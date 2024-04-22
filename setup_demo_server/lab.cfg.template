@@ -1,0 +1,25 @@
+# Default root password, please change afterwards
+ROOT_PWD_HASH='$6$AK9pZLzQ6G5zD5Vn$U7t.tGI9xDLqMez/kQLjziwVwxIYxpWbx./UYAVqZGvYclQHoiZ3ph1pFLvsNnz/p6H..51sLXS79Wn9IXc/r0'  ## --> This is the hash for 1234
+
+# default SSH Public key, note a new one is generated with the automation machine that will be added to the hypervisor authorized keys, that key will be shown during the installation process.
+ROOT_SSH_PUB_KEY='REPLACE ME with cat ~/.ssh/<your_key>.pub'
+
+
+# Automation VM hostname
+AUTOMATION_HOSTNAME='automation.mydemo.lab'
+
+
+# Network settings
+_mydns=192.168.8.1
+_mymask=255.255.255.0
+_mygw=192.168.8.1
+_myip=192.168.8.71
+_mynet=192.168.8.0/24
+_mydomain=mydemo.lab
+_mynetrev=8.168.192
+
+# QCOW image path 
+_QCOW_IMAGE=/var/lib/libvirt/images/sources/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
+
+# initial root password
+root_pwd=1234

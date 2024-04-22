@@ -1,0 +1,57 @@
+{
+"nodes": {
+  "node51.mydemo.lab":
+    {"myip":"192.168.8.51",
+   "mymac":"34:8a:b1:4b:16:b1",
+   "INSTALL_RKE2_TYPE": "server"
+    },
+  "node52.mydemo.lab":
+    {"myip":"192.168.8.52",
+     "mymac":"34:8a:b1:4b:16:b2",
+     "INSTALL_RKE2_TYPE": "server"
+    },
+  "node53.mydemo.lab":
+    {"myip":"192.168.8.53",
+     "mymac":"34:8a:b1:4b:16:b3",
+     "INSTALL_RKE2_TYPE": "server"
+    },
+  "node54.mydemo.lab":
+    {"myip":"192.168.8.54",
+     "mymac":"34:8a:b1:4b:16:b4",
+     "INSTALL_RKE2_TYPE": "agent"
+    },
+  "node55.mydemo.lab":
+    {"myip":"192.168.8.55",
+     "mymac":"34:8a:b1:4b:16:b5",
+     "INSTALL_RKE2_TYPE": "agent"
+    }
+},
+"common":
+  {"mymask": "24",
+   "mygw": "192.168.8.1",
+   "mydns": "192.168.8.71",
+   "mynet_reverse": "8.168.192",
+   "ISO_IMAGE": "SLE-Micro.x86_64-5.5.0-Default-qcow-GM.qcow2",
+   "VM_MEM": "8192",
+   "VM_DSK": "40",
+   "VM_CPU": "4"
+},
+
+"cluster":
+  {"clu_name": "cluster2",
+   "clu_type": "rke2",
+   "clu_rel": "stable",
+  "mydomain": "mydemo.lab"
+},
+"addons": [ 
+  "rancher", "longhorn", "neuvector" 
+],
+
+"rancher":
+  {"cert_manager_ver": "--version v1.14.4",
+   "rancher_repo": "rancher-stable/rancher",
+   "rancher_shorthn": "rancher",
+   "rancher_rel": "stable"
+  }
+}
+

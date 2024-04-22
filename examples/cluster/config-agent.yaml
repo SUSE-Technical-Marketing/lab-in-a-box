@@ -1,0 +1,5 @@
+write-kubeconfig-mode: "0600"
+tls-san:
+  - "mydemo.lab"
+  - "cluster.mydemo.lab"
+
