@@ -1,0 +1,69 @@
+#!/bin/bash
+# combustion: network prepare
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+#  This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
+#
+# Based on script generated with https://opensuse.github.io/fuel-ignition/
+set -euo pipefail
+
+
+
+#local vars
+_curl_cmd="curl -sfL http://${mysource}${sourcepath}/"
+
+# setup the network
+nm_config() {
+umask 077 # Required for NM config
+mkdir -p /etc/NetworkManager/system-connections/
+cat >/etc/NetworkManager/system-connections/static.nmconnection <<-EOF
+[connection]
+id=static
+type=ethernet
+autoconnect=true
+
+[ipv4]
+method=manual
+dns=${mydns}
+address1=${myip}/${mymask},${mygw}
+EOF
+
+}
+
+if [ "${1-}" = "--prepare" ]; then
+  nm_config
+  exit 0
+fi
+
+# Redirect output to the console
+exec > >(exec tee -a /dev/tty0) 2>&1
+
+sed "1s/^/nameserver ${mydns}\n/" -i /etc/resolv.conf
+nm_config
+
+
+# Registration
+if ! which SUSEConnect > /dev/null 2>&1; then
+    zypper --non-interactive install suseconnect-ng
+fi
+SUSEConnect --email ${SUSE_email} --url ${SUSE_url} --regcode ${SUSE_regcode}
+zypper  --non-interactive install vim-small apparmor-parser iptables NetworkManager-cloud-setup wget git
+
+
+# set the keyboard
+echo "KEYMAP=us" >> /etc/vconsole.conf
+
+# set the time zone
+ln -sf /usr/share/zoneinfo/Europe/Zurich /etc/localtime
+
+# add extra ssh keys
+echo 'ROOT_SSH_KEY' >>/root/.ssh/authorized_keys
+
+exit 0
+
+

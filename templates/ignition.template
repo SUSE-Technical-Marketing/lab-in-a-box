@@ -1,0 +1,82 @@
+{
+  "ignition": {
+    "version": "3.1.0"
+  },
+  "passwd": {
+    "users": [
+      {
+        "name": "root",
+        "passwordHash": "ROOT_PWD_HASH",
+        "sshAuthorizedKeys": 
+          [
+            "ROOT_SSH_KEY"
+          ]
+      }
+    ]
+  },
+  "storage": {
+    "filesystems": [
+      {
+        "device": "/dev/disk/by-label/ROOT",
+        "format": "btrfs",
+        "mountOptions": [
+          "subvol=/@/home"
+        ],
+        "path": "/home",
+        "wipeFilesystem": false
+      }
+    ],
+    "files": [
+      {
+        "overwrite": true,
+        "path": "/etc/hostname",
+        "contents": {
+          "source": "data:,TEMPLATE_HN%0A"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/NetworkManager/conf.d/rke2-canal.conf",
+        "mode": 420,
+        "contents": {
+          "source": "data:text/plain;charset=utf-8;base64,W2tleWZpbGVdCnVubWFuYWdlZC1kZXZpY2VzPWludGVyZmFjZS1uYW1lOmNhbGkqO2ludGVyZmFjZS1uYW1lOmZsYW5uZWwq"
+        }
+      },
+      {
+        "path": "/etc/sysctl.d/90-rke2.conf",
+        "mode": 420,
+        "contents": {
+          "source": "data:text/plain;charset=utf-8;base64,bmV0LmlwdjQuY29uZi5hbGwuZm9yd2FyZGluZz0xCm5ldC5pcHY2LmNvbmYuYWxsLmZvcndhcmRpbmc9MQ=="
+        }
+      },
+      {
+        "path": "/etc/profile.d/rke2.sh",
+        "mode": 420,
+        "contents": {
+          "source": "data:text/plain;charset=utf-8;base64,ZXhwb3J0IFBBVEg9JFBBVEg6L29wdC9ya2UyL2JpbjovdmFyL2xpYi9yYW5jaGVyL3JrZTIvYmluLwpleHBvcnQgS1VCRUNPTkZJRz0vZXRjL3JhbmNoZXIvcmtlMi9ya2UyLnlhbWwKCg=="
+        }
+      }
+    ]
+  },
+  "systemd": {
+    "units": [
+      {
+        "name": "sshd.service",
+        "enabled": true
+      },
+      {
+        "name": "Firewalld.service",
+        "enabled": false
+      },
+      {
+        "name": "nm-cloud-setup.service",
+        "enabled": false
+      },
+      {
+        "name": "nm-cloud-setup.timer",
+        "enabled": false
+      }
+    ]
+  }
+}
+

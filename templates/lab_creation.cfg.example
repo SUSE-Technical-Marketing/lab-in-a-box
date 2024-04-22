@@ -1,0 +1,43 @@
+# This is the hypervisor node
+REMOTE_HOST='nuc1.mydemo.lab'
+
+# This is the url to connect to libvirt in the hypervisor node.
+VIRT_SRV="qemu+ssh://root@${REMOTE_HOST}/system?keyfile=.ssh/id_rsa"
+
+# This is the path for the materials of the lab that will be retrieved via HTTP
+LAB_SETUP_PATH="/srv/www/htdocs/lab_creation"
+
+# The delay between stages, increase if load is high or resources are low. The current should work with "normal" hardware
+delay_min="2"
+delay_sec="$((60 * $delay_min))"
+
+# This is where the VM disk images will be placed
+VM_IMG_LOC='/var/lib/libvirt/images/'
+
+# This is the location of the source images used to build the VMs
+ISO_LOC='/var/lib/libvirt/images/sources'
+
+# This is the hostname of the lab automation server.
+mysource='automation.mydemo.lab'
+
+# This is the source path for the lab automation scripts that maybe used during the combustion phase.
+sourcepath=/lab_creation/scripts/
+
+# This are the details for registering the VMs with SUSE.
+SUSE_email='me@mydemo.lab'
+SUSE_url='https://scc.suse.com'
+SUSE_regcode='XYZ-XYZ'
+
+# This is the password hash for the root password
+ROOT_PWD_HASH='$6$AK9pZLzQ6G5zD5Vn$U7t.tGI9xDLqMez/kQLjziwVwxIYxpWbx./UYAVqZGvYclQHoiZ3ph1pFLvsNnz/p6H..51sLXS79Wn9IXc/r0' # this example is 1234
+
+# This is the public SSH key to be setup on the VMs.
+ROOT_SSH_KEY='REPLACE ME with cat ~/.ssh/<your_key>.pub'
+
+# This is the initial rancher password
+rancher_initial_pwd=abc1234
+
+# DO NOT CHANGE:
+# path for the library
+_lib_path=/usr/local/lib/lab_creation/lab_creation.bash
+
