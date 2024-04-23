@@ -80,11 +80,11 @@ In the words of an AI:
     This step will require aproximately 15minutes depending on your internet conncetion and hardware.
 
     - From a linux system run the following command:
-      ```
+      ```shell
       curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
       ```
     - Define the settings for your node and lab
-      ```
+      ```shell
       cd /var/tmp/setup_demo_server/setup_demo_server/
       vim lab.cfg
       ```
@@ -104,11 +104,40 @@ In the words of an AI:
       
     - Once you have the config file ready lets run the script, <IP_of_lab_node> should be replaced with the IP of your lab node (hypervisor):
 
-      ```
+      ```shell
       bash setup_kvm_node.sh <IP_of_lab_node>
       ```
-    - 
+    - Once the setup is completed we need to login into the automation VM, at this point it is worth to configure your client with the DNS server created inside the automation VM so that you can resolve all the DNS of your lab.
+    - We will clone the repository first
+      ```shell
+      git clone git@github.com:SUSE-Technical-Marketing/lab-in-a-box.git
+      ```
 
+    - Install the scripts in the right locations
+      ```shell
+      bash install_automation_node_scripts.sh
+      ```
+   
+    - Edit the lab creation configuration file
+      ```shell
+      cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+      vim /etc/lab_creation.cfg
+      ```
+      
+    - Create your first lab by editing one of the example files inside examples folder
+      ```
+      cp examples/cluster.json.template cluster2.json 
+      cp -r examples/cluster cluster1
+      vim cluster1.json
+      vim cluster1/*
+      ```
+      ```
+      setup_cluster.sh cluster1.json
+      ```
+      **NOTE**: Depending on the VMs capacity, the network and other factors it may take from 10 minutes to more.
+
+
+      
 
 
 
