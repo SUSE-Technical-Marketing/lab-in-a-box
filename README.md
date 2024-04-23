@@ -14,7 +14,17 @@ In the words of an AI:
 
 "Easily set up your own lab to try out various software hassle-free. Our scripts and instructions ensure a smooth, controlled experience, promoting modularity and automation. Get experimenting!"
 
+## How does it work
 
+![Image of one of the NUCs i used to test and develop this lab.](media/diagram1.svg)
+
+The system is made of one or more virtualization hypervisors, the nodes running the workloads, and a VM called "automation" which is responsible for orchestrating the creation of labs on the hypervisors.
+
+A lab can be an RKE2 cluster with Rancher, Longhorn and NeuVector installed, a simple VM with openSUSE Leap Micro, or something else depending on the automation that becomes available here.
+
+To orchestrate the labs we only need an SSH connection to the automation VM which will communicate also via SSH with the hypervisor.
+
+The Automation machine acts as a DNS server for the lab, providing local resolution for the lab domain as well as forwarding requests to other DNS servers, so ideally the Desktop (client) will point at the Automation VM DNS to get resolution for the lab domains.
 
 
 ## Quick Start
