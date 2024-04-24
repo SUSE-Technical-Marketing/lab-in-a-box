@@ -68,7 +68,9 @@ chroot /mnt/ systemctl enable sshd.service
 chroot /mnt/ systemctl enable NetworkManager.service
 chroot /mnt/ systemctl enable named
 chroot /mnt/ ssh-keygen -b 16384 -N '' -t rsa -f /root/.ssh/id_rsa
-chroot /mnt/ curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh | bash -
+git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /mnt/var/tmp/lab-in-a-box
+_scripts_path=/var/tmp/lab-in-a-box/
+chroot /mnt/  curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh | bash -
 
 cat /mnt/root/.ssh/id_rsa.pub >>/root/.ssh/authorized_keys
 echo "# This is the automation host public key: 
@@ -187,6 +189,7 @@ sleep 60
 
 # There seems to be a bug, the vnet of the vm doesn't get added automatically to the bridge, so we need to stop it and start it.
 virsh shutdown $AUTOMATION_HOSTNAME
+sleep 60
 virsh start $AUTOMATION_HOSTNAME
 
 echo "Reconfigure host to use new VM as DNS server"
