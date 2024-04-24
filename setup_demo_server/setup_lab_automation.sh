@@ -61,13 +61,15 @@ echo "KEYMAP=us" >> /mnt/etc/vconsole.conf
 # set the time zone
 ln -sf /usr/share/zoneinfo/Europe/Zurich /mnt/etc/localtime
 
-chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install
+chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git
 chroot /mnt/ systemctl disable firewalld.service
 chroot /mnt/ systemctl disable wicked.service
 chroot /mnt/ systemctl enable sshd.service
 chroot /mnt/ systemctl enable NetworkManager.service
 chroot /mnt/ systemctl enable named
 chroot /mnt/ ssh-keygen -b 16384 -N '' -t rsa -f /root/.ssh/id_rsa
+chroot /mnt/ curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh | bash -
+
 cat /mnt/root/.ssh/id_rsa.pub >>/root/.ssh/authorized_keys
 echo "# This is the automation host public key: 
 
