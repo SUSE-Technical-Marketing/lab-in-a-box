@@ -1,8 +1,9 @@
 # lab-in-a-box
 
 
-<p align="center">
-<kbd><img src="media/NUC.jpg" width="400" alt="Image of one of the NUCs i used to test and develop this lab." style="align:middle;margin:0px 50px"/></kbd>
+<p align="center" float="left">
+  <kbd><img src="media/NUC.jpg" width="400" alt="Image of one of the NUCs i used to test and develop this lab." /></kbd>
+
 </p>
 
 The purpose of this project is to enable users to setup their own lab where they can quickly try different software and its features in a reliable and controlled manner with modularity and automation in mind.
@@ -17,7 +18,12 @@ In the words of an AI:
 
 ## How does it work
 
-<img src="media/diagram1.svg" width="400" alt="Diagram1"/>
+
+<p align="center" float="left">
+  <kbd><img src="media/diagram1.svg" width="800" alt="Diagram1"/></kbd>
+  <kbd><img src="media/diagram2.svg" width="800" alt="Diagram2"/></kbd>
+</p>
+
 
 The system is made of one or more virtualization hypervisors, the nodes running the workloads, and a VM called "automation" which is responsible for orchestrating the creation of labs on the hypervisors.
 
