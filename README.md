@@ -124,34 +124,43 @@ The Automation machine acts as a DNS server for the lab, providing local resolut
       ```shell
       bash setup_kvm_node.sh <IP_of_lab_node>
       ```
-    - Once the setup is completed we need to login into the automation VM, at this point it is worth to configure your client with the DNS server created inside the automation VM so that you can resolve all the DNS of your lab.
-    - We will clone the repository first
-      ```shell
-      git clone git@github.com:SUSE-Technical-Marketing/lab-in-a-box.git
-      ```
-
-    - Install the scripts in the right locations
-      ```shell
-      bash install_automation_node_scripts.sh
-      ```
-   
-    - Edit the lab creation configuration file
+    - Once the setup is completed we can login into the automation VM, at this point it is worth to configure your client with the DNS server created inside the automation VM so that you can resolve all the DNS of your lab.
+ 
+ 4. Now the only thing we have left is to configure the automation node with the settings we want:
+    
+    - Copy the example configuration file and edit it with your preferences
       ```shell
       cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
       vim /etc/lab_creation.cfg
       ```
-      
-    - Create your first lab by editing one of the example files inside examples folder
-      ```
+
+## Using the lab
+
+  There are different scripts we can use to configure different things, these should be already in automation node executables' path, [here is the current list](./scripts/), you can also find example configurations and settings inside [/examples](./examples/) folder in this repository.
+
+### Example: Create your first RKE2 cluster with Rancher, NeuVector and Longhorn
+
+- For doing so we will use setup_cluster.sh script and we will adapt existing example configuration files:
+  
+  ```
       cp examples/cluster.json.template cluster2.json 
       cp -r examples/cluster cluster1
+  ```
+  
+- Now lets edit them
+  
+  ```
       vim cluster1.json
       vim cluster1/*
-      ```
-      ```
+  ```
+  
+- Finally we will call the setup_cluster.sh script with the main json configuration file we just created.
+  
+  ```
       setup_cluster.sh cluster1.json
-      ```
-      **NOTE**: Depending on the VMs capacity, the network and other factors it may take from 10 minutes to more.
+  ```
+  
+ **NOTE**: Depending on the VMs capacity, the network and other factors it may take from 10 minutes to more.
 
 
       
