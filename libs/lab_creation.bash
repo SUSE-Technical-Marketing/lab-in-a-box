@@ -85,6 +85,7 @@ function create_vm() {
 	echo "## Create virtual machine"
 	virt-install --connect ${VIRT_SRV} \
 	       --name  ${_vm_name} \
+               --autostart \
 	       --vcpus ${VM_CPU}  \
 	       --memory ${VM_MEM} \
 	       --os-variant=slem5.4 \

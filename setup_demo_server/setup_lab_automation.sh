@@ -179,6 +179,7 @@ guestunmount /mnt
 echo "## Create virtual machine"
         virt-install --connect ${_qemu_addr} \
                --name  $AUTOMATION_HOSTNAME \
+               --autostart \
                --vcpus 1  \
                --memory 2048 \
                --osinfo=opensuse15.5 \
