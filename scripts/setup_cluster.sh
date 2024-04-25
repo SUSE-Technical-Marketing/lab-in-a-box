@@ -12,9 +12,13 @@
 inputFile=${1}
 
 
-if [[ ! -f "${inputFile}" ]]
+if [[ ! -f "${inputFile}" ]] 
 then
    echo "Cluster definition file (${inputFile}) doesn't exists or not specified"
+   exit 1
+elif ! jq <"${inputFile}" >/dev/null
+then
+   echo "Cluster definition not in validated JSON format"
    exit 1
 fi
 

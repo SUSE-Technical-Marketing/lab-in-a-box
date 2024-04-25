@@ -23,3 +23,9 @@ _QCOW_IMAGE=/var/lib/libvirt/images/sources/openSUSE-Leap-15.5-Minimal-VM.x86_64
 
 # initial root password
 root_pwd=1234
+
+
+# advanced settings
+_qemu_addr="qemu:///system"
+
+

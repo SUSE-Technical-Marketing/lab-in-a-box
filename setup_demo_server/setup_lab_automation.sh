@@ -26,8 +26,8 @@ fi
 
 
 echo "## Delete VM"
-virsh -c qemu:///system destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
-virsh -c qemu:///system undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
+virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
+virsh -c ${_qemu_addr} undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
 
 cp ${_QCOW_IMAGE} /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ; qemu-img resize /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ${_disk_size}G
 
@@ -177,7 +177,7 @@ guestunmount /mnt
 
 
 echo "## Create virtual machine"
-        virt-install --connect qemu:///system \
+        virt-install --connect ${_qemu_addr} \
                --name  $AUTOMATION_HOSTNAME \
                --vcpus 1  \
                --memory 2048 \

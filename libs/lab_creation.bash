@@ -40,6 +40,7 @@ function copy_to_hypervisor() {
         ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/{combustion,ignition}"
         rsync -aqv ${LAB_SETUP_PATH}/combustion/${_vm_name} root@${REMOTE_HOST}:${LAB_SETUP_PATH}/combustion/
 	rsync -aqv ${LAB_SETUP_PATH}/ignition/${_vm_name}.ign root@${REMOTE_HOST}:${LAB_SETUP_PATH}/ignition/
+        ssh  -q root@${REMOTE_HOST} "chmod 0644 ${LAB_SETUP_PATH}/ignition/* ${LAB_SETUP_PATH}/combustion/*"
 }
 
 # Add hostname entry to the DNS server as well as the API DNS entry, TBI
@@ -169,24 +170,37 @@ function setup_helm() {
         $ssh_command "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
 }
 
+
+function helm_repo_add() {
+        echo "Adding helm repository \"${_repo_name}\""
+	$ssh_command "helm repo add ${_repo_name} ${_repo_url}"
+        $ssh_command "helm repo update"
+}
+
 # Setup SUSE Rancher helm respoitory
 function setup_rancher_repo() {
-	$ssh_command "helm repo add rancher-${rancher_rel} https://releases.rancher.com/server-charts/${rancher_rel}"
-	$ssh_command "helm repo add jetstack https://charts.jetstack.io"
-	$ssh_command "helm repo update"
+        _repo_name="${rancher_rel:-rancher-stable/rancher}"
+        _repo_url="${rancher_repo_url:-https://releases.rancher.com/server-charts/stable}"
+	helm_repo_add
+	_repo_name="${rancher_cert_repo_name:-jetstack}"
+	_repo_url="${rancher_cert_repo_url:-https://charts.jetstack.io}"
+	helm_repo_add
 }
 
 # Setup SUSE NeuVector helm repository
 function setup_nv_repo() {
-        $ssh_command "helm repo add neuvector https://neuvector.github.io/neuvector-helm"
-        $ssh_command "helm repo update"
+	_repo_name="${nv_rel:-neuvector}"
+        _repo_url="${nv_repo_url:-https://neuvector.github.io/neuvector-helm}"
+	helm_repo_add
 }
 
 # Setup SUSE Longhorn helm repository
 function setup_lh_repo() {
-        $ssh_command "helm repo add longhorn https://charts.longhorn.io"
-        $ssh_command "helm repo update"
+        _repo_name="${lh_rel:-longhorn}"
+        _repo_url="${lh_repo_url:-https://charts.longhorn.io}"
+	helm_repo_add
 }
+
 
 # Setup SUSE Longhorn
 function setup_lh() {
@@ -213,7 +227,7 @@ function setup_cert-manager() {
 # Setup SUSE Rancher
 function setup_rancher() {
 	echo "# Setup Rancher ${rancher_repo:-jjjj}"
-        $ssh_command "helm upgrade -i rancher ${rancher_repo} --create-namespace --namespace cattle-system --set hostname="${rancher_shorthn}.${clu_name}.${mydomain}" --set bootstrapPassword=\"${rancher_initial_pwd}\""
+        $ssh_command "helm upgrade -i ${rancher_helm_rel:-rancher} ${rancher_helm_chart} --create-namespace --namespace cattle-system --set hostname="${rancher_shorthn}.${clu_name}.${mydomain}" --set bootstrapPassword=\"${rancher_initial_pwd}\""
 	echo "# Get initial password: "
 	$ssh_command "kubectl get secret --namespace cattle-system bootstrap-secret -o go-template='{{.data.bootstrapPassword|base64decode}}{{ \"\n\" }}'"
 	

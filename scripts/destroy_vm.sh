@@ -34,6 +34,10 @@ then
 	echo "configuration file \"${inputFile}\" not found or name incorrect"
 	usage
 	exit 1
+elif ! jq <"${inputFile}" >/dev/null
+then
+   echo "Cluster definition not in validated JSON format"
+   exit 1
 fi
 
 if [[ ! ${_vm_name} ]]
