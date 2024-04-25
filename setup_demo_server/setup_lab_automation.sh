@@ -191,14 +191,26 @@ echo "## Create virtual machine"
 echo "Wait until the VM starts"
 sleep 60 
 
-# There seems to be a bug, the vnet of the vm doesn't get added automatically to the bridge, so we need to stop it and start it.
-virsh shutdown $AUTOMATION_HOSTNAME
-sleep 60
-virsh start $AUTOMATION_HOSTNAME
+# There seems to be a bug, the vnet of the vm doesn't get added automatically to the bridge after the network interface has been restarted, so we need to stop the VMs and start them again.
+#virsh shutdown $AUTOMATION_HOSTNAME
+#sleep 60
+#virsh start $AUTOMATION_HOSTNAME
 
 echo "Reconfigure host to use new VM as DNS server"
+# make it persistent
 sed "s/NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS=\"${_myip} ${_mydns}\"/;s/NETCONFIG_DNS_STATIC_SEARCHLIST=.*/NETCONFIG_DNS_STATIC_SEARCHLIST=\"${_mydomain}\"/" -i /etc/sysconfig/network/config
-systemctl restart network
+# make it active
+if grep -i "^search " /etc/resolv.conf &>/dev/null
+then 
+	sed "/search.*/a nameserver ${_myip} " -i /etc/resolv.conf
+else
+	sed "1s/^/search ${_mydomain}" -i /etc/resolv.conf
+        sed "1s/^/nameserver ${_myip}" -i /etc/resolv.conf
+fi	
+
+
+# Commented due to bug above.
+# systemctl restart network
 
 
 
