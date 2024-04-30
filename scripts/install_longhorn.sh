@@ -18,6 +18,22 @@ $0 <configuration file>"
 
 }
 
+# Setup SUSE Longhorn helm repository
+function setup_lh_repo() {
+        _repo_name="${lh_rel:-longhorn}"
+        _repo_url="${lh_repo_url:-https://charts.longhorn.io}"
+        helm_repo_add
+}
+
+
+ # Setup SUSE Longhorn
+function setup_lh() {
+                $ssh_command "kubectl create namespace longhorn-system"
+                $ssh_command "helm upgrade -i longhorn longhorn/longhorn --namespace longhorn-system --set ingress.enabled=true --set ingress.host=${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
+                echo "Longhorn should be available in a few minutes in: ${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
+}
+ 
+
 if [[ ! ${inputFile} ]]
 then
         echo "missing configuration file parameter"

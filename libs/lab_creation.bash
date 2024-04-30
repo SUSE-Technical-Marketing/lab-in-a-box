@@ -86,6 +86,7 @@ function create_vm() {
 	virt-install --connect ${VIRT_SRV} \
 	       --name  ${_vm_name} \
                --autostart \
+               --boot uefi \
 	       --vcpus ${VM_CPU}  \
 	       --memory ${VM_MEM} \
 	       --os-variant=slem5.4 \
@@ -100,8 +101,9 @@ function create_vm() {
 # Deletes a VM from a KVM hypervisor
 function delete_vm() {
 	echo "## Delete VM"
+        virsh -c ${VIRT_SRV} undefine --nvram "${_vm_name}"
 	virsh -c ${VIRT_SRV} destroy  "${_vm_name}" 2>/dev/null
-	virsh -c ${VIRT_SRV} undefine "${_vm_name}" --remove-all-storage
+	virsh -c ${VIRT_SRV} undefine "${_vm_name}" --nvram --remove-all-storage
 }
 
 # Removes the VM ssh key from the known hosts to avoid warnings.
@@ -178,76 +180,6 @@ function helm_repo_add() {
         $ssh_command "helm repo update"
 }
 
-# Setup SUSE Rancher helm respoitory
-function setup_rancher_repo() {
-        _repo_name="${rancher_rel:-rancher-stable/rancher}"
-        _repo_url="${rancher_repo_url:-https://releases.rancher.com/server-charts/stable}"
-	helm_repo_add
-	_repo_name="${rancher_cert_repo_name:-jetstack}"
-	_repo_url="${rancher_cert_repo_url:-https://charts.jetstack.io}"
-	helm_repo_add
-}
-
-# Setup SUSE NeuVector helm repository
-function setup_nv_repo() {
-	_repo_name="${nv_rel:-neuvector}"
-        _repo_url="${nv_repo_url:-https://neuvector.github.io/neuvector-helm}"
-	helm_repo_add
-}
-
-# Setup SUSE Longhorn helm repository
-function setup_lh_repo() {
-        _repo_name="${lh_rel:-longhorn}"
-        _repo_url="${lh_repo_url:-https://charts.longhorn.io}"
-	helm_repo_add
-}
-
-
-# Setup SUSE Longhorn
-function setup_lh() {
-                $ssh_command "kubectl create namespace longhorn-system"
-                $ssh_command "helm upgrade -i longhorn longhorn/longhorn --namespace longhorn-system --set ingress.enabled=true --set ingress.host=${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
-		echo "Longhorn should be available in a few minutes in: ${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
-}
-
-# Setup SUSE NeuVector
-function setup_nv() {
-	        $ssh_command "kubectl create namespace cattle-neuvector-system"
-	        $ssh_command "helm upgrade -i neuvector neuvector/core --namespace cattle-neuvector-system --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock --set manager.ingress.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.enabled=true --set manager.ingress.host=${nv_shorthn:-neuvector}.${clu_name}.${mydomain} --set global.cattle.url=https://${rancher_shorthn}.${clu_name}.${mydomain} --set controller.ranchersso.enabled=true --set rbac=true"
-		echo "NeuVector should be available in a few minutes in: ${nv_shorthn:-neuvector}.${clu_name}.${mydomain}"
-}
-
-
-# Setup cert-manager
-function setup_cert-manager() {
-        # https://cert-manager.io/docs/installation/helm/
-	echo "# Setup Cert-manager"
-        $ssh_command "helm upgrade -i cert-manager jetstack/cert-manager ${cert_manager_ver} --namespace cert-manager --create-namespace --set installCRDs=true"
-}
-
-# Setup SUSE Rancher
-function setup_rancher() {
-	echo "# Setup Rancher ${rancher_repo:-jjjj}"
-        $ssh_command "helm upgrade -i ${rancher_helm_rel:-rancher} ${rancher_helm_chart} --create-namespace --namespace cattle-system --set hostname="${rancher_shorthn}.${clu_name}.${mydomain}" --set bootstrapPassword=\"${rancher_initial_pwd}\""
-	echo "# Get initial password: "
-	$ssh_command "kubectl get secret --namespace cattle-system bootstrap-secret -o go-template='{{.data.bootstrapPassword|base64decode}}{{ \"\n\" }}'"
-	
-	# verify it's up and running
-	# kubectl -n cattle-system rollout status deploy/rancher
-	# kubectl -n cattle-system get deploy rancher
-	
-	echo "## Add Rancher DNS"
-        _dns_entry="${rancher_shorthn:-ERROR_ranchershort}.${clu_name}"
-        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-        do
-                        add_dns_to_named_rr
-        done
-        systemctl restart named
-	echo "Wait 5 minutes for the installation to finish"
-	sleep 300
-
-}
-
 
 
 # Generic load Vars function
@@ -265,13 +197,28 @@ function _load_vars() {
 	fi
 }
 
+
 # Load rancher related variables.
 function load_rancher_vars() {
-	_section="rancher"
-	_load_vars
+        _section="rancher"
+        _load_vars
 }
 
-# Load Longhorn related variables.
+
+# Load Jenkins related variables.
+function load_jenkins_vars() {
+       _section="jenkins"
+       _load_vars
+}
+
+# Load ArgoCD related variables.
+function load_argocd_vars() {
+       _section="argocd"
+       _load_vars
+}
+
+ 
+  # Load Longhorn related variables.
 function load_lh_vars() {
        _section="longhorn"
        _load_vars
@@ -281,6 +228,16 @@ function load_lh_vars() {
 function load_nv_vars() {
        _section="neuvector"
        _load_vars
+}
+
+
+# Inspired from https://stackoverflow.com/questions/2914220/bash-templating-how-to-build-configuration-files-from-templates-with-bash#11050943
+function process_templates() {
+	eval "cat <<EOF                                   
+$(sed 's/\"/\\\\"/g' < ${template_file} )
+EOF
+"
+
 }
 
 

@@ -18,6 +18,22 @@ $0 <configuration file>"
 
 }
 
+# Setup SUSE NeuVector helm repository
+function setup_nv_repo() {
+        _repo_name="${nv_rel:-neuvector}"
+        _repo_url="${nv_repo_url:-https://neuvector.github.io/neuvector-helm}"
+        helm_repo_add
+}
+
+
+# Setup SUSE NeuVector
+function setup_nv() {
+                $ssh_command "kubectl create namespace cattle-neuvector-system"
+                $ssh_command "helm upgrade -i neuvector neuvector/core --namespace cattle-neuvector-system --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock --set manager.ingress.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.enabled=true --set manager.ingress.host=${nv_shorthn:-neuvector}.${clu_name}.${mydomain} --set global.cattle.url=https://${rancher_shorthn}.${clu_name}.${mydomain} --set controller.ranchersso.enabled=true --set rbac=true"
+                echo "NeuVector should be available in a few minutes in: ${nv_shorthn:-neuvector}.${clu_name}.${mydomain}"
+}
+
+
 if [[ ! ${inputFile} ]]
 then
         echo "missing configuration file parameter"

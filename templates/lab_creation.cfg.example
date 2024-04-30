@@ -40,4 +40,4 @@ rancher_initial_pwd=abc1234
 # DO NOT CHANGE:
 # path for the library
 _lib_path=/usr/local/lib/lab_creation/lab_creation.bash
-
+_templ_addons_loc=/usr/share/lab_creation/templates/addons/

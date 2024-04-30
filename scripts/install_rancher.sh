@@ -17,6 +17,50 @@ $0 <configuration file>"
 
 }
 
+# Setup SUSE Rancher helm respoitory
+function setup_rancher_repo() {
+        _repo_name="${rancher_rel:-rancher-stable/rancher}"
+        _repo_url="${rancher_repo_url:-https://releases.rancher.com/server-charts/stable}"
+        helm_repo_add
+        _repo_name="${rancher_cert_repo_name:-jetstack}"
+        _repo_url="${rancher_cert_repo_url:-https://charts.jetstack.io}"
+        helm_repo_add
+} 
+
+
+# Setup cert-manager
+function setup_cert-manager() {
+        # https://cert-manager.io/docs/installation/helm/
+        echo "# Setup Cert-manager"
+        $ssh_command "helm upgrade -i cert-manager jetstack/cert-manager ${cert_manager_ver} --namespace cert-manager --create-namespace --set installCRDs=true"
+}
+
+ 
+# Setup SUSE Rancher
+function setup_rancher() {
+        echo "# Setup Rancher ${rancher_repo:-jjjj}"
+        $ssh_command "helm upgrade -i ${rancher_helm_rel:-rancher} ${rancher_helm_chart} --create-namespace --namespace cattle-system --set hostname="${rancher_shorthn}.${clu_name}.${mydomain}" --set bootstrapPassword=\"${rancher_initial_pwd}\""
+        echo "# Get initial password: "
+        $ssh_command "kubectl get secret --namespace cattle-system bootstrap-secret -o go-template='{{.data.bootstrapPassword|base64decode}}{{ \"\n\" }}'"
+
+        # verify it's up and running
+        # kubectl -n cattle-system rollout status deploy/rancher
+        # kubectl -n cattle-system get deploy rancher
+
+        echo "## Add Rancher DNS"
+        _dns_entry="${rancher_shorthn:-ERROR_ranchershort}.${clu_name}"
+        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+        do
+                        add_dns_to_named_rr
+        done
+        systemctl restart named
+        echo "Wait 5 minutes for the installation to finish"
+        sleep 300
+
+}
+
+
+
 if [[ ! ${inputFile} ]]
 then
         echo "missing configuration file parameter"

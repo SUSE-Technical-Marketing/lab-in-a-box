@@ -9,25 +9,34 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
+
+
+
 if [[ "$_scripts_path" != "" ]]
 then
 	cd $_scripts_path
 fi
 
+if [[ "$_templ_addons_loc" != "" ]]
+then
+	_templ_addons_loc=/usr/share/lab_creation/templates/addons/
+fi
 
+
+# create directories
+mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition} ${_templ_addons_loc} /usr/local/lib/lab_creation/ &>/dev/null
 
 cp templates/lab_creation.cfg.example /etc/lab_creation.cfg.example
 chmod 0600 /etc/lab_creation.cfg.example
 
 cp scripts/setup_vm.sh /usr/local/bin/setup_vm.sh
 chmod 0755 /usr/local/bin/setup_vm.sh
-mkdir /usr/local/lib/lab_creation/
 cp libs/lab_creation.bash /usr/local/lib/lab_creation/lab_creation.bash
 
 cp scripts/destroy_vm.sh /usr/local/bin/destroy_vm.sh
 chmod 0755  /usr/local/bin/destroy_vm.sh
 
-
+cp -r  templates/addons/* ${_templ_addons_loc}/
 
 
 
@@ -40,6 +49,5 @@ done
 
 cp scripts/setup_cluster.sh /usr/local/bin/setup_cluster.sh
 chmod 0755  /usr/local/bin/setup_cluster.sh
-mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition}
 cp templates/combustion.template /srv/www/htdocs/lab_creation/combustion/template
 cp templates/ignition.template /srv/www/htdocs/lab_creation/ignition/template
