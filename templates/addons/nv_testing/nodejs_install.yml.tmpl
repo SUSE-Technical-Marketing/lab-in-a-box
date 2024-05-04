@@ -1,0 +1,36 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-pod
+  namespace: ${nv_testing_ns:-demo}
+spec:
+  selector:
+    matchLabels:
+      app: node-pod
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: node-pod
+    spec:
+      containers:
+      - name: node-pod
+        image: nvbeta/node
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node
+  namespace: ${nv_testing_ns:-demo}
+spec:
+  ports:
+  - port: 8888
+    protocol: TCP
+    name: node-port
+  clusterIP: None
+  selector:
+    app: node-pod
+  type: ClusterIP
+...

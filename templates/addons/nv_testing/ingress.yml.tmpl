@@ -1,0 +1,25 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${nv_testing_name:-nv-testing}
+  namespace: ${nv_testing_ns:-demo}
+spec:
+  defaultBackend:
+    service:
+      name: nginx-webui
+      port:
+        number: 80
+  rules:
+    - host: ${nv_testing_name:-nv-testing}.${clu_name}.${mydomain}
+      http:
+        paths:
+          - backend:
+              service:
+                name: nginx-webui
+                port:
+                  name: webui
+            path: /
+            pathType: Prefix
+...
+
