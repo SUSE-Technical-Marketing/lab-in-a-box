@@ -60,8 +60,8 @@ for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
 do
 	echo "# Node: $_vm_name"
 	ssh-keygen -f ~/.ssh/known_hosts -R "${_vm_name}"
-	bash destroy_vm.sh "${inputFile}" "${_vm_name}"
-	bash setup_vm.sh "${inputFile}" "${_vm_name}"
+	destroy_vm.sh "${inputFile}" "${_vm_name}"
+	setup_vm.sh "${inputFile}" "${_vm_name}"
 done
 
 echo "# Wait ${delay_min} min (${delay_sec} sec)  and restart"
@@ -93,11 +93,11 @@ sleep $((60 * ( 2 + $delay_min ) ))
 
 for _addon in $(jq -r '.addons[]' < ${inputFile})
 do
-	if command -v install_${_addon}.sh &>/dev/null
+	if command -v install_${_addon} &>/dev/null
 	then
-		install_${_addon}.sh "${inputFile}"
+		install_${_addon} "${inputFile}"
 	else
-		echo "## FAILED! Addon script \"install_${_addon}.sh\" not found"
+		echo "## FAILED! Addon script \"install_${_addon}\" not found"
 	fi
 done
 

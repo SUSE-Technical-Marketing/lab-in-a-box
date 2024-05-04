@@ -60,7 +60,7 @@ for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
 do
 	echo "# Node: $_vm_name"
 	ssh-keygen -f ~/.ssh/known_hosts -R "${_vm_name}"
-	bash destroy_vm.sh "${inputFile}" "${_vm_name}"
+	destroy_vm.sh "${inputFile}" "${_vm_name}"
 done
 
 
