@@ -51,14 +51,40 @@ function add_to_dns() {
 
 	echo "## Add API DNS"
 	_dns_entry="api.${clu_name}"
-	for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
         do
-		if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_RKE2_TYPE\"]" < ${inputFile} ) == "server" ]]
+                if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_${clu_type}_TYPE\"]" < ${inputFile} ) == "server" ]]
                 then
-        		add_dns_to_named_rr
-		fi
-	done
-	systemctl restart named
+                        add_dns_to_named_rr
+                fi
+        done
+        systemctl restart named
+        add_service_dns
+}
+
+
+# function to add a service DNS giving preference to agent nodes.
+function add_service_dns() {
+        _count=0
+        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+        do
+                if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_${clu_type}_TYPE\"]" < ${inputFile} ) == "agent" ]]
+                then
+                        add_dns_to_named_rr
+                        _count=1
+                fi
+        done
+        if [[ "${_count}" == "0" ]]
+        then
+        	for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+	        do
+			add_dns_to_named_rr
+		done
+		echo "DNS ${_dns_entry} added to point to all nodes"
+	else
+		echo "DNS ${_dns_entry} added to point to agent nodes"
+        fi
+        systemctl restart named
 }
 
 
@@ -120,7 +146,7 @@ function prepare_local_as_kubeclient() {
 }
 
 
-# Setup RK2
+# Setup RKE2
 function setup_rke2() {
 
 
@@ -170,7 +196,12 @@ function load_cluster_vars() {
 function setup_helm() {
 	# add helm
 	echo "# Setup Helm"
-        $ssh_command "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+        if [[ "$online" == "1" ]]
+	then
+	        $ssh_command "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+	else
+		$ssh_command 'curl http://automation/helm/install_helm.sh | bash -'
+	fi
 }
 
 
