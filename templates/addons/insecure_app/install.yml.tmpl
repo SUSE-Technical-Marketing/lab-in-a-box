@@ -1,0 +1,74 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${insecure_app_ns:-insecure-apps}
+...
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insecure-app-myconf
+  namespace: ${insecure_app_ns:-insecure-apps}
+data:
+  myconf.yml: |
+    ADMIN_USER: admin
+    ALLOWED_EXTENSIONS:
+    - apng
+    - avif
+    - gif
+    - jpg
+    - png
+    - svg
+    - webp
+    APP_NAME: ${insecure_app_long_name:-My Buggy App}
+    BASIC_AUTH_PASSWORD: ${insecure_app_admin_pwd:-admin123}
+    BASIC_AUTH_USERNAME: admin
+    DBNAME: ${insecure_app_DBNAME:-photos}
+    DB_FILE: ${insecure_app_DB_FILE:-database.db}
+    DB_TABLE_NAME: ${insecure_app_DB_TABLE_NAME:-photos}
+    #DB_TYPE: mysql
+    DB_TYPE: ${insecure_app_DB_TYPE:-sqlite3}
+    DB_HOST: ${insecure_app_DB_HOST:-mysql}
+    DB_USER: ${insecure_app_DB_USER:-root}
+    DB_PWD: ${insecure_app_DB_PWD:-password_change_me}
+    IMAGES_LOCATION: ${insecure_app_IMAGES_LOCATION:-images/}
+    PORT: ${insecure_app_port:-5000}
+    MAX_CONTENT_LENGTH: 104857600
+    SECRET_KEY: ${insecure_app_SECRET_KEY:-abcde1234}
+...
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${insecure_app_name:-webphotobook}
+  namespace: ${insecure_app_ns:-insecure-apps}
+  labels:
+    app: ${insecure_app_name:-webphotobook}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${insecure_app_name:-webphotobook}
+  template:
+    metadata:
+      labels:
+        app: ${insecure_app_name:-webphotobook}
+    spec:
+      containers:
+      - name: ${insecure_app_name:-webphotobook}
+        image: ${insecure_app_image_path:-rmahiquesuse/webphotobook_demo}:${insecure_app_ver:-latest}
+        ports:
+        - containerPort: ${insecure_app_port:-5000}
+        volumeMounts:
+        - mountPath: /home/myconf.yml
+          name: insecure-app-myconf
+          subPath: myconf.yml
+      volumes:
+      - name: insecure-app-myconf
+        configMap:
+          name: insecure-app-myconf
+          items:
+          - key: myconf.yml
+            path: myconf.yml
+...
