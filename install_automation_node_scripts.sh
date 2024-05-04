@@ -17,7 +17,7 @@ then
 	cd $_scripts_path
 fi
 
-if [[ "$_templ_addons_loc" != "" ]]
+if [[ "$_templ_addons_loc" == "" ]]
 then
 	_templ_addons_loc=/usr/share/lab_creation/templates/addons/
 fi
@@ -40,7 +40,7 @@ cp -r  templates/addons/* ${_templ_addons_loc}/
 
 
 
-for i in scripts/install_*.sh
+for i in scripts/install_*
 do     
 	cp $i  /usr/local/bin/
         chmod 0755  /usr/local/bin/${i//*\/}

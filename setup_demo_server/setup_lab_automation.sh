@@ -67,11 +67,35 @@ chroot /mnt/ systemctl disable wicked.service
 chroot /mnt/ systemctl enable sshd.service
 chroot /mnt/ systemctl enable NetworkManager.service
 chroot /mnt/ systemctl enable named
+chroot /mnt/ systemctl enable apache2
 chroot /mnt/ ssh-keygen -b 16384 -N '' -t rsa -f /root/.ssh/id_rsa
 git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /mnt/var/tmp/lab-in-a-box
 export _scripts_path=/var/tmp/lab-in-a-box/
 curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh >/mnt/tmp/install_automation_node_scripts.sh
 chroot /mnt/ bash /tmp/install_automation_node_scripts.sh
+# Download latest helm and create the script to update it
+mkdir /mnt/srv/www/htdocs/helm
+chmod 0755 /mnt/srv/www/htdocs/helm
+curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS  --output /mnt/srv/www/htdocs/helm/KEYS
+chmod 0644 /mnt/srv/www/htdocs/helm/KEYS
+curl -k https://get.helm.sh/helm-$(curl -L --silent --show-error --fail "https://get.helm.sh/helm-latest-version" 2>&1 | grep '^v[0-9]')-linux-${myarch:-amd64}.tar.gz  --output /mnt/srv/www/htdocs/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
+echo '#!/bin/bash
+curl -k https://get.helm.sh/helm-$(curl -L --silent --show-error --fail "https://get.helm.sh/helm-latest-version" 2>&1 | grep '^v[0-9]')-linux-'${myarch:-amd64}'.tar.gz  --output /srv/www/htdocs/helm/helm-latest-linux-'${myarch:-amd64}'.tar.gz
+curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS  --output /srv/www/htdocs/helm/KEYS
+chmod 0644 /srv/www/htdocs/helm/KEYS /srv/www/htdocs/helm/helm-latest-linux-'${myarch:-amd64}'.tar.gz
+' >/mnt/usr/local/bin/download_latest_helm.sh
+# create script to install helm
+echo '#!/bin/bash'"
+[ -d /tmp/helm ]  || mkdir /tmp/helm
+curl -SsL  --silent --show-error --fail http://${HOSTNAME}/helm/helm-latest-linux-${myarch:-amd64}.tar.gz -o /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
+tar xf /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz -C /tmp/helm
+cp /tmp/helm/linux-${myarch:-amd64}/helm /usr/local/bin
+
+">/mnt/srv/www/htdocs/helm/install_helm.sh
+chmod 0755 /mnt/usr/local/bin/download_latest_helm.sh /mnt/srv/www/htdocs/helm/install_helm.sh
+
+
+
 
 cat /mnt/root/.ssh/id_rsa.pub >>/root/.ssh/authorized_keys
 echo "
@@ -186,7 +210,7 @@ echo "## Create virtual machine"
                --import \
                --disk size=${_disk_size},path=/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2,sparse=no,boot.order=1 \
                --graphics=spice  \
-               --network "bridge=br0" \
+               --network "bridge=br0,mac.address=34:8a:b1:11:11:99" \
                --noautoconsole
 
 echo "Wait until the VM starts"
