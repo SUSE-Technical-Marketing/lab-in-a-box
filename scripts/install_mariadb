@@ -27,11 +27,9 @@ function load_mariadb_vars() {
 
 
 
-# Setup insecure-app
+# Setup mariadb
 function setup_mariadb() {
              
-#                $ssh_command "kubectl apply -f https://raw.githubusercontent.com/SUSE-Technical-Marketing/insecure-app/main/fleet_cattle.yml"
-#		$ssh_command "kubectl delete namespace ${mariadb_ns}"
                 $ssh_command "kubectl delete deployment -n ${mariadb_ns:-db} ${mariadb_name:-mariadb}"
 		template_file=${_templ_addons_loc}/mariadb/install.yml.tmpl
                 process_templates | $ssh_command "kubectl apply -f -"
@@ -86,7 +84,7 @@ load_rancher_vars
 # load neuvector variables
 load_nv_vars
 
-# load neuvector variables
+# load mariadb variables
 load_mariadb_vars
 
 

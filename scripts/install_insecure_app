@@ -30,6 +30,7 @@ function load_insecure_app_vars() {
 # Setup insecure-app
 function setup_insecure_app() {
              
+# For fleet
 #                $ssh_command "kubectl apply -f https://raw.githubusercontent.com/SUSE-Technical-Marketing/insecure-app/main/fleet_cattle.yml"
 #		$ssh_command "kubectl delete namespace ${insecure_app_ns}"
                 $ssh_command "kubectl delete deployment -n ${insecure_app_ns:-insecure-apps} ${insecure_app_name:-webphotobook}"
@@ -44,7 +45,7 @@ function setup_insecure_app() {
 			_pod_name=`$ssh_command "kubectl get pods -n ${insecure_app_ns:-insecure-apps} | grep -o '${insecure_app_name:-webphotobook}-[a-z0-9]*-[a-Z0-9]*'"`
 			$ssh_command "kubectl exec -n ${insecure_app_ns:-insecure-apps}  -i ${_pod_name} -- /usr/bin/python3 init_db.py"
 		fi
-                echo "Insecure app should be available in a few minutes in: ${insecure_app_shorthn:-webphotobook}.${clu_name}.${mydomain}"
+                echo "Insecure app should be available in a few minutes"
 }
 
 
@@ -96,7 +97,7 @@ load_rancher_vars
 # load neuvector variables
 load_nv_vars
 
-# load neuvector variables
+# load insecure_app variables
 load_insecure_app_vars
 
 
