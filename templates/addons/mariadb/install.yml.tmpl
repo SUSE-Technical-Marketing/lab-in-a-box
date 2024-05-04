@@ -1,0 +1,57 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${mariadb_ns:-db}
+...
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${mariadb_name:-mariadb}
+  namespace: ${mariadb_ns:-db}
+spec: # specification for deployment resource
+  replicas: ${mariadb_replicas:-1} 
+  selector:
+    matchLabels:
+      app: ${mariadb_name:-mariadb}
+  template: 
+    metadata:
+      labels:
+        app: ${mariadb_name:-mariadb}
+    spec:
+      containers:
+      - name: ${mariadb_name:-mariadb}
+        image: mariadb
+        ports:
+        - containerPort: ${mariadb_port:-3306}
+        env:
+        - name: MARIADB_ALLOW_EMPTY_ROOT_PASSWORD
+          value: "0"
+        - name: MARIADB_ROOT_PASSWORD
+          value: ${mariadb_root_pwd:-admin123}
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${mariadb_name:-webphotobook}
+  namespace: ${mariadb_ns:-insecure-apps}
+spec:
+  clusterIP: None
+  clusterIPs:
+    - None
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: ${mariadb_name:-webphotobook}-port
+      port: ${mariadb_port:-5000}
+      protocol: TCP
+      targetPort: ${mariadb_port:-5000}
+  selector:
+    app: ${mariadb_name:-webphotobook}
+  sessionAffinity: None
+  type: ClusterIP
+...
