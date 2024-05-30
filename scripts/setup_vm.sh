@@ -92,7 +92,7 @@ copy_vm_img
 
 if [[ "$config_method" == "" ]]
 then
-  create_ign_and_cmb
+  prepare_ign_and_cmb
 else
   prepare_${config_method}
 fi
