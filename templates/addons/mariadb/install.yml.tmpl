@@ -35,7 +35,7 @@ spec: # specification for deployment resource
 apiVersion: v1
 kind: Service
 metadata:
-  name: ${mariadb_name:-webphotobook}
+  name: ${mariadb_name:-mariadb}
   namespace: ${mariadb_ns:-insecure-apps}
 spec:
   clusterIP: None
@@ -46,12 +46,12 @@ spec:
     - IPv4
   ipFamilyPolicy: SingleStack
   ports:
-    - name: ${mariadb_name:-webphotobook}-port
+    - name: ${mariadb_name:-mariadb}-port
       port: ${mariadb_port:-5000}
       protocol: TCP
       targetPort: ${mariadb_port:-5000}
   selector:
-    app: ${mariadb_name:-webphotobook}
+    app: ${mariadb_name:-mariadb}
   sessionAffinity: None
   type: ClusterIP
 ...

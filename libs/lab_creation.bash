@@ -21,7 +21,7 @@ function copy_vm_img() {
 
 
 # Creates ignition and combustion files used to setup the VM
-function create_ign_and_cmb() {
+function prepare_ign_and_cmb() {
 	echo "# - Create ignition and combustion files"
 	cp ${LAB_SETUP_PATH}/combustion/{template,$_vm_name}
 	cp ${LAB_SETUP_PATH}/ignition/{template,$_vm_name.ign}
@@ -33,14 +33,37 @@ function create_ign_and_cmb() {
 }
 
 
+# Creates cloud-init files used to setup the VM
+function prepare_cloud-init() {
+        echo "# - Create cloud-init files"
+        ROOT_SSH_KEY=$(cat /root/.ssh/id_rsa.pub)
+        for _type in user-data network-config meta-data
+	do
+          template_file=${LAB_SETUP_PATH}/cloud-init/template_${_type}
+          process_templates >${LAB_SETUP_PATH}/cloud-init/${_vm_name}_${_type}
+        done
+}
+
+
+
 # Copy the lab materials needed for the install to the hypervisor
 function copy_to_hypervisor() {
 	echo "## - Copy accross the lab setup materials"
 	ssh root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/"
-        ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/{combustion,ignition}"
-        rsync -aqv ${LAB_SETUP_PATH}/combustion/${_vm_name} root@${REMOTE_HOST}:${LAB_SETUP_PATH}/combustion/
-	rsync -aqv ${LAB_SETUP_PATH}/ignition/${_vm_name}.ign root@${REMOTE_HOST}:${LAB_SETUP_PATH}/ignition/
-        ssh  -q root@${REMOTE_HOST} "chmod 0644 ${LAB_SETUP_PATH}/ignition/* ${LAB_SETUP_PATH}/combustion/*"
+
+        if [[ "$config_method" == "" ]]
+        then
+          ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/{combustion,ignition}"
+          rsync -aqv ${LAB_SETUP_PATH}/combustion/${_vm_name} root@${REMOTE_HOST}:${LAB_SETUP_PATH}/combustion/
+          rsync -aqv ${LAB_SETUP_PATH}/ignition/${_vm_name}.ign root@${REMOTE_HOST}:${LAB_SETUP_PATH}/ignition/
+          ssh  -q root@${REMOTE_HOST} "chmod 0644 ${LAB_SETUP_PATH}/ignition/* ${LAB_SETUP_PATH}/combustion/*"
+        else
+          ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/${config_method}"
+          rsync -aqv ${LAB_SETUP_PATH}/${config_method}/${_vm_name}* root@${REMOTE_HOST}:${LAB_SETUP_PATH}/${config_method}/
+          ssh  -o StrictHostKeyChecking=accept-new root@${REMOTE_HOST} "cd ${LAB_SETUP_PATH}/${config_method}/; for i in ${_vm_name}*; do echo cp \${i} /tmp/\${i/${_vm_name}_/}; cp \${i} /tmp/\${i/${_vm_name}_/}; done ; rm -f ${VM_IMG_LOC}/${_vm_name}_ci.iso  ;mkisofs -J -l -R -V "cidata" -iso-level 4 -o ${VM_IMG_LOC}/${_vm_name}_ci.iso /tmp/user-data /tmp/meta-data /tmp/network-config"
+          
+        fi
+
 }
 
 # Add hostname entry to the DNS server as well as the API DNS entry, TBI
@@ -49,17 +72,21 @@ function add_to_dns() {
 	grep -qi "'${_vm_name}." /var/lib/named/${mynet_reverse}.db || echo "${myip//*.}      IN  PTR     ${_vm_name}." >>/var/lib/named/${mynet_reverse}.db
 	grep -qi "^${_vm_name//.*} " /var/lib/named/${mydomain}.lan || echo "${_vm_name//.*}         IN  A       ${myip}" >>/var/lib/named/${mydomain}.lan
 
-	echo "## Add API DNS"
-	_dns_entry="api.${clu_name}"
-        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-        do
+
+        if [[ "${clu_name}" != "" ]]
+        then
+          echo "## Add API DNS"
+          _dns_entry="api.${clu_name}"
+          for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+          do
                 if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_${clu_type}_TYPE\"]" < ${inputFile} ) == "server" ]]
                 then
                         add_dns_to_named_rr
                 fi
-        done
+          done
+          add_service_dns
+        fi
         systemctl restart named
-        add_service_dns
 }
 
 
@@ -109,19 +136,60 @@ function del_from_dns() {
 # Creates a VM on a KVM hypervisor
 function create_vm() {
 	echo "## Create virtual machine"
-	virt-install --connect ${VIRT_SRV} \
+
+        if [[ "$config_method" == "" ]]
+        then
+          virt-install --connect ${VIRT_SRV} \
 	       --name  ${_vm_name} \
                --autostart \
                --boot uefi \
 	       --vcpus ${VM_CPU}  \
 	       --memory ${VM_MEM} \
-	       --os-variant=slem5.4 \
+	       --os-variant=${VM_OSVARIANT:-slem5.4} \
 	       --import \
 	       --disk size=${VM_DSK},path=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 \
 	       --graphics=spice  \
 	       --network "${NETWORK}" \
 	       --noautoconsole \
 	       --qemu-commandline="-fw_cfg name=opt/com.coreos/config,file=${LAB_SETUP_PATH}/ignition/${IGN_FILE} -fw_cfg name=opt/org.opensuse.combustion/script,file=${LAB_SETUP_PATH}/combustion/${COM_FILE}"
+        elif [[ "$config_method" == "cloud-init" ]]
+        then
+#          virt-customize --connect ${VIRT_SRV} -a ${VM_DSK} --root-password password:admin123
+#          $ssh_command "virt-install -q  --name  ${_vm_name} --autostart --boot uefi --vcpus ${VM_CPU} --memory ${VM_MEM} --os-variant=${VM_OSVARIANT:-slem5.4} --import --disk size=${VM_DSK},backing_store=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 --graphics=spice --network '${NETWORK}' --noautoconsole --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config' --disk /tmp/ci.iso,device=cdrom"
+           
+#           $ssh_command "virt-install -q  --name  ${_vm_name} --autostart --boot uefi --vcpus ${VM_CPU} --memory ${VM_MEM} --os-variant=${VM_OSVARIANT:-slem5.4} --import --disk size=${VM_DSK},backing_store=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 --graphics=spice --network '${NETWORK}' --noautoconsole --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config' --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config'"
+          virt-install  --connect ${VIRT_SRV} \
+               --name  ${_vm_name} \
+               --import \
+               --autostart \
+               --boot uefi \
+               --vcpus ${VM_CPU}  \
+               --memory ${VM_MEM} \
+               --os-variant=${VM_OSVARIANT:-slem5.4} \
+               --disk size=${VM_DSK},path=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 \
+               --graphics=spice  \
+               --network "${NETWORK}" \
+               --noautoconsole \
+               --disk ${VM_IMG_LOC}/${_vm_name}_ci.iso,device=cdrom
+#               --cdrom ${VM_IMG_LOC}/${_vm_name}_ci.iso
+#               --cloud-init user-data="${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data",disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config="${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config"
+          echo "### Waiting 3 minutes"
+          sleep 180
+          echo "### eject media"
+          virsh --connect ${VIRT_SRV} change-media ${_vm_name} --eject ${VM_IMG_LOC}${_vm_name}_ci.iso
+          if [[ "$salt_states" != "" ]]
+          then
+            setup_salt
+            echo "#### applying salt states"
+            for _salt_state in ${salt_states}
+            do
+              salt-ssh -i -v --update-roster  ${_vm_name} state.apply ${_salt_state}
+            done
+          fi
+         echo "### reboot node"
+          virsh --connect ${VIRT_SRV} reboot ${_vm_name}
+        fi
+
 }
 
 # Deletes a VM from a KVM hypervisor
@@ -174,11 +242,28 @@ function setup_rke2() {
 function load_vm_vars() {
         for _key in $(jq -r ".nodes[\"${_vm_name}\"] | to_entries[].key" < ${inputFile} )
         do
-            export ${_key}=$(jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"]" < ${inputFile} )
+#            if jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"]" < ${inputFile}  |grep -q ']'
+#            then
+#              ${_key}=\(""\)
+#              for _arrayitm in $(jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"][]" < ${inputFile} )
+#              do
+#                export ${_key}+=\("${_arrayitm}"\)
+#              done
+#            else
+              export ${_key}="$(jq -r .nodes[\"${_vm_name}\"][\"${_key}\"] < ${inputFile} )"
+#            fi
         done
         for _key in $(jq -r '.common | to_entries[].key ' < ${inputFile} )
         do
-            export ${_key}=$(jq -r ".common[\"${_key}\"]" < ${inputFile} )
+#            if jq -r ".common[\"${_key}\"]" < ${inputFile} |grep -q ']'
+#            then
+#              for _arrayitm in $(jq -r ".common[\"${_key}\"][]" < ${inputFile} )
+#              do
+#                export ${_key}+=\("${_arrayitm}"\)
+#              done
+#            else
+              export ${_key}="$(jq -r .common[\"${_key}\"] < ${inputFile} )"
+#            fi
         done
 }
 
@@ -189,6 +274,25 @@ function load_cluster_vars() {
         do
             export ${_key}=$(jq -r ".cluster[\"${_key}\"]" < ${inputFile} )
         done
+}
+
+# Setup SALT
+function setup_salt() {
+   [ -d ${HOME}/salt-ssh/states ] || mkdir -p ${HOME}/salt-ssh/states
+   cat >${HOME}/salt-ssh/roster <<-EOF
+managed:
+  host: ${_vm_name}
+  user: root
+  sudo: False
+  priv: ${HOME}/.ssh/id_rsa
+EOF
+
+  for _state in ${salt_states}
+  do
+    template_file=${LAB_SETUP_PATH}/salt-ssh/${_state}
+    process_templates >${HOME}/salt-ssh/states/${_state}
+  done
+
 }
 
 
@@ -264,8 +368,12 @@ function load_nv_vars() {
 
 # Inspired from https://stackoverflow.com/questions/2914220/bash-templating-how-to-build-configuration-files-from-templates-with-bash#11050943
 function process_templates() {
-	eval "cat <<EOF                                   
-$(sed 's/\"/\\\\"/g' < ${template_file} )
+#	eval "cat <<EOF                                   
+#$(sed 's/\"/\\\\"/g' < ${template_file} )
+#EOF
+#"
+       eval "cat <<EOF                                   
+$(cat ${template_file} )
 EOF
 "
 

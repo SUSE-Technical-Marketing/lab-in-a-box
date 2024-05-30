@@ -61,7 +61,7 @@ echo "KEYMAP=us" >> /mnt/etc/vconsole.conf
 # set the time zone
 ln -sf /usr/share/zoneinfo/Europe/Zurich /mnt/etc/localtime
 
-chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git
+chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git salt-ssh
 chroot /mnt/ systemctl disable firewalld.service
 chroot /mnt/ systemctl disable wicked.service
 chroot /mnt/ systemctl enable sshd.service
@@ -188,6 +188,7 @@ cat >/mnt/var/lib/named/${_mydomain}.lan  <<-EOF
         IN  MX 10   ${AUTOMATION_HOSTNAME}.
 
 ${AUTOMATION_HOSTNAME//.$_mydomain}         IN  A       ${_myip}
+${MYREG//.$_mydomain}         IN  CNAME       ${AUTOMATION_HOSTNAME}
 bastion          IN  CNAME   ${AUTOMATION_HOSTNAME}.
 $(hostname)         IN  A       $(gethostip -d $HOSTNAME)
 

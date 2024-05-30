@@ -1,6 +1,9 @@
 # This is the hypervisor node
 REMOTE_HOST='nuc1.mydemo.lab'
 
+# Internal registry server to use
+MYREG='registry.mydemo.lab'
+
 # This is the url to connect to libvirt in the hypervisor node.
 VIRT_SRV="qemu+ssh://root@${REMOTE_HOST}/system?keyfile=.ssh/id_rsa"
 

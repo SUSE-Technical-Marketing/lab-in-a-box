@@ -24,20 +24,14 @@ fi
 
 
 # create directories
-mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition} ${_templ_addons_loc} /usr/local/lib/lab_creation/ &>/dev/null
+mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition,cloud-init,salt} ${_templ_addons_loc} /usr/local/lib/lab_creation/ &>/dev/null
 
 cp templates/lab_creation.cfg.example /etc/lab_creation.cfg.example
 chmod 0600 /etc/lab_creation.cfg.example
 
-cp scripts/setup_vm.sh /usr/local/bin/setup_vm.sh
-chmod 0755 /usr/local/bin/setup_vm.sh
 cp libs/lab_creation.bash /usr/local/lib/lab_creation/lab_creation.bash
 
-cp scripts/destroy_vm.sh /usr/local/bin/destroy_vm.sh
-chmod 0755  /usr/local/bin/destroy_vm.sh
-
 cp -r  templates/addons/* ${_templ_addons_loc}/
-
 
 
 for i in scripts/install_*
@@ -46,8 +40,23 @@ do
         chmod 0755  /usr/local/bin/${i//*\/}
 done
 
+for i in setup_cluster.sh destroy_vm.sh setup_vm.sh pushDockerImage.sh
+do
+    cp scripts/$i /usr/local/bin/$i
+    chmod 0755  /usr/local/bin/$i
 
-cp scripts/setup_cluster.sh /usr/local/bin/setup_cluster.sh
-chmod 0755  /usr/local/bin/setup_cluster.sh
-cp templates/combustion.template /srv/www/htdocs/lab_creation/combustion/template
-cp templates/ignition.template /srv/www/htdocs/lab_creation/ignition/template
+done
+
+
+for i in templates/salt/*
+do
+  cp $i /srv/www/htdocs/lab_creation/salt/
+done
+
+for i in combustion.template ignition.template cloud-init.template_meta-data cloud-init.template_network-config cloud-init.template_user-data
+do
+  cp templates/${i} /srv/www/htdocs/lab_creation/${i//./\/}
+done
+
+
+

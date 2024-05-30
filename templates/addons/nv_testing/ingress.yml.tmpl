@@ -7,7 +7,7 @@ metadata:
 spec:
   defaultBackend:
     service:
-      name: nginx-webui
+      name: nvtesing-nginx-webui
       port:
         number: 80
   rules:
@@ -16,7 +16,7 @@ spec:
         paths:
           - backend:
               service:
-                name: nginx-webui
+                name: nvtesing-nginx-webui
                 port:
                   name: webui
             path: /
