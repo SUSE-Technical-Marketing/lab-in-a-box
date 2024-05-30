@@ -73,15 +73,30 @@ fi
 # load VM settings
 load_vm_vars
 
-IGN_FILE=${_vm_name}.ign
-COM_FILE=${_vm_name}
-NETWORK="bridge=br0,mac.address=${mymac}"
+IGN_FILE="${_vm_name}.ign"
+COM_FILE="${_vm_name}"
 
+# set some defaults
+if [[ "$mymac" == "" ]]
+then
+  NETWORK="${NETWORK:-bridge=br0}"
+else
+  NETWORK="${NETWORK:-bridge=br0,mac.address=${mymac}}"
+fi
+
+# Define shortcut for the ssh command
+ssh_command="ssh  -o StrictHostKeyChecking=accept-new root@${REMOTE_HOST}"
 
 
 copy_vm_img
 
-create_ign_and_cmb
+if [[ "$config_method" == "" ]]
+then
+  create_ign_and_cmb
+else
+  prepare_${config_method}
+fi
+
 
 copy_to_hypervisor
 

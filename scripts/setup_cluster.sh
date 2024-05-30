@@ -95,6 +95,7 @@ for _addon in $(jq -r '.addons[]' < ${inputFile})
 do
 	if command -v install_${_addon} &>/dev/null
 	then
+                echo -e "\n## Running addon \"${_addon}\" ##\n"
 		install_${_addon} "${inputFile}"
 	else
 		echo "## FAILED! Addon script \"install_${_addon}\" not found"
