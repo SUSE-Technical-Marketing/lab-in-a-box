@@ -12,7 +12,7 @@
 
 
 [[ -d /var/tmp/setup_demo_server ]] || mkdir /var/tmp/setup_demo_server
-if git clone git@github.com:SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server/
+if git clone  https://raw.githubusercontent.com/SUSE-Technical-Marketing /var/tmp/setup_demo_server/
 then
 	cd /var/tmp/setup_demo_server/setup_demo_server/
 	chmod 0755 setup_kvm_node.sh setup_lab_automation.sh
@@ -28,7 +28,7 @@ You can also setup your current machine as the lab server by not adding any para
 
 "
 else
-	echo "ERROR: Cloning the repository failed, this is the command used: \"git clone git@github.com:SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server/\""
+	echo "ERROR: Cloning the repository failed, this is the command used: \"git clone  https://raw.githubusercontent.com/SUSE-Technical-Marketing /var/tmp/setup_demo_server/\""
 	exit 1
 fi
 
