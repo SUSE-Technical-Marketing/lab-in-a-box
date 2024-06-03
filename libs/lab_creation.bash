@@ -154,10 +154,6 @@ function create_vm() {
 	       --qemu-commandline="-fw_cfg name=opt/com.coreos/config,file=${LAB_SETUP_PATH}/ignition/${IGN_FILE} -fw_cfg name=opt/org.opensuse.combustion/script,file=${LAB_SETUP_PATH}/combustion/${COM_FILE}"
         elif [[ "$config_method" == "cloud-init" ]]
         then
-#          virt-customize --connect ${VIRT_SRV} -a ${VM_DSK} --root-password password:admin123
-#          $ssh_command "virt-install -q  --name  ${_vm_name} --autostart --boot uefi --vcpus ${VM_CPU} --memory ${VM_MEM} --os-variant=${VM_OSVARIANT:-slem5.4} --import --disk size=${VM_DSK},backing_store=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 --graphics=spice --network '${NETWORK}' --noautoconsole --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config' --disk /tmp/ci.iso,device=cdrom"
-           
-#           $ssh_command "virt-install -q  --name  ${_vm_name} --autostart --boot uefi --vcpus ${VM_CPU} --memory ${VM_MEM} --os-variant=${VM_OSVARIANT:-slem5.4} --import --disk size=${VM_DSK},backing_store=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 --graphics=spice --network '${NETWORK}' --noautoconsole --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config' --cloud-init user-data='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data',disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config='${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config'"
           virt-install  --connect ${VIRT_SRV} \
                --name  ${_vm_name} \
                --import \
@@ -171,8 +167,6 @@ function create_vm() {
                --network "${NETWORK}" \
                --noautoconsole \
                --disk ${VM_IMG_LOC}/${_vm_name}_ci.iso,device=cdrom
-#               --cdrom ${VM_IMG_LOC}/${_vm_name}_ci.iso
-#               --cloud-init user-data="${LAB_SETUP_PATH}/${config_method}/${_vm_name}_user-data",disable=on,root-ssh-key=/root/.ssh/id_rsa.pub,clouduser-ssh-key=/root/.ssh/id_rsa.pub,network-config="${LAB_SETUP_PATH}/${config_method}/${_vm_name}_network-config"
           echo "### Waiting 3 minutes"
           sleep 180
           echo "### eject media"
@@ -242,28 +236,11 @@ function setup_rke2() {
 function load_vm_vars() {
         for _key in $(jq -r ".nodes[\"${_vm_name}\"] | to_entries[].key" < ${inputFile} )
         do
-#            if jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"]" < ${inputFile}  |grep -q ']'
-#            then
-#              ${_key}=\(""\)
-#              for _arrayitm in $(jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"][]" < ${inputFile} )
-#              do
-#                export ${_key}+=\("${_arrayitm}"\)
-#              done
-#            else
               export ${_key}="$(jq -r .nodes[\"${_vm_name}\"][\"${_key}\"] < ${inputFile} )"
-#            fi
         done
         for _key in $(jq -r '.common | to_entries[].key ' < ${inputFile} )
         do
-#            if jq -r ".common[\"${_key}\"]" < ${inputFile} |grep -q ']'
-#            then
-#              for _arrayitm in $(jq -r ".common[\"${_key}\"][]" < ${inputFile} )
-#              do
-#                export ${_key}+=\("${_arrayitm}"\)
-#              done
-#            else
               export ${_key}="$(jq -r .common[\"${_key}\"] < ${inputFile} )"
-#            fi
         done
 }
 
@@ -368,10 +345,6 @@ function load_nv_vars() {
 
 # Inspired from https://stackoverflow.com/questions/2914220/bash-templating-how-to-build-configuration-files-from-templates-with-bash#11050943
 function process_templates() {
-#	eval "cat <<EOF                                   
-#$(sed 's/\"/\\\\"/g' < ${template_file} )
-#EOF
-#"
        eval "cat <<EOF                                   
 $(cat ${template_file} )
 EOF

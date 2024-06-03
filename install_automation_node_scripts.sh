@@ -40,7 +40,7 @@ do
         chmod 0755  /usr/local/bin/${i//*\/}
 done
 
-for i in setup_cluster.sh destroy_vm.sh setup_vm.sh pushDockerImage.sh
+for i in setup_cluster.sh destroy_vm.sh setup_vm.sh pushDockerImage.sh setup_lab.sh
 do
     cp scripts/$i /usr/local/bin/$i
     chmod 0755  /usr/local/bin/$i
