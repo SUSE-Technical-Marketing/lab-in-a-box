@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of lab-in-a-box, it will destroy a VM
+# Part of lab-in-a-box, it will install mariadb
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -10,44 +10,49 @@
 # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
 
-
 inputFile=${1}
-_vm_name=${2}
 
 function usage() {
-	echo "Usage:
-$0 <configuration file> <vm_name>"
+        echo "Usage:
+$0 <configuration file>"
 
 }
 
 
+# Load insecure-app related variables.
+function load_mariadb_vars() {
+       _section="mariadb"
+       _load_vars
+}
+
+
+
+# Setup mariadb
+function setup_mariadb() {
+             
+                $ssh_command "kubectl delete deployment -n ${mariadb_ns:-db} ${mariadb_name:-mariadb}"
+		template_file=${_templ_addons_loc}/mariadb/install.yml.tmpl
+                process_templates | $ssh_command "kubectl apply -f -"
+}
 
 
 if [[ ! ${inputFile} ]]
 then
-	echo "missing configuration file parameter"
-	usage
-	exit 1
+        echo "missing configuration file parameter"
+        usage
+        exit 1
 fi
+
 if [[ ! -f ${inputFile} ]]
 then
-	echo "configuration file \"${inputFile}\" not found or name incorrect"
-	usage
+        echo "configuration file \"${inputFile}\" not found or name incorrect"
+        usage
 	exit 1
 elif ! jq <"${inputFile}" >/dev/null
 then
    echo "Cluster definition not in validated JSON format"
    exit 1
 fi
-
-if [[ ! ${_vm_name} ]]
-then
-	echo "Missing VM name"
-	usage
-	exit 1
-fi
-
-
 
 # load lab_creation config
 if [[ -f /etc/lab_creation.cfg ]]
@@ -70,16 +75,29 @@ else
         . ${_lib_path}
 fi
 
+# load cluster vars
+load_cluster_vars
+
+# load rancher variables
+load_rancher_vars
+
+# load neuvector variables
+load_nv_vars
+
+# load mariadb variables
+load_mariadb_vars
 
 
-# load VM settings
-load_vm_vars
 
-
-del_from_dns
-
-delete_vm
-
-echo -e "#\t\tVM \"${_vm_name}\" destroyed\n"
+# find a server node or API url
+for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+do
+	load_vm_vars
+	ssh_command="ssh  -o StrictHostKeyChecking=accept-new -q  root@${_vm_name}"
+	echo "# Using node: $_vm_name"
+	setup_mariadb
+	sleep 60
+	exit 1
+done
 
 

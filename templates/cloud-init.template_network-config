@@ -1,0 +1,16 @@
+#cloud-config
+network:
+  version: 2
+  ethernets:
+    id0:
+      match:
+        macaddress: "${mymac}"
+      addresses:
+        - ${myip}/${mymask}
+      routes:
+        - to: default
+          via: ${mygw}
+      nameservers:
+        search: [${mydomain}]
+        addresses: [${mydns}]
+

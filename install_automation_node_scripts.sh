@@ -9,37 +9,54 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
+
+
+
 if [[ "$_scripts_path" != "" ]]
 then
 	cd $_scripts_path
 fi
 
+if [[ "$_templ_addons_loc" == "" ]]
+then
+	_templ_addons_loc=/usr/share/lab_creation/templates/addons/
+fi
 
+
+# create directories
+mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition,cloud-init,salt} ${_templ_addons_loc} /usr/local/lib/lab_creation/ &>/dev/null
 
 cp templates/lab_creation.cfg.example /etc/lab_creation.cfg.example
 chmod 0600 /etc/lab_creation.cfg.example
 
-cp scripts/setup_vm.sh /usr/local/bin/setup_vm.sh
-chmod 0755 /usr/local/bin/setup_vm.sh
-mkdir /usr/local/lib/lab_creation/
 cp libs/lab_creation.bash /usr/local/lib/lab_creation/lab_creation.bash
 
-cp scripts/destroy_vm.sh /usr/local/bin/destroy_vm.sh
-chmod 0755  /usr/local/bin/destroy_vm.sh
+cp -r  templates/addons/* ${_templ_addons_loc}/
 
 
-
-
-
-for i in scripts/install_*.sh
+for i in scripts/install_*
 do     
 	cp $i  /usr/local/bin/
         chmod 0755  /usr/local/bin/${i//*\/}
 done
 
+for i in setup_cluster.sh destroy_vm.sh setup_vm.sh pushDockerImage.sh setup_lab.sh
+do
+    cp scripts/$i /usr/local/bin/$i
+    chmod 0755  /usr/local/bin/$i
 
-cp scripts/setup_cluster.sh /usr/local/bin/setup_cluster.sh
-chmod 0755  /usr/local/bin/setup_cluster.sh
-mkdir -p /srv/www/htdocs/lab_creation/{combustion,ignition}
-cp templates/combustion.template /srv/www/htdocs/lab_creation/combustion/template
-cp templates/ignition.template /srv/www/htdocs/lab_creation/ignition/template
+done
+
+
+for i in templates/salt/*
+do
+  cp $i /srv/www/htdocs/lab_creation/salt/
+done
+
+for i in combustion.template ignition.template cloud-init.template_meta-data cloud-init.template_network-config cloud-init.template_user-data
+do
+  cp templates/${i} /srv/www/htdocs/lab_creation/${i//./\/}
+done
+
+
+

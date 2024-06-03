@@ -21,7 +21,7 @@ function copy_vm_img() {
 
 
 # Creates ignition and combustion files used to setup the VM
-function create_ign_and_cmb() {
+function prepare_ign_and_cmb() {
 	echo "# - Create ignition and combustion files"
 	cp ${LAB_SETUP_PATH}/combustion/{template,$_vm_name}
 	cp ${LAB_SETUP_PATH}/ignition/{template,$_vm_name.ign}
@@ -33,13 +33,37 @@ function create_ign_and_cmb() {
 }
 
 
+# Creates cloud-init files used to setup the VM
+function prepare_cloud-init() {
+        echo "# - Create cloud-init files"
+        ROOT_SSH_KEY=$(cat /root/.ssh/id_rsa.pub)
+        for _type in user-data network-config meta-data
+	do
+          template_file=${LAB_SETUP_PATH}/cloud-init/template_${_type}
+          process_templates >${LAB_SETUP_PATH}/cloud-init/${_vm_name}_${_type}
+        done
+}
+
+
+
 # Copy the lab materials needed for the install to the hypervisor
 function copy_to_hypervisor() {
 	echo "## - Copy accross the lab setup materials"
 	ssh root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/"
-        ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/{combustion,ignition}"
-        rsync -aqv ${LAB_SETUP_PATH}/combustion/${_vm_name} root@${REMOTE_HOST}:${LAB_SETUP_PATH}/combustion/
-	rsync -aqv ${LAB_SETUP_PATH}/ignition/${_vm_name}.ign root@${REMOTE_HOST}:${LAB_SETUP_PATH}/ignition/
+
+        if [[ "$config_method" == "" ]]
+        then
+          ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/{combustion,ignition}"
+          rsync -aqv ${LAB_SETUP_PATH}/combustion/${_vm_name} root@${REMOTE_HOST}:${LAB_SETUP_PATH}/combustion/
+          rsync -aqv ${LAB_SETUP_PATH}/ignition/${_vm_name}.ign root@${REMOTE_HOST}:${LAB_SETUP_PATH}/ignition/
+          ssh  -q root@${REMOTE_HOST} "chmod 0644 ${LAB_SETUP_PATH}/ignition/* ${LAB_SETUP_PATH}/combustion/*"
+        else
+          ssh -q root@${REMOTE_HOST} "mkdir -p ${LAB_SETUP_PATH}/${config_method}"
+          rsync -aqv ${LAB_SETUP_PATH}/${config_method}/${_vm_name}* root@${REMOTE_HOST}:${LAB_SETUP_PATH}/${config_method}/
+          ssh  -o StrictHostKeyChecking=accept-new root@${REMOTE_HOST} "cd ${LAB_SETUP_PATH}/${config_method}/; for i in ${_vm_name}*; do echo cp \${i} /tmp/\${i/${_vm_name}_/}; cp \${i} /tmp/\${i/${_vm_name}_/}; done ; rm -f ${VM_IMG_LOC}/${_vm_name}_ci.iso  ;mkisofs -J -l -R -V "cidata" -iso-level 4 -o ${VM_IMG_LOC}/${_vm_name}_ci.iso /tmp/user-data /tmp/meta-data /tmp/network-config"
+          
+        fi
+
 }
 
 # Add hostname entry to the DNS server as well as the API DNS entry, TBI
@@ -48,16 +72,46 @@ function add_to_dns() {
 	grep -qi "'${_vm_name}." /var/lib/named/${mynet_reverse}.db || echo "${myip//*.}      IN  PTR     ${_vm_name}." >>/var/lib/named/${mynet_reverse}.db
 	grep -qi "^${_vm_name//.*} " /var/lib/named/${mydomain}.lan || echo "${_vm_name//.*}         IN  A       ${myip}" >>/var/lib/named/${mydomain}.lan
 
-	echo "## Add API DNS"
-	_dns_entry="api.${clu_name}"
-	for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-        do
-		if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_RKE2_TYPE\"]" < ${inputFile} ) == "server" ]]
+
+        if [[ "${clu_name}" != "" ]]
+        then
+          echo "## Add API DNS"
+          _dns_entry="api.${clu_name}"
+          for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+          do
+                if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_${clu_type}_TYPE\"]" < ${inputFile} ) == "server" ]]
                 then
-        		add_dns_to_named_rr
-		fi
-	done
-	systemctl restart named
+                        add_dns_to_named_rr
+                fi
+          done
+          add_service_dns
+        fi
+        systemctl restart named
+}
+
+
+# function to add a service DNS giving preference to agent nodes.
+function add_service_dns() {
+        _count=0
+        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+        do
+                if [[ $(jq -r ".nodes[\"${_dns}\"][\"INSTALL_${clu_type}_TYPE\"]" < ${inputFile} ) == "agent" ]]
+                then
+                        add_dns_to_named_rr
+                        _count=1
+                fi
+        done
+        if [[ "${_count}" == "0" ]]
+        then
+        	for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+	        do
+			add_dns_to_named_rr
+		done
+		echo "DNS ${_dns_entry} added to point to all nodes"
+	else
+		echo "DNS ${_dns_entry} added to point to agent nodes"
+        fi
+        systemctl restart named
 }
 
 
@@ -82,24 +136,62 @@ function del_from_dns() {
 # Creates a VM on a KVM hypervisor
 function create_vm() {
 	echo "## Create virtual machine"
-	virt-install --connect ${VIRT_SRV} \
+
+        if [[ "$config_method" == "" ]]
+        then
+          virt-install --connect ${VIRT_SRV} \
 	       --name  ${_vm_name} \
+               --autostart \
+               --boot uefi \
 	       --vcpus ${VM_CPU}  \
 	       --memory ${VM_MEM} \
-	       --os-variant=slem5.4 \
+	       --os-variant=${VM_OSVARIANT:-slem5.4} \
 	       --import \
 	       --disk size=${VM_DSK},path=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 \
 	       --graphics=spice  \
 	       --network "${NETWORK}" \
 	       --noautoconsole \
 	       --qemu-commandline="-fw_cfg name=opt/com.coreos/config,file=${LAB_SETUP_PATH}/ignition/${IGN_FILE} -fw_cfg name=opt/org.opensuse.combustion/script,file=${LAB_SETUP_PATH}/combustion/${COM_FILE}"
+        elif [[ "$config_method" == "cloud-init" ]]
+        then
+          virt-install  --connect ${VIRT_SRV} \
+               --name  ${_vm_name} \
+               --import \
+               --autostart \
+               --boot uefi \
+               --vcpus ${VM_CPU}  \
+               --memory ${VM_MEM} \
+               --os-variant=${VM_OSVARIANT:-slem5.4} \
+               --disk size=${VM_DSK},path=${VM_IMG_LOC}/${_vm_name}.qcow2,sparse=no,boot.order=1 \
+               --graphics=spice  \
+               --network "${NETWORK}" \
+               --noautoconsole \
+               --disk ${VM_IMG_LOC}/${_vm_name}_ci.iso,device=cdrom
+          echo "### Waiting 3 minutes"
+          sleep 180
+          echo "### eject media"
+          virsh --connect ${VIRT_SRV} change-media ${_vm_name} --eject ${VM_IMG_LOC}${_vm_name}_ci.iso
+          if [[ "$salt_states" != "" ]]
+          then
+            setup_salt
+            echo "#### applying salt states"
+            for _salt_state in ${salt_states}
+            do
+              salt-ssh -i -v --update-roster  ${_vm_name} state.apply ${_salt_state}
+            done
+          fi
+         echo "### reboot node"
+          virsh --connect ${VIRT_SRV} reboot ${_vm_name}
+        fi
+
 }
 
 # Deletes a VM from a KVM hypervisor
 function delete_vm() {
 	echo "## Delete VM"
+        virsh -c ${VIRT_SRV} undefine --nvram "${_vm_name}"
 	virsh -c ${VIRT_SRV} destroy  "${_vm_name}" 2>/dev/null
-	virsh -c ${VIRT_SRV} undefine "${_vm_name}" --remove-all-storage
+	virsh -c ${VIRT_SRV} undefine "${_vm_name}" --nvram --remove-all-storage
 }
 
 # Removes the VM ssh key from the known hosts to avoid warnings.
@@ -116,7 +208,7 @@ function prepare_local_as_kubeclient() {
 }
 
 
-# Setup RK2
+# Setup RKE2
 function setup_rke2() {
 
 
@@ -144,11 +236,11 @@ function setup_rke2() {
 function load_vm_vars() {
         for _key in $(jq -r ".nodes[\"${_vm_name}\"] | to_entries[].key" < ${inputFile} )
         do
-            export ${_key}=$(jq -r ".nodes[\"${_vm_name}\"][\"${_key}\"]" < ${inputFile} )
+              export ${_key}="$(jq -r .nodes[\"${_vm_name}\"][\"${_key}\"] < ${inputFile} )"
         done
         for _key in $(jq -r '.common | to_entries[].key ' < ${inputFile} )
         do
-            export ${_key}=$(jq -r ".common[\"${_key}\"]" < ${inputFile} )
+              export ${_key}="$(jq -r .common[\"${_key}\"] < ${inputFile} )"
         done
 }
 
@@ -161,76 +253,43 @@ function load_cluster_vars() {
         done
 }
 
+# Setup SALT
+function setup_salt() {
+   [ -d ${HOME}/salt-ssh/states ] || mkdir -p ${HOME}/salt-ssh/states
+   cat >${HOME}/salt-ssh/roster <<-EOF
+managed:
+  host: ${_vm_name}
+  user: root
+  sudo: False
+  priv: ${HOME}/.ssh/id_rsa
+EOF
+
+  for _state in ${salt_states}
+  do
+    template_file=${LAB_SETUP_PATH}/salt-ssh/${_state}
+    process_templates >${HOME}/salt-ssh/states/${_state}
+  done
+
+}
+
 
 # Setup Helm
 function setup_helm() {
 	# add helm
 	echo "# Setup Helm"
-        $ssh_command "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+        if [[ "$online" == "1" ]]
+	then
+	        $ssh_command "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+	else
+		$ssh_command 'curl http://automation/helm/install_helm.sh | bash -'
+	fi
 }
 
-# Setup SUSE Rancher helm respoitory
-function setup_rancher_repo() {
-	$ssh_command "helm repo add rancher-${rancher_rel} https://releases.rancher.com/server-charts/${rancher_rel}"
-	$ssh_command "helm repo add jetstack https://charts.jetstack.io"
-	$ssh_command "helm repo update"
-}
 
-# Setup SUSE NeuVector helm repository
-function setup_nv_repo() {
-        $ssh_command "helm repo add neuvector https://neuvector.github.io/neuvector-helm"
+function helm_repo_add() {
+        echo "Adding helm repository \"${_repo_name}\""
+	$ssh_command "helm repo add ${_repo_name} ${_repo_url}"
         $ssh_command "helm repo update"
-}
-
-# Setup SUSE Longhorn helm repository
-function setup_lh_repo() {
-        $ssh_command "helm repo add longhorn https://charts.longhorn.io"
-        $ssh_command "helm repo update"
-}
-
-# Setup SUSE Longhorn
-function setup_lh() {
-                $ssh_command "kubectl create namespace longhorn-system"
-                $ssh_command "helm upgrade -i longhorn longhorn/longhorn --namespace longhorn-system --set ingress.enabled=true --set ingress.host=${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
-		echo "Longhorn should be available in a few minutes in: ${lh_shorthn:-longhorn}.${clu_name}.${mydomain}"
-}
-
-# Setup SUSE NeuVector
-function setup_nv() {
-	        $ssh_command "kubectl create namespace cattle-neuvector-system"
-	        $ssh_command "helm upgrade -i neuvector neuvector/core --namespace cattle-neuvector-system --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock --set manager.ingress.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.enabled=true --set manager.ingress.host=${nv_shorthn:-neuvector}.${clu_name}.${mydomain} --set global.cattle.url=https://${rancher_shorthn}.${clu_name}.${mydomain} --set controller.ranchersso.enabled=true --set rbac=true"
-		echo "NeuVector should be available in a few minutes in: ${nv_shorthn:-neuvector}.${clu_name}.${mydomain}"
-}
-
-
-# Setup cert-manager
-function setup_cert-manager() {
-        # https://cert-manager.io/docs/installation/helm/
-	echo "# Setup Cert-manager"
-        $ssh_command "helm upgrade -i cert-manager jetstack/cert-manager ${cert_manager_ver} --namespace cert-manager --create-namespace --set installCRDs=true"
-}
-
-# Setup SUSE Rancher
-function setup_rancher() {
-	echo "# Setup Rancher ${rancher_repo:-jjjj}"
-        $ssh_command "helm upgrade -i rancher ${rancher_repo} --create-namespace --namespace cattle-system --set hostname="${rancher_shorthn}.${clu_name}.${mydomain}" --set bootstrapPassword=\"${rancher_initial_pwd}\""
-	echo "# Get initial password: "
-	$ssh_command "kubectl get secret --namespace cattle-system bootstrap-secret -o go-template='{{.data.bootstrapPassword|base64decode}}{{ \"\n\" }}'"
-	
-	# verify it's up and running
-	# kubectl -n cattle-system rollout status deploy/rancher
-	# kubectl -n cattle-system get deploy rancher
-	
-	echo "## Add Rancher DNS"
-        _dns_entry="${rancher_shorthn:-ERROR_ranchershort}.${clu_name}"
-        for _dns in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-        do
-                        add_dns_to_named_rr
-        done
-        systemctl restart named
-	echo "Wait 5 minutes for the installation to finish"
-	sleep 300
-
 }
 
 
@@ -250,13 +309,28 @@ function _load_vars() {
 	fi
 }
 
+
 # Load rancher related variables.
 function load_rancher_vars() {
-	_section="rancher"
-	_load_vars
+        _section="rancher"
+        _load_vars
 }
 
-# Load Longhorn related variables.
+
+# Load Jenkins related variables.
+function load_jenkins_vars() {
+       _section="jenkins"
+       _load_vars
+}
+
+# Load ArgoCD related variables.
+function load_argocd_vars() {
+       _section="argocd"
+       _load_vars
+}
+
+ 
+  # Load Longhorn related variables.
 function load_lh_vars() {
        _section="longhorn"
        _load_vars
@@ -266,6 +340,16 @@ function load_lh_vars() {
 function load_nv_vars() {
        _section="neuvector"
        _load_vars
+}
+
+
+# Inspired from https://stackoverflow.com/questions/2914220/bash-templating-how-to-build-configuration-files-from-templates-with-bash#11050943
+function process_templates() {
+       eval "cat <<EOF                                   
+$(cat ${template_file} )
+EOF
+"
+
 }
 
 

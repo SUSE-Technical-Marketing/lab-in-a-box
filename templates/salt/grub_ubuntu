@@ -1,0 +1,29 @@
+change_ubuntu_grub_menu_to_visible:
+  file.keyvalue:
+    - name: /etc/default/grub
+    - key_values:
+       GRUB_TIMEOUT_STYLE: 'menu'
+       GRUB_TIMEOUT: '8'
+    - separator: '='
+    - uncomment: '# '
+    - append_if_not_found: True
+
+rebuild_grub_menu_file:
+  cmd.run:
+    - name: 'grub-mkconfig -o /boot/grub/grub.cfg'
+
+ubuntu_grub_mkconfig_alias:
+  file.symlink:
+    - name: /usr/sbin/grub2-mkconfig
+    - target: /usr/sbin/grub-mkconfig
+    - onlyif:
+      - test -f /usr/sbin/grub-mkconfig
+      - test ! -L  /usr/sbin/grub2-mkconfig
+
+ubuntu_grub_directory_alias:
+  file.symlink:
+    - name: /boot/grub2
+    - target: /boot/grub
+    - onlyif:
+      - test -d /boot/grub
+      - test ! -L /boot/grub2

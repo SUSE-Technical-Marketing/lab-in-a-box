@@ -8,6 +8,8 @@ ROOT_SSH_PUB_KEY='REPLACE ME with cat ~/.ssh/<your_key>.pub'
 # Automation VM hostname
 AUTOMATION_HOSTNAME='automation.mydemo.lab'
 
+# Internal registry server to use
+MYREG='registry.mydemo.lab'
 
 # Network settings
 _mydns=192.168.8.1
@@ -23,3 +25,9 @@ _QCOW_IMAGE=/var/lib/libvirt/images/sources/openSUSE-Leap-15.5-Minimal-VM.x86_64
 
 # initial root password
 root_pwd=1234
+
+
+# advanced settings
+_qemu_addr="qemu:///system"
+
+

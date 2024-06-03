@@ -1,0 +1,24 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${insecure_app_name:-webphotobook}
+  namespace: ${insecure_app_ns:-insecure-apps}
+spec:
+  defaultBackend:
+    service:
+      name: ${insecure_app_name:-webphotobook}
+      port:
+        number: ${insecure_app_port:-5000}
+  rules:
+    - host: ${insecure_app_name:-webphotobook}.${clu_name}.${mydomain}
+      http:
+        paths:
+          - backend:
+              service:
+                name: ${insecure_app_name:-webphotobook}
+                port:
+                  number: ${insecure_app_port:-5000}
+            path: /
+            pathType: Prefix
+...

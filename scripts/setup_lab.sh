@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of lab-in-a-box, it will setup a VM
+# Part of lab-in-a-box, it will setup a Lab
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -14,15 +14,16 @@ inputFile=${1}
 
 if [[ ! -f "${inputFile}" ]] 
 then
-   echo "Cluster definition file (${inputFile}) doesn't exists or not specified"
+   echo "Lab definition file (${inputFile}) doesn't exists or not specified"
    exit 1
 elif ! jq <"${inputFile}" >/dev/null
 then
-   echo "Cluster definition not in validated JSON format"
+   echo "Lab definition not in validated JSON format"
    exit 1
 fi
 
-clu_name="$(jq -r '.cluster.name ' < ${inputFile})"
+clu_name="$(jq -r '.cluster.name ' < ${inputFile} &>/dev/null )"
+lab_name="$(jq -r '.common.lab_name ' < ${inputFile} &>/dev/null )"
 
 # load lab_creation config
 if [[ -f /etc/lab_creation.cfg ]]
@@ -45,11 +46,15 @@ else
         . ${_lib_path}
 fi
 
-# load cluster vars
-load_cluster_vars
 
-echo "# Create all the VMs for cluster \"$clu_name\""
-
+if [[ "${clu_name}" != "" ]]
+then
+  # load cluster vars
+  load_cluster_vars
+  echo "# Create all the VMs for the cluster \"${lab_name:-$clu_name}\""
+else
+  echo "# Create all the VMs for the lab \"$lab_name\""
+fi
 
 function load_def(){
 	load_vm_vars
@@ -68,31 +73,32 @@ echo "# Wait ${delay_min} min (${delay_sec} sec)  and restart"
 sleep ${delay_sec}
 
 
-for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-do
+
+if [[ "${clu_name}" != "" ]]
+then
+  for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+  do
 	load_def
 	echo "# Restart node ${_vm_name}"
 	$ssh_command 'reboot'
-done
+  done
 
-echo "# Wait ${delay_min} min and continue setting up the cluster"
-sleep $((60 * $delay_min))
+  echo "# Wait ${delay_min} min and continue setting up the cluster"
+  sleep $((60 * $delay_min))
 
-for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
-do
+  for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+  do
 	echo "# Installing ${clu_type} on node ${_vm_name}"
 	load_def
 	
 	setup_${clu_type}
-done
+  done
 
+  echo "# Wait $(( 2 + $delay_min )) min and continue setting up the cluster $((60 * ( 2 + $delay_min) ))"
+  sleep $((60 * ( 2 + $delay_min ) ))
 
-echo "# Wait $(( 2 + $delay_min )) min and continue setting up the cluster $((60 * ( 2 + $delay_min) ))"
-sleep $((60 * ( 2 + $delay_min ) ))
-
-
-for _addon in $(jq -r '.addons[]' < ${inputFile})
-do
+  for _addon in $(jq -r '.addons[]' < ${inputFile})
+  do
 	if command -v install_${_addon} &>/dev/null
 	then
                 echo -e "\n## Running addon \"${_addon}\" ##\n"
@@ -100,6 +106,25 @@ do
 	else
 		echo "## FAILED! Addon script \"install_${_addon}\" not found"
 	fi
+  done
+fi
+
+
+echo "## Install individual addons for each VM"
+for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+do
+    echo ${_vm_name}
+    for _addon in $(jq -r ".nodes.\"${_vm_name}\".addons[]" < ${inputFile})
+    do
+      if command -v install_${_addon} &>/dev/null
+      then
+        echo -e "\n## Running addon \"${_addon}\" ##\n"
+        _vm_name=$_vm_name install_${_addon} "${inputFile}"
+      else
+        echo "## FAILED! Addon script \"install_${_addon}\" not found"
+      fi
+    done
 done
+
 
 

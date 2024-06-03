@@ -1,0 +1,24 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${insecure_app_name:-webphotobook}
+  namespace: ${insecure_app_ns:-insecure-apps}
+spec:
+  clusterIP: None
+  clusterIPs:
+    - None
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: ${insecure_app_name:-webphotobook}-port
+      port: ${insecure_app_port:-5000}
+      protocol: TCP
+      targetPort: ${insecure_app_port:-5000}
+  selector:
+    app: ${insecure_app_name:-webphotobook}
+  sessionAffinity: None
+  type: ClusterIP
+...

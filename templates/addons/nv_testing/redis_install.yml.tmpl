@@ -1,0 +1,35 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-pod
+  namespace: ${nv_testing_ns:-demo}
+spec:
+  selector:
+    matchLabels:
+      app: redis-pod
+  template:
+    metadata:
+      labels:
+        app: redis-pod
+    spec:
+      containers:
+      - name: redis-pod
+        image: redis
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ${nv_testing_ns:-demo}
+spec:
+  ports:
+  - port: 6379
+    protocol: TCP
+    name: redis-port
+  clusterIP: None
+  selector:
+    app: redis-pod
+  type: ClusterIP
+...

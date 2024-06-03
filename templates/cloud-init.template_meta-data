@@ -1,0 +1,4 @@
+#cloud-config
+meta-data:
+  instance-id: ${_vm_name}
+  local-hostname: ${_vm_name}

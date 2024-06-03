@@ -1,6 +1,9 @@
 # This is the hypervisor node
 REMOTE_HOST='nuc1.mydemo.lab'
 
+# Internal registry server to use
+MYREG='registry.mydemo.lab'
+
 # This is the url to connect to libvirt in the hypervisor node.
 VIRT_SRV="qemu+ssh://root@${REMOTE_HOST}/system?keyfile=.ssh/id_rsa"
 
@@ -40,4 +43,4 @@ rancher_initial_pwd=abc1234
 # DO NOT CHANGE:
 # path for the library
 _lib_path=/usr/local/lib/lab_creation/lab_creation.bash
-
+_templ_addons_loc=/usr/share/lab_creation/templates/addons/

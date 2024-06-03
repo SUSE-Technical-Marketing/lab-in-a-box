@@ -1,0 +1,120 @@
+#!/bin/bash
+# Part of lab-in-a-box, it will install Insecure_app
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+#  This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
+
+
+inputFile=${1}
+
+function usage() {
+        echo "Usage:
+$0 <configuration file>"
+
+}
+
+
+# Load insecure-app related variables.
+function load_insecure_app_vars() {
+       _section="insecure_app"
+       _load_vars
+}
+
+
+
+# Setup insecure-app
+function setup_insecure_app() {
+             
+# For fleet
+#                $ssh_command "kubectl apply -f https://raw.githubusercontent.com/SUSE-Technical-Marketing/insecure-app/main/fleet_cattle.yml"
+#		$ssh_command "kubectl delete namespace ${insecure_app_ns}"
+                $ssh_command "kubectl delete deployment -n ${insecure_app_ns:-insecure-apps} ${insecure_app_name:-webphotobook}"
+		template_file=${_templ_addons_loc}/insecure_app/install.yml.tmpl
+                process_templates | $ssh_command "kubectl apply -f -"
+                template_file=${_templ_addons_loc}/insecure_app/service.yml.tmpl
+                process_templates | $ssh_command "kubectl apply -f -"
+                template_file=${_templ_addons_loc}/insecure_app/ingress.yml.tmpl
+                process_templates | $ssh_command "kubectl apply -f -"
+		if [[ "${insecure_app_DB_TYPE:-sqlite3}" == "mysql" ]]
+		then
+			_pod_name=`$ssh_command "kubectl get pods -n ${insecure_app_ns:-insecure-apps} | grep -o '${insecure_app_name:-webphotobook}-[a-z0-9]*-[a-Z0-9]*'"`
+			$ssh_command "kubectl exec -n ${insecure_app_ns:-insecure-apps}  -i ${_pod_name} -- /usr/bin/python3 init_db.py"
+		fi
+                echo "Insecure app should be available in a few minutes"
+}
+
+
+if [[ ! ${inputFile} ]]
+then
+        echo "missing configuration file parameter"
+        usage
+        exit 1
+fi
+
+if [[ ! -f ${inputFile} ]]
+then
+        echo "configuration file \"${inputFile}\" not found or name incorrect"
+        usage
+	exit 1
+elif ! jq <"${inputFile}" >/dev/null
+then
+   echo "Cluster definition not in validated JSON format"
+   exit 1
+fi
+
+# load lab_creation config
+if [[ -f /etc/lab_creation.cfg ]]
+then
+        . /etc/lab_creation.cfg
+elif [[ -f lab_creation.cfg ]]
+then
+        . lab_creation.cfg
+else
+        echo "ERROR: Configuration file lab_creation.cfg not found in local path or /etc"
+        exit 1
+fi
+
+if [[ ! -f ${_lib_path} ]]
+then
+        echo "ERROR: Library \"${_lib_path}\" not found"
+        exit 1
+else
+        # load library
+        . ${_lib_path}
+fi
+
+# load cluster vars
+load_cluster_vars
+
+# load rancher variables
+load_rancher_vars
+
+# load neuvector variables
+load_nv_vars
+
+# load insecure_app variables
+load_insecure_app_vars
+
+
+
+# find a server node or API url
+for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+do
+	load_vm_vars
+	ssh_command="ssh  -o StrictHostKeyChecking=accept-new -q  root@${_vm_name}"
+	echo "# Using node: $_vm_name"
+	setup_insecure_app
+        _dns_entry="${insecure_app_name:-webphotobook}.${clu_name}"
+        add_service_dns
+        echo "Service will be ready at ${insecure_app_name:-webphotobook}.${clu_name}.${mydomain}"
+	sleep 60
+	exit 1
+	
+done
+
+

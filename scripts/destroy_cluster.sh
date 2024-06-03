@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of lab-in-a-box, it will destroy a VM
+# Part of lab-in-a-box, it will remove all a cluster and its VMs
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -9,45 +9,20 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
-
-
 inputFile=${1}
-_vm_name=${2}
-
-function usage() {
-	echo "Usage:
-$0 <configuration file> <vm_name>"
-
-}
 
 
-
-
-if [[ ! ${inputFile} ]]
+if [[ ! -f "${inputFile}" ]] 
 then
-	echo "missing configuration file parameter"
-	usage
-	exit 1
-fi
-if [[ ! -f ${inputFile} ]]
-then
-	echo "configuration file \"${inputFile}\" not found or name incorrect"
-	usage
-	exit 1
+   echo "Cluster definition file (${inputFile}) doesn't exists or not specified"
+   exit 1
 elif ! jq <"${inputFile}" >/dev/null
 then
    echo "Cluster definition not in validated JSON format"
    exit 1
 fi
 
-if [[ ! ${_vm_name} ]]
-then
-	echo "Missing VM name"
-	usage
-	exit 1
-fi
-
-
+clu_name="$(jq -r '.cluster.name ' < ${inputFile})"
 
 # load lab_creation config
 if [[ -f /etc/lab_creation.cfg ]]
@@ -70,16 +45,23 @@ else
         . ${_lib_path}
 fi
 
+# load cluster vars
+load_cluster_vars
+
+echo "# Delete all the VMs for cluster \"$clu_name\""
 
 
-# load VM settings
-load_vm_vars
+function load_def(){
+	load_vm_vars
+	ssh_command="ssh  -o StrictHostKeyChecking=accept-new -q  root@${_vm_name}"
+}
 
+for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+do
+	echo "# Node: $_vm_name"
+	ssh-keygen -f ~/.ssh/known_hosts -R "${_vm_name}"
+	destroy_vm.sh "${inputFile}" "${_vm_name}"
+done
 
-del_from_dns
-
-delete_vm
-
-echo -e "#\t\tVM \"${_vm_name}\" destroyed\n"
 
 
