@@ -34,7 +34,7 @@ function setup_suma() {
                 $ssh_command "transactional-update pkg install -y mgradm-bash-completion mgrctl-bash-completion mgradm-zsh-completion mgrctl-zsh-completion; reboot"
                 sleep 60
                 $ssh_command "podman login --username  ${suma_reg_username:-admin@mydemo.lab} --password ${suma_reg_pwd:-aaaaaaaa} registry.suse.com"
-                $ssh_command "mgradm install --admin-password ${suma_adm_pwd:-admin123} --ssl-password ${suma_ssl_pwd:-admin123}  --admin-email ${suma_adm_email:-admin@mydemo.lab}  podman"
+                $ssh_command "mgradm install --admin-password ${suma_adm_pwd:-admin123} --ssl-password ${suma_ssl_pwd:-admin123}  --admin-email ${suma_adm_email:-admin@mydemo.lab} --scc-user ${suma_scc_user:-XYZ} --scc-password ${suma_scc_pwd:-admin123}  podman"
                 sleep 120
                 $ssh_command "reboot"
                 sleep 60
