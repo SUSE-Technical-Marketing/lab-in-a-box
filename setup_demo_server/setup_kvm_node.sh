@@ -13,7 +13,9 @@
 
 
 function show_nicer_messages() {
+  tput bold
   echo -e "\n###._ ${_msg} _.###\n"
+  tput sgr0
 }
 
 
@@ -39,6 +41,7 @@ function do_it_all() {
 
         _msg="Download openSUSE Leap image to be used for the VM" show_nicer_messages
         cd /var/lib/libvirt/images/sources/ && wget -nc https://download.opensuse.org/distribution/leap/15.5/appliances/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
+        cd -
 
         echo '<!--
 WARNING: THIS IS AN AUTO-GENERATED FILE. CHANGES TO IT ARE LIKELY TO BE
@@ -66,9 +69,9 @@ or other application using the libvirt API.
         systemctl disable --now firewalld
 
         _msg="Start setup_lab_automation.sh script to create the automation VM" show_nicer_messages
-        [ -d /var/tmp/${0//*\/}_${_currenttime}/ ] || mkdir -p /var/tmp/${0//*\/}_${_currenttime}/
-	cd /var/tmp/${0//*\/}_${_currenttime}/
-        tmp_folder=/var/tmp/${0//*\/}_${_currenttime}/ bash setup_lab_automation.sh
+#        [ -d /var/tmp/${0//*\/}_${_currenttime}/ ] || mkdir -p /var/tmp/${0//*\/}_${_currenttime}/
+#        tmp_folder=/var/tmp/${0//*\/}_${_currenttime}/ 
+         bash setup_lab_automation.sh
 
 }
 
