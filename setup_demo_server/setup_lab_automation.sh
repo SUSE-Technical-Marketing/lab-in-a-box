@@ -24,7 +24,9 @@ else
 fi
 
 function show_nicer_messages() {
+  tput bold
   echo -e "\n###._ ${_msg} _.###\n"
+  tput sgr0
 }
 
 

@@ -39,6 +39,13 @@ function setup_suma() {
                 $ssh_command "reboot"
                 sleep 60
                 echo "SUMA should be available in a few minutes, visit https://${_vm_name}/"
+                if [[ "${suma_channels}" != "" ]]
+                then
+                  echo "We will start the process of synching the selected channels, this may take hours"
+                  # wait 5 minutes to let SUMA start
+                  sleep 300
+                  $ssh_command "mgrctl exec -- mgr-sync add channels ${suma_channels}"
+                fi
 }
 
 
