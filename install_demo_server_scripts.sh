@@ -13,18 +13,19 @@
 
 
 
-if cd /var/tmp/setup_demo_server; then git pull; else git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server; fi
+if cd /var/tmp/setup_demo_server &>/dev/null; then git pull; else git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server; fi
 
-if cd /var/tmp/setup_demo_server/setup_demo_server/
+if cd /var/tmp/setup_demo_server/setup_demo_server/ 
 then
 	chmod 0755 setup_kvm_node.sh setup_lab_automation.sh
 
 	cp lab.cfg.template  lab.cfg
 	echo "
 ############
-Please edit the file:
 
- lab.cfg 
+Please edit the lab configuration file:
+
+ cd /var/tmp/setup_demo_server/setup_demo_server/ ; vi lab.cfg 
 
 in this folder according to your settings.
 
