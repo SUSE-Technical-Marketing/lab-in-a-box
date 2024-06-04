@@ -28,7 +28,7 @@ function show_nicer_messages() {
 }
 
 
-_msg="Delete VM if it exists" show_nicer_messages
+_msg="Delete VM \"${AUTOMATION_HOSTNAME}\" if it exists" show_nicer_messages
 if virsh desc "${AUTOMATION_HOSTNAME}" &>/dev/null
 then
   virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
