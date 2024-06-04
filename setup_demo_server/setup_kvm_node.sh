@@ -12,6 +12,9 @@
 
 
 
+function show_nicer_messages() {
+  echo -e "\n###._ ${_msg} _.###\n"
+}
 
 
 function do_it_all() {
@@ -20,13 +23,13 @@ function do_it_all() {
                 echo "Please download setup_lab_automation.sh script from the GIT repository"
 		exit 1
         fi
-        echo "## Configure package repositories ##"
+        _msg="Configure package repositories" show_nicer_messages
         SUSEConnect --product PackageHub/15.5/x86_64
         SUSEConnect --product sle-module-containers/15.5/x86_64
         SUSEConnect --product sle-module-basesystem/15.5/x86_64
 #        SUSEConnect --product sle-module-development-tools/15.5/x86_64
         SUSEConnect --product sle-module-legacy/15.5/x86_64
-        echo "## Update all packages and install necessary ones ##"
+        _msg="Update all packages and install necessary ones" show_nicer_messages
         zypper refresh
         zypper update -y
         zypper install -y libvirt podman docker cri-tools minikube-bash-completion kubectl-who-can kubevirt-virtctl kubernetes1.28-client gpgme-devel device-mapper-devel libbtrfs-devel git-core mc bridge-utils tcpdump sensors ftsteutates-sensors
@@ -34,7 +37,7 @@ function do_it_all() {
 
         [[ -d /var/lib/libvirt/images/sources/ ]] || mkdir -p /var/lib/libvirt/images/sources/
 
-        echo "## Download openSUSE Leap image to be used for the VM ##"
+        _msg="Download openSUSE Leap image to be used for the VM" show_nicer_messages
         cd /var/lib/libvirt/images/sources/ && wget -nc https://download.opensuse.org/distribution/leap/15.5/appliances/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
 
         echo '<!--
@@ -62,7 +65,7 @@ or other application using the libvirt API.
         systemctl enable --now libvirtd
         systemctl disable --now firewalld
 
-        echo "## Start setup_lab_automation.sh script to create the automation VM ##"
+        _msg="Start setup_lab_automation.sh script to create the automation VM" show_nicer_messages
         [ -d /var/tmp/${0//*\/}_${_currenttime}/ ] || mkdir -p /var/tmp/${0//*\/}_${_currenttime}/
 	cd /var/tmp/${0//*\/}_${_currenttime}/
         tmp_folder=/var/tmp/${0//*\/}_${_currenttime}/ bash setup_lab_automation.sh
@@ -74,10 +77,10 @@ _input="$1"
 
 if [[ -f lab.cfg ]]
 then
-	echo "Loading configuration file lab.cfg"
+        _msg="Loading configuration file lab.cfg" show_nicer_messages
 	. lab.cfg
 else
-	echo "Missing configuratoin file lab.cfg"
+        _msg="Missing configuratoin file lab.cfg" show_nicer_messages
 	exit 1
 fi
 
@@ -85,7 +88,7 @@ if [[ "${_input}" != "" ]]
 then
 	if  ping -c 1 -q "${_input}" &>/dev/null
 	then
-	        echo -e "###############\n## Setting up ${_input} remotely ##\n###############"
+                _msg="\n## Setting up ${_input} remotely ##\n" show_nicer_messages
 	        ssh-copy-id root@${_input}
 		if [[ "$?" != "0" ]]
 		then
@@ -93,11 +96,6 @@ then
 			exit 1
 		fi
 	        ssh root@${_input} "mkdir /var/tmp/$0_${_currenttime}"
-#		if [[ ! -f setup_lab_automation.sh ]]
-#        	then
-#                   echo "Please download setup_lab_automation.sh script from the GIT repository"
-#                   exit 1
-#                fi
 	        scp $0 lab.cfg setup_lab_automation.sh root@${_input}:/var/tmp/${0//*\/}_${_currenttime}/
 	        ssh root@${_input} "cd /var/tmp/${0//*\/}_${_currenttime}/ ; _currenttime=${_currenttime} bash $0 -y"
 	elif [[ "${_input}" == "-y" ]]
