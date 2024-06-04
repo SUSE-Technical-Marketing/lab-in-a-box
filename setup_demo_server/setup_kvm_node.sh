@@ -17,14 +17,16 @@
 function do_it_all() {
         if [[ ! -f setup_lab_automation.sh ]]
         then
-                echo "Please download setup_labe_automation.sh script from the GIT repository"
+                echo "Please download setup_lab_automation.sh script from the GIT repository"
 		exit 1
         fi
+        echo "## Configure package repositories ##"
         SUSEConnect --product PackageHub/15.5/x86_64
         SUSEConnect --product sle-module-containers/15.5/x86_64
         SUSEConnect --product sle-module-basesystem/15.5/x86_64
 #        SUSEConnect --product sle-module-development-tools/15.5/x86_64
         SUSEConnect --product sle-module-legacy/15.5/x86_64
+        echo "## Update all packages and install necessary ones ##"
         zypper refresh
         zypper update -y
         zypper install -y libvirt podman docker cri-tools minikube-bash-completion kubectl-who-can kubevirt-virtctl kubernetes1.28-client gpgme-devel device-mapper-devel libbtrfs-devel git-core mc bridge-utils tcpdump sensors ftsteutates-sensors
@@ -32,6 +34,7 @@ function do_it_all() {
 
         [[ -d /var/lib/libvirt/images/sources/ ]] || mkdir -p /var/lib/libvirt/images/sources/
 
+        echo "## Download openSUSE Leap image to be used for the VM ##"
         cd /var/lib/libvirt/images/sources/ && wget -nc https://download.opensuse.org/distribution/leap/15.5/appliances/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
 
         echo '<!--
@@ -59,6 +62,7 @@ or other application using the libvirt API.
         systemctl enable --now libvirtd
         systemctl disable --now firewalld
 
+        echo "## Start setup_lab_automation.sh script to create the automation VM ##"
 	cd /var/tmp/$0_${_currenttime}/
         tmp_folder=/var/tmp/$0_${_currenttime}/ bash setup_lab_automation.sh
 
@@ -80,7 +84,7 @@ if [[ "${_input}" != "" ]]
 then
 	if  ping -c 1 -q "${_input}" &>/dev/null
 	then
-	        echo "Setting up ${_input} remotely"
+	        echo -e "###############\n## Setting up ${_input} remotely ##\n###############"
 	        ssh-copy-id root@${_input}
 		if [[ "$?" != "0" ]]
 		then

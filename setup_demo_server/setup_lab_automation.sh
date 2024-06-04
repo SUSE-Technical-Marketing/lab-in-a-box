@@ -25,13 +25,18 @@ fi
 
 
 
-echo "## Delete VM"
-virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
-virsh -c ${_qemu_addr} undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
+echo "## Delete VM if it exists ##"
+if virsh desc "${AUTOMATION_HOSTNAME}" &>/dev/null
+then
+  virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
+  virsh -c ${_qemu_addr} undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
+fi
 
+echo "## Copy image and resize ##"
 cp ${_QCOW_IMAGE} /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ; qemu-img resize /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ${_disk_size}G
 
 
+echo "## Configure the VM ##"
 guestmount -i --rw -a  /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 /mnt/
 
 rm /mnt/var/lib/YaST2/reconfig_system
@@ -61,19 +66,25 @@ echo "KEYMAP=us" >> /mnt/etc/vconsole.conf
 # set the time zone
 ln -sf /usr/share/zoneinfo/Europe/Zurich /mnt/etc/localtime
 
+echo "## Install required packages ##"
 chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git salt-ssh
+echo "## Enable/Disable services ##"
 chroot /mnt/ systemctl disable firewalld.service
 chroot /mnt/ systemctl disable wicked.service
 chroot /mnt/ systemctl enable sshd.service
 chroot /mnt/ systemctl enable NetworkManager.service
 chroot /mnt/ systemctl enable named
 chroot /mnt/ systemctl enable apache2
+echo "## Generate SSH key ##"
 chroot /mnt/ ssh-keygen -b 16384 -N '' -t rsa -f /root/.ssh/id_rsa
+echo "## Clone repository ##"
 git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /mnt/var/tmp/lab-in-a-box
 export _scripts_path=/var/tmp/lab-in-a-box/
 curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh >/mnt/tmp/install_automation_node_scripts.sh
+echo "## Run install_automation_node_scripts.sh script ##"
 chroot /mnt/ bash /tmp/install_automation_node_scripts.sh
 # Download latest helm and create the script to update it
+echo "## Download latest helm and and install it ##"
 mkdir /mnt/srv/www/htdocs/helm
 chmod 0755 /mnt/srv/www/htdocs/helm
 curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS  --output /mnt/srv/www/htdocs/helm/KEYS
@@ -96,7 +107,7 @@ chmod 0755 /mnt/usr/local/bin/download_latest_helm.sh /mnt/srv/www/htdocs/helm/i
 
 
 
-
+echo "## Setup SSH keys ##"
 cat /mnt/root/.ssh/id_rsa.pub >>/root/.ssh/authorized_keys
 echo "
 
@@ -109,6 +120,8 @@ echo "
 echo 'root:${root_pwd}' | chroot /mnt/ chpasswd -c SHA512
 echo "$ROOT_SSH_PUB_KEY" >> /mnt/root/.ssh/authorized_keys
 
+
+echo "## Configure DNS server ##"
 
 cat >/mnt/etc/named.conf  <<-EOF
 options {
@@ -201,7 +214,8 @@ sleep 5
 guestunmount /mnt
 
 
-echo "## Create virtual machine"
+
+echo "## Create virtual machine ##"
         virt-install --connect ${_qemu_addr} \
                --name  $AUTOMATION_HOSTNAME \
                --autostart \
@@ -214,7 +228,7 @@ echo "## Create virtual machine"
                --network "bridge=br0,mac.address=34:8a:b1:11:11:99" \
                --noautoconsole
 
-echo "Wait until the VM starts"
+echo "    Wait until the VM starts"
 sleep 60 
 
 # There seems to be a bug, the vnet of the vm doesn't get added automatically to the bridge after the network interface has been restarted, so we need to stop the VMs and start them again.
