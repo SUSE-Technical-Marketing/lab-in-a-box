@@ -11,10 +11,12 @@
 
 
 
-[[ -d /var/tmp/setup_demo_server ]] || mkdir /var/tmp/setup_demo_server
-if git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server/
+
+
+if cd /var/tmp/setup_demo_server; then git pull; else git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server; fi
+
+if cd /var/tmp/setup_demo_server/setup_demo_server/
 then
-	cd /var/tmp/setup_demo_server/setup_demo_server/
 	chmod 0755 setup_kvm_node.sh setup_lab_automation.sh
 
 	cp lab.cfg.template  lab.cfg
