@@ -23,20 +23,23 @@ else
         exit 1
 fi
 
+function show_nicer_messages() {
+  echo -e "\n###._ ${_msg} _.###\n"
+}
 
 
-echo "## Delete VM if it exists ##"
+_msg="Delete VM if it exists" show_nicer_messages
 if virsh desc "${AUTOMATION_HOSTNAME}" &>/dev/null
 then
   virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
   virsh -c ${_qemu_addr} undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
 fi
 
-echo "## Copy image and resize ##"
+
+_msg="Copy image and resize" show_nicer_messages
 cp ${_QCOW_IMAGE} /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ; qemu-img resize /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ${_disk_size}G
 
-
-echo "## Configure the VM ##"
+_msg="Configure the VM" show_nicer_messages
 guestmount -i --rw -a  /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 /mnt/
 
 rm /mnt/var/lib/YaST2/reconfig_system
@@ -66,25 +69,27 @@ echo "KEYMAP=us" >> /mnt/etc/vconsole.conf
 # set the time zone
 ln -sf /usr/share/zoneinfo/Europe/Zurich /mnt/etc/localtime
 
-echo "## Install required packages ##"
+
+
+_msg="Install required packages" show_nicer_messages
 chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git salt-ssh
-echo "## Enable/Disable services ##"
+_msg="Enable/Disable services" show_nicer_messages
 chroot /mnt/ systemctl disable firewalld.service
 chroot /mnt/ systemctl disable wicked.service
 chroot /mnt/ systemctl enable sshd.service
 chroot /mnt/ systemctl enable NetworkManager.service
 chroot /mnt/ systemctl enable named
 chroot /mnt/ systemctl enable apache2
-echo "## Generate SSH key ##"
+_msg="Generate SSH key" show_nicer_messages
 chroot /mnt/ ssh-keygen -b 16384 -N '' -t rsa -f /root/.ssh/id_rsa
-echo "## Clone repository ##"
+_msg="Clone repository" show_nicer_messages
 git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /mnt/var/tmp/lab-in-a-box
 export _scripts_path=/var/tmp/lab-in-a-box/
 curl -k https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_automation_node_scripts.sh >/mnt/tmp/install_automation_node_scripts.sh
-echo "## Run install_automation_node_scripts.sh script ##"
+_msg="Run install_automation_node_scripts.sh script" show_nicer_messages
 chroot /mnt/ bash /tmp/install_automation_node_scripts.sh
 # Download latest helm and create the script to update it
-echo "## Download latest helm and and install it ##"
+_msg="Download latest helm and and install it" show_nicer_messages
 mkdir /mnt/srv/www/htdocs/helm
 chmod 0755 /mnt/srv/www/htdocs/helm
 curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS  --output /mnt/srv/www/htdocs/helm/KEYS
@@ -106,8 +111,7 @@ cp /tmp/helm/linux-${myarch:-amd64}/helm /usr/local/bin
 chmod 0755 /mnt/usr/local/bin/download_latest_helm.sh /mnt/srv/www/htdocs/helm/install_helm.sh
 
 
-
-echo "## Setup SSH keys ##"
+_msg="Setup SSH keys" show_nicer_messages
 cat /mnt/root/.ssh/id_rsa.pub >>/root/.ssh/authorized_keys
 echo "
 
@@ -120,8 +124,7 @@ echo "
 echo 'root:${root_pwd}' | chroot /mnt/ chpasswd -c SHA512
 echo "$ROOT_SSH_PUB_KEY" >> /mnt/root/.ssh/authorized_keys
 
-
-echo "## Configure DNS server ##"
+_msg="Configure DNS server" show_nicer_messages
 
 cat >/mnt/etc/named.conf  <<-EOF
 options {
@@ -214,8 +217,7 @@ sleep 5
 guestunmount /mnt
 
 
-
-echo "## Create virtual machine ##"
+_msg="Create virtual machine" show_nicer_messages
         virt-install --connect ${_qemu_addr} \
                --name  $AUTOMATION_HOSTNAME \
                --autostart \
@@ -227,8 +229,7 @@ echo "## Create virtual machine ##"
                --graphics=spice  \
                --network "bridge=br0,mac.address=34:8a:b1:11:11:99" \
                --noautoconsole
-
-echo "    Wait until the VM starts"
+_msg="Wait 1 minute for the VM starts" show_nicer_messages
 sleep 60 
 
 # There seems to be a bug, the vnet of the vm doesn't get added automatically to the bridge after the network interface has been restarted, so we need to stop the VMs and start them again.
@@ -236,7 +237,7 @@ sleep 60
 #sleep 60
 #virsh start $AUTOMATION_HOSTNAME
 
-echo "Reconfigure host to use new VM as DNS server"
+_msg="Reconfigure host to use new VM as DNS server" show_nicer_messages
 # make it persistent
 sed "s/NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS=\"${_myip} ${_mydns}\"/;s/NETCONFIG_DNS_STATIC_SEARCHLIST=.*/NETCONFIG_DNS_STATIC_SEARCHLIST=\"${_mydomain}\"/" -i /etc/sysconfig/network/config
 # make it active
