@@ -19,7 +19,7 @@ if cd /var/tmp/setup_demo_server/setup_demo_server/
 then
 	chmod 0755 setup_kvm_node.sh setup_lab_automation.sh
 
-	cp lab.cfg.template  lab.cfg
+	[ -f lab.cfg ] || cp lab.cfg.template  lab.cfg
 	echo "
 ############
 
