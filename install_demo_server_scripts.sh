@@ -19,13 +19,26 @@ then
 
 	cp lab.cfg.template  lab.cfg
 	echo "
-Please edit the file lab.cfg in this folder to include your settings
-Once you have done so run setup_kvm_node.sh:
-./setup_kvm_node.sh [<node_ip>]
+############
+Please edit the file:
 
-Where node_ip is the IP of the server you want to use for your lab.
-You can also setup your current machine as the lab server by not adding any parameter.
+ lab.cfg 
 
+in this folder according to your settings.
+
+Once you have done it, run setup_kvm_node.sh to configure your LAB KVM server:
+
+./setup_kvm_node.sh <node_ip>
+
+- node_ip: is the IP of the server you want to use for your lab
+
+
+You can also setup your current machine as the lab server by running the same command without any parameter:
+
+./setup_kvm_node.sh 
+
+
+##############
 "
 else
 	echo "ERROR: Cloning the repository failed, this is the command used: \"git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server/\""
