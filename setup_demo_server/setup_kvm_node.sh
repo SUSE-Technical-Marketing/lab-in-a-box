@@ -63,8 +63,9 @@ or other application using the libvirt API.
         systemctl disable --now firewalld
 
         echo "## Start setup_lab_automation.sh script to create the automation VM ##"
-	cd /var/tmp/$0_${_currenttime}/
-        tmp_folder=/var/tmp/$0_${_currenttime}/ bash setup_lab_automation.sh
+        [ -d /var/tmp/${0//*\/}_${_currenttime}/ ] || mkdir -p /var/tmp/${0//*\/}_${_currenttime}/
+	cd /var/tmp/${0//*\/}_${_currenttime}/
+        tmp_folder=/var/tmp/${0//*\/}_${_currenttime}/ bash setup_lab_automation.sh
 
 }
 
@@ -97,8 +98,8 @@ then
 #                   echo "Please download setup_lab_automation.sh script from the GIT repository"
 #                   exit 1
 #                fi
-	        scp $0 lab.cfg setup_lab_automation.sh root@${_input}:/var/tmp/$0_${_currenttime}/
-	        ssh root@${_input} "cd /var/tmp/$0_${_currenttime}/ ; _currenttime=${_currenttime} bash $0 -y"
+	        scp $0 lab.cfg setup_lab_automation.sh root@${_input}:/var/tmp/${0//*\/}_${_currenttime}/
+	        ssh root@${_input} "cd /var/tmp/${0//*\/}_${_currenttime}/ ; _currenttime=${_currenttime} bash $0 -y"
 	elif [[ "${_input}" == "-y" ]]
 	then
 		do_it_all
