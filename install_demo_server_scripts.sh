@@ -13,8 +13,8 @@
 
 
 
-if cd /var/tmp/setup_demo_server &>/dev/null; then git pull; else git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server; fi
-
+if cd /var/tmp/setup_demo_server &>/dev/null; then git stash; git pull; else git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server; fi
+ 
 if cd /var/tmp/setup_demo_server/setup_demo_server/ 
 then
 	chmod 0755 setup_kvm_node.sh setup_lab_automation.sh
