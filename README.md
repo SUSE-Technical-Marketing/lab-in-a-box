@@ -127,6 +127,11 @@ The Automation machine acts as a DNS server for the lab, providing local resolut
     - Once the setup is completed we can login into the automation VM, at this point it is worth to configure your client with the DNS server created inside the automation VM so that you can resolve all the DNS of your lab.
  
  4. Now the only thing we have left is to configure the automation node with the settings we want:
+
+    - Connect to the automation node
+      ```shell
+      ssh <AUTOMATION_HOSTNAME>
+      ```
     
     - Copy the example configuration file and edit it with your preferences
       ```shell
