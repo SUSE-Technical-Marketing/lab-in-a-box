@@ -23,24 +23,24 @@ $0 <configuration file> <vm_name>"
 
 if [[ ! ${inputFile} ]]
 then
-        echo "ERROR: missing configuration file parameter"
+        _msg="ERROR: missing configuration file parameter" show_nicer_messages
         usage
         exit 1
 fi
 if [[ ! -f ${inputFile} ]]
 then
-        echo "ERROR: configuration file \"${inputFile}\" not found or name incorrect"
+        _msg="ERROR: configuration file \"${inputFile}\" not found or name incorrect" show_nicer_messages
         usage
         exit 1
 elif ! jq <"${inputFile}" >/dev/null
 then
-   echo "Cluster definition not in validated JSON format"
+   _msg="Cluster definition not in validated JSON format" show_nicer_messages
    exit 1
 fi
 
 if [[ ! ${_vm_name} ]]
 then
-        echo "ERROR: Missing VM name parameter"
+        _msg="ERROR: Missing VM name parameter" show_nicer_messages
         usage
         exit 1
 fi
@@ -54,14 +54,14 @@ then
 elif [[ -f lab_creation.cfg ]]
 then
 	. lab_creation.cfg
-else
-	echo "ERROR: Configuration file lab_creation.cfg not found in local path or /etc"
+else    
+        _msg="ERROR: Configuration file lab_creation.cfg not found in local path or /etc" show_nicer_messages
 	exit 1
 fi
 
 if [[ ! -f ${_lib_path} ]]
 then
-	echo "ERROR: Library \"${_lib_path}\" not found"
+        _msg="ERROR: Library \"${_lib_path}\" not found" show_nicer_messages
 	exit 1
 else
 	# load library
@@ -109,6 +109,6 @@ clean_ssh_keys
 prepare_local_as_kubeclient
 
 
-echo -e "#\t\tVM \"${_vm_name}\" created\n"
+_msg="\t\tVM \"${_vm_name}\" created" show_nicer_messages
 
 
