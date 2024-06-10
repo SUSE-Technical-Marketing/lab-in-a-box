@@ -40,4 +40,4 @@ write_files:
 runcmd:
   - netplan generate
   - netplan apply
-$( if [[ "${ci_options}" == *"grub_ubuntu"* ]]; then echo '  - ln -s /usr/sbin/grub-mkconfig /usr/sbin/grub2-mkconfig'; echo '  - ln -s /boot/grub /boot/grub2'; echo '  - sed "s/GRUB_TIMEOUT_STYLE.*/GRUB_TIMEOUT_STYLE=menu/;s/GRUB_TIMEOUT.*/GRUB_TIMEOUT=8/" -i /etc/default/grub'; echo '  - grub-mkconfig -o /boot/grub/grub.cfg';fi )
+$( if [[ "${ci_options}" == *"grub_ubuntu"* ]]; then echo '  - ln -s /usr/sbin/grub-mkconfig /usr/sbin/grub2-mkconfig'; echo '  - ln -s /boot/grub /boot/grub2'; echo '  - sed "s/GRUB_TIMEOUT_STYLE.*/GRUB_TIMEOUT_STYLE=menu/;s/GRUB_TIMEOUT.*/GRUB_TIMEOUT=8/" -i /etc/default/grub -i /etc/default/grub.d/50-cloudimg-settings.cfg'; echo '  - grub-mkconfig -o /boot/grub/grub.cfg';fi )

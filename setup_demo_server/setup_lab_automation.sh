@@ -74,7 +74,7 @@ ln -sf /usr/share/zoneinfo/Europe/Zurich /mnt/etc/localtime
 
 
 _msg="Install required packages" show_nicer_messages
-chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git salt-ssh
+chroot /mnt/ zypper install -y  vim-small git rsync apache2  bind-utils bind docker podman libvirt-client jq NetworkManager virt-install git salt-ssh ipcalc
 _msg="Enable/Disable services" show_nicer_messages
 chroot /mnt/ systemctl disable firewalld.service
 chroot /mnt/ systemctl disable wicked.service

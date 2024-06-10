@@ -14,11 +14,11 @@ inputFile=${1}
 
 if [[ ! -f "${inputFile}" ]] 
 then
-   echo "Lab definition file (${inputFile}) doesn't exists or not specified"
+   echo "ERROR: Lab definition file (${inputFile}) doesn't exists or not specified"
    exit 1
 elif ! jq <"${inputFile}" >/dev/null
 then
-   echo "Lab definition not in validated JSON format"
+   echo "ERROR: Lab definition not in validated JSON format"
    exit 1
 fi
 
@@ -51,9 +51,9 @@ if [[ "${clu_name}" != "" ]]
 then
   # load cluster vars
   load_cluster_vars
-  echo "# Create all the VMs for the cluster \"${lab_name:-$clu_name}\""
+  _msg="Create all the VMs for the cluster \"${lab_name:-$clu_name}\"" show_nicer_messages
 else
-  echo "# Create all the VMs for the lab \"$lab_name\""
+  _msg="Create all the VMs for the lab \"$lab_name\"" show_nicer_messages
 fi
 
 function load_def(){
@@ -63,13 +63,13 @@ function load_def(){
 
 for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
 do
-	echo "# Node: $_vm_name"
+        _msg="Node: $_vm_name" show_nicer_messages
 	ssh-keygen -f ~/.ssh/known_hosts -R "${_vm_name}"
 	destroy_vm.sh "${inputFile}" "${_vm_name}"
 	setup_vm.sh "${inputFile}" "${_vm_name}"
 done
 
-echo "# Wait ${delay_min} min (${delay_sec} sec)  and restart"
+_msg="Wait ${delay_min} min (${delay_sec} sec)  and restart" show_nicer_messages
 sleep ${delay_sec}
 
 
@@ -79,49 +79,49 @@ then
   for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
   do
 	load_def
-	echo "# Restart node ${_vm_name}"
+        _msg="Restart node ${_vm_name}" show_nicer_messages
 	$ssh_command 'reboot'
   done
 
-  echo "# Wait ${delay_min} min and continue setting up the cluster"
-  sleep $((60 * $delay_min))
+  _msg="Wait ${delay_min} min and continue setting up the cluster" show_nicer_messages
+  sleep 5
+  check_ssh_conn
+#  sleep $((60 * $delay_min))
 
   for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
   do
-	echo "# Installing ${clu_type} on node ${_vm_name}"
+        _msg="Installing ${clu_type} on node ${_vm_name}" show_nicer_messages
 	load_def
 	
 	setup_${clu_type}
   done
 
-  echo "# Wait $(( 2 + $delay_min )) min and continue setting up the cluster $((60 * ( 2 + $delay_min) ))"
+  _msg="Wait $(( 2 + $delay_min )) min and continue setting up the cluster $((60 * ( 2 + $delay_min) ))" show_nicer_messages
   sleep $((60 * ( 2 + $delay_min ) ))
 
   for _addon in $(jq -r '.addons[]' < ${inputFile})
   do
 	if command -v install_${_addon} &>/dev/null
 	then
-                echo -e "\n## Running addon \"${_addon}\" ##\n"
+                _msg="- Running addon \"${_addon}\"" show_nicer_messages
 		install_${_addon} "${inputFile}"
 	else
-		echo "## FAILED! Addon script \"install_${_addon}\" not found"
+                _msg="- FAILED! Addon script \"install_${_addon}\" not found" show_nicer_messages
 	fi
   done
 fi
 
-
-echo "## Install individual addons for each VM"
-for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs)
+_msg="- Install individual addons for each VM" show_nicer_messages
+for _vm_name in $(jq -r '.nodes | to_entries[].key' < ${inputFile} |xargs )
 do
-    echo ${_vm_name}
-    for _addon in $(jq -r ".nodes.\"${_vm_name}\".addons[]" < ${inputFile})
+    for _addon in $(jq -r ".nodes.\"${_vm_name}\".addons[]" < ${inputFile} 2>/dev/null )
     do
       if command -v install_${_addon} &>/dev/null
       then
-        echo -e "\n## Running addon \"${_addon}\" ##\n"
+        _msg="- Running addon \"${_addon}\"" show_nicer_messages
         _vm_name=$_vm_name install_${_addon} "${inputFile}"
       else
-        echo "## FAILED! Addon script \"install_${_addon}\" not found"
+        _msg="- FAILED! Addon script \"install_${_addon}\" not found" show_nicer_messages
       fi
     done
 done
