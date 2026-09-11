@@ -7,11 +7,38 @@
 #
 # ─── JSON section: "smlm" ───────────────────────────────────────────────────────
 #
-# MANDATORY
+# OPTIONAL – deployment mode
+#   smlm_deployment        : "kubernetes" (default) = the Helm-chart deployment
+#                           documented at this file's own Kubernetes-guide
+#                           reference link above, target node is any
+#                           Kubernetes cluster's first server node.
+#                           "podman" = the traditional mgradm/podman
+#                           deployment directly on a dedicated host/VM (no
+#                           Kubernetes at all), per
+#                           documentation.suse.com/multi-linux-manager/5.2/en/
+#                           docs/installation-and-upgrade/'s own bare-metal
+#                           install guide — see setup_smlm_podman()'s own
+#                           docstring. Target node(s): any node listing
+#                           "smlm" in its own addons[] list.
+#
+# MANDATORY when smlm_deployment is "kubernetes" (the default)
 #   smlm_fqdn             : Fully-qualified domain name for the SMLM server
 #                           (e.g. "smlm.cluster1.mydemo.lab")
 #   smlm_scc_user         : SUSE Customer Center (SCC) username (mirroring credentials)
 #   smlm_scc_password     : SUSE Customer Center (SCC) password
+#
+# MANDATORY when smlm_deployment is "podman"
+#   smlm_scc_regcode      : SUSE Customer Center (SCC) registration code for
+#                           the base OS product (SLES 15 SP7 or SL Micro 6.2)
+#                           — `SUSEConnect -r <code> -e <email>`
+#   smlm_scc_product      : Exact SCC extension-product identifier for the
+#                           "SUSE Multi-Linux Manager" module —
+#                           `SUSEConnect -p <that>`. This project could not
+#                           verify the real identifier string from public
+#                           docs alone (SCC product identifiers are
+#                           account/catalogue specific); find yours with
+#                           `SUSEConnect --list-extensions` right after the
+#                           base `-r` registration succeeds.
 #
 # OPTIONAL – passwords/credentials
 #   smlm_db_admin_user    : DB admin username          (default: mlmadmin)
@@ -283,12 +310,19 @@ __version__ = "39753e7"
 
 PLUGIN = {
     "name": "smlm",
-    "targets": ["container"],
-    "layers": ["kubernetes"],
+    # "container"/"kubernetes" is the original Helm-chart deployment (smlm_deployment
+    # unset or "kubernetes", the default — unchanged). "vm"/"baremetal"/"standalone-
+    # container" is the traditional mgradm/podman deployment (smlm_deployment: "podman",
+    # added 2026-09-11 — see setup_smlm_podman()'s own docstring) — the two modes are
+    # dispatched completely differently in main() below, so both target shapes are
+    # listed here rather than picking one.
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["kubernetes", "standalone-container"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }
 
+import os
 import shlex
 import subprocess
 import sys
@@ -303,19 +337,179 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, die, log  # noqa: E402
+from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log  # noqa: E402
 
 
 def _validate(v):
-    v.vreq("smlm", "smlm_fqdn")
-    v.vreq("smlm", "smlm_scc_user")
-    v.vreq("smlm", "smlm_scc_password")
+    cfg = v.definition.get("smlm", {}) or {}
+    if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
+        # Traditional mgradm/podman deployment (see setup_smlm_podman()) — no
+        # Kubernetes cluster/fqdn-for-ingress/SCC-registry-pull-secret fields
+        # apply here at all; a real SCC product REGISTRATION is needed instead.
+        v.vreq("smlm", "smlm_scc_regcode")
+        v.vreq("smlm", "smlm_scc_product")
+    else:
+        v.vreq("smlm", "smlm_fqdn")
+        v.vreq("smlm", "smlm_scc_user")
+        v.vreq("smlm", "smlm_scc_password")
     v.vns("smlm")
     v.vver("smlm")
     v.vbool("smlm", "smlm_super_privileged")
     v.vbool("smlm", "smlm_db_ha")
     v.vbool("smlm", "smlm_db_ha_sync")
     v.vport("smlm", "smlm_db_ha_replicas")
+
+
+# ─── Traditional (mgradm/podman) deployment — added 2026-09-11 ─────────────
+# User request: install_uyuni.py must refer ONLY to the open-source Uyuni
+# project; a genuine SMLM install needs its own real deployment path, not
+# borrowed Uyuni branding — per documentation.suse.com/multi-linux-manager/
+# 5.2's own container-deployment/mlm/ vs container-deployment/uyuni/ page
+# split (both exist as parallel, officially documented install guides for
+# the SAME mgradm/podman tool, just sourced from different repos/registries).
+
+def setup_smlm_podman(hostname, virt_srv, cfg):
+    """
+    Install SUSE Multi-Linux Manager the traditional way: mgradm/podman
+    directly on a dedicated host/VM, no Kubernetes at all. Reuses
+    install_uyuni.py's own proven mgradm-install/container-health-wait
+    helpers (_run_install_with_pg_hba_guard/_ensure_server_container_active —
+    imported from that script rather than duplicated, since that logic
+    works around a real, subtly-timed upstream mgradm/podman/postgres-image
+    race condition confirmed live 2026-08-28) — the underlying tool and
+    container mechanics are identical between Uyuni and SMLM; what genuinely
+    differs is where mgradm/mgrctl and the server's own container images
+    come from.
+
+    install_uyuni.py adds Uyuni's own free community OBS repo — no
+    entitlement needed, by design (open source). A real SMLM install instead
+    needs the host registered against SCC with the actual SUSE Multi-Linux
+    Manager module, so mgradm/mgrctl — and whatever entitled images mgradm
+    itself pulls later from registry.suse.com — are the real, licensed
+    product, not the community build:
+      - smlm_scc_regcode : the SCC registration code for the base SLES/SL
+                            Micro product (`SUSEConnect -r <code> -e <email>`)
+      - smlm_scc_product : the exact SCC extension-product identifier for
+                            the "SUSE Multi-Linux Manager" module
+                            (`SUSEConnect -p <that>`) — this project could
+                            not find/verify the real string from public docs
+                            alone (SUSE product identifiers are typically
+                            account/SCC-catalogue specific); find yours with
+                            `SUSEConnect --list-extensions` right after the
+                            base `-r` registration succeeds — same confirmed-
+                            live workflow libs/kvm_host_profiles.py's own
+                            SUSEConnect wrapper already documents.
+
+    NOT live-tested (no real SCC registration code available in this
+    project's dev/CI environment) — the mgradm/podman install portion itself
+    reuses install_uyuni.py's own live-tested mechanism verbatim; only the
+    SCC-registration prelude and the transactional-vs-plain-zypper package
+    install branch (SMLM 5.2 officially supports both SL Micro 6.2, which is
+    transactional, and plain SLES 15 SP7, which install_uyuni.py's own
+    hardcoded transactional-update-only assumption never had to handle) are
+    new and unverified against a real server.
+    """
+    from install_uyuni import _run_install_with_pg_hba_guard, _ensure_server_container_active
+
+    regcode = cfg.get("smlm_scc_regcode")
+    product = cfg.get("smlm_scc_product")
+    email = cfg.get("smlm_email") or "admin@lab.local"
+
+    print("- Registering the host with SCC")
+    ssh_run(hostname, "SUSEConnect -r {} -e {}".format(shlex.quote(regcode), shlex.quote(email)), check=False)
+    r = ssh_run(hostname, "SUSEConnect -p {}".format(shlex.quote(product)), check=False)
+    if r.returncode != 0:
+        die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
+            "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
+            "own docstring for how to find it)".format(product, hostname))
+
+    print("- Installing mgradm tooling")
+    pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
+    is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
+    if is_transactional:
+        # SL Micro base — package changes land in a new snapshot that only
+        # takes effect after a reboot, same as install_uyuni.py's own
+        # (Micro-only) assumption.
+        ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
+        reboot_vm(virt_srv, hostname)
+        time.sleep(5)
+        check_ssh_conn(hostname)
+    else:
+        # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
+        # a regular, non-transactional zypper install, no reboot needed.
+        ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
+
+    print("- Installing SUSE Multi-Linux Manager server")
+    admin = cfg.get("smlm_admin") or "admin"
+    password = cfg.get("smlm_password") or "Smlm12345"
+    # Same flag set as install_uyuni.py's own live-verified `mgradm install
+    # podman ...` invocation (mgradm/podman mechanics are identical between
+    # the two products) — see that script's own comment on why --admin-email
+    # doesn't exist (it's the top-level --email flag instead).
+    install_cmd = (
+        "mgradm install podman "
+        "--admin-login {} "
+        "--admin-password {} "
+        "--email {} "
+        "--ssl-password {} "
+        "--organization {}".format(
+            admin, password, email,
+            cfg.get("smlm_ssl_password") or password, cfg.get("smlm_org") or "lab"))
+    _run_install_with_pg_hba_guard(hostname, install_cmd)
+
+    time.sleep(60)
+    ssh_run(hostname, "reboot", check=False)
+    time.sleep(5)
+    check_ssh_conn(hostname)
+    _ensure_server_container_active(hostname)
+
+    print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
+
+    channels = cfg.get("smlm_channels") or ""
+    if channels:
+        count = 0
+        print("- Waiting for channel list to sync")
+        while True:
+            time.sleep(10)
+            count += 1
+            print("Retry {}".format(count), end="\r")
+            out = ssh_run(hostname, "mgrctl exec -- mgr-sync list channels 2>/dev/null",
+                          check=False, capture=True).stdout or ""
+            if any("no channels found." not in line.lower() for line in out.splitlines()):
+                break
+        time.sleep(300)
+        ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channels))
+
+    sync_channels = (cfg.get("smlm_sync_channels") or "").split()
+    config_channels = cfg.get("smlm_config_channels") or []
+    orgs = cfg.get("smlm_orgs") or []
+    access_groups = cfg.get("smlm_access_groups") or []
+    ansible_paths = cfg.get("smlm_ansible_paths") or []
+    content_projects = cfg.get("smlm_content_projects") or []
+    activation_keys = cfg.get("smlm_activation_keys") or []
+    system_groups = cfg.get("smlm_system_groups") or []
+    custom_info_keys = cfg.get("smlm_custom_info_keys") or []
+    system_tags = cfg.get("smlm_system_tags") or []
+    environments = cfg.get("smlm_environments") or []
+    if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
+            or access_groups or ansible_paths or content_projects or activation_keys
+            or system_groups or custom_info_keys or system_tags or environments):
+        exec_prefix = "mgrctl exec --"
+        sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
+        sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
 
 
 # ─── Traefik configuration ───────────────────────────────────────────────────
@@ -892,6 +1086,29 @@ def main():
     definition = primary.load_definition(json_file)
 
     cfg = definition.get("smlm", {}) or {}
+
+    # "podman" deployment — traditional mgradm/podman install directly on a
+    # dedicated host/VM, no Kubernetes cluster involved at all (see
+    # setup_smlm_podman()'s own docstring). Dispatched via k8s.addon_nodes()
+    # (any node with "smlm" in its addons[] list), same shape as
+    # install_uyuni.py's own main() — NOT k8s.first_server_node(), which only
+    # makes sense for the Kubernetes/Helm-chart deployment below.
+    if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
+        if not cfg.get("smlm_scc_regcode"):
+            print("ERROR: smlm_scc_regcode is required in the 'smlm' JSON section "
+                  "when smlm_deployment is 'podman'", file=sys.stderr)
+            sys.exit(1)
+        if not cfg.get("smlm_scc_product"):
+            print("ERROR: smlm_scc_product is required in the 'smlm' JSON section "
+                  "when smlm_deployment is 'podman'", file=sys.stderr)
+            sys.exit(1)
+
+        config = primary.load_config()
+        virt_srv = config.get("VIRT_SRV", "")
+        env_vm_name = os.environ.get("_vm_name") or None
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
+            setup_smlm_podman(vm_name, virt_srv, cfg)
+        return
 
     if not cfg.get("smlm_fqdn"):
         print("ERROR: smlm_fqdn is required in the 'smlm' JSON section", file=sys.stderr)
