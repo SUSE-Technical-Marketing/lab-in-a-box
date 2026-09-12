@@ -24,21 +24,63 @@
 # MANDATORY when smlm_deployment is "kubernetes" (the default)
 #   smlm_fqdn             : Fully-qualified domain name for the SMLM server
 #                           (e.g. "smlm.cluster1.mydemo.lab")
-#   smlm_scc_user         : SUSE Customer Center (SCC) username (mirroring credentials)
-#   smlm_scc_password     : SUSE Customer Center (SCC) password
+#   smlm_scc_user         : SUSE Customer Center (SCC) account username — used
+#                           to `podman login registry.suse.com` to pull the
+#                           chart's entitled images (mirroring credentials)
+#   smlm_scc_password     : SUSE Customer Center (SCC) account password
 #
 # MANDATORY when smlm_deployment is "podman"
-#   smlm_scc_regcode      : SUSE Customer Center (SCC) registration code for
-#                           the base OS product (SLES 15 SP7 or SL Micro 6.2)
-#                           — `SUSEConnect -r <code> -e <email>`
+#   smlm_scc_regcode      : SUSE Customer Center (SCC) registration code —
+#                           NOT an "account"/"subscription ID": this is the
+#                           per-subscription code shown on scc.suse.com next
+#                           to each of your subscriptions, and IS what
+#                           identifies which subscription to activate against
+#                           (SUSEConnect has no separate concept of a
+#                           subscription id). Registers both the base OS
+#                           product (`SUSEConnect -r <code>`) and the SMLM
+#                           extension module (`SUSEConnect -p <product> -r
+#                           <code>`) — confirmed via documentation.suse.com/
+#                           multi-linux-manager/5.2's own server-deployment
+#                           guide.
+#
+# OPTIONAL but STRONGLY RECOMMENDED when smlm_deployment is "podman" —
+# MANDATORY in practice if smlm_channels or smlm_activation_keys are also set
+#   smlm_scc_user         : SAME field/meaning as the kubernetes-mode field
+#                           above, reused here for TWO separate reasons:
+#                           (1) `mgradm install podman` pulls SMLM's entitled
+#                           container images from registry.suse.com, which
+#                           needs its own `podman login` — separate from,
+#                           and IN ADDITION TO, the SUSEConnect host
+#                           registration above. Confirmed via the same
+#                           official doc's own "if the install fails, log in
+#                           to the registry" section — this one alone is
+#                           merely recommended, since the docs frame it as a
+#                           fallback. (2) mgr-sync has no visibility into
+#                           which channels/products are entitled until these
+#                           SAME credentials are registered as its own
+#                           "organization credentials" via `mgr-sync add
+#                           credentials` — confirmed real command (Uyuni's
+#                           own cli-sync reference), REQUIRED whenever
+#                           smlm_channels or smlm_activation_keys are set, or
+#                           the channel sync will simply never find anything
+#                           (setup_smlm_podman() dies with a clear message if
+#                           channels/activation keys are requested without
+#                           these two fields). If omitted (and no channels
+#                           requested), setup_smlm_podman() skips the
+#                           registry login and relies on SUSEConnect's own
+#                           registration alone for the image pull.
+#   smlm_scc_password     : SAME field/meaning as the kubernetes-mode field above.
 #   smlm_scc_product      : Exact SCC extension-product identifier for the
 #                           "SUSE Multi-Linux Manager" module —
-#                           `SUSEConnect -p <that>`. This project could not
-#                           verify the real identifier string from public
-#                           docs alone (SCC product identifiers are
-#                           account/catalogue specific); find yours with
-#                           `SUSEConnect --list-extensions` right after the
-#                           base `-r` registration succeeds.
+#                           `SUSEConnect -p <that> -r <smlm_scc_regcode>`.
+#                           Default (used if unset): "Multi-Linux-Manager-
+#                           Server-SLE/5.2/x86_64" — confirmed via
+#                           documentation.suse.com/multi-linux-manager/5.2's
+#                           own server-deployment guide (quoted directly, not
+#                           guessed), but that guide was published as "5.2
+#                           RC" — override this field if your real server
+#                           rejects the default once SUSE Multi-Linux
+#                           Manager 5.2 reaches GA and the identifier shifts.
 #
 # OPTIONAL – passwords/credentials
 #   smlm_db_admin_user    : DB admin username          (default: mlmadmin)
@@ -344,10 +386,23 @@ def _validate(v):
     cfg = v.definition.get("smlm", {}) or {}
     if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
         # Traditional mgradm/podman deployment (see setup_smlm_podman()) — no
-        # Kubernetes cluster/fqdn-for-ingress/SCC-registry-pull-secret fields
-        # apply here at all; a real SCC product REGISTRATION is needed instead.
+        # Kubernetes cluster/fqdn-for-ingress fields apply here at all.
+        # smlm_scc_product has a real, confirmed default (see the JSON
+        # section comment above) so it's not required here; smlm_scc_regcode
+        # has no possible default (per-customer) and always is.
+        # smlm_scc_user/smlm_scc_password are recommended (needed for
+        # `podman login registry.suse.com`) but not unconditionally
+        # required — setup_smlm_podman() degrades to relying on SUSEConnect
+        # alone if they're absent, per the official docs' own framing of the
+        # registry login as a fallback, not a strict prerequisite. They
+        # BECOME required the moment smlm_channels/smlm_activation_keys are
+        # also set, since mgr-sync has no other way to learn which channels
+        # are entitled (see setup_smlm_podman()'s own die() for the runtime
+        # version of this same check).
         v.vreq("smlm", "smlm_scc_regcode")
-        v.vreq("smlm", "smlm_scc_product")
+        if cfg.get("smlm_channels") or cfg.get("smlm_activation_keys"):
+            v.vreq("smlm", "smlm_scc_user")
+            v.vreq("smlm", "smlm_scc_password")
     else:
         v.vreq("smlm", "smlm_fqdn")
         v.vreq("smlm", "smlm_scc_user")
@@ -384,59 +439,96 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     install_uyuni.py adds Uyuni's own free community OBS repo — no
     entitlement needed, by design (open source). A real SMLM install instead
     needs the host registered against SCC with the actual SUSE Multi-Linux
-    Manager module, so mgradm/mgrctl — and whatever entitled images mgradm
-    itself pulls later from registry.suse.com — are the real, licensed
-    product, not the community build:
+    Manager module, so mgradm/mgrctl — and the entitled images mgradm itself
+    pulls later from registry.suse.com — are the real, licensed product, not
+    the community build. Confirmed against documentation.suse.com/
+    multi-linux-manager/5.2's own server-deployment guide (quoted directly,
+    2026-09-12 — this corrected an earlier version of this function that
+    only did the SUSEConnect step and neither installed podman on a plain
+    SLES base nor logged into the image registry, both of which the real
+    docs show as necessary):
       - smlm_scc_regcode : the SCC registration code for the base SLES/SL
-                            Micro product (`SUSEConnect -r <code> -e <email>`)
+                            Micro product (`SUSEConnect -r <code>`) — this
+                            is NOT a separate "subscription ID": the regcode
+                            itself is what identifies which subscription to
+                            activate against, there's no other identifier.
+                            ALSO passed to the module registration below
+                            (`-p <product> -r <code>`, confirmed from docs —
+                            an earlier version of this code omitted -r there).
       - smlm_scc_product : the exact SCC extension-product identifier for
-                            the "SUSE Multi-Linux Manager" module
-                            (`SUSEConnect -p <that>`) — this project could
-                            not find/verify the real string from public docs
-                            alone (SUSE product identifiers are typically
-                            account/SCC-catalogue specific); find yours with
-                            `SUSEConnect --list-extensions` right after the
-                            base `-r` registration succeeds — same confirmed-
-                            live workflow libs/kvm_host_profiles.py's own
-                            SUSEConnect wrapper already documents.
+                            the "SUSE Multi-Linux Manager" module. Defaults
+                            to "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
+                            (quoted directly from the official docs, not
+                            guessed) if unset — override if a future GA
+                            release renames it.
+      - smlm_scc_user/smlm_scc_password : SCC account credentials (NOT the
+                            regcode) for `podman login registry.suse.com` —
+                            the docs' own troubleshooting section shows this
+                            as needed when the image pull isn't already
+                            authorized through the SUSEConnect registration
+                            alone. Optional here (skipped with a warning if
+                            unset) since the docs frame it as a fallback,
+                            not always strictly required.
+      - On plain SLES 15 SP7 (not SL Micro), podman is NOT preinstalled and
+        needs its own free module (`SUSEConnect -p sle-module-containers/
+        15.7/x86_64`) plus `zypper in podman` + enabling the podman socket —
+        confirmed from the same docs. SL Micro ships podman by default, same
+        assumption install_uyuni.py's own (Micro-only) code already made.
 
     NOT live-tested (no real SCC registration code available in this
     project's dev/CI environment) — the mgradm/podman install portion itself
-    reuses install_uyuni.py's own live-tested mechanism verbatim; only the
-    SCC-registration prelude and the transactional-vs-plain-zypper package
-    install branch (SMLM 5.2 officially supports both SL Micro 6.2, which is
-    transactional, and plain SLES 15 SP7, which install_uyuni.py's own
-    hardcoded transactional-update-only assumption never had to handle) are
-    new and unverified against a real server.
+    reuses install_uyuni.py's own live-tested mechanism verbatim; everything
+    else in this function is new and unverified against a real server.
     """
     from install_uyuni import _run_install_with_pg_hba_guard, _ensure_server_container_active
 
     regcode = cfg.get("smlm_scc_regcode")
-    product = cfg.get("smlm_scc_product")
+    product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
     email = cfg.get("smlm_email") or "admin@lab.local"
 
     print("- Registering the host with SCC")
-    ssh_run(hostname, "SUSEConnect -r {} -e {}".format(shlex.quote(regcode), shlex.quote(email)), check=False)
-    r = ssh_run(hostname, "SUSEConnect -p {}".format(shlex.quote(product)), check=False)
+    ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
+    r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
+                check=False)
     if r.returncode != 0:
         die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
             "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
             "own docstring for how to find it)".format(product, hostname))
 
+    scc_user = cfg.get("smlm_scc_user")
+    scc_password = cfg.get("smlm_scc_password")
+    if scc_user and scc_password:
+        # Separate from the SUSEConnect registration above: mgradm pulls
+        # SMLM's entitled container images from registry.suse.com, which
+        # needs its own podman login, per the docs' own troubleshooting
+        # section (see this function's own docstring).
+        print("- Logging into registry.suse.com")
+        ssh_run(hostname, "echo {} | podman login -u {} --password-stdin registry.suse.com".format(
+            shlex.quote(scc_password), shlex.quote(scc_user)), check=False)
+    else:
+        print("- smlm_scc_user/smlm_scc_password not set — skipping podman login to "
+              "registry.suse.com; relying on SUSEConnect registration alone to authorize "
+              "the image pull (see setup_smlm_podman()'s own docstring)")
+
     print("- Installing mgradm tooling")
     pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
     is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
     if is_transactional:
-        # SL Micro base — package changes land in a new snapshot that only
-        # takes effect after a reboot, same as install_uyuni.py's own
-        # (Micro-only) assumption.
+        # SL Micro base — ships podman by default; package changes land in a
+        # new snapshot that only takes effect after a reboot, same as
+        # install_uyuni.py's own (Micro-only) assumption.
         ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
         reboot_vm(virt_srv, hostname)
         time.sleep(5)
         check_ssh_conn(hostname)
     else:
         # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
-        # a regular, non-transactional zypper install, no reboot needed.
+        # does NOT ship podman by default; needs the free containers module
+        # plus an explicit podman install/enable first (confirmed from the
+        # official docs — missed in an earlier version of this function).
+        ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
+        ssh_run(hostname, "zypper --non-interactive install -y podman")
+        ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
         ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
 
     print("- Installing SUSE Multi-Linux Manager server")
@@ -466,6 +558,34 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
 
     channels = cfg.get("smlm_channels") or ""
+    if channels or cfg.get("smlm_activation_keys"):
+        # Unlike the podman-registry login above (a fallback the docs frame
+        # as optional), this step IS required: mgr-sync has no visibility
+        # into which channels/products are entitled until the server's own
+        # SCC "organization credentials" (mirror credentials) are registered
+        # via `mgr-sync add credentials` — confirmed real command (Uyuni's
+        # own cli-sync reference: `add` covers "channels, organization
+        # credentials, or products"), but this project could NOT confirm the
+        # exact non-interactive argument/prompt shape from public docs after
+        # 3 separate attempts (SUSE Manager 5.0/5.1 and Uyuni's own
+        # references all describe the command's existence but never show a
+        # worked username/password example) — feeding user+password on
+        # separate stdin lines is this project's best-effort guess at the
+        # interactive prompt sequence, same as every other credential prompt
+        # in this file; if it fails, check `mgrctl exec -- mgr-sync add
+        # credentials --help` on the real server and fix this call.
+        if not (scc_user and scc_password):
+            die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
+                "are not — mgr-sync cannot see any entitled channels without the SCC organization "
+                "credentials registered on '{}' first (`mgr-sync add credentials`)".format(hostname))
+        print("- Registering SCC organization (mirror) credentials with mgr-sync")
+        # -i is required: confirmed live (libs/spacecmd_common.py's own
+        # _run() docstring, 2026-08-28) that `mgrctl exec` does NOT forward
+        # stdin unless given -i explicitly — omitting it here would silently
+        # send this input_text nowhere instead of erroring.
+        ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
+                input_text="{}\n{}\n".format(scc_user, scc_password), check=False)
+
     if channels:
         count = 0
         print("- Waiting for channel list to sync")
@@ -1096,10 +1216,6 @@ def main():
     if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
         if not cfg.get("smlm_scc_regcode"):
             print("ERROR: smlm_scc_regcode is required in the 'smlm' JSON section "
-                  "when smlm_deployment is 'podman'", file=sys.stderr)
-            sys.exit(1)
-        if not cfg.get("smlm_scc_product"):
-            print("ERROR: smlm_scc_product is required in the 'smlm' JSON section "
                   "when smlm_deployment is 'podman'", file=sys.stderr)
             sys.exit(1)
 
