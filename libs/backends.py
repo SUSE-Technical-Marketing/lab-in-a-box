@@ -3752,6 +3752,45 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     return ip
 
 
+def _resolve_account_name(definition, config, vm_name):
+    """
+    The cloud_account name that applies to `vm_name`: an explicit
+    "cloud_account" field (node, then common) if set, else — added
+    2026-09-12 — auto-discovered from whatever credentials files actually
+    exist, so an encrypted account for the same provider isn't silently
+    ignored just because the lab JSON never named it explicitly (the
+    encrypted-credentials feature's whole point). Auto-discovery only
+    engages when the node's own "backend" field (independent of any
+    account — see effective_backend_name()'s own fallback chain) already
+    names an actual CLOUD backend; a libvirt/harvester node never triggers
+    a credentials-directory scan.
+
+    Returns "" if no account applies (today's behaviour: read
+    lab_creation.cfg directly) — never None, so every caller can keep
+    treating "falsy" as "no account" as before.
+
+    Dies if auto-discovery finds more than one credentials file for that
+    provider — genuinely ambiguous, must be resolved with an explicit
+    "cloud_account" rather than guessed.
+    """
+    node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
+    common_cfg = definition.get("common", {}) or {}
+    account = node_cfg.get("cloud_account") or common_cfg.get("cloud_account") or ""
+    if account:
+        return account
+    backend_name = node_cfg.get("backend") or common_cfg.get("backend") or config.get("BACKEND") or "libvirt"
+    if backend_name not in CLOUD_BACKEND_NAMES:
+        return ""
+    found, matches = primary.find_cloud_account_for_cloudtype(backend_name, config=config)
+    if found:
+        return found
+    if len(matches) > 1:
+        die("VM '{}': backend '{}' has no explicit \"cloud_account\" set, and {} matching "
+            "credentials files were found ({}) — set \"cloud_account\" explicitly to pick "
+            "one".format(vm_name, backend_name, len(matches), ", ".join(matches)))
+    return ""
+
+
 def resolve_cloud_account(definition, config, vm_name):
     """
     Multiple cloud accounts, the same way KVM_HOSTS gives multiple hypervisors.
@@ -3762,17 +3801,16 @@ def resolve_cloud_account(definition, config, vm_name):
     a `cloudtype` (aws/gcp/…) plus that provider's usual connection keys
     (AWS_REGION, etc.) — see primary.load_cloud_account(). A node (or common)
     picks one with a "cloud_account": "<name>" field, exactly like
-    "kvm_host": "<host>".
+    "kvm_host": "<host>" — or one is auto-discovered (see
+    _resolve_account_name()) if none is named explicitly.
 
     Returns (account_name, effective_config, cloudtype):
-      - no cloud_account set anywhere -> ("", config, None): today's behaviour,
+      - no account applies -> ("", config, None): today's behaviour,
         keys read straight from lab_creation.cfg.
-      - set -> (name, config-with-the-account-file's-keys-layered-on-top, cloudtype).
-    Dies (via primary) if the named account file is missing or has no cloudtype.
+      - resolved -> (name, config-with-the-account-file's-keys-layered-on-top, cloudtype).
+    Dies (via primary) if the named/discovered account file is missing or has no cloudtype.
     """
-    node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
-    common_cfg = definition.get("common", {}) or {}
-    account = node_cfg.get("cloud_account") or common_cfg.get("cloud_account") or ""
+    account = _resolve_account_name(definition, config, vm_name)
     if not account:
         return "", config, None
     acct = primary.load_cloud_account(account, config=config)
@@ -3786,11 +3824,13 @@ def effective_backend_name(definition, config, vm_name):
     """The backend name that actually applies to `vm_name`, honouring a
     cloud_account's cloudtype (which wins, making the `backend` field optional)
     before falling back to nodes[x].backend / common.backend / config["BACKEND"]
-    / "libvirt". Used by setup_vm.py / destroy_vm.py for their CLOUD_BACKEND_NAMES
-    gate. Dies if a referenced cloud_account file is missing/invalid."""
+    / "libvirt" — the account may be named explicitly or auto-discovered (see
+    _resolve_account_name()). Used by setup_vm.py / destroy_vm.py for their
+    CLOUD_BACKEND_NAMES gate. Dies if a named/discovered cloud_account file is
+    missing/invalid."""
     node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
     common_cfg = definition.get("common", {}) or {}
-    account = node_cfg.get("cloud_account") or common_cfg.get("cloud_account") or ""
+    account = _resolve_account_name(definition, config, vm_name)
     if account:
         return primary.load_cloud_account(account, config=config).get("CLOUDTYPE", "")
     return node_cfg.get("backend") or common_cfg.get("backend") or config.get("BACKEND") or "libvirt"

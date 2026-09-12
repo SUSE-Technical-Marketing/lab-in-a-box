@@ -241,6 +241,81 @@ def cloud_account_path(name, config=None):
     return None
 
 
+def list_cloud_accounts(config=None):
+    """
+    Every parseable credentials file across credentials_dirs(config), as
+    (name, cloudtype) pairs. `cloudtype` is ALWAYS a plaintext top-level
+    field even in an otherwise fully-encrypted file (see
+    try_load_cloud_account()'s own docstring on the two encrypted shapes) —
+    so this never decrypts anything and never prompts for a passphrase.
+
+    Added 2026-09-12 to support automatic account discovery (see
+    find_cloud_account_for_cloudtype() below) — before this, a cloud
+    backend with no explicit "cloud_account" set silently fell back to
+    plaintext lab_creation.cfg keys even when an encrypted credentials file
+    for that same provider existed, which is what the encrypted-store
+    feature was actually meant to replace.
+
+    A file that fails to parse, isn't a mapping, or has no cloudtype field
+    is skipped silently — inventorying what's usable, not validating every
+    file in the directory; load_cloud_account() still gives the real error
+    if a specific broken one is ever actually selected.
+    """
+    accounts = []
+    seen = set()
+    for d in credentials_dirs(config):
+        dirp = Path(d)
+        if not dirp.is_dir():
+            continue
+        for ext in _CLOUD_ACCOUNT_EXTS:
+            for p in sorted(dirp.glob("*" + ext)):
+                name = p.name[:-len(ext)]
+                if name in seen:
+                    continue
+                try:
+                    text = p.read_text()
+                    if ext == ".json":
+                        data = json.loads(text)
+                    elif ext in (".yaml", ".yml"):
+                        import yaml
+                        data = yaml.safe_load(text)
+                    else:
+                        data = _parse_shell_vars(text)
+                except Exception:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                cloudtype = ""
+                for k in data:
+                    if k.lower() in ("cloudtype", "cloud_type"):
+                        cloudtype = str(data[k] or "").strip()
+                        break
+                if cloudtype:
+                    accounts.append((name, cloudtype))
+                    seen.add(name)
+    return accounts
+
+
+def find_cloud_account_for_cloudtype(cloudtype, config=None):
+    """
+    Auto-discovery for backends.resolve_cloud_account()/effective_backend_name():
+    when a cloud-backend node has no explicit "cloud_account" set, look for
+    a credentials file matching `cloudtype` (e.g. "aws") instead of silently
+    using plaintext lab_creation.cfg keys.
+
+    Returns (name_or_None, all_matching_names):
+      - exactly one match  -> (that name, [that name]): use it automatically.
+      - no matches         -> (None, []): caller falls back to today's
+        lab_creation.cfg behaviour — nothing changes for setups that never
+        adopted the encrypted store.
+      - more than one match -> (None, [name, ...]): genuinely ambiguous —
+        the caller should die() with a clear message rather than guess
+        which one was intended.
+    """
+    matches = sorted(name for name, ct in list_cloud_accounts(config) if ct == cloudtype)
+    return (matches[0] if len(matches) == 1 else None), matches
+
+
 def _decrypt_value(envelope, cache_key, label, passphrase_prompt, max_attempts=3):
     """
     Decrypt one crypto_store envelope dict, trying a cached passphrase for
