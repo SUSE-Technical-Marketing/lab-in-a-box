@@ -104,6 +104,22 @@ check("phase_vm_addons: runs on the owning node", all(env["_vm_name"] == "vm1" f
 check("phase_vm_addons: a node with no addons is skipped entirely",
       not any("vm2" == env.get("_vm_name") for _, env in run_calls))
 
+# A node whose OWN VM creation failed must never have its addons attempted
+# either — found live 2026-09-12: every addon on such a node was SSH-ing
+# into a host that was never created, each addon's own die() message then
+# misleadingly blaming something addon-specific instead of the real, single
+# cause (already reported once from phase_create_vms).
+run_calls.clear()
+setup_lab._report = setup_lab._RunReport()
+setup_lab._report.add_node("vm1", "FAILED")
+definition3b = {"nodes": {"vm1": {"addons": ["mariadb"]}, "vm2": {"addons": ["openldap"]}}}
+setup_lab.phase_vm_addons(definition3b, "lab.json")
+check("phase_vm_addons: a node whose own VM creation FAILED never has its addons attempted",
+      not any(env.get("_vm_name") == "vm1" for _, env in run_calls))
+check("phase_vm_addons: a DIFFERENT node (not FAILED) still gets its addons installed normally",
+      any(env.get("_vm_name") == "vm2" for _, env in run_calls))
+setup_lab._report = setup_lab._RunReport()
+
 
 # ── apps.collect_addon_names: every addon referenced anywhere in the lab ───
 addon_def = {

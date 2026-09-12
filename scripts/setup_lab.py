@@ -531,9 +531,24 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
 
 
 def phase_vm_addons(definition, json_file):
+    # A node whose OWN VM creation failed (phase_create_vms recorded it
+    # "FAILED" in _report) can never have its addons installed either — the
+    # host simply doesn't exist. Found live 2026-09-12: without this check,
+    # every addon on such a node still ran, each SSH-ing into a hostname
+    # with no DNS entry / nothing listening, and each addon script's own
+    # die() message ended up blaming something addon-specific (a wrong SCC
+    # product ID, "could not write spacecmd credentials", …) when the real,
+    # single root cause was simply "this node was never created" — already
+    # reported once in the Errors list from phase_create_vms. Skipping here
+    # avoids the noise and the misleading per-addon diagnostics entirely.
+    failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         addons = node_cfg.get("addons", [])
         if not addons:
+            continue
+        if vm_name in failed_nodes:
+            lc.log("Skipping \"{}{}{}\" addons — its own VM creation failed (see the Errors above)".format(
+                lc._RED, vm_name, lc._RESET))
             continue
         lc.log("Installing VM \"{}{}{}\" addons".format(lc._RED, vm_name, lc._RESET))
         lc._level += 1
