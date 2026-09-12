@@ -4,9 +4,10 @@
 # install path distinct from the addon's original Kubernetes/Helm-chart
 # deployment, per documentation.suse.com/multi-linux-manager/5.2's own
 # installation-and-upgrade guide. install_uyuni.py itself is NOT modified
-# (per explicit user instruction: it stays scoped to the open-source Uyuni
-# project only) — setup_smlm_podman() imports and reuses its
-# _run_install_with_pg_hba_guard/_ensure_server_container_active helpers,
+# beyond importing its two shared helpers from libs/mgradm_common.py instead
+# of defining them (per explicit user instruction: it stays scoped to the
+# open-source Uyuni project only) — setup_smlm_podman() imports and reuses
+# mgradm_common's run_install_with_pg_hba_guard/ensure_server_container_active,
 # which are mocked here rather than exercised for real. Run from
 # 49_smlm_baremetal.sh, in its own container — see tests/run_tests.sh.
 import sys
@@ -19,7 +20,7 @@ sys.path.insert(0, str(_REPO / "scripts"))
 
 import addon_common as ac  # noqa: E402
 import install_smlm as ism  # noqa: E402
-import install_uyuni  # noqa: E402
+import mgradm_common  # noqa: E402
 
 failures = []
 original_die = ism.die
@@ -106,8 +107,8 @@ def run_setup_smlm_podman(cfg, transactional):
 
     guard_calls = []
     active_calls = []
-    install_uyuni._run_install_with_pg_hba_guard = lambda hostname, cmd: guard_calls.append((hostname, cmd))
-    install_uyuni._ensure_server_container_active = lambda hostname: active_calls.append(hostname)
+    mgradm_common.run_install_with_pg_hba_guard = lambda hostname, cmd: guard_calls.append((hostname, cmd))
+    mgradm_common.ensure_server_container_active = lambda hostname: active_calls.append(hostname)
 
     sc_calls = []
     for name in ("ensure_spacecmd_config", "ensure_channels_synced", "ensure_config_channels",
@@ -144,13 +145,13 @@ check("setup_smlm_podman: transactional host uses transactional-update pkg insta
       any(c.startswith("transactional-update --quiet pkg install") and "mgradm" in c for c in calls))
 check("setup_smlm_podman: transactional host reboots to apply the new snapshot",
       any(c == "REBOOT:sol.mydemo.lab" for c in calls))
-check("setup_smlm_podman: the mgradm install runs through install_uyuni's pg_hba-guard helper",
+check("setup_smlm_podman: the mgradm install runs through mgradm_common's pg_hba-guard helper",
       len(guard_calls) == 1 and guard_calls[0][0] == "sol.mydemo.lab")
 check("setup_smlm_podman: install command uses the flag-only mgradm form (no FQDN positional)",
       "mgradm install podman" in guard_calls[0][1]
       and "--admin-login admin" in guard_calls[0][1]
       and "--organization lab" in guard_calls[0][1])
-check("setup_smlm_podman: waits for the server container via install_uyuni's own helper",
+check("setup_smlm_podman: waits for the server container via mgradm_common's own helper",
       active_calls == ["sol.mydemo.lab"])
 check("setup_smlm_podman: with no activation keys configured, spacecmd config is never touched",
       sc_calls == [])

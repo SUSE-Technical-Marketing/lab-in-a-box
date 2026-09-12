@@ -427,11 +427,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     """
     Install SUSE Multi-Linux Manager the traditional way: mgradm/podman
     directly on a dedicated host/VM, no Kubernetes at all. Reuses
-    install_uyuni.py's own proven mgradm-install/container-health-wait
-    helpers (_run_install_with_pg_hba_guard/_ensure_server_container_active —
-    imported from that script rather than duplicated, since that logic
-    works around a real, subtly-timed upstream mgradm/podman/postgres-image
-    race condition confirmed live 2026-08-28) — the underlying tool and
+    libs/mgradm_common.py's proven mgradm-install/container-health-wait
+    helpers (run_install_with_pg_hba_guard/ensure_server_container_active —
+    shared with install_uyuni.py, not duplicated, since that logic works
+    around a real, subtly-timed upstream mgradm/podman/postgres-image race
+    condition confirmed live 2026-08-28; moved to libs/ 2026-09-12 after a
+    real deployed-environment failure — `from install_uyuni import ...`
+    raised ModuleNotFoundError once install_uyuni.py was actually deployed
+    without its .py suffix, confirmed live running setup_lab.py for real —
+    see mgradm_common.py's own docstring) — the underlying tool and
     container mechanics are identical between Uyuni and SMLM; what genuinely
     differs is where mgradm/mgrctl and the server's own container images
     come from.
@@ -480,7 +484,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     reuses install_uyuni.py's own live-tested mechanism verbatim; everything
     else in this function is new and unverified against a real server.
     """
-    from install_uyuni import _run_install_with_pg_hba_guard, _ensure_server_container_active
+    from mgradm_common import run_install_with_pg_hba_guard, ensure_server_container_active
 
     regcode = cfg.get("smlm_scc_regcode")
     product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
@@ -547,13 +551,13 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         "--organization {}".format(
             admin, password, email,
             cfg.get("smlm_ssl_password") or password, cfg.get("smlm_org") or "lab"))
-    _run_install_with_pg_hba_guard(hostname, install_cmd)
+    run_install_with_pg_hba_guard(hostname, install_cmd)
 
     time.sleep(60)
     ssh_run(hostname, "reboot", check=False)
     time.sleep(5)
     check_ssh_conn(hostname)
-    _ensure_server_container_active(hostname)
+    ensure_server_container_active(hostname)
 
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
 

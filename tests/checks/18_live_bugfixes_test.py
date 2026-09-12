@@ -25,6 +25,7 @@ sys.path.insert(0, str(_REPO / "libs"))
 import services  # noqa: E402
 import backends  # noqa: E402
 import lab_creation as lc  # noqa: E402
+import mgradm_common  # noqa: E402
 
 sys.path.insert(0, str(_REPO / "scripts"))
 import install_uyuni  # noqa: E402
@@ -693,12 +694,19 @@ check("push_provisioning_files (cloud-init): the cp step's variable expansions a
 # running install in the background and patching pg_hba the moment uyuni-db
 # is ready, before uyuni-server's first connection attempt — so the ONE
 # install command completes end-to-end.)
-install_uyuni.time.sleep = lambda *a, **kw: None
+# _run_install_with_pg_hba_guard/_ensure_server_container_active now live in
+# libs/mgradm_common.py (moved 2026-09-12 — see that module's own docstring:
+# `from install_uyuni import ...` broke once install_uyuni.py was deployed
+# without its .py suffix). install_uyuni._run_install_with_pg_hba_guard is
+# still the SAME function object (aliased back on import), so calling it
+# through install_uyuni is unchanged — but its actual ssh_run/time/die come
+# from mgradm_common's own module globals now, so that's what needs patching.
+mgradm_common.time.sleep = lambda *a, **kw: None
 
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=0)),
                           ("cat ", FakeResult(returncode=0, stdout="0\n"))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman --admin-login admin")
 launch_calls = [c for h, c, kw in fake.calls if "nohup" in c]
 check("_run_install_with_pg_hba_guard: launches mgradm install in the background",
@@ -714,7 +722,7 @@ check("_run_install_with_pg_hba_guard: pg_hba patch happens after uyuni-db is co
 # Timeout: the rc-file marker never appears -> die(), not a silent return.
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=1))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 try:
     install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=1, poll_interval=1)
     died = False
@@ -726,7 +734,7 @@ check("_run_install_with_pg_hba_guard: dies if the install never finishes within
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=0)),
                           ("cat ", FakeResult(returncode=0, stdout="1\n"))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 try:
     install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=5, poll_interval=1)
     died = False
