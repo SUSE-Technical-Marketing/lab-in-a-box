@@ -18,6 +18,7 @@
 # library rather than defining them itself.
 # Author/s: Raul Mahiques
 # License: GPLv3
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -122,6 +123,40 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=900, poll_inter
             "check {} there directly".format(hostname, rc, log_path))
 
 
+def _relax_health_kill_policy(hostname):
+    """
+    mgradm bakes `--health-on-failure=stop` into uyuni-server's systemd unit
+    (confirmed live 2026-09-13, real AWS install, SMLM 5.2.0/podman 4.9.5) —
+    podman's OWN default for --health-on-failure is "none"; mgradm opts into
+    "stop" deliberately. Combined with the image's zero --health-start-period,
+    a container that's still legitimately warming up (Tomcat deploys fine
+    every cycle — confirmed via `systemctl status tomcat` inside the
+    container — it just isn't answering HTTP yet) can rack up 3 consecutive
+    failed health checks and get killed before it ever reaches "healthy".
+    systemd's Restart=on-success (RestartUSec=100ms) then brings it straight
+    back into the same warm-up window — an infinite loop, not the occasional
+    one-off flake ensure_server_container_active was originally written to
+    recover from via a plain restart (systemctl is-active barely ever
+    reports non-"active" because the restart is near-instant, so that retry
+    path never actually fires).
+
+    Fix: mgradm's own custom.conf ships an empty PODMAN_EXTRA_ARGS
+    Environment= line specifically as an upgrade-safe override point — it's
+    spliced into the `podman run` line right before the image name, so a
+    later --health-on-failure/--health-retries/--health-start-period here
+    overrides mgradm's own earlier ones on the same command line. Verified
+    live: a container left alone with no health-triggered kill reaches
+    genuine "healthy" reliably ~2-3 minutes after start. custom.conf is a
+    static file — survives both `mgradm upgrade` (which only rewrites
+    generated.conf) and a plain reboot.
+    """
+    conf = "/etc/systemd/system/uyuni-server.service.d/custom.conf"
+    override = ('[Service]\nEnvironment="PODMAN_EXTRA_ARGS=--health-on-failure=none '
+                '--health-retries=10 --health-start-period=180s"\n')
+    ssh_run(hostname, "cat > {} <<'EOF'\n{}EOF".format(shlex.quote(conf), override), check=False)
+    ssh_run(hostname, "systemctl daemon-reload", check=False)
+
+
 def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_restarts=3):
     """
     Confirm the server container actually reaches podman's own "healthy"
@@ -156,6 +191,7 @@ def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_
     service/container names, identical for a Uyuni or an SMLM install —
     not Uyuni-specific despite the name.
     """
+    _relax_health_kill_policy(hostname)
     restarts = 0
     elapsed = 0
     while elapsed < timeout:
