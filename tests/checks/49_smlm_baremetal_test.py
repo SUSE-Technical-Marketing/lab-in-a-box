@@ -219,6 +219,21 @@ check("setup_smlm_podman: mgr-sync credentials command is fed the LOCAL admin lo
       inputs_keys.get("mgrctl exec -i -- mgr-sync add credentials")
       == "admin\nSmlm12345\nsccuser\nsccpass\nsccpass\n")
 
+# Real bug found live 2026-09-14: every real lab definition's smlm_channels
+# is a JSON array (matching solar-system-lab.json), but this code's own "or
+# ''" default and a plain .format(channels) both assumed a pre-joined
+# string — .format() on a Python list just stringifies its own repr
+# ("['a', 'b']"), producing ONE malformed shell argument. Never caught by
+# the older cfg fixture above (line ~67), which happened to use a plain
+# string for smlm_channels and so never exercised the list case at all.
+cfg_with_channel_list = dict(cfg, smlm_channels=["chan-a", "chan-b"])
+calls_chanlist, _, _, _, _ = run_setup_smlm_podman(cfg_with_channel_list, transactional=True)
+check("setup_smlm_podman: a real (list-shaped) smlm_channels is space-joined into the mgr-sync "
+      "add channels command, not stringified as a Python list repr",
+      any(c == "mgrctl exec -- mgr-sync add channels chan-a chan-b" for c in calls_chanlist))
+check("setup_smlm_podman: the malformed Python-list-repr form never appears",
+      not any("['chan-a', 'chan-b']" in c for c in calls_chanlist))
+
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []
 ism.die = lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)

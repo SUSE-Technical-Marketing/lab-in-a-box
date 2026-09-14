@@ -579,7 +579,19 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
 
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
 
-    channels = cfg.get("smlm_channels") or ""
+    # smlm_channels is a JSON array in every real lab definition (see the
+    # JSON section's own docs), but this variable's "or ''" default and the
+    # later plain .format(channels) both assumed a pre-joined string — a
+    # real, confirmed-live 2026-09-14 bug: .format() on a Python list just
+    # stringifies its repr ("['a', 'b']"), producing ONE malformed shell
+    # argument instead of space-separated channel labels, so `mgr-sync add
+    # channels` was never actually invoked correctly in any run before now.
+    # Accept either shape (a list, the real-world case, or a pre-joined
+    # string, kept for backward compatibility) and always build the actual
+    # command from a normalized list.
+    channels = cfg.get("smlm_channels") or []
+    if isinstance(channels, str):
+        channels = channels.split()
     if channels or cfg.get("smlm_activation_keys"):
         # Unlike the podman-registry login above (a fallback the docs frame
         # as optional), this step IS required: mgr-sync has no visibility
@@ -632,7 +644,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             if any("no channels found." not in line.lower() for line in out.splitlines()):
                 break
         time.sleep(300)
-        ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channels))
+        channel_args = " ".join(shlex.quote(c) for c in channels)
+        ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
 
     sync_channels = (cfg.get("smlm_sync_channels") or "").split()
     config_channels = cfg.get("smlm_config_channels") or []

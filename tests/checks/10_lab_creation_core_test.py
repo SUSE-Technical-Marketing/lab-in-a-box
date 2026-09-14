@@ -871,6 +871,21 @@ def _render_network_config(variables):
         lc.prepare_cloud_init("vm1.mydemo.lab", tmp, variables)
         return (ci_dir / "vm1.mydemo.lab_network-config").read_text()
 
+
+def _render_user_data(variables):
+    pubkey_path = Path("/root/.ssh/id_rsa.pub")
+    pubkey_path.parent.mkdir(parents=True, exist_ok=True)
+    if not pubkey_path.exists():
+        pubkey_path.write_text("ssh-rsa AAAAtest test@test\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        ci_dir = Path(tmp) / "cloud-init"
+        ci_dir.mkdir()
+        for kind in ("user-data", "network-config", "network-config-dhcp", "network-config-dhcp-nomac", "meta-data"):
+            src = _REPO / "templates" / "cloud-init.template_{}".format(kind)
+            (ci_dir / "template_{}".format(kind)).write_text(src.read_text())
+        lc.prepare_cloud_init("vm1.mydemo.lab", tmp, variables)
+        return (ci_dir / "vm1.mydemo.lab_user-data").read_text()
+
 _base_vars = {
     "_vm_name": "vm1.mydemo.lab", "mymac": "52:54:00:aa:bb:cc", "myip": "192.168.1.50",
     "mymask": "24", "mygw": "192.168.1.1", "mydns": "192.168.1.1", "mydomain": "mydemo.lab",
@@ -881,6 +896,79 @@ rendered = _render_network_config(dict(_base_vars))
 check("prepare_cloud_init defaults network_renderer to NetworkManager when the lab JSON omits it "
       "(SLE Micro/SLES/Leap's own default — unchanged behavior for every existing lab)",
       "renderer: NetworkManager" in rendered)
+
+# Real bug found live 2026-09-13: a real SLES 15 SP7 BYOS AMI on AWS booted
+# cleanly (cloud-init succeeded, sshd started, keys injected correctly —
+# confirmed via the instance's own console output) but was still completely
+# unreachable via SSH from outside — security group and network ACL both
+# confirmed correct via real AWS calls. Root-caused to SLES's own firewalld,
+# enabled by default on this AMI and silently dropping inbound traffic.
+# template_user-data's non-Ubuntu branch now disables it unconditionally
+# (harmless no-op on any image without firewalld, e.g. Debian/Amazon Linux).
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+check("prepare_cloud_init: a non-Ubuntu image's user-data disables firewalld via runcmd "
+      "(real bug: a SLES BYOS AMI's default-enabled firewalld silently blocked inbound SSH "
+      "even though the security group and NACL were both correctly configured)",
+      "systemctl disable --now firewalld" in rendered)
+
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+check("prepare_cloud_init: an Ubuntu image's user-data does NOT get the firewalld runcmd "
+      "(it has its own netplan runcmd instead, from the existing ubuntu branch)",
+      "firewalld" not in rendered and "netplan apply" in rendered)
+
+# Second real bug found live 2026-09-13, same troubleshooting session: once
+# firewalld/security-group/routing were all fixed and the instance became
+# reachable, `mgradm install` itself still failed — "failed to compute
+# server FQDN: hostname: Name or service not known". Confirmed directly on
+# the real instance: `hostname -f` failed because /etc/hosts had no
+# self-referential entry for its own FQDN, and AWS's own VPC DNS resolver
+# has no knowledge of this lab's custom on-prem "mydemo.lab" zone. Fixed by
+# adding a guarded /etc/hosts append to BOTH branches' runcmd (idempotent,
+# same grep -qF-before-append convention already used elsewhere in this
+# project, e.g. add_to_dns()).
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+check("prepare_cloud_init: a non-Ubuntu image's user-data adds a self-referential /etc/hosts "
+      "entry for its own FQDN (real bug: mgradm's own hostname -f failed without one, since "
+      "AWS's VPC DNS resolver knows nothing about this lab's custom on-prem zone)",
+      'grep -qF "vm1.mydemo.lab" /etc/hosts || echo "127.0.0.1 vm1.mydemo.lab vm1" >> /etc/hosts'
+      in rendered)
+
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+check("prepare_cloud_init: an Ubuntu image's user-data gets the same self-referential "
+      "/etc/hosts entry too, alongside its own netplan runcmd",
+      'grep -qF "vm1.mydemo.lab" /etc/hosts || echo "127.0.0.1 vm1.mydemo.lab vm1" >> /etc/hosts'
+      in rendered and "netplan apply" in rendered)
+
+# Third real bug found live 2026-09-14, same lab: a KVM SLES15 SP7 "Cloud"
+# image's own bundled cloud-init (an old python3.6-era build) crashes with
+# "TypeError: string indices must be integers" inside its own opensuse.py
+# distro module's route-writing code, and — reproduced directly via `cloud-
+# init devel net-convert`, WITHOUT that crash even — silently drops the
+# gateway route from /etc/sysconfig/network/routes regardless. The guest
+# ends up with an IP but no default route at all, so it (and anything
+# depending on it, like registering against a cloud-hosted SMLM server)
+# can't reach anything outside its own subnet. Not something this
+# project's own template's YAML shape can work around (confirmed the route
+# data IS present internally, correctly, right up to the point cloud-init
+# fails to actually write it) — fixed defensively in the non-Ubuntu
+# runcmd, independent of cloud-init's own (buggy) network-config renderer:
+# write wicked's routes file directly, and also apply the route immediately
+# at runtime, both idempotent/non-fatal, same style as the firewalld fix.
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+check("prepare_cloud_init: a non-Ubuntu image's user-data writes a default route into wicked's "
+      "own routes file directly (real bug: this SLES image's bundled cloud-init silently drops "
+      "the gateway route from its own network-config, even when the route data is otherwise "
+      "correct — confirmed via `cloud-init devel net-convert` and a live TypeError crash)",
+      'grep -qF "default 192.168.1.1" /etc/sysconfig/network/routes 2>/dev/null || '
+      "printf 'default %s - -\\n' \"192.168.1.1\" >> /etc/sysconfig/network/routes" in rendered)
+check("prepare_cloud_init: the same fix also applies the route immediately at runtime, not just "
+      "persists it for the next boot",
+      "ip route show default | grep -q . || ip route add default via 192.168.1.1 || true" in rendered)
+
+rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+check("prepare_cloud_init: an Ubuntu image's user-data does NOT get the wicked-routes-file "
+      "workaround (Ubuntu's own netplan runcmd already applies routes correctly)",
+      "/etc/sysconfig/network/routes" not in rendered)
 
 rendered = _render_network_config(dict(_base_vars, network_renderer="networkd"))
 check("prepare_cloud_init honors an explicit network_renderer override (e.g. for an Ubuntu guest, "
