@@ -211,11 +211,13 @@ check("setup_smlm_podman: activation keys present -> registers SCC organization 
       "mgr-sync, forwarding stdin via mgrctl's -i flag",
       any(c == "mgrctl exec -i -- mgr-sync add credentials" for c in calls_keys))
 check("setup_smlm_podman: mgr-sync credentials command is fed the LOCAL admin login/password "
-      "first, then the SCC user/password — confirmed live 2026-09-14 that `mgr-sync add "
-      "credentials` actually prompts for both, in that order, under two identically-worded "
-      "banners; feeding only the SCC pair (the old behavior) left the second Login prompt "
-      "waiting forever and the call died with an unnoticed EOF",
-      inputs_keys.get("mgrctl exec -i -- mgr-sync add credentials") == "admin\nSmlm12345\nsccuser\nsccpass\n")
+      "first, then the SCC user/password/password-confirmation — confirmed live 2026-09-14 "
+      "that `mgr-sync add credentials` actually prompts for all five, in that order (a local "
+      "admin Login/Password pair, then SCC \"User to add:\"/\"Password to add:\"/\"Confirm "
+      "password:\"); feeding only 2 or 4 lines (both earlier guesses) left a later prompt "
+      "waiting forever and the call died silently",
+      inputs_keys.get("mgrctl exec -i -- mgr-sync add credentials")
+      == "admin\nSmlm12345\nsccuser\nsccpass\nsccpass\n")
 
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []

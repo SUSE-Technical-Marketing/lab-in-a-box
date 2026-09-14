@@ -590,17 +590,23 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # credentials, or products").
         #
         # Confirmed live 2026-09-14 (real SMLM 5.2 server) the actual
-        # non-interactive prompt shape, which this project's earlier guess
-        # (SCC user/password only) got wrong: `mgr-sync add credentials`
-        # asks for TWO Login/Password pairs in sequence, both printed under
-        # the identical (misleadingly reused) "Please enter the credentials
-        # of SUSE Multi-Linux Manager Administrator" banner — round 1 is the
-        # server's own local admin login (smlm_admin/smlm_password, the
-        # account `mgradm install` just created), round 2 is the actual SCC
-        # mirror credentials. Feeding only one pair, as before, left the
-        # second round's Login prompt waiting forever and the whole call
-        # died with "General error: EOF when reading a line" — a silent,
-        # unnoticed no-op under this function's own check=False.
+        # non-interactive prompt shape, which this project's earlier guesses
+        # (SCC user/password only, then a 4-line admin+SCC-pair guess) both
+        # got wrong: `mgr-sync add credentials` asks for FIVE lines total —
+        # first a Login/Password pair for the server's own local admin
+        # account (smlm_admin/smlm_password, the account `mgradm install`
+        # just created; this round is printed under a "Please enter the
+        # credentials of SUSE Multi-Linux Manager Administrator" banner),
+        # THEN three more prompts for the real SCC mirror credentials:
+        # "User to add:", "Password to add:", and "Confirm password:" (the
+        # SCC password a second time). Feeding fewer lines left a later
+        # prompt waiting forever and the whole call died silently — a
+        # local-admin-only 2-line feed died with "General error: EOF when
+        # reading a line" at the SCC "User to add:" prompt; a 4-line feed
+        # (missing the confirmation) died with a bare "General error:" at
+        # "Confirm password:" — both silent, unnoticed no-ops under this
+        # function's own check=False. Verified live: this exact 5-line
+        # sequence gets "Successfully added credentials."
         if not (scc_user and scc_password):
             die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
                 "are not — mgr-sync cannot see any entitled channels without the SCC organization "
@@ -611,7 +617,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # stdin unless given -i explicitly — omitting it here would silently
         # send this input_text nowhere instead of erroring.
         ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
-                input_text="{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password), check=False)
+                input_text="{}\n{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password, scc_password),
+                check=False)
 
     if channels:
         count = 0
