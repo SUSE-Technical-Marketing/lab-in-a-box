@@ -646,6 +646,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         time.sleep(300)
         channel_args = " ".join(shlex.quote(c) for c in channels)
         ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
+        ensure_channel_sync_monitor(hostname, admin, password)
 
     sync_channels = (cfg.get("smlm_sync_channels") or "").split()
     config_channels = cfg.get("smlm_config_channels") or []
@@ -677,6 +678,139 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
+
+
+_CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
+# Installed by lab-in-a-box's install_smlm.py (ensure_channel_sync_monitor) —
+# checks every software channel present on this SMLM server for a clean,
+# completed reposync, and re-triggers any that never synced, errored, or
+# were left interrupted by something like a mid-flight server restart. Runs
+# periodically via smlm-channel-sync-monitor.timer (see the matching
+# .service unit next to this file).
+set -uo pipefail
+
+LOG_DIR=/var/log/rhn/reposync
+LOGFILE=/var/log/smlm-channel-sync-monitor.log
+ADMIN=__ADMIN__
+PASSWORD=__PASSWORD__
+
+log() {
+    echo "$(date -Is) $*" >> "$LOGFILE"
+}
+
+spacecmd_() {
+    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>/dev/null
+}
+
+trigger_resync() {
+    local channel="$1" reason="$2"
+    log "channel '$channel': $reason -- triggering resync"
+    spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
+}
+
+CHANNELS=$(spacecmd_ softwarechannel_list)
+if [ -z "$CHANNELS" ]; then
+    log "no software channels found on the server -- nothing to check"
+    exit 0
+fi
+
+for channel in $CHANNELS; do
+    reposync_log="$LOG_DIR/$channel.log"
+
+    if ! podman exec uyuni-server test -f "$reposync_log"; then
+        trigger_resync "$channel" "never synced (no reposync log)"
+        continue
+    fi
+
+    tail_lines=$(podman exec uyuni-server tail -n 20 "$reposync_log" 2>/dev/null)
+
+    if echo "$tail_lines" | tail -n 3 | grep -qF "Sync completed."; then
+        continue
+    fi
+
+    if echo "$tail_lines" | grep -qiE 'error|traceback'; then
+        trigger_resync "$channel" "last reposync log shows an error"
+        continue
+    fi
+
+    if ! podman exec uyuni-server pgrep -f "spacewalk-repo-sync --channel $channel " >/dev/null 2>&1; then
+        trigger_resync "$channel" "incomplete reposync log with no active sync process (interrupted)"
+    fi
+done
+"""
+
+_CHANNEL_SYNC_MONITOR_SERVICE = """[Unit]
+Description=Check SMLM software channels for a failed/interrupted reposync and retry
+After=uyuni-server.service
+Wants=uyuni-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smlm-channel-sync-monitor.sh
+"""
+
+_CHANNEL_SYNC_MONITOR_TIMER = """[Unit]
+Description=Periodically check SMLM software channels for a failed/interrupted reposync
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def ensure_channel_sync_monitor(hostname, admin, password):
+    """
+    Deploys a HOST-level (not container-internal) systemd service+timer that
+    periodically checks every software channel present on the SMLM server
+    for a clean, completed reposync, and re-triggers any that never synced,
+    errored, or were left interrupted — confirmed live 2026-09-14 that a
+    mid-flight `mgradm restart` orphaned exactly this kind of stuck,
+    half-downloaded channel log (no "Sync completed." line, no error either,
+    just abandoned) with nothing to notice or recover on its own.
+
+    Deliberately host-level, not inside the uyuni-server container itself:
+    that container runs with `--rm` and is fully recreated (fresh
+    filesystem, `/etc` included — only the explicit named volumes survive)
+    on every restart/upgrade, so anything installed inside it — including a
+    systemd timer — would be silently lost the next time mgradm or systemd
+    recycles it. The host's own systemd is not ephemeral, matching how
+    uyuni-server.service/uyuni-db.service themselves already manage the
+    container from outside it. The monitor script itself just reaches in via
+    `podman exec uyuni-server ...` for every actual check/action, the same
+    way this project's own live troubleshooting did tonight.
+
+    Failure detection, per channel (matching each channel's own
+    /var/log/rhn/reposync/<label>.log inside the container):
+      - no log file at all -> never synced
+      - last lines contain "error"/"traceback" -> failed
+      - doesn't end with "Sync completed." AND no spacewalk-repo-sync
+        process is currently running for that channel -> interrupted
+      - otherwise (ends with "Sync completed.") -> healthy, left alone
+
+    Re-trigger uses `spacecmd softwarechannel_syncrepos <label>` (confirmed
+    live, real command, verified it actually resumes a stuck sync) rather
+    than `mgr-sync sync channel <label>` — the latter needs the same
+    fragile interactive multi-round credential prompt as `mgr-sync add
+    credentials` (see that function's own docstring), unsafe to script
+    unattended from a timer.
+    """
+    script = _CHANNEL_SYNC_MONITOR_SCRIPT.replace(
+        "__ADMIN__", shlex.quote(admin)).replace("__PASSWORD__", shlex.quote(password))
+
+    print("- Installing the channel-sync failure monitor (checks every 30 min)")
+    ssh_run(hostname, "cat > /usr/local/sbin/smlm-channel-sync-monitor.sh <<'EOF'\n{}EOF".format(script),
+            check=False)
+    ssh_run(hostname, "chmod 755 /usr/local/sbin/smlm-channel-sync-monitor.sh", check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.service <<'EOF'\n{}EOF".format(
+        _CHANNEL_SYNC_MONITOR_SERVICE), check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.timer <<'EOF'\n{}EOF".format(
+        _CHANNEL_SYNC_MONITOR_TIMER), check=False)
+    ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-channel-sync-monitor.timer",
+            check=False)
 
 
 # ─── Traefik configuration ───────────────────────────────────────────────────

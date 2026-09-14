@@ -234,6 +234,35 @@ check("setup_smlm_podman: a real (list-shaped) smlm_channels is space-joined int
 check("setup_smlm_podman: the malformed Python-list-repr form never appears",
       not any("['chan-a', 'chan-b']" in c for c in calls_chanlist))
 
+# ensure_channel_sync_monitor: deployed whenever channels are configured —
+# confirmed live 2026-09-14 that a mid-flight server restart can orphan a
+# reposync with no completion marker and no error, silently, so this must
+# run on its own periodic schedule to ever notice and recover.
+monitor_script_call = next(
+    (c for c in calls_chanlist if c.startswith("cat > /usr/local/sbin/smlm-channel-sync-monitor.sh")), None)
+check("setup_smlm_podman: deploys the channel-sync-monitor script when channels are configured",
+      monitor_script_call is not None)
+check("setup_smlm_podman: the monitor script is substituted with the real admin credentials, "
+      "not left as a template placeholder",
+      monitor_script_call is not None and "__ADMIN__" not in monitor_script_call
+      and "__PASSWORD__" not in monitor_script_call
+      and "ADMIN=admin" in monitor_script_call and "PASSWORD=Smlm12345" in monitor_script_call)
+check("setup_smlm_podman: the monitor script re-triggers a sync via spacecmd softwarechannel_syncrepos "
+      "(NOT `mgr-sync sync`, which needs the same fragile interactive multi-round prompt as "
+      "`mgr-sync add credentials` — unsafe to script unattended)",
+      monitor_script_call is not None and "softwarechannel_syncrepos" in monitor_script_call
+      and "mgr-sync sync" not in monitor_script_call)
+check("setup_smlm_podman: the monitor script treats a channel as healthy only when its reposync "
+      "log actually ends with the real completion marker",
+      monitor_script_call is not None and "Sync completed." in monitor_script_call)
+check("setup_smlm_podman: deploys the systemd service unit for the monitor",
+      any(c.startswith("cat > /etc/systemd/system/smlm-channel-sync-monitor.service") for c in calls_chanlist))
+check("setup_smlm_podman: deploys the systemd timer unit, on a recurring (not one-shot) schedule",
+      any(c.startswith("cat > /etc/systemd/system/smlm-channel-sync-monitor.timer") and "OnUnitActiveSec="
+          in c for c in calls_chanlist))
+check("setup_smlm_podman: enables and starts the timer (not just installs it inert)",
+      any("systemctl enable --now smlm-channel-sync-monitor.timer" in c for c in calls_chanlist))
+
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []
 ism.die = lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)
