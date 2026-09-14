@@ -145,6 +145,15 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
             r = ssh_run(hostname, "podman exec uyuni-db pg_isready", check=False)
             if r.returncode == 0:
                 ssh_run(hostname, hba_fix, check=False)
+                # Not restarted here — uyuni-db is mid-bootstrap (schema/org/
+                # admin creation happens via uyuni-server's own exec calls
+                # against it right after this) and a restart now would risk
+                # the exact corruption this function's own docstring already
+                # warns about. The drop-in still takes effect on whatever
+                # restart naturally happens next (the post-install reboot
+                # setup_smlm_podman()/setup_uyuni() already does shortly
+                # after this function returns).
+                _relax_health_kill_policy(hostname, "uyuni-db")
                 patched = True
                 print("  Pre-empted the known pg_hba/IPv6 race as soon as uyuni-db came up")
         if not health_patched:
@@ -172,37 +181,57 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
             "check {} there directly".format(hostname, rc, log_path))
 
 
-def _relax_health_kill_policy(hostname):
+def _relax_health_kill_policy(hostname, service_name="uyuni-server"):
     """
-    mgradm bakes `--health-on-failure=stop` into uyuni-server's systemd unit
-    (confirmed live 2026-09-13, real AWS install, SMLM 5.2.0/podman 4.9.5) —
-    podman's OWN default for --health-on-failure is "none"; mgradm opts into
-    "stop" deliberately. Combined with the image's zero --health-start-period,
-    a container that's still legitimately warming up (Tomcat deploys fine
-    every cycle — confirmed via `systemctl status tomcat` inside the
-    container — it just isn't answering HTTP yet) can rack up 3 consecutive
-    failed health checks and get killed before it ever reaches "healthy".
-    systemd's Restart=on-success (RestartUSec=100ms) then brings it straight
-    back into the same warm-up window — an infinite loop, not the occasional
-    one-off flake ensure_server_container_active was originally written to
-    recover from via a plain restart (systemctl is-active barely ever
-    reports non-"active" because the restart is near-instant, so that retry
-    path never actually fires).
+    mgradm bakes `--health-on-failure=stop` into BOTH uyuni-server's AND
+    uyuni-db's systemd units (confirmed live 2026-09-13 for uyuni-server,
+    2026-09-14 for uyuni-db — same flag, same generated ExecStart shape,
+    just never checked on the DB side until it actually bit) — podman's OWN
+    default for --health-on-failure is "none"; mgradm opts into "stop"
+    deliberately, for both containers. Combined with each image's own tight
+    healthcheck thresholds, this kills the container on any 3 consecutive
+    failed checks, for any reason:
+      - uyuni-server, still legitimately warming up (Tomcat deploys fine
+        every cycle — confirmed via `systemctl status tomcat` inside the
+        container — it just isn't answering HTTP yet) can rack up 3
+        failures before it ever reaches "healthy" in the first place.
+      - uyuni-db, confirmed live 2026-09-14: postgres's own baked-in
+        healthcheck (Interval=10s, Timeout=5s, Retries=3) killed a
+        perfectly healthy, multi-hour-uptime database mid-operation —
+        confirmed via `podman inspect` and the unit's own generated
+        ExecStart both showing --health-on-failure=stop still active —
+        under sustained heavy write load from a long-running reposync (a
+        single query occasionally taking longer than the 5s timeout, 3
+        times in a row, is all it takes). Took the entire application down
+        for over 3 hours with zero automatic recovery (Restart=on-success
+        only retries a CLEAN exit, not this kind of kill) until a human
+        noticed and manually restarted it.
+    Either way, systemd's Restart=on-success (RestartUSec=100ms) then
+    brings the container straight back into the same failure window — an
+    infinite loop for uyuni-server's warm-up case, or just a long
+    unnoticed outage for uyuni-db's case, not the occasional one-off flake
+    ensure_server_container_active was originally written to recover from
+    via a plain restart (systemctl is-active barely ever reports non-
+    "active" because the restart is near-instant, so that retry path
+    never actually fires).
 
-    Fix: mgradm's own custom.conf ships an empty PODMAN_EXTRA_ARGS
-    Environment= line specifically as an upgrade-safe override point — it's
-    spliced into the `podman run` line right before the image name, so a
-    later --health-on-failure/--health-retries/--health-start-period here
+    Fix: mgradm's own custom.conf ships (uyuni-server) or CAN be created in
+    (uyuni-db — its own .service.d/ dir already exists with just
+    generated.conf, custom.conf just needs writing) an upgrade-safe
+    PODMAN_EXTRA_ARGS Environment= override point — it's spliced into the
+    `podman run` line right before the image name, so a later
+    --health-on-failure/--health-retries/--health-start-period here
     overrides mgradm's own earlier ones on the same command line. Verified
-    live: a container left alone with no health-triggered kill reaches
-    genuine "healthy" reliably ~2-3 minutes after start. custom.conf is a
-    static file — survives both `mgradm upgrade` (which only rewrites
-    generated.conf) and a plain reboot.
+    live for uyuni-server: a container left alone with no health-triggered
+    kill reaches genuine "healthy" reliably ~2-3 minutes after start.
+    custom.conf is a static file — survives both `mgradm upgrade` (which
+    only rewrites generated.conf) and a plain reboot, for either service.
     """
-    conf = "/etc/systemd/system/uyuni-server.service.d/custom.conf"
+    conf_dir = "/etc/systemd/system/{}.service.d".format(service_name)
     override = ('[Service]\nEnvironment="PODMAN_EXTRA_ARGS=--health-on-failure=none '
                 '--health-retries=10 --health-start-period=180s"\n')
-    ssh_run(hostname, "cat > {} <<'EOF'\n{}EOF".format(shlex.quote(conf), override), check=False)
+    ssh_run(hostname, "mkdir -p {} && cat > {}/custom.conf <<'EOF'\n{}EOF".format(
+        shlex.quote(conf_dir), shlex.quote(conf_dir), override), check=False)
     ssh_run(hostname, "systemctl daemon-reload", check=False)
 
 
@@ -241,6 +270,7 @@ def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_
     not Uyuni-specific despite the name.
     """
     _relax_health_kill_policy(hostname)
+    _relax_health_kill_policy(hostname, "uyuni-db")
     restarts = 0
     elapsed = 0
     while elapsed < timeout:

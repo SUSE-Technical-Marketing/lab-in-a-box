@@ -67,7 +67,31 @@ check("reloads systemd so the drop-in actually takes effect",
 check("conf path itself is shell-quoted (defensive, even though it's a fixed literal)",
       shlex.quote("/etc/systemd/system/uyuni-server.service.d/custom.conf") in out)
 
-# ── ensure_server_container_active calls the fix BEFORE polling ────────────
+# ── _relax_health_kill_policy also works for uyuni-db, not just the server —
+# real bug found live 2026-09-14: mgradm bakes the identical
+# --health-on-failure=stop into uyuni-db's own systemd unit too, and its
+# baked-in healthcheck (Interval=10s, Timeout=5s, Retries=3) killed a
+# perfectly healthy, multi-hour-uptime database mid-operation under
+# sustained heavy write load (a long-running reposync) — taking the whole
+# application down for 3+ hours with no automatic recovery, since this
+# project's original fix only ever patched uyuni-server's copy of the
+# identical flag. Unlike uyuni-server, uyuni-db's own .service.d/ directory
+# ships with only generated.conf (no empty custom.conf placeholder already
+# there) — the fix must create the directory, not just the file.
+rec_db = _Rec()
+mgradm_common.ssh_run = rec_db
+mgradm_common._relax_health_kill_policy("vm1", "uyuni-db")
+out_db = rec_db.joined()
+check("writes to uyuni-db's own custom.conf override point, creating the "
+      "drop-in directory first since it doesn't pre-exist there",
+      "mkdir -p /etc/systemd/system/uyuni-db.service.d" in out_db
+      and "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out_db)
+check("uyuni-db's override uses the exact same relaxed policy as uyuni-server's",
+      "--health-on-failure=none" in out_db and "--health-retries=10" in out_db
+      and "--health-start-period=180s" in out_db)
+
+# ── ensure_server_container_active calls the fix BEFORE polling, for BOTH --
+# ── uyuni-server AND uyuni-db ------------------------------------------------
 rec2 = _Rec(stdout_by_cmd={
     "systemctl is-active uyuni-server.service": "active",
     "State.Health.Status": "healthy",
@@ -80,6 +104,9 @@ out2 = rec2.joined()
 check("ensure_server_container_active applies the health-kill-policy fix itself "
       "(both install_uyuni.py and install_smlm.py get it for free)",
       "custom.conf" in out2 and "daemon-reload" in out2)
+check("ensure_server_container_active ALSO relaxes uyuni-db's own copy of the same "
+      "policy, not just uyuni-server's — this is what actually bit live",
+      "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out2)
 check("the fix is applied before the is-active poll starts",
       out2.index("daemon-reload") < out2.index("systemctl is-active uyuni-server.service"))
 
@@ -117,6 +144,14 @@ check("restarts the service once so the freshly-patched PODMAN_EXTRA_ARGS actual
       "systemctl restart uyuni-server.service" in out3)
 check("the health-kill patch happens before mgradm install is confirmed finished",
       out3.index("daemon-reload") < out3.rindex("test -f"))
+check("run_install_with_pg_hba_guard ALSO relaxes uyuni-db's own health-kill policy, "
+      "as soon as pg_isready succeeds — this is the container that actually got killed "
+      "live, not uyuni-server",
+      "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out3)
+check("does NOT restart uyuni-db here — it's mid-bootstrap (schema/org/admin creation "
+      "happens via exec calls against it right after) and a restart now would risk the "
+      "exact corruption this same function's own pg_hba-guard logic exists to avoid",
+      "systemctl restart uyuni-db.service" not in out3)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
