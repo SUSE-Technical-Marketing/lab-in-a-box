@@ -639,6 +639,11 @@ class LibvirtBackend(VMBackend):
                                   # own call site); accepted and ignored so setup_vm.py can pass
                                   # it unconditionally without needing to know which backend it's
                                   # talking to.
+        open_ports=None,  # unused here — an AWS-only override (see AWSBackend.create_vm()'s own
+                           # _ensure_security_group_access()); accepted and ignored for the same
+                           # reason as cloud_instance_type above — this is the only backend
+                           # without a trailing **kwargs, so it needs every cloud-only kwarg
+                           # listed explicitly or setup_vm.py's unconditional call breaks it.
     ):
         """
         Create a VM on a KVM hypervisor via virt-install, covering all 6
@@ -1815,6 +1820,8 @@ class AWSBackend(VMBackend):
         self.vm_img_loc = vm_img_loc
         self.lab_setup_path = lab_setup_path
         self._user_data_by_vm = {}  # populated by push_provisioning_files(), read by create_vm()
+        self._cached_public_ip = None  # see _own_public_ip()
+        self._instance_id_by_vm = {}  # populated by create_vm(), read by _find_instance()
 
     @classmethod
     def resolve(cls, definition, vm_name, config, for_existing, vm_img_loc=None,
@@ -1823,9 +1830,22 @@ class AWSBackend(VMBackend):
         if not region:
             die("backend 'aws' requires AWS_REGION to be set in /etc/lab_creation.cfg (VM '{}')".format(vm_name))
         profile = config.get("AWS_PROFILE")
-        access_key = config.get("AWS_ACCESS_KEY_ID")
-        secret_key = config.get("AWS_SECRET_ACCESS_KEY")
-        session_token = config.get("AWS_SESSION_TOKEN")
+        access_key = None if profile else config.get("AWS_ACCESS_KEY_ID")
+        secret_key = None if profile else config.get("AWS_SECRET_ACCESS_KEY")
+        session_token = None if profile else config.get("AWS_SESSION_TOKEN")
+        # AWS_PROFILE wins outright when set — confirmed live 2026-09-13:
+        # resolve_cloud_account()'s merge only overrides same-named keys, so
+        # a cloud_account that sets AWS_PROFILE (e.g. to use SSO) still had
+        # /etc/lab_creation.cfg's own leftover AWS_ACCESS_KEY_ID/SECRET/
+        # SESSION_TOKEN (a different, unrelated config layer) come through
+        # untouched — and the `aws` CLI's own credential chain checks those
+        # explicit env vars BEFORE AWS_PROFILE, so a stale/expired key from
+        # lab_creation.cfg silently defeated a freshly-configured SSO
+        # profile (RequestExpired, even though the profile itself worked
+        # fine when tested directly). Setting a profile is an explicit,
+        # deliberate choice of auth mechanism; it should never be silently
+        # undermined by whatever raw keys happen to still be sitting in a
+        # different config layer.
         if not profile and not (access_key and secret_key):
             die("backend 'aws' requires either AWS_PROFILE, or both AWS_ACCESS_KEY_ID and "
                 "AWS_SECRET_ACCESS_KEY, in /etc/lab_creation.cfg (VM '{}')".format(vm_name))
@@ -1871,7 +1891,35 @@ class AWSBackend(VMBackend):
                 config_method or "<empty>", vm_name))
 
     def _find_instance(self, vm_name):
-        """Returns the first non-terminated instance tagged Name=<vm_name>, or None."""
+        """
+        Returns the non-terminated instance tagged Name=<vm_name>, or None.
+
+        Prefers the exact InstanceId create_vm() cached for this vm_name (set the
+        moment `run-instances` returns) over the tag-based lookup below — confirmed
+        live 2026-09-13 that the tag lookup alone is genuinely ambiguous: `Name` tags
+        are NOT unique in EC2, and a caller that creates a new VM while an old
+        same-named instance still exists (e.g. setup_vm.py run directly against a
+        single node, which — unlike setup_lab.py's own full run — does not destroy
+        an existing same-named VM first) gets back "the first" of two matches with
+        no ordering guarantee, silently returning the WRONG instance's IP for DNS
+        registration right after successfully creating the right one. The tag-based
+        fallback below still covers every other caller (vm_exists, delete_vm, a
+        freshly-constructed backend instance with nothing cached) where no such
+        ambiguity is expected in normal operation.
+        """
+        cached_id = self._instance_id_by_vm.get(vm_name)
+        if cached_id:
+            result = self._aws(
+                "ec2", "describe-instances",
+                "--instance-ids", cached_id,
+                "--filters", "Name=instance-state-name,Values=pending,running,stopping,stopped",
+            )
+            for reservation in (result or {}).get("Reservations", []):
+                instances = reservation.get("Instances", [])
+                if instances:
+                    return instances[0]
+            # Cached ID no longer matches a live instance (terminated elsewhere) —
+            # fall through to the tag-based lookup rather than returning None outright.
         result = self._aws(
             "ec2", "describe-instances",
             "--filters", "Name=tag:Name,Values={}".format(vm_name),
@@ -1983,11 +2031,149 @@ class AWSBackend(VMBackend):
             die("cloud-init user-data not found for '{}' at {}".format(vm_name, userdata_path))
         self._user_data_by_vm[vm_name] = userdata_path.read_text()
 
+    def _own_public_ip(self):
+        """
+        This automation node's own current public IP, as AWS itself would see
+        it — cached on first call (a single setup_lab.py run creates many VMs
+        but this host's own outbound IP doesn't change mid-run). Needed to
+        scope the SSH-access security-group rule tightly (see
+        _ensure_security_group_access()) rather than opening port 22 to the
+        whole internet.
+
+        Confirmed live 2026-09-13: one of three real, stacked causes behind
+        a genuinely confusing failure — a freshly-created AWS node got a
+        real IP and DNS entry, but check_ssh_conn() then exhausted its
+        retry limit waiting for it to come online. This piece: the security
+        group had no inbound rule at all for traffic from outside AWS's own
+        network (only a self-referencing rule letting its OWN members talk
+        to each other). Necessary, but NOT sufficient on its own — see
+        _ensure_internet_gateway()'s own docstring for the other, deeper
+        cause found only after this fix alone didn't resolve it.
+        """
+        if self._cached_public_ip is None:
+            try:
+                with urllib.request.urlopen("https://checkip.amazonaws.com", timeout=10) as resp:
+                    self._cached_public_ip = resp.read().decode("utf-8").strip()
+            except (urllib.error.URLError, OSError) as e:
+                die("backend 'aws': could not determine this automation node's own public IP "
+                    "(needed to open SSH access in the security group) — {}".format(e))
+        return self._cached_public_ip
+
+    def _ensure_security_group_access(self, open_ports):
+        """
+        Ensures self.security_group_id allows: (1) SSH from this automation
+        node's own public IP — unconditional, every AWS VM needs this to
+        ever become reachable (see _own_public_ip()'s own docstring for the
+        real bug this fixes) — and (2) each port in `open_ports` (a lab-JSON
+        "aws_open_ports" list, e.g. ["443", "4505", "4506"] or ["69/udp"];
+        default protocol is tcp) from anywhere (0.0.0.0/0) — for
+        genuinely-public-facing service ports (e.g. SMLM's own web UI/salt
+        ports), unlike the deliberately-narrow SSH rule above.
+
+        Never removes/revokes an existing rule — only adds whatever's
+        missing — so nothing a user configured by hand outside this project
+        is ever silently undone. No-op entirely if no security group is
+        configured at all (nothing to manage).
+        """
+        if not self.security_group_id:
+            return
+        wanted = [(22, 22, "tcp", "{}/32".format(self._own_public_ip()))]
+        for entry in (open_ports or []):
+            entry = str(entry)
+            port_s, _, proto = entry.partition("/")
+            port = int(port_s)
+            wanted.append((port, port, (proto or "tcp").lower(), "0.0.0.0/0"))
+
+        existing = set()
+        sg_result = self._aws("ec2", "describe-security-groups", "--group-ids", self.security_group_id)
+        for perm in ((sg_result or {}).get("SecurityGroups") or [{}])[0].get("IpPermissions", []):
+            for r in perm.get("IpRanges", []):
+                existing.add((perm.get("FromPort"), perm.get("ToPort"), perm.get("IpProtocol"), r.get("CidrIp")))
+
+        for from_port, to_port, proto, cidr in wanted:
+            if (from_port, to_port, proto, cidr) in existing:
+                continue
+            log("- Opening {}/{} from {} on security group {}".format(to_port, proto, cidr, self.security_group_id))
+            self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
+                       "--protocol", proto, "--port", str(to_port), "--cidr", cidr)
+
+    def _ensure_internet_gateway(self):
+        """
+        Ensures self.subnet_id's VPC actually has a route to the internet at
+        all — creating and attaching an Internet Gateway, and adding the
+        route table's 0.0.0.0/0 route, if either is missing. No-op if
+        self.subnet_id isn't set, or if a working IGW route already exists
+        (checked first — never creates a second IGW/route needlessly).
+
+        Confirmed live 2026-09-13: the DEEPER of two stacked real causes
+        behind an AWS node getting a real public IP and passing every
+        health/security check, yet remaining completely unreachable —
+        _ensure_security_group_access()'s own fix (opening SSH in the
+        security group) was necessary but NOT sufficient on its own. Ruled
+        out, in order, before finding this: the security group itself
+        (fixed, but didn't resolve it), the subnet's Network ACL (already
+        correct — default allow-all), a guest-side firewall (firewalld
+        wasn't even installed on the AMI in question), and only then — via
+        `describe-route-tables` — this: the route table had no `0.0.0.0/0`
+        route to any Internet Gateway at all, and `describe-internet-
+        gateways` showed none attached to the VPC in the first place. A
+        public IP is still assigned and NAT'd at the IGW layer regardless of
+        whether one exists, so every symptom (real IP, DNS correct, cloud-
+        init/sshd both healthy per the instance's own console output, but a
+        silent full connection timeout — not "refused" — from outside) is
+        explained by this alone; security groups/NACLs never even get
+        evaluated if the packets have no route to arrive by in the first
+        place. Automated here (rather than a one-off manual CLI fix) at the
+        user's own explicit request: "add it as part of the process of
+        using aws."
+        """
+        if not self.subnet_id:
+            return
+        subnet_result = self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id)
+        subnets = (subnet_result or {}).get("Subnets") or []
+        if not subnets:
+            die("backend 'aws': subnet '{}' not found — check AWS_SUBNET_ID".format(self.subnet_id))
+        vpc_id = subnets[0]["VpcId"]
+
+        igw_result = self._aws("ec2", "describe-internet-gateways",
+                                "--filters", "Name=attachment.vpc-id,Values={}".format(vpc_id))
+        igws = (igw_result or {}).get("InternetGateways") or []
+        if igws:
+            igw_id = igws[0]["InternetGatewayId"]
+        else:
+            log("- No Internet Gateway attached to VPC {} — creating one".format(vpc_id))
+            create_result = self._aws("ec2", "create-internet-gateway")
+            igw_id = create_result["InternetGateway"]["InternetGatewayId"]
+            self._aws("ec2", "attach-internet-gateway", "--internet-gateway-id", igw_id, "--vpc-id", vpc_id)
+
+        rt_result = self._aws("ec2", "describe-route-tables",
+                               "--filters", "Name=association.subnet-id,Values={}".format(self.subnet_id))
+        route_tables = (rt_result or {}).get("RouteTables") or []
+        if not route_tables:
+            # No explicit per-subnet association -> falls back to the VPC's
+            # own main route table, same as AWS itself does.
+            rt_result = self._aws("ec2", "describe-route-tables", "--filters",
+                                   "Name=vpc-id,Values={}".format(vpc_id), "Name=association.main,Values=true")
+            route_tables = (rt_result or {}).get("RouteTables") or []
+        if not route_tables:
+            die("backend 'aws': could not find a route table for subnet '{}' (VPC {})".format(
+                self.subnet_id, vpc_id))
+        rt_id = route_tables[0]["RouteTableId"]
+
+        has_default_route = any(
+            r.get("DestinationCidrBlock") == "0.0.0.0/0" for r in route_tables[0].get("Routes", []))
+        if not has_default_route:
+            log("- Adding a 0.0.0.0/0 route to Internet Gateway {} on route table {}".format(igw_id, rt_id))
+            self._aws("ec2", "create-route", "--route-table-id", rt_id,
+                       "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", igw_id)
+
     def create_vm(
         self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network,
-        config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
+        config_method="", iso_image="", mymac=None, cloud_instance_type="", open_ports=None, **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
+        self._ensure_internet_gateway()
+        self._ensure_security_group_access(open_ports)
         # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
         # per explicit user request — bypasses _pick_instance_type() entirely and uses the given
         # EC2 instance type name verbatim.
@@ -1998,6 +2184,27 @@ class AWSBackend(VMBackend):
         if not images:
             die("AMI '{}' not found for VM '{}' — check ISO_IMAGE and AWS_REGION".format(iso_image, vm_name))
         root_device = images[0].get("RootDeviceName", "/dev/xvda")
+
+        # Auto-raise vm_dsk_gb to the AMI's own minimum root volume size, same
+        # spirit as the existing QCOW2-source-image auto-raise (see setup_lab.py's
+        # own preflight) — confirmed live 2026-09-13: a plain SLES 15 SP7 BYOS AMI
+        # (snapshot's own real VolumeSize: 10) rejected the hardcoded 8 GiB
+        # ensure_cloud_dns_vm() passes for every cloud DNS VM, regardless of
+        # which AMI a given lab actually configures — `InvalidBlockDeviceMapping:
+        # Volume of size 8GB is smaller than snapshot ..., expect size >= 10GB`.
+        # Fixed once, here, rather than in ensure_cloud_dns_vm() itself, since
+        # ANY caller passing a too-small vm_dsk_gb for a given AMI would hit the
+        # exact same wall — this is the one place that already knows the AMI's
+        # own real minimum.
+        for bdm in images[0].get("BlockDeviceMappings", []):
+            if bdm.get("DeviceName") == root_device:
+                ami_min_gb = (bdm.get("Ebs") or {}).get("VolumeSize")
+                if ami_min_gb and int(vm_dsk_gb) < ami_min_gb:
+                    log("- VM_DSK is {} GiB but AMI '{}' needs at least {} GiB — raising to {} GiB "
+                        "(a smaller volume would fail at instance launch)".format(
+                            vm_dsk_gb, iso_image, ami_min_gb, ami_min_gb))
+                    vm_dsk_gb = ami_min_gb
+                break
 
         args = [
             "ec2", "run-instances",
@@ -2029,9 +2236,19 @@ class AWSBackend(VMBackend):
 
         log("Creating VM '{}' on AWS EC2 (instance_type={})".format(vm_name, instance_type))
         try:
-            self._aws(*args)
+            run_result = self._aws(*args)
         except RuntimeError as e:
             die(str(e))
+
+        # Cache the exact InstanceId run-instances just returned — confirmed live
+        # 2026-09-13 that re-finding "the" instance by Name tag right after this can
+        # grab the WRONG one if an old same-named instance still exists (see
+        # _find_instance()'s own docstring for the full incident). Every subsequent
+        # lookup for this vm_name within this backend instance's lifetime (get_ip(),
+        # vm_exists(), etc.) now targets this exact instance, not an ambiguous tag.
+        new_instances = (run_result or {}).get("Instances", [])
+        if new_instances:
+            self._instance_id_by_vm[vm_name] = new_instances[0].get("InstanceId")
 
         # Real, live-verified 2026-09-09: RunInstances' own response does carry the instance, but
         # its IP fields are empty at that instant (state is still "pending") — a short poll via

@@ -30,7 +30,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 from lab_creation import ssh_run, die  # noqa: E402
 
 
-def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=900, poll_interval=5):
+def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_interval=5):
     """
     Run `mgradm install podman ...` while proactively neutralizing a
     confirmed upstream mgradm/Uyuni-postgres-image race hit live
@@ -77,6 +77,47 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=900, poll_inter
     the ONE install command complete end-to-end (network + DB + schema +
     org + admin), with no separate recovery/resume step needed.
 
+    Also pre-empts the health-kill crash-loop fixed in
+    ensure_server_container_active()/_relax_health_kill_policy(): that fix
+    only runs AFTER `mgradm install` itself finishes, but the same
+    --health-on-failure=stop policy can just as easily hit the container's
+    very first boot, WHILE `mgradm install` is still waiting on it —
+    confirmed live 2026-09-13 (fresh AWS instance, from-scratch SMLM
+    install): the container cycled starting/unhealthy indefinitely and
+    `mgradm install` itself never returned, timing out this function's own
+    900s wait instead of the pg_hba race. Same pattern as the pg_hba fix:
+    poll for the systemd drop-in directory mgradm creates, patch+reload+
+    restart once as soon as it exists, then keep waiting as before. Safe
+    to restart the container here — mgradm is still blocked on its own
+    internal wait for the container to report healthy at this point, so
+    its schema/org/admin bootstrap (the exec-based step a restart would
+    otherwise corrupt, per the history above) hasn't started yet.
+
+    `timeout` was raised from 900s to 1800s on 2026-09-14: once the
+    health-kill crash-loop above no longer aborts the container early,
+    `mgradm install` runs its full, longer sequence (core server bootstrap,
+    THEN a further pass setting up optional additional services —
+    attestation, hub-xmlrpc-api, saline, tftpd) end to end, which can
+    legitimately take longer than 900s in total.
+
+    A separate, NOT fixed here, real anomaly confirmed the same day: this
+    function's own die() on timeout does not necessarily mean the install
+    actually failed. Live, `mgradm install`'s core bootstrap (DB schema,
+    org, admin user, every real spacewalk.target service) finished and
+    started successfully well inside 900s, but the outer `mgradm install`
+    process then died — with no error, no logged reason, and the wrapper's
+    own `; echo $? > rc_path` never executing — while checking an OPTIONAL
+    image (`proxy-tftpd`) this account's SCC entitlement doesn't cover,
+    even though that optional tftpd service was never enabled
+    (`--tftpd-enable` defaults off). Confirmed live that `podman pull` on
+    that exact image fails fast and cleanly ("requested access to the
+    resource is denied") — mgradm appears to mishandle that failure fatally
+    rather than skipping a disabled service's image, without flushing
+    whatever it was about to log. If this function ever dies with a
+    timeout again, check `mgradm status`/`systemctl is-active
+    spacewalk.target` on the host directly before assuming the install
+    itself failed — it may already be fully functional.
+
     The database/container names here ("uyuni-db", "uyuni-server") are
     mgradm's own fixed container names — identical regardless of which
     product (Uyuni or SMLM) is being installed, since both use the same
@@ -96,6 +137,7 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=900, poll_inter
         "&& podman exec uyuni-db psql -U postgres -c 'SELECT pg_reload_conf();'"
     )
     patched = False
+    health_patched = False
     finished = False
     elapsed = 0
     while elapsed < timeout:
@@ -105,6 +147,13 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=900, poll_inter
                 ssh_run(hostname, hba_fix, check=False)
                 patched = True
                 print("  Pre-empted the known pg_hba/IPv6 race as soon as uyuni-db came up")
+        if not health_patched:
+            r = ssh_run(hostname, "test -d /etc/systemd/system/uyuni-server.service.d", check=False)
+            if r.returncode == 0:
+                _relax_health_kill_policy(hostname)
+                ssh_run(hostname, "systemctl restart uyuni-server.service", check=False)
+                health_patched = True
+                print("  Pre-empted the health-kill crash-loop as soon as the unit existed")
         r = ssh_run(hostname, "test -f {}".format(rc_path), check=False)
         if r.returncode == 0:
             finished = True

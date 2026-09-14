@@ -137,8 +137,16 @@ calls, guard_calls, active_calls, sc_calls, _inputs = run_setup_smlm_podman(cfg,
 
 check("setup_smlm_podman: registers the base product via SUSEConnect -r (no -e — not in the real docs)",
       any(c == "SUSEConnect -r REGCODE123" for c in calls))
+check("setup_smlm_podman: registers the free containers module (needed as a prerequisite for every "
+      "base OS, not just plain SLES) before the SMLM extension module",
+      any(c == "SUSEConnect -p sle-module-containers/15.7/x86_64" for c in calls))
 check("setup_smlm_podman: registers the SMLM extension module via SUSEConnect -p ... -r (both, per real docs)",
       any(c == "SUSEConnect -p SUSE-Manager-Server/5.2/x86_64 -r REGCODE123" for c in calls))
+check("setup_smlm_podman: the containers module is registered BEFORE the SMLM extension module — "
+      "confirmed live 2026-09-13: SCC's own server rejects the SMLM module (422, 'requires... "
+      "Containers Module... to be activated first') if attempted in the other order",
+      calls.index("SUSEConnect -p sle-module-containers/15.7/x86_64")
+      < calls.index("SUSEConnect -p SUSE-Manager-Server/5.2/x86_64 -r REGCODE123"))
 check("setup_smlm_podman: logs into registry.suse.com when smlm_scc_user/password are set",
       any("podman login -u sccuser --password-stdin registry.suse.com" in c for c in calls))
 check("setup_smlm_podman: transactional host uses transactional-update pkg install",
@@ -151,6 +159,15 @@ check("setup_smlm_podman: install command uses the flag-only mgradm form (no FQD
       "mgradm install podman" in guard_calls[0][1]
       and "--admin-login admin" in guard_calls[0][1]
       and "--organization lab" in guard_calls[0][1])
+
+# Real bug found live 2026-09-13: an unquoted multi-word --organization
+# ("SUSE Test") got split by the remote shell into two tokens — mgradm then
+# misinterpreted the stray second word as its own optional FQDN positional
+# argument ("Test is not a valid FQDN"), failing the entire install.
+cfg_org_with_space = dict(cfg, smlm_org="SUSE Test")
+_, guard_calls_org, _, _, _ = run_setup_smlm_podman(cfg_org_with_space, transactional=True)
+check("setup_smlm_podman: a multi-word smlm_org is shell-quoted as ONE argument, not split",
+      "--organization 'SUSE Test'" in guard_calls_org[0][1])
 check("setup_smlm_podman: waits for the server container via mgradm_common's own helper",
       active_calls == ["sol.mydemo.lab"])
 check("setup_smlm_podman: with no activation keys configured, spacecmd config is never touched",
@@ -165,9 +182,6 @@ check("setup_smlm_podman: non-transactional (plain SLES) host uses zypper instal
       and not any(c.startswith("transactional-update") for c in calls2))
 check("setup_smlm_podman: non-transactional host never reboots for the package install itself",
       calls2.count("REBOOT:sol.mydemo.lab") == 0)
-check("setup_smlm_podman: non-transactional (plain SLES) host registers the free containers module first "
-      "(podman isn't preinstalled there, unlike SL Micro)",
-      any(c == "SUSEConnect -p sle-module-containers/15.7/x86_64" for c in calls2))
 check("setup_smlm_podman: non-transactional host explicitly installs podman itself",
       any(c == "zypper --non-interactive install -y podman" for c in calls2))
 check("setup_smlm_podman: non-transactional host enables the podman socket",
@@ -196,8 +210,12 @@ check("setup_smlm_podman: activation keys present -> spacecmd config applied wit
 check("setup_smlm_podman: activation keys present -> registers SCC organization credentials with "
       "mgr-sync, forwarding stdin via mgrctl's -i flag",
       any(c == "mgrctl exec -i -- mgr-sync add credentials" for c in calls_keys))
-check("setup_smlm_podman: mgr-sync credentials command is fed username then password over stdin",
-      inputs_keys.get("mgrctl exec -i -- mgr-sync add credentials") == "sccuser\nsccpass\n")
+check("setup_smlm_podman: mgr-sync credentials command is fed the LOCAL admin login/password "
+      "first, then the SCC user/password — confirmed live 2026-09-14 that `mgr-sync add "
+      "credentials` actually prompts for both, in that order, under two identically-worded "
+      "banners; feeding only the SCC pair (the old behavior) left the second Login prompt "
+      "waiting forever and the call died with an unnoticed EOF",
+      inputs_keys.get("mgrctl exec -i -- mgr-sync add credentials") == "admin\nSmlm12345\nsccuser\nsccpass\n")
 
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []

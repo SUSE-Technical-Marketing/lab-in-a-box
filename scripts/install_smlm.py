@@ -492,6 +492,16 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
 
     print("- Registering the host with SCC")
     ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
+    # sle-module-containers MUST be registered before the SMLM extension
+    # itself — confirmed live 2026-09-13: SCC's own registration server
+    # rejects the SMLM module outright ("requires one of these products to
+    # be activated first: Containers Module 15 SP7 x86_64", HTTP 422) if
+    # attempted first. An earlier version of this function registered the
+    # containers module later, only in the plain-SLES package-install
+    # branch below (where it's ALSO needed, for podman itself) — too late
+    # for this dependency check, which happens regardless of base OS. Free
+    # module, no regcode needed, same as the official docs' own example.
+    ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
     r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
                 check=False)
     if r.returncode != 0:
@@ -527,10 +537,10 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         check_ssh_conn(hostname)
     else:
         # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
-        # does NOT ship podman by default; needs the free containers module
-        # plus an explicit podman install/enable first (confirmed from the
-        # official docs — missed in an earlier version of this function).
-        ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
+        # does NOT ship podman by default; needs an explicit podman
+        # install/enable first (confirmed from the official docs). The
+        # containers module itself is already registered above, before the
+        # SMLM module registration attempt — no need to repeat it here.
         ssh_run(hostname, "zypper --non-interactive install -y podman")
         ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
         ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
@@ -538,10 +548,18 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     print("- Installing SUSE Multi-Linux Manager server")
     admin = cfg.get("smlm_admin") or "admin"
     password = cfg.get("smlm_password") or "Smlm12345"
+    org = cfg.get("smlm_org") or "lab"
     # Same flag set as install_uyuni.py's own live-verified `mgradm install
     # podman ...` invocation (mgradm/podman mechanics are identical between
     # the two products) — see that script's own comment on why --admin-email
-    # doesn't exist (it's the top-level --email flag instead).
+    # doesn't exist (it's the top-level --email flag instead). Every value
+    # shell-quoted — confirmed live 2026-09-13: an unquoted multi-word
+    # --organization ("SUSE Test") got split by the remote shell into
+    # `--organization SUSE` plus a stray `Test` token, which mgradm then
+    # misinterpreted as its own optional FQDN positional argument ("Test is
+    # not a valid FQDN"). install_uyuni.py has this identical latent bug —
+    # never touched here (still Uyuni-only, per the user's own instruction),
+    # but its own uyuni_org just never happened to contain a space.
     install_cmd = (
         "mgradm install podman "
         "--admin-login {} "
@@ -549,8 +567,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         "--email {} "
         "--ssl-password {} "
         "--organization {}".format(
-            admin, password, email,
-            cfg.get("smlm_ssl_password") or password, cfg.get("smlm_org") or "lab"))
+            shlex.quote(admin), shlex.quote(password), shlex.quote(email),
+            shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
     run_install_with_pg_hba_guard(hostname, install_cmd)
 
     time.sleep(60)
@@ -569,15 +587,20 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # SCC "organization credentials" (mirror credentials) are registered
         # via `mgr-sync add credentials` — confirmed real command (Uyuni's
         # own cli-sync reference: `add` covers "channels, organization
-        # credentials, or products"), but this project could NOT confirm the
-        # exact non-interactive argument/prompt shape from public docs after
-        # 3 separate attempts (SUSE Manager 5.0/5.1 and Uyuni's own
-        # references all describe the command's existence but never show a
-        # worked username/password example) — feeding user+password on
-        # separate stdin lines is this project's best-effort guess at the
-        # interactive prompt sequence, same as every other credential prompt
-        # in this file; if it fails, check `mgrctl exec -- mgr-sync add
-        # credentials --help` on the real server and fix this call.
+        # credentials, or products").
+        #
+        # Confirmed live 2026-09-14 (real SMLM 5.2 server) the actual
+        # non-interactive prompt shape, which this project's earlier guess
+        # (SCC user/password only) got wrong: `mgr-sync add credentials`
+        # asks for TWO Login/Password pairs in sequence, both printed under
+        # the identical (misleadingly reused) "Please enter the credentials
+        # of SUSE Multi-Linux Manager Administrator" banner — round 1 is the
+        # server's own local admin login (smlm_admin/smlm_password, the
+        # account `mgradm install` just created), round 2 is the actual SCC
+        # mirror credentials. Feeding only one pair, as before, left the
+        # second round's Login prompt waiting forever and the whole call
+        # died with "General error: EOF when reading a line" — a silent,
+        # unnoticed no-op under this function's own check=False.
         if not (scc_user and scc_password):
             die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
                 "are not — mgr-sync cannot see any entitled channels without the SCC organization "
@@ -588,7 +611,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # stdin unless given -i explicitly — omitting it here would silently
         # send this input_text nowhere instead of erroring.
         ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
-                input_text="{}\n{}\n".format(scc_user, scc_password), check=False)
+                input_text="{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password), check=False)
 
     if channels:
         count = 0

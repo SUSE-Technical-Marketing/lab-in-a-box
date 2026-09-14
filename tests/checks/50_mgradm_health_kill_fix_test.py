@@ -83,6 +83,41 @@ check("ensure_server_container_active applies the health-kill-policy fix itself 
 check("the fix is applied before the is-active poll starts",
       out2.index("daemon-reload") < out2.index("systemctl is-active uyuni-server.service"))
 
+# ── run_install_with_pg_hba_guard also pre-empts the SAME crash-loop on the
+# very first boot, WHILE mgradm install is still running — confirmed live
+# 2026-09-13 (fresh AWS instance, from-scratch SMLM install) that the fix
+# inside ensure_server_container_active() is too late for this case: it
+# only runs after mgradm install itself returns, but mgradm install can
+# itself get stuck forever waiting on a container that never reaches
+# "healthy" because of this exact bug.
+class _RecRc(_Rec):
+    def __call__(self, host, cmd, **kw):
+        r = super().__call__(host, cmd, **kw)
+        if "test -d /etc/systemd/system/uyuni-server.service.d" in cmd:
+            r.returncode = 0
+        elif "pg_isready" in cmd:
+            r.returncode = 0
+        elif cmd.startswith("test -f") and "mgradm_install.rc" in cmd:
+            r.returncode = 0
+        elif cmd.startswith("cat ") and "mgradm_install.rc" in cmd:
+            r.stdout = "0\n"
+        return r
+
+
+rec3 = _RecRc()
+mgradm_common.ssh_run = rec3
+mgradm_common.time.sleep = lambda *a, **kw: None
+mgradm_common.run_install_with_pg_hba_guard("vm1", "mgradm install podman --admin-login admin")
+out3 = rec3.joined()
+
+check("run_install_with_pg_hba_guard also applies the health-kill-policy fix "
+      "as soon as the systemd drop-in directory exists, not just after install finishes",
+      "custom.conf" in out3 and "daemon-reload" in out3)
+check("restarts the service once so the freshly-patched PODMAN_EXTRA_ARGS actually take effect",
+      "systemctl restart uyuni-server.service" in out3)
+check("the health-kill patch happens before mgradm install is confirmed finished",
+      out3.index("daemon-reload") < out3.rindex("test -f"))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
