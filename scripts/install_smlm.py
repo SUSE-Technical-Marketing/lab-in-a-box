@@ -592,6 +592,29 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     channels = cfg.get("smlm_channels") or []
     if isinstance(channels, str):
         channels = channels.split()
+
+    # Real bug found live 2026-09-14: an activation key's own
+    # *_activation_key_child_channels (e.g. the "managertools-*" channels
+    # that actually provide venv-salt-minion) are only ever REFERENCED by
+    # ensure_activation_key()'s own activationkey_addchildchannels call —
+    # nothing ever adds those channels to the server in the first place if
+    # they're not also separately listed in smlm_channels. The link call
+    # then fails with "Invalid channel" (previously silent — see
+    # ensure_activation_key()'s own fix in spacecmd_common.py), and every
+    # client bootstrapped against that key gets the wrong tooling package
+    # with no visible error anywhere: confirmed live, this is why a real
+    # SLES15 client kept getting classic salt-minion instead of SUSE's own
+    # venv-salt-minion (the bootstrap script's own venv-enabled marker file
+    # 404s until its owning channel is actually synced), and the SMLM
+    # server's hardened salt-master then rejected it outright ("protocol
+    # version 2, minimum required 3"). Fold every activation key's own
+    # child channels into what actually gets synced, deduplicated against
+    # smlm_channels, so this can't happen silently again.
+    for key_cfg in ([cfg] + list(cfg.get("smlm_activation_keys") or [])):
+        for c in (key_cfg.get("smlm_activation_key_child_channels") or "").split():
+            if c not in channels:
+                channels.append(c)
+
     if channels or cfg.get("smlm_activation_keys"):
         # Unlike the podman-registry login above (a fallback the docs frame
         # as optional), this step IS required: mgr-sync has no visibility

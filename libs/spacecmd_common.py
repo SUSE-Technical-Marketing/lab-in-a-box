@@ -364,7 +364,7 @@ import shlex
 import time
 from datetime import datetime, timezone
 
-from lab_creation import ssh_run, die
+from lab_creation import ssh_run, die, warn
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
@@ -563,8 +563,23 @@ def ensure_activation_key(hostname, exec_prefix, cfg, prefix):
 
     child_channels = (k("_child_channels") or "").split()
     if child_channels:
-        _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
+        # Confirmed live 2026-09-14: this genuinely fails ("Invalid channel")
+        # whenever a listed child channel isn't actually on the server yet —
+        # e.g. the "managertools-*" channels that provide venv-salt-minion,
+        # easy to reference here without ever having added them via
+        # mgr-sync (they're not implied by their own base product channel).
+        # _spacecmd()'s own return code used to be silently discarded, so
+        # this failure never surfaced anywhere — activation keys looked
+        # created and fine, but clients bootstrapped against them got the
+        # wrong (unlinked) channel set with no visible error at all.
+        r = _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
             shlex.quote(key_name), " ".join(shlex.quote(c) for c in child_channels)))
+        if r.returncode != 0:
+            warn("could not link child channels ({}) to activation key '{}' — check they're "
+                 "actually synced on the server (`mgr-sync add channels`), not just referenced "
+                 "in {}_activation_key_child_channels: {}".format(
+                     ", ".join(child_channels), key_name, prefix,
+                     (r.stderr or r.stdout or "").strip()))
 
     config_channels = (k("_config_channels") or "").split()
     if config_channels:

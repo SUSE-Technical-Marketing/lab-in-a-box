@@ -234,6 +234,34 @@ check("setup_smlm_podman: a real (list-shaped) smlm_channels is space-joined int
 check("setup_smlm_podman: the malformed Python-list-repr form never appears",
       not any("['chan-a', 'chan-b']" in c for c in calls_chanlist))
 
+# Real bug found live 2026-09-14: an activation key's own
+# *_activation_key_child_channels (e.g. the "managertools-*" channels that
+# actually provide venv-salt-minion) were only ever REFERENCED by
+# ensure_activation_key()'s own activationkey_addchildchannels call — never
+# actually added to the server, since nothing implied syncing a channel
+# just because an activation key mentions it. The link call then failed
+# ("Invalid channel", previously silent), and clients bootstrapped against
+# that key got the wrong tooling package with no visible error anywhere —
+# confirmed live as the real reason a SLES15 client kept getting classic
+# salt-minion instead of venv-salt-minion, which this SMLM server's
+# hardened salt-master then rejected outright.
+cfg_with_child_channels = dict(
+    cfg,
+    smlm_channels=["chan-a"],
+    smlm_activation_keys=[{
+        "smlm_activation_key": "k1",
+        "smlm_activation_key_base_channel": "chan-a",
+        "smlm_activation_key_child_channels": "managertools-sle15-pool-x86_64-sp7 chan-a",
+    }],
+)
+calls_childchan, _, _, _, _ = run_setup_smlm_podman(cfg_with_child_channels, transactional=True)
+mgr_sync_call = next((c for c in calls_childchan if c.startswith("mgrctl exec -- mgr-sync add channels")), "")
+check("setup_smlm_podman: an activation key's own child channels are folded into what actually "
+      "gets synced, not just referenced by the key",
+      "managertools-sle15-pool-x86_64-sp7" in mgr_sync_call)
+check("setup_smlm_podman: a child channel already present in smlm_channels isn't duplicated",
+      mgr_sync_call.count("chan-a") == 1)
+
 # ensure_channel_sync_monitor: deployed whenever channels are configured —
 # confirmed live 2026-09-14 that a mid-flight server restart can orphan a
 # reposync with no completion marker and no error, silently, so this must

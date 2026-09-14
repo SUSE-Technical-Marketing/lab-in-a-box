@@ -199,6 +199,33 @@ check("follow-up: config deployment enabled", any("activationkey_enableconfigdep
 check("follow-up: groups added", any("activationkey_addgroups 1-mykey group-a group-b" in c for c in cmds))
 check("follow-up: contact method set", any("activationkey_setcontactmethod 1-mykey default" in c for c in cmds))
 
+# -- ensure_activation_key: a failed child-channel link now surfaces, not --
+# -- silently swallowed -------------------------------------------------------
+# Real bug found live 2026-09-14: activationkey_addchildchannels genuinely
+# fails ("Invalid channel") whenever a listed child channel (e.g. the
+# "managertools-*" channels that provide venv-salt-minion) was never
+# actually added to the server — easy to do, since nothing else implies
+# syncing it just because an activation key references it. This call's own
+# return code used to be discarded outright, so the failure never surfaced
+# anywhere: the activation key looked fine, but clients bootstrapped
+# against it silently got the wrong (unlinked) channel set.
+fake = FakeSSH(responses=[
+    ("activationkey_list", FakeResult(stdout="")),
+    ("activationkey_addchildchannels", FakeResult(returncode=1, stderr="Invalid channel")),
+])
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_activation_key("host1", "mgrctl exec --", {
+    "smlm_activation_key": "1-mykey",
+    "smlm_activation_key_base_channel": "sle-product-base",
+    "smlm_activation_key_child_channels": "managertools-sle15-pool-x86_64-sp7",
+}, "smlm")
+check("ensure_activation_key: a failed child-channel link now calls warn(), not silently ignored",
+      len(warned) == 1)
+check("ensure_activation_key: the warning names the actual channel and the real server error",
+      warned and "managertools-sle15-pool-x86_64-sp7" in warned[0] and "Invalid channel" in warned[0])
+
 # -- ensure_activation_key: follow-ups use the REAL (org-id-prefixed) name --
 # (confirmed live, 2026-08-28: creating "-n 1-otherkey" was actually stored
 # as "1-1-otherkey" — every follow-up command must target that real name,
