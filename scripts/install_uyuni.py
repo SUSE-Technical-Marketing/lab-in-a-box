@@ -405,6 +405,10 @@ def setup_uyuni(hostname, virt_srv, cfg):
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "uyuni")
+        # System groups BEFORE any activation key — see install_smlm.py's
+        # identical comment on the same reorder for why (activationkey_
+        # addgroups dies if the named group doesn't exist yet server-side).
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "uyuni")
@@ -413,7 +417,6 @@ def setup_uyuni(hostname, virt_srv, cfg):
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_environments(hostname, exec_prefix, cfg, "uyuni")

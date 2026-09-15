@@ -803,7 +803,10 @@ try:
     sc.ensure_user_role("host1", "mgrctl exec --", "bob", "read-only-ops")
 except SystemExit:
     died = True
-check("ensure_user_role: user_addrole failure (e.g. unknown user) dies", died)
+check("ensure_user_role: user_addrole failure warns, doesn't die (confirmed live: even a "
+      "satellite_admin session gets the identical rejection for a custom access-group label, "
+      "so this can't be treated as a config mistake worth aborting the whole run over)",
+      died is False)
 
 # -- ensure_access_groups: full orchestration --------------------------------
 fake = FakeSSH(responses=[
@@ -1586,7 +1589,8 @@ try:
     sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["bogus.lab"])
 except SystemExit:
     died = True
-check("ensure_group_systems: addsystems failure dies", died)
+check("ensure_group_systems: addsystems failure warns, doesn't die (not-yet-registered "
+      "systems are expected and self-heal on a later run)", died is False)
 
 # -- ensure_system_groups: orchestration, no-op, validation ------------------
 fake = FakeSSH()

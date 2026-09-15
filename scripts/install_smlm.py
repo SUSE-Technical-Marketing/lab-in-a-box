@@ -714,6 +714,13 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        # System groups BEFORE any activation key: ensure_activation_key()/
+        # ensure_activation_keys() link a key to <prefix>_activation_key_groups
+        # via activationkey_addgroups, which dies if the named group doesn't
+        # exist yet server-side — confirmed live 2026-09-15 ("Unable to locate
+        # or access server group: 'prod'") the first time a lab actually
+        # combined smlm_system_groups with smlm_activation_key_groups.
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
@@ -722,7 +729,6 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
@@ -1313,6 +1319,7 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
@@ -1321,7 +1328,6 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")

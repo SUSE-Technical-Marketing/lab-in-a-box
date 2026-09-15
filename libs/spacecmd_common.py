@@ -961,12 +961,14 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
     {name, admin_user, admin_pass, admin_email, admin_first_name,
     admin_last_name, prefix, pam, trust_with: [...], share_channels: [...],
     share_channels_access}, PLUS whatever <prefix>_activation_key*/
-    <prefix>_config_channels/<prefix>_access_groups keys that org itself
-    needs — reusing the exact same field names as the top-level config,
-    since once this function re-authenticates as that org's own admin,
-    ensure_activation_key/ensure_config_channels/ensure_appstreams/
-    ensure_access_groups work completely unchanged (org-scoping is entirely
-    a function of which session is active — see module docstring). For each
+    <prefix>_config_channels/<prefix>_access_groups/<prefix>_system_groups/
+    <prefix>_users keys that org itself needs — reusing the exact same
+    field names as the top-level config, since once this function
+    re-authenticates as that org's own admin, ensure_activation_key/
+    ensure_config_channels/ensure_appstreams/ensure_access_groups/
+    ensure_system_groups/ensure_users work completely unchanged
+    (org-scoping is entirely a function of which session is active — see
+    module docstring). For each
     org, in list order (so a later org can trust_with an earlier one):
       1. re-authenticate as the DEFAULT admin, then create the org if it
          doesn't exist yet
@@ -1009,6 +1011,11 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
             ensure_channel_sharing(hostname, exec_prefix, ch, share_access)
 
         ensure_config_channels(hostname, exec_prefix, org, prefix)
+        # System groups BEFORE any activation key — same reorder, same
+        # reason, as the top-level orchestration in install_smlm.py/
+        # install_uyuni.py: ensure_activation_key()'s own group-linking dies
+        # if the named group doesn't exist yet server-side.
+        ensure_system_groups(hostname, exec_prefix, org, prefix)
         ensure_activation_key(hostname, exec_prefix, org, prefix)
         ensure_appstreams(hostname, exec_prefix, org, prefix)
         ensure_activation_key_packages(hostname, exec_prefix, org, prefix)
@@ -1105,19 +1112,40 @@ def user_has_role(hostname, exec_prefix, username, role):
 
 def ensure_user_role(hostname, exec_prefix, username, role):
     """
-    Idempotently attach `role` (a fixed role label like "org_admin" or a
-    custom access group's own label — both are ordinary role labels
-    server-side once the group exists) to an ALREADY-EXISTING user via
-    spacecmd's native user_addrole. Does not create the user — dies with
-    whatever error user_addrole itself returns if `username` doesn't exist.
-    NOT live-tested.
+    Idempotently attach `role` to an ALREADY-EXISTING user via spacecmd's
+    native user_addrole. Does not create the user — a missing username is
+    reported the same way as any other user_addrole failure (see below).
+
+    CONFIRMED LIVE 2026-09-15 against a real SMLM 5.2 server, contradicting
+    this module's own earlier assumption: user.addRole (user_addrole)
+    ONLY accepts the fixed/builtin role labels (activation_key_admin,
+    channel_admin, config_admin, image_admin, org_admin, regular_user,
+    satellite_admin, system_group_admin) — a custom access group's own
+    label is REJECTED outright ("Role with the label [X] cannot be
+    assigned/revoked from the user"), and this is unconditional: even the
+    default satellite_admin session gets the identical rejection, not just
+    a less-privileged org admin. The real XML-RPC method for attaching a
+    user to a custom Access Group was not found among the reasonable
+    candidates probed live (access.setUserAccessGroups/addUserAccessGroup/
+    setUsers/grantAccessGroup, user.setAccessGroups/addAssignedRoles — all
+    404 "Could not find method"), so ensure_access_groups()'s own `users`
+    field is currently UNIMPLEMENTABLE via any spacecmd/XML-RPC call this
+    module could locate — warn(), don't die(), so a lab with a mix of
+    builtin-role and custom-group user assignments still gets the builtin
+    ones applied and every other orchestration step still runs. Attach
+    users to a custom access group by hand via the Web UI until the real
+    API is found.
     """
     if user_has_role(hostname, exec_prefix, username, role):
         print("  User '{}' already has role '{}' — leaving it alone".format(username, role))
         return
     r = _spacecmd(hostname, exec_prefix, "user_addrole {} {}".format(shlex.quote(username), shlex.quote(role)))
     if r.returncode != 0:
-        die("could not add role '{}' to user '{}': {}".format(role, username, (r.stderr or r.stdout or "").strip()))
+        warn("could not add role '{}' to user '{}' — if '{}' is a custom access group's own "
+             "label, this is a known, currently-unresolved API gap (see this function's own "
+             "docstring), not a config mistake: {}".format(
+                 role, username, role, (r.stderr or r.stdout or "").strip()))
+        return
     print("  Added role '{}' to user '{}'".format(role, username))
 
 
@@ -1203,13 +1231,22 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
     Orchestrates <prefix>_access_groups: a list of {label, description,
     permissions_from: [...], permissions: [{namespace, mode}], users: [...]}
     dicts. Each entry: create the access group (or skip if it exists), grant
-    its requested namespaces, then attach it as a role to every already-
-    existing username in `users` (see ensure_user_role — no user accounts
-    are created here). No-op if <prefix>_access_groups is unset or empty.
-    Called both at the top level (default-org users) and per-org from
-    ensure_orgs (org-scoped users) — the 'access' namespace is reached
-    through the same session-is-org-scoping mechanism as everything else in
-    this module. NOT live-tested.
+    its requested namespaces, then TRY to attach it as a role to every
+    already-existing username in `users` via ensure_user_role. No-op if
+    <prefix>_access_groups is unset or empty. Called both at the top level
+    (default-org users) and per-org from ensure_orgs (org-scoped users) —
+    the 'access' namespace is reached through the same session-is-org-
+    scoping mechanism as everything else in this module.
+
+    Group creation and permission-granting are confirmed live (2026-09-15,
+    real SMLM 5.2 server) and work correctly. The `users` attachment step is
+    ALSO confirmed live — and confirmed BROKEN: see ensure_user_role()'s own
+    docstring for the real, reproducible API rejection this hits for every
+    custom label, regardless of caller privilege. That call now warns
+    instead of dying, so this orchestrator still finishes (and every other
+    <prefix>_access_groups entry, plus every step after it in the caller's
+    own orchestration, still runs) even though `users` currently has no
+    working effect.
     """
     groups = cfg.get("{}_access_groups".format(prefix)) or []
     for group in groups:
@@ -1953,7 +1990,19 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     Idempotently ensures every system name in `systems` is a member of
     `group_name`, via spacecmd's native group_addsystems — adds only the
     ones not already listed by group_listsystems. No-op if `systems` is
-    empty. NOT live-tested.
+    empty.
+
+    Confirmed live 2026-09-15: group_addsystems silently skips any name in
+    the list that isn't (yet) a real registered system, AS LONG AS at least
+    one other name in the same call IS real — but if EVERY name in one call
+    is invalid, it fails outright instead (exit 1, empty stderr). A
+    `systems` list built from a lab's own node hostnames routinely contains
+    names not registered yet (client_registration pending or intentionally
+    never a client, e.g. the server's own hostname in a "star"-type group)
+    — self-healing once they do register, exactly like
+    ensure_activation_key_child_channels' own not-yet-synced-channel case.
+    warn(), don't die(), so one not-yet-ready group doesn't abort every
+    other orchestration step after it.
     """
     if not systems:
         return
@@ -1965,7 +2014,9 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     r = _spacecmd(hostname, exec_prefix, "group_addsystems {} {}".format(
         shlex.quote(group_name), " ".join(shlex.quote(s) for s in missing)))
     if r.returncode != 0:
-        die("could not add systems to group '{}': {}".format(group_name, (r.stderr or r.stdout or "").strip()))
+        warn("could not add system(s) ({}) to group '{}' — they may not be registered systems yet: "
+             "{}".format(", ".join(missing), group_name, (r.stderr or r.stdout or "").strip()))
+        return
     print("  Added {} system(s) to group '{}': {}".format(len(missing), group_name, ", ".join(missing)))
 
 
