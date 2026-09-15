@@ -626,6 +626,96 @@ except SystemExit:
     died = True
 check("ensure_orgs: entry missing 'name' dies", died)
 
+# -- user_exists / ensure_user / ensure_users --------------------------------
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout="admin\nalice\n"))])
+sc.ssh_run = fake
+check("user_exists: found", sc.user_exists("host1", "mgrctl exec --", "alice") is True)
+check("user_exists: not found", sc.user_exists("host1", "mgrctl exec --", "bob") is False)
+
+# Existing user -> no user_create call, but roles are still (idempotently) applied.
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="alice\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Roles: org_admin")),
+])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {"username": "alice", "roles": ["org_admin"]})
+cmds = [c[1] for c in fake.calls]
+check("ensure_user: existing user -> no user_create call", not any("user_create" in c for c in cmds))
+check("ensure_user: already-held role -> no user_addrole call", not any("user_addrole" in c for c in cmds))
+
+# Missing user, all required fields present -> created, then roles granted.
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="")),
+    ("user_details", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {
+    "username": "curie", "password": "pw", "first_name": "Marie", "last_name": "Curie",
+    "email": "curie@edge.mydemo.lab", "roles": ["channel_admin"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_user: missing user -> user_create called with the right argv",
+      any("user_create -u curie -p pw -f Marie -l Curie -e curie@edge.mydemo.lab" in c for c in cmds))
+check("ensure_user: no --pam flag when not requested",
+      not any("--pam" in c for c in cmds))
+check("ensure_user: roles granted after creation",
+      any("user_addrole curie channel_admin" in c for c in cmds))
+
+# pam flag appended when set.
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {
+    "username": "turing", "password": "pw", "first_name": "Alan", "last_name": "Turing",
+    "email": "turing@edge.mydemo.lab", "pam": True,
+})
+check("ensure_user: --pam appended when requested",
+      any("-e turing@edge.mydemo.lab --pam" in c[1] for c in fake.calls))
+
+# Missing user, a required field absent -> dies rather than silently skip.
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_user("host1", "mgrctl exec --", {"username": "incomplete", "password": "pw"})
+except SystemExit:
+    died = True
+check("ensure_user: missing user + missing required field dies", died)
+
+# Entry missing 'username' dies.
+died = False
+try:
+    sc.ensure_user("host1", "mgrctl exec --", {"password": "pw"})
+except SystemExit:
+    died = True
+check("ensure_user: entry missing 'username' dies", died)
+
+# ensure_users: orchestrates a list, no-op when unset.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_users("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_users: no-op when field unset", len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="")),
+    ("user_details", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+cfg = {
+    "smlm_users": [
+        {"username": "curie", "password": "pw", "first_name": "Marie", "last_name": "Curie",
+         "email": "curie@edge.mydemo.lab", "roles": ["channel_admin"]},
+        {"username": "turing", "password": "pw", "first_name": "Alan", "last_name": "Turing",
+         "email": "turing@edge.mydemo.lab", "roles": ["config_admin"]},
+    ]
+}
+sc.ensure_users("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --", cfg, "smlm")
+cmds = [c[1] for c in fake.calls]
+check("ensure_users: creates every listed user",
+      any("user_create -u curie" in c for c in cmds) and any("user_create -u turing" in c for c in cmds))
+check("ensure_users: grants each user's own roles",
+      any("user_addrole curie channel_admin" in c for c in cmds)
+      and any("user_addrole turing config_admin" in c for c in cmds))
+
 # -- access_group_exists / ensure_access_group -------------------------------
 fake = FakeSSH(responses=[("access.listRoles", FakeResult(returncode=0, stdout="read-only-ops\nother-group\n"))])
 sc.ssh_run = fake

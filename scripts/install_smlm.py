@@ -220,6 +220,31 @@
 #                             libs/spacecmd_common.py for what's confirmed vs. inferred here
 #                             (trust's bidirectionality in particular).
 #
+# OPTIONAL – user accounts. List of objects, usable at the top level (scoped to the default
+# org) or nested inside an smlm_orgs entry (scoped to that org — same field name either way).
+# Runs automatically on every install (idempotent), BEFORE smlm_access_groups below so its own
+# "users" list can reference an account defined here:
+#   smlm_users                 : [{
+#                                 "username": "...", "password": "...", "first_name": "...",
+#                                 "last_name": "...", "email": "...", "pam": false,
+#                                 "roles": ["channel_admin", ...]   # optional, see below
+#                               }, ...]
+#                             password/first_name/last_name/email are required to create the
+#                             account (skipped — not idempotent-creatable — otherwise, same
+#                             convention as an org's own admin_user/admin_pass/admin_email).
+#                             "roles" are applied on every run via spacecmd's native user_addrole
+#                             (idempotent — diffed against the user's current roles first), but
+#                             ONLY use it for one of the fixed labels from 'spacecmd
+#                             user_listavailableroles' (activation_key_admin, channel_admin,
+#                             config_admin, image_admin, org_admin, regular_user, satellite_admin,
+#                             system_group_admin) — those always exist. Do NOT put a custom access
+#                             group's own label here: smlm_users runs BEFORE smlm_access_groups
+#                             below (an access group's own "users" list needs the account to
+#                             already exist), so the custom role wouldn't exist yet and
+#                             user_addrole would fail. Attach a user to a custom group the other
+#                             way instead — list their username in that group's own "users" field
+#                             below, which runs in the correct order.
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
 # smlm_orgs entry (scoped to that org — same field name either way):
@@ -227,12 +252,12 @@
 #                                 "label": "...", "description": "...",
 #                                 "permissions_from": ["existing-role-label", ...],
 #                                 "permissions": [{"namespace": "...", "mode": "R" | "W"}, ...],
-#                                 "users": ["existing-username", ...]
+#                                 "users": ["username", ...]
 #                               }, ...]
-#                             Does NOT create user accounts — every name in "users" must already
-#                             exist (e.g. an org's own admin_user above) or attaching the role
-#                             fails with a clear error. Every access_* operation goes through the
-#                             raw 'api' passthrough (spacecmd has no native subcommand for this
+#                             Each username must exist by the time this runs — defined above via
+#                             smlm_users, or an org's own admin_user, or attaching the role fails
+#                             with a clear error. Every access_* operation goes through the raw
+#                             'api' passthrough (spacecmd has no native subcommand for this
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
@@ -693,6 +718,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
@@ -1291,6 +1317,7 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")

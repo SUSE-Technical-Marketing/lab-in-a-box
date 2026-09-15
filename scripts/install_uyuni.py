@@ -92,6 +92,31 @@
 #                             them. See libs/spacecmd_common.py for what's confirmed vs. inferred
 #                             here (trust's bidirectionality in particular).
 #
+# OPTIONAL – user accounts. List of objects, usable at the top level (scoped to the default
+# org) or nested inside a uyuni_orgs entry (scoped to that org — same field name either way).
+# Runs automatically on every install (idempotent), BEFORE uyuni_access_groups below so its own
+# "users" list can reference an account defined here:
+#   uyuni_users                : [{
+#                                 "username": "...", "password": "...", "first_name": "...",
+#                                 "last_name": "...", "email": "...", "pam": false,
+#                                 "roles": ["channel_admin", ...]   # optional, see below
+#                               }, ...]
+#                             password/first_name/last_name/email are required to create the
+#                             account (skipped — not idempotent-creatable — otherwise, same
+#                             convention as an org's own admin_user/admin_pass/admin_email).
+#                             "roles" are applied on every run via spacecmd's native user_addrole
+#                             (idempotent — diffed against the user's current roles first), but
+#                             ONLY use it for one of the fixed labels from 'spacecmd
+#                             user_listavailableroles' (activation_key_admin, channel_admin,
+#                             config_admin, image_admin, org_admin, regular_user, satellite_admin,
+#                             system_group_admin) — those always exist. Do NOT put a custom access
+#                             group's own label here: uyuni_users runs BEFORE uyuni_access_groups
+#                             below (an access group's own "users" list needs the account to
+#                             already exist), so the custom role wouldn't exist yet and
+#                             user_addrole would fail. Attach a user to a custom group the other
+#                             way instead — list their username in that group's own "users" field
+#                             below, which runs in the correct order.
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside a
 # uyuni_orgs entry (scoped to that org — same field name either way):
@@ -99,12 +124,12 @@
 #                                 "label": "...", "description": "...",
 #                                 "permissions_from": ["existing-role-label", ...],
 #                                 "permissions": [{"namespace": "...", "mode": "R" | "W"}, ...],
-#                                 "users": ["existing-username", ...]
+#                                 "users": ["username", ...]
 #                               }, ...]
-#                             Does NOT create user accounts — every name in "users" must already
-#                             exist (e.g. an org's own admin_user above) or attaching the role
-#                             fails with a clear error. Every access_* operation goes through the
-#                             raw 'api' passthrough (spacecmd has no native subcommand for this
+#                             Each username must exist by the time this runs — defined above via
+#                             uyuni_users, or an org's own admin_user, or attaching the role fails
+#                             with a clear error. Every access_* operation goes through the raw
+#                             'api' passthrough (spacecmd has no native subcommand for this
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
@@ -236,6 +261,7 @@ PLUGIN = {
 }
 
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -319,6 +345,12 @@ def setup_uyuni(hostname, virt_srv, cfg):
     # `mgradm install` rejected it outright with "unknown flag: --admin-email".
     # bash's own version (libs/lab_creation.bash) has this identical bug,
     # pre-existing, not a python-port regression.
+    # Every value shell-quoted — confirmed live 2026-09-13 (install_smlm.py,
+    # which mirrors this exact command shape): an unquoted multi-word
+    # --organization got split by the remote shell into two tokens, the
+    # second of which mgradm misinterpreted as its own optional FQDN
+    # positional argument. Same latent bug here — uyuni_org just never
+    # happened to contain a space in practice, so it was never hit live.
     install_cmd = (
         "mgradm install podman "
         "--admin-login {} "
@@ -326,8 +358,10 @@ def setup_uyuni(hostname, virt_srv, cfg):
         "--email {} "
         "--ssl-password {} "
         "--organization {}".format(
-            admin, password, cfg.get("uyuni_email") or "admin@lab.local",
-            cfg.get("uyuni_ssl_password") or password, cfg.get("uyuni_org") or "lab"))
+            shlex.quote(admin), shlex.quote(password),
+            shlex.quote(cfg.get("uyuni_email") or "admin@lab.local"),
+            shlex.quote(cfg.get("uyuni_ssl_password") or password),
+            shlex.quote(cfg.get("uyuni_org") or "lab")))
     _run_install_with_pg_hba_guard(hostname, install_cmd)
 
     time.sleep(60)
@@ -375,6 +409,7 @@ def setup_uyuni(hostname, virt_srv, cfg):
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "uyuni")
+        sc.ensure_users(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "uyuni")

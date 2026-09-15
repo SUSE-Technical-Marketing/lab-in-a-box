@@ -121,10 +121,14 @@ inline below:
     attach a user to a custom group's label too, since a created access
     group becomes an ordinary role label server-side once it exists — no
     separate "add user to access group" API exists or is needed. Deliberate
-    scope cut: this does NOT create user accounts — no user-creation
-    command was confirmed by research, so every name in a group's `users`
-    list must already exist (e.g. an org's own admin from ensure_org) or
-    user_addrole simply fails with a clear error. grantAccess's own
+    CORRECTION (2026-09-15, confirmed live against a real SMLM 5.2 server):
+    the original research here missed that spacecmd DOES have a native
+    user_create subcommand (spacecmd/src/spacecmd/user.py) — `spacecmd --
+    help`'s two-column output lists it, easy to miss by eye, and the
+    earlier docs-only research pass didn't catch it. ensure_users()/
+    ensure_user() below now create user accounts directly, so a group's
+    `users` list no longer requires the account to already exist
+    elsewhere. grantAccess's own
     idempotency on a repeat call for an already-granted namespace wasn't
     confirmed, so ensure_access_group_permissions checks
     access.listPermissions first rather than assuming a repeat call is a
@@ -1008,6 +1012,7 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
         ensure_activation_key(hostname, exec_prefix, org, prefix)
         ensure_appstreams(hostname, exec_prefix, org, prefix)
         ensure_activation_key_packages(hostname, exec_prefix, org, prefix)
+        ensure_users(hostname, exec_prefix, org, prefix)
         ensure_access_groups(hostname, exec_prefix, org, prefix)
 
     ensure_spacecmd_config(hostname, exec_prefix, default_admin_user, default_admin_pass)
@@ -1114,6 +1119,83 @@ def ensure_user_role(hostname, exec_prefix, username, role):
     if r.returncode != 0:
         die("could not add role '{}' to user '{}': {}".format(role, username, (r.stderr or r.stdout or "").strip()))
     print("  Added role '{}' to user '{}'".format(role, username))
+
+
+def user_exists(hostname, exec_prefix, username):
+    """
+    Whether `username` already appears as an exact line in `spacecmd
+    user_list`'s output (one username per line, no header, confirmed live
+    2026-09-15 — same shape as org_list). Exact match, same reasoning as
+    org_exists.
+    """
+    r = _spacecmd(hostname, exec_prefix, "user_list")
+    return username in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def ensure_user(hostname, exec_prefix, user):
+    """
+    Idempotently create the user account described by one entry of
+    <prefix>_users, via spacecmd's native user_create (confirmed live
+    2026-09-15 against a real SMLM 5.2 server — see this module's own
+    top-of-file notes on ensure_access_groups for the research correction).
+    Builtin roles (fixed labels from `spacecmd user_listavailableroles`:
+    activation_key_admin, channel_admin, config_admin, image_admin,
+    org_admin, regular_user, satellite_admin, system_group_admin — confirmed
+    live against the same server) are applied via `roles`, reusing
+    ensure_user_role() so a repeat run never re-grants an already-held role.
+
+    A custom access group's own label is an ordinary role label too once the
+    group exists, BUT ensure_users() runs BEFORE ensure_access_groups() at
+    every call site in this module (an access group's own `users` list needs
+    the account to already exist) — so a custom label put in `roles` here
+    would try to attach a role that doesn't exist yet and fail. Grant custom
+    labels the other way instead: list the username in that access group's
+    own `users` field, which runs in the correct order already. Reserve
+    `roles` here for the fixed builtin labels, which have no such ordering
+    dependency.
+    """
+    username = user.get("username")
+    if not username:
+        die("users: an entry is missing required 'username'")
+
+    if user_exists(hostname, exec_prefix, username):
+        print("  User '{}' already exists — leaving it alone".format(username))
+    else:
+        password = user.get("password")
+        first_name = user.get("first_name")
+        last_name = user.get("last_name")
+        email = user.get("email")
+        if not (password and first_name and last_name and email):
+            die("user '{}': password, first_name, last_name and email are all required to "
+                "create it".format(username))
+
+        cmd = "user_create -u {u} -p {p} -f {f} -l {l} -e {e}".format(
+            u=shlex.quote(username), p=shlex.quote(password),
+            f=shlex.quote(first_name), l=shlex.quote(last_name), e=shlex.quote(email))
+        if user.get("pam"):
+            cmd += " --pam"
+        r = _spacecmd(hostname, exec_prefix, cmd)
+        if r.returncode != 0:
+            die("could not create user '{}': {}".format(username, (r.stderr or r.stdout or "").strip()))
+        print("  Created user '{}'".format(username))
+
+    for role in user.get("roles") or []:
+        ensure_user_role(hostname, exec_prefix, username, role)
+
+
+def ensure_users(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_users: a list of {username, password, first_name,
+    last_name, email, pam: false, roles: [...]} dicts — see ensure_user()
+    for per-entry behavior. No-op if <prefix>_users is unset or empty.
+    Called both at the top level (default-org users) and per-org from
+    ensure_orgs (org-scoped users), same pattern as ensure_access_groups —
+    and deliberately BEFORE ensure_access_groups() at each of those call
+    sites, since an access group's own `users` list needs the account to
+    already exist.
+    """
+    for user in cfg.get("{}_users".format(prefix)) or []:
+        ensure_user(hostname, exec_prefix, user)
 
 
 def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
