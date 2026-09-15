@@ -842,19 +842,6 @@ def _generate_unused_mac(used_macs):
             return candidate
 
 
-def vm_is_reusable(virt_srv, vm_name, mymac, myip, remote_host=None):
-    """
-    Returns True when the VM should be kept, False when it must be destroyed
-    and recreated. Thin wrapper — body moved to
-    backends.LibvirtBackend.vm_is_reusable().
-
-    remote_host: see _list_domain_macs()'s docstring — optional, only needed
-    by the SSH fallback.
-    """
-    from backends import LibvirtBackend
-    return LibvirtBackend(virt_srv, remote_host=remote_host).vm_is_reusable(vm_name, mymac, myip)
-
-
 # ── SSH helpers ───────────────────────────────────────────────────────────────
 
 _SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
