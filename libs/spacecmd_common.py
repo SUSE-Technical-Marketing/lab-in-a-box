@@ -1723,6 +1723,71 @@ def ensure_activation_keys(hostname, exec_prefix, cfg, prefix):
         ensure_appstreams(hostname, exec_prefix, key_cfg, prefix)
         ensure_activation_key_packages(hostname, exec_prefix, key_cfg, prefix)
         ensure_activation_key_groups(hostname, exec_prefix, key_cfg, prefix)
+        ensure_activation_key_child_channels(hostname, exec_prefix, key_cfg, prefix)
+
+
+def activation_key_child_channels(hostname, exec_prefix, key_name):
+    """Returns the set of child channel labels currently linked to
+    activation key `key_name`, via spacecmd's native
+    activationkey_listchildchannels."""
+    r = _spacecmd(hostname, exec_prefix, "activationkey_listchildchannels {}".format(shlex.quote(key_name)))
+    if r.returncode != 0:
+        return set()
+    return set(line.strip() for line in (r.stdout or "").splitlines() if line.strip())
+
+
+def ensure_activation_key_child_channels(hostname, exec_prefix, cfg, prefix):
+    """
+    Idempotently ensures every child channel listed in
+    <prefix>_activation_key_child_channels is linked to
+    <prefix>_activation_key, via spacecmd's native
+    activationkey_addchildchannels. Same shape as
+    ensure_activation_key_groups: a real list API exists
+    (activationkey_listchildchannels), so this is genuinely idempotent and
+    called unconditionally (not just at key-creation time) — generalizing
+    that same pattern from groups to child channels.
+
+    This is the real fix for a gap found live 2026-09-15: ensure_
+    activation_key()'s own child-channel linking only ever runs at
+    CREATION time — an already-existing key (the normal case on every run
+    after the first) skips it entirely, so a lab JSON edit adding/
+    correcting child_channels for an existing activation key silently had
+    no effect at all until now. Confirmed live: several of solar-system-
+    lab.json's own activation keys (leap16, rhel9, debian13,
+    debian13arm64, oraclelinux9, amazonlinux2, amazonlinux2023) had NO
+    Client Tools channel linked whatsoever — not a creation-time-only gap,
+    a total, silent absence — because they were created once, early, with
+    an empty child_channels field, and every later JSON fix to add the
+    right channel never got applied since the key already existed.
+
+    No-op if either the key or the child-channels field is unset. Calling
+    this alongside ensure_activation_key's own creation-time linking is
+    harmless — it just finds nothing new to add if that path already
+    handled it.
+    """
+    key_name = cfg.get("{}_activation_key".format(prefix))
+    spec = (cfg.get("{}_activation_key_child_channels".format(prefix)) or "").split()
+    if not key_name or not spec:
+        return
+    key_name = resolve_activation_key_name(hostname, exec_prefix, key_name)
+
+    existing = activation_key_child_channels(hostname, exec_prefix, key_name)
+    missing = [c for c in spec if c not in existing]
+    if not missing:
+        print("  Activation key '{}' already linked to all requested child channels — "
+              "leaving it alone".format(key_name))
+        return
+
+    r = _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
+        shlex.quote(key_name), " ".join(shlex.quote(c) for c in missing)))
+    if r.returncode != 0:
+        warn("could not link child channels ({}) to activation key '{}' — check they're "
+             "actually synced on the server (`mgr-sync add channels`), not just referenced "
+             "in {}_activation_key_child_channels: {}".format(
+                 ", ".join(missing), key_name, prefix, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Linked {} child channel(s) to activation key '{}': {}".format(
+        len(missing), key_name, ", ".join(missing)))
 
 
 def activation_key_groups(hostname, exec_prefix, key_name):

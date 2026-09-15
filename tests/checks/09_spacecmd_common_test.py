@@ -1333,6 +1333,67 @@ except SystemExit:
     died = True
 check("ensure_activation_key_groups: addgroups failure dies", died)
 
+# -- activation_key_child_channels / ensure_activation_key_child_channels ----
+# Real bug found live 2026-09-15: ensure_activation_key()'s own child-
+# channel linking only ever ran at CREATION time — an already-existing key
+# (the normal case on every run after the first) skipped it entirely, so a
+# lab JSON edit adding/correcting child_channels for an existing key had
+# silently NO EFFECT: confirmed live that several of solar-system-lab.
+# json's own keys had ZERO "SUSE Multi-Linux Manager Client Tools" channel
+# linked at all, because they were created once with an empty
+# child_channels field and every later fix to add the right channel never
+# got applied since the key already existed. Same fix shape as groups.
+fake = FakeSSH(responses=[("activationkey_listchildchannels",
+                            FakeResult(returncode=0, stdout="chan-a\nchan-b\n"))])
+sc.ssh_run = fake
+check("activation_key_child_channels: returns the current set",
+      sc.activation_key_child_channels("host1", "mgrctl exec --", "1-mykey") == {"chan-a", "chan-b"})
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=1, stderr="no such key"))])
+sc.ssh_run = fake
+check("activation_key_child_channels: returns empty set on failure",
+      sc.activation_key_child_channels("host1", "mgrctl exec --", "bogus") == set())
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels("host1", "mgrctl exec --", {}, "uyuni")
+sc.ensure_activation_key_child_channels("host1", "mgrctl exec --", {"uyuni_activation_key": "1-mykey"}, "uyuni")
+check("ensure_activation_key_child_channels: no-op when key or child_channels field is unset",
+      len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=0, stdout="chan-a\n"))])
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels(
+    "host1", "mgrctl exec --",
+    {"uyuni_activation_key": "1-mykey", "uyuni_activation_key_child_channels": "chan-a"}, "uyuni")
+check("ensure_activation_key_child_channels: all already linked -> no addchildchannels call",
+      len(fake.calls) == 2 and not any("activationkey_addchildchannels" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=0, stdout="chan-a\n"))])
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels(
+    "host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+    {"smlm_activation_key": "1-mykey", "smlm_activation_key_child_channels": "chan-a managertools-sle15-pool-x86_64-sp7"},
+    "smlm")
+add_cmd = next((c[1] for c in fake.calls if "activationkey_addchildchannels" in c[1]), "")
+check("ensure_activation_key_child_channels: links only the missing channel — this is what "
+      "actually fixes an existing key whose lab JSON gained a Client Tools channel later",
+      "activationkey_addchildchannels 1-mykey managertools-sle15-pool-x86_64-sp7" in add_cmd)
+
+fake = FakeSSH(responses=[
+    ("activationkey_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("activationkey_addchildchannels", FakeResult(returncode=1, stderr="Invalid channel")),
+])
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_activation_key_child_channels(
+    "host1", "mgrctl exec --",
+    {"uyuni_activation_key": "1-mykey", "uyuni_activation_key_child_channels": "not-yet-synced-channel"}, "uyuni")
+check("ensure_activation_key_child_channels: addchildchannels failure warns (not dies — a channel "
+      "not yet synced is a real, recoverable, expected transient state, not a fatal misconfiguration)",
+      len(warned) == 1 and "not-yet-synced-channel" in warned[0] and "Invalid channel" in warned[0])
+
 # -- ensure_activation_keys: list orchestration reuses per-key functions -----
 fake = FakeSSH(responses=[
     ("activationkey_listgroups", FakeResult(returncode=0, stdout="")),
