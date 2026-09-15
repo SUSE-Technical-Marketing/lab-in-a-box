@@ -710,6 +710,18 @@ _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
 # were left interrupted by something like a mid-flight server restart. Runs
 # periodically via smlm-channel-sync-monitor.timer (see the matching
 # .service unit next to this file).
+#
+# Triggers AT MOST ONE resync per run — confirmed live 2026-09-14:
+# spacewalk-repo-sync only ever allows a single instance system-wide
+# ("attempting to run more than one instance... Exiting"), and taskomatic
+# does not automatically retry a collision. Triggering every pending
+# channel each run (the original behavior) caused this project's own
+# monitor to self-collide with itself: taskomatic tried to launch several
+# at once, only one ever actually got the lock, and every other channel
+# lost the race, got no log file, and sat untried for a full cycle since
+# nothing else prompted a retry sooner. Firing one at a time, and only when
+# nothing is already running, means every trigger this monitor issues has
+# a real, uncontested chance to actually run.
 set -uo pipefail
 
 LOG_DIR=/var/log/rhn/reposync
@@ -725,11 +737,10 @@ spacecmd_() {
     podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>/dev/null
 }
 
-trigger_resync() {
-    local channel="$1" reason="$2"
-    log "channel '$channel': $reason -- triggering resync"
-    spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
-}
+if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
+    log "a reposync is already running -- nothing to trigger this cycle"
+    exit 0
+fi
 
 CHANNELS=$(spacecmd_ softwarechannel_list)
 if [ -z "$CHANNELS" ]; then
@@ -739,25 +750,25 @@ fi
 
 for channel in $CHANNELS; do
     reposync_log="$LOG_DIR/$channel.log"
+    reason=""
 
     if ! podman exec uyuni-server test -f "$reposync_log"; then
-        trigger_resync "$channel" "never synced (no reposync log)"
-        continue
+        reason="never synced (no reposync log)"
+    else
+        tail_lines=$(podman exec uyuni-server tail -n 20 "$reposync_log" 2>/dev/null)
+        if echo "$tail_lines" | tail -n 3 | grep -qF "Sync completed."; then
+            continue
+        elif echo "$tail_lines" | grep -qiE 'error|traceback'; then
+            reason="last reposync log shows an error"
+        elif ! podman exec uyuni-server pgrep -f "spacewalk-repo-sync --channel $channel " >/dev/null 2>&1; then
+            reason="incomplete reposync log with no active sync process (interrupted)"
+        fi
     fi
 
-    tail_lines=$(podman exec uyuni-server tail -n 20 "$reposync_log" 2>/dev/null)
-
-    if echo "$tail_lines" | tail -n 3 | grep -qF "Sync completed."; then
-        continue
-    fi
-
-    if echo "$tail_lines" | grep -qiE 'error|traceback'; then
-        trigger_resync "$channel" "last reposync log shows an error"
-        continue
-    fi
-
-    if ! podman exec uyuni-server pgrep -f "spacewalk-repo-sync --channel $channel " >/dev/null 2>&1; then
-        trigger_resync "$channel" "incomplete reposync log with no active sync process (interrupted)"
+    if [ -n "$reason" ]; then
+        log "channel '$channel': $reason -- triggering resync"
+        spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
+        exit 0
     fi
 done
 """

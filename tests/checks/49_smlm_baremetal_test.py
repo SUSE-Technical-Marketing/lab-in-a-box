@@ -291,6 +291,28 @@ check("setup_smlm_podman: deploys the systemd timer unit, on a recurring (not on
 check("setup_smlm_podman: enables and starts the timer (not just installs it inert)",
       any("systemctl enable --now smlm-channel-sync-monitor.timer" in c for c in calls_chanlist))
 
+# Real bug found live 2026-09-14, same night: spacewalk-repo-sync only ever
+# allows a single instance system-wide ("attempting to run more than one
+# instance... Exiting"), and taskomatic never automatically retries a
+# collision. The monitor's original behavior — triggering every pending
+# channel in one run — caused it to self-collide: taskomatic tried to
+# launch several at once, only one ever got the lock, and everything else
+# lost the race, got no log file at all, and sat untried for a full 30-min
+# cycle. Fixed: trigger at most ONE channel per run, and only when nothing
+# is already syncing, so every trigger this monitor issues has a real,
+# uncontested shot at actually running.
+check("channel-sync-monitor script checks for an already-running reposync before "
+      "triggering anything, to avoid colliding with itself",
+      monitor_script_call is not None
+      and "pgrep -f spacewalk-repo-sync" in monitor_script_call
+      and monitor_script_call.index("pgrep -f spacewalk-repo-sync")
+      < monitor_script_call.index("softwarechannel_syncrepos"))
+check("channel-sync-monitor script triggers at most one channel per run (exits "
+      "immediately after the first trigger, inside the loop)",
+      monitor_script_call is not None
+      and monitor_script_call.count("softwarechannel_syncrepos \"$channel\"") == 1
+      and "exit 0" in monitor_script_call.split("softwarechannel_syncrepos \"$channel\"")[1][:40])
+
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []
 ism.die = lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)
