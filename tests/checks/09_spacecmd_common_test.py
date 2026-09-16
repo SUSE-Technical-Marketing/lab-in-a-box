@@ -7,6 +7,7 @@
 # server behavior. Run from 09_spacecmd_common.sh, in its own container —
 # see tests/run_tests.sh.
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -1962,6 +1963,150 @@ try:
 except SystemExit:
     died = True
 check("ensure_client_registered: dies if the key never appears as pending", died)
+
+
+# -- describe_activation_key / describe_system_group / describe_access_groups /
+#    export_config -- reading a live server back into lab-in-a-box JSON --------
+# Fixture text below is copied verbatim from a real activationkey_details/
+# group_details run against a live SMLM 5.2 server (2026-09-16), not invented,
+# since this whole feature exists to parse that exact real output shape.
+_REAL_AK_DETAILS = """Key:                    1-sles15sp7
+Description:            mercury.mydemo.lab - SLES 15 SP7
+Universal Default:      False
+Usage Limit:            0
+Deploy Config Channels: False
+Contact Method:         default
+
+Software Channels
+-----------------
+sle-product-sles15-sp7-pool-x86_64
+ |-- managertools-sle15-pool-x86_64-sp7
+ |-- managertools-sle15-updates-x86_64-sp7
+ |-- sle-module-basesystem15-sp7-pool-x86_64
+ |-- sle-module-basesystem15-sp7-updates-x86_64
+ |-- sle-product-sles15-sp7-updates-x86_64
+ |-- sle15-sp7-installer-updates-x86_64
+
+Configuration Channels
+----------------------
+
+Entitlements
+------------
+
+
+System Groups
+-------------
+prod
+
+Packages
+--------
+"""
+
+fake = FakeSSH(responses=[("activationkey_details", FakeResult(returncode=0, stdout=_REAL_AK_DETAILS))])
+sc.ssh_run = fake
+ak = sc.describe_activation_key("host1", "mgrctl exec --", "1-sles15sp7", "smlm")
+check("describe_activation_key: strips the numeric org-id prefix off the key name",
+      ak["smlm_activation_key"] == "sles15sp7")
+check("describe_activation_key: description round-trips exactly as the server has it",
+      ak["smlm_activation_key_desc"] == "mercury.mydemo.lab - SLES 15 SP7")
+check("describe_activation_key: base channel is the first (non-indented) software channel line",
+      ak["smlm_activation_key_base_channel"] == "sle-product-sles15-sp7-pool-x86_64")
+check("describe_activation_key: child channels are every ' |-- '-prefixed line, space-joined",
+      ak["smlm_activation_key_child_channels"] ==
+      "managertools-sle15-pool-x86_64-sp7 managertools-sle15-updates-x86_64-sp7 "
+      "sle-module-basesystem15-sp7-pool-x86_64 sle-module-basesystem15-sp7-updates-x86_64 "
+      "sle-product-sles15-sp7-updates-x86_64 sle15-sp7-installer-updates-x86_64")
+check("describe_activation_key: groups", ak["smlm_activation_key_groups"] == "prod")
+check("describe_activation_key: an EMPTY section (Configuration Channels here) contributes no "
+      "field at all — confirmed live 2026-09-16 this used to bleed the NEXT header's own text in "
+      "as bogus content when the boundary regex assumed two blank lines instead of one",
+      "smlm_activation_key_config_channels" not in ak)
+check("describe_activation_key: an empty Entitlements section is also omitted, not an empty string",
+      "smlm_activation_key_entitlements" not in ak)
+
+_REAL_GROUP_DETAILS = """ID:                17
+Name:              star
+Description:       The G-type main-sequence star at the center of the system
+Number of Systems: 0
+
+Members
+-------
+"""
+fake = FakeSSH(responses=[("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS))])
+sc.ssh_run = fake
+sg = sc.describe_system_group("host1", "mgrctl exec --", "star")
+check("describe_system_group: name/description round-trip",
+      sg == {"name": "star", "description": "The G-type main-sequence star at the center of the system"})
+
+_REAL_GROUP_DETAILS_WITH_MEMBERS = """ID:                20
+Name:              terrestrial-planets
+Description:       Rocky planets with solid surfaces
+Number of Systems: 3
+
+Members
+-------
+earth.mydemo.lab
+mars.mydemo.lab
+mercury.mydemo.lab
+"""
+fake = FakeSSH(responses=[("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS_WITH_MEMBERS))])
+sc.ssh_run = fake
+sg = sc.describe_system_group("host1", "mgrctl exec --", "terrestrial-planets")
+check("describe_system_group: members list populated when non-empty",
+      sg["systems"] == ["earth.mydemo.lab", "mars.mydemo.lab", "mercury.mydemo.lab"])
+
+fake = FakeSSH(responses=[
+    ("access.listRoles", FakeResult(returncode=0, stdout=json.dumps(
+        [{"label": "engineering", "description": "Content, config and Salt formula authoring"}]))),
+    ("access.listPermissions", FakeResult(returncode=0, stdout=json.dumps([
+        {"namespace": "software.manage.list", "access_mode": {"value": "W"}},
+        {"namespace": "config.channels", "access_mode": {"value": "W"}},
+    ]))),
+])
+sc.ssh_run = fake
+groups = sc.describe_access_groups("host1", "mgrctl exec --")
+check("describe_access_groups: returns one entry per role with label/description/permissions",
+      groups == [{
+          "label": "engineering", "description": "Content, config and Salt formula authoring",
+          "permissions": [{"namespace": "software.manage.list", "mode": "W"},
+                           {"namespace": "config.channels", "mode": "W"}],
+      }])
+
+# export_config: full orchestration, mocking only the top-level list commands (activation-key/
+# group/access-group DETAIL parsing is already covered above by the real fixtures).
+fake = FakeSSH(responses=[
+    # "org_listusers" MUST be checked before "org_list" — FakeSSH matches the
+    # first substring hit in list order, and "org_list" is itself a substring
+    # of "org_listusers" (confirmed live 2026-09-16: without this ordering,
+    # every org_listusers call silently got org_list's own response instead).
+    ("org_listusers", FakeResult(returncode=0, stdout="edgeadmin\nlovelace\n")),
+    ("softwarechannel_list", FakeResult(returncode=0, stdout="chan1\nchan2\n")),
+    ("activationkey_list", FakeResult(returncode=0, stdout="1-sles15sp7\n")),
+    ("activationkey_details", FakeResult(returncode=0, stdout=_REAL_AK_DETAILS)),
+    ("group_list", FakeResult(returncode=0, stdout="star\n")),
+    ("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS)),
+    ("access.listRoles", FakeResult(returncode=0, stdout="[]")),
+    ("org_list", FakeResult(returncode=0, stdout="Default\nedge\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Organisation:  Default\n")),
+])
+sc.ssh_run = fake
+result = sc.export_config("host1", "mgrctl exec --", "admin", "pw", "smlm")
+check("export_config: top-level admin/org fields", result["smlm_admin"] == "admin" and result["smlm_org"] == "Default")
+check("export_config: channels list", result["smlm_channels"] == ["chan1", "chan2"])
+check("export_config: activation keys via describe_activation_key",
+      len(result["smlm_activation_keys"]) == 1
+      and result["smlm_activation_keys"][0]["smlm_activation_key"] == "sles15sp7")
+check("export_config: system groups via describe_system_group",
+      result["smlm_system_groups"] ==
+      [{"name": "star", "description": "The G-type main-sequence star at the center of the system"}])
+check("export_config: skips the CALLER'S OWN org (Default) from smlm_orgs, keeps others",
+      [o["name"] for o in result["smlm_orgs"]] == ["edge"])
+check("export_config: every non-own org carries a best-effort username list and an explicit "
+      "warning that passwords/other fields could not be recovered",
+      result["smlm_orgs"][0]["existing_users"] == ["edgeadmin", "lovelace"]
+      and "_export_note" in result["smlm_orgs"][0])
+check("export_config: no smlm_access_groups key at all when the current org has none",
+      "smlm_access_groups" not in result)
 
 
 if failures:

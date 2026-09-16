@@ -2335,3 +2335,228 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
 
     saltkey_accept(hostname, exec_prefix, client_hostname)
     print("  Accepted salt key for '{}'".format(client_hostname))
+
+
+# ── Config export: read a live server back into lab-in-a-box JSON ──────────
+# Added 2026-09-16 at the user's explicit request ("generate a lab
+# definition based on the configuration of an existing server") — the
+# reverse of every ensure_* function above: read-only spacecmd/API calls,
+# parsed back into the exact <prefix>_* field shapes ensure_activation_keys/
+# ensure_system_groups/ensure_access_groups/ensure_orgs already consume, so
+# the result can be pasted straight into a lab JSON's "smlm"/"uyuni" section.
+# Two real, confirmed-live API gaps limit what's recoverable, documented
+# where they bite below rather than silently guessed around:
+#   - passwords are one-way hashed server-side — a re-imported user/org
+#     admin always needs a real password filled in by hand.
+#   - a custom access group's own member list isn't queryable for any org
+#     other than the CALLING session's own (user.getDetails/access.listRoles
+#     are both hard org-scoped, even for a satellite_admin — see
+#     ensure_user_role()'s own docstring for the identical constraint on
+#     the write side) — so smlm_access_groups' `users` field is exported
+#     only for the org this session is currently authenticated as.
+
+def describe_activation_key(hostname, exec_prefix, key_name, prefix):
+    """
+    Reads one activation key's live configuration via spacecmd's native
+    activationkey_details and returns it as a dict using the same
+    <prefix>_activation_key* field names ensure_activation_key() consumes —
+    a direct, valid entry for <prefix>_activation_keys.
+
+    `key_name` is the key's real, org-id-prefixed label as spacecmd knows
+    it (e.g. "1-sles15sp7", confirmed live: activationkey_create's own
+    org-id-prefixing, see ensure_activation_key()'s neighboring code) — the
+    returned <prefix>_activation_key value has that numeric prefix stripped
+    back off, matching what a lab JSON actually specifies (the prefix is
+    applied server-side at creation time, never part of the caller's own
+    input).
+    """
+    text = _spacecmd(hostname, exec_prefix, "activationkey_details {}".format(
+        shlex.quote(key_name))).stdout or ""
+
+    def field(label):
+        m = re.search(r"^{}:\s*(.*)$".format(re.escape(label)), text, re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    def section(header):
+        # Stop at the next section header (a line immediately followed by a
+        # dashes-only line) or end of string, NOT at the first blank line —
+        # confirmed live 2026-09-16 that an EMPTY section (e.g. "Configuration
+        # Channels" with nothing under it) is followed by only ONE blank line
+        # before the next header, not two, so a "\n\n" stop bled straight
+        # into the next header's own text.
+        m = re.search(r"^{}\n-+\n(.*?)(?=\n[A-Za-z][^\n]*\n-+\n|\Z)".format(re.escape(header)),
+                       text, re.MULTILINE | re.DOTALL)
+        return [line.strip() for line in (m.group(1).splitlines() if m else []) if line.strip()]
+
+    channel_lines = section("Software Channels")
+    base_channel = channel_lines[0].lstrip("|- ").strip() if channel_lines else ""
+    child_channels = [line.lstrip("|- ").strip() for line in channel_lines[1:]]
+
+    entry = {
+        "{}_activation_key".format(prefix): re.sub(r"^\d+-", "", key_name),
+        "{}_activation_key_desc".format(prefix): field("Description"),
+        "{}_activation_key_base_channel".format(prefix): base_channel,
+    }
+    if child_channels:
+        entry["{}_activation_key_child_channels".format(prefix)] = " ".join(child_channels)
+    groups = section("System Groups")
+    if groups:
+        entry["{}_activation_key_groups".format(prefix)] = " ".join(groups)
+    config_channels = section("Configuration Channels")
+    if config_channels:
+        entry["{}_activation_key_config_channels".format(prefix)] = " ".join(config_channels)
+    entitlements = field("Entitlements") or ",".join(section("Entitlements"))
+    if entitlements:
+        entry["{}_activation_key_entitlements".format(prefix)] = entitlements
+    packages = section("Packages")
+    if packages:
+        entry["{}_activation_key_packages".format(prefix)] = " ".join(packages)
+    if (field("Universal Default") or "").strip().lower() == "true":
+        entry["{}_activation_key_universal_default".format(prefix)] = "true"
+    contact_method = field("Contact Method")
+    if contact_method and contact_method != "default":
+        entry["{}_activation_key_contact_method".format(prefix)] = contact_method
+    return entry
+
+
+def describe_system_group(hostname, exec_prefix, name):
+    """
+    Reads one system group's live members via spacecmd's native
+    group_details, and returns a dict matching one <prefix>_system_groups
+    entry: {"name": ..., "description": ..., "systems": [...]}.
+    """
+    text = _spacecmd(hostname, exec_prefix, "group_details {}".format(shlex.quote(name))).stdout or ""
+    m = re.search(r"^Description:\s*(.*)$", text, re.MULTILINE)
+    description = m.group(1).strip() if m else name
+    m = re.search(r"^Members\n-+\n(.*?)\Z", text, re.MULTILINE | re.DOTALL)
+    systems = [line.strip() for line in (m.group(1).splitlines() if m else []) if line.strip()]
+    entry = {"name": name, "description": description}
+    if systems:
+        entry["systems"] = systems
+    return entry
+
+
+def describe_access_groups(hostname, exec_prefix):
+    """
+    Reads every custom access group VISIBLE TO THE CURRENT SESSION'S OWN
+    ORG via access.listRoles + access.listPermissions, and returns a list
+    of <prefix>_access_groups entries: {"label", "description",
+    "permissions": [{"namespace", "mode"}]}. No `users` field — see this
+    module's own top-of-section note on why that can't be recovered for
+    any org other than the caller's own, and even for the caller's own org
+    there's no API to map a namespace-permission grant back to the
+    individual users holding that role (only the reverse: user -> roles,
+    itself org-scoped and, for custom labels specifically, further gated by
+    the same real getAssignableRoles restriction ensure_user_role()'s
+    docstring documents). Callers wanting `users` populated must add it by
+    hand.
+    """
+    r = _api_call(hostname, exec_prefix, "access.listRoles", [])
+    try:
+        roles = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        roles = []
+
+    groups = []
+    for role in roles:
+        label = role.get("label")
+        if not label:
+            continue
+        perms_r = _api_call(hostname, exec_prefix, "access.listPermissions", [label])
+        try:
+            perms = json.loads(perms_r.stdout or "[]")
+        except (ValueError, TypeError):
+            perms = []
+        permissions = [
+            {"namespace": p["namespace"], "mode": (p.get("access_mode") or {}).get("value", "R")}
+            for p in perms if p.get("namespace")
+        ]
+        entry = {"label": label, "description": role.get("description") or label}
+        if permissions:
+            entry["permissions"] = permissions
+        groups.append(entry)
+    return groups
+
+
+def export_config(hostname, exec_prefix, admin, password, prefix):
+    """
+    Reads a live server's current configuration back into a dict shaped
+    exactly like a lab JSON's "smlm"/"uyuni" top-level section (same
+    <prefix>_* field names ensure_channels_synced/ensure_activation_keys/
+    ensure_system_groups/ensure_access_groups/ensure_orgs already consume)
+    — the reverse of every ensure_* function in this module. Read-only:
+    issues no write calls at all.
+
+    Covers: every software channel currently on the server
+    (<prefix>_channels), every activation key with its full detail
+    (<prefix>_activation_keys, via describe_activation_key), every system
+    group with its current members (<prefix>_system_groups, via
+    describe_system_group), the CURRENT org's own custom access groups
+    (<prefix>_access_groups, via describe_access_groups — see its own
+    docstring for the real org-scoping limit), and every OTHER org
+    (<prefix>_orgs) with its own username list (org_listusers, confirmed
+    live to work cross-org even though user.getDetails does not) — each
+    flagged with an "_export_note" key (not a real schema field — strip it
+    before use) since admin_pass/password/first_name/last_name/email can
+    never be recovered from a live server (passwords are one-way hashed)
+    and must be filled in by hand before this is usable to actually
+    recreate that org/its users elsewhere.
+    """
+    ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+
+    channels = [line.strip() for line in
+                (_spacecmd(hostname, exec_prefix, "softwarechannel_list").stdout or "").splitlines()
+                if line.strip()]
+
+    key_names = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "activationkey_list").stdout or "").splitlines()
+                 if line.strip()]
+    activation_keys = [describe_activation_key(hostname, exec_prefix, k, prefix) for k in key_names]
+
+    group_names = [line.strip() for line in
+                   (_spacecmd(hostname, exec_prefix, "group_list").stdout or "").splitlines()
+                   if line.strip()]
+    system_groups = [describe_system_group(hostname, exec_prefix, g) for g in group_names]
+
+    access_groups = describe_access_groups(hostname, exec_prefix)
+
+    org_names = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "org_list").stdout or "").splitlines()
+                 if line.strip()]
+    details = _spacecmd(hostname, exec_prefix, "user_details {}".format(shlex.quote(admin))).stdout or ""
+    m = re.search(r"^Organisation:\s*(.*)$", details, re.MULTILINE)
+    own_org = m.group(1).strip() if m else None
+
+    orgs = []
+    for org_name in org_names:
+        if org_name == own_org:
+            continue
+        users = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "org_listusers {}".format(shlex.quote(org_name))).stdout
+                  or "").splitlines() if line.strip()]
+        orgs.append({
+            "name": org_name,
+            "_export_note": "admin_user/admin_pass/admin_email cannot be recovered from a live "
+                             "server (passwords are one-way hashed) — fill these in by hand before "
+                             "this org can be recreated elsewhere. 'existing_users' below is a "
+                             "best-effort username list (org_listusers); none of their own "
+                             "password/first_name/last_name/email could be recovered either "
+                             "(user.getDetails is hard org-scoped, even for a satellite_admin) — "
+                             "use it as a checklist, not a ready-to-use {}_users list.".format(prefix),
+            "existing_users": users,
+        })
+
+    result = {
+        "{}_admin".format(prefix): admin,
+        "{}_org".format(prefix): own_org or "",
+        "{}_channels".format(prefix): channels,
+    }
+    if activation_keys:
+        result["{}_activation_keys".format(prefix)] = activation_keys
+    if system_groups:
+        result["{}_system_groups".format(prefix)] = system_groups
+    if access_groups:
+        result["{}_access_groups".format(prefix)] = access_groups
+    if orgs:
+        result["{}_orgs".format(prefix)] = orgs
+    return result

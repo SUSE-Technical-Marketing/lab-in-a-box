@@ -367,6 +367,19 @@
 #                             install_smlm.py <lab.json> --run-recurring-schedules (never automatic
 #                             — recurring-action idempotency was never confirmed).
 #
+# READ-ONLY — export a live server's own current configuration back into JSON shaped like
+# this "smlm" section (channels, activation keys, system groups, the calling admin's own org's
+# custom access groups, and a best-effort username list for every OTHER org), instead of
+# installing anything. Never runs automatically. Prints to stdout, or writes to a file:
+#   install_smlm.py <lab.json> --export-config [output.json]
+# Real, confirmed limits (see libs/spacecmd_common.py's export_config()/describe_access_groups()
+# for the full detail): passwords can never be recovered (one-way hashed server-side) — every
+# smlm_orgs entry's admin_pass and any smlm_users entry's password must be filled in by hand
+# before the result is usable to actually recreate that org/its users elsewhere. A custom access
+# group's own member list is only exportable for the CALLING session's own org — user.getDetails
+# and access.listRoles are both hard org-scoped, even for a satellite_admin (same constraint
+# ensure_user_role()'s own docstring documents on the write side).
+#
 # NOTE: RKE2 (default) or K3s, with Traefik. On RKE2, Traefik is enabled
 #       through the 'ingress-controller' option and the extra TCP ports 4505,
 #       4506 (Salt) and 5432 (report DB) are exposed via a rke2-traefik
@@ -389,6 +402,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import json
 import os
 import shlex
 import subprocess
@@ -1334,6 +1348,30 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin_user, admin_pass)
 
 
+def export_smlm_config(hostname, exec_prefix, cfg, output_path=None):
+    """
+    Reads `hostname`'s live SMLM configuration back into JSON shaped
+    exactly like a lab definition's "smlm" section (see
+    libs/spacecmd_common.py's export_config() for exactly what's covered
+    and its real, confirmed-live limits — most notably: activation keys,
+    channels, and system groups round-trip cleanly, but user/org
+    passwords can never be recovered, since they're one-way hashed
+    server-side). Prints the result as pretty JSON to stdout, or writes it
+    to `output_path` if given. Read-only — issues no write calls at all.
+    """
+    admin = cfg.get("smlm_admin") or "admin"
+    password = cfg.get("smlm_password") or "Smlm12345"
+    result = sc.export_config(hostname, exec_prefix, admin, password, "smlm")
+    text = json.dumps(result, indent=2)
+    if output_path:
+        Path(output_path).write_text(text + "\n")
+        print("# Wrote live config from '{}' to {}".format(hostname, output_path), file=sys.stderr)
+        print("# Review the _export_note field(s) under smlm_orgs before using this — "
+              "passwords could not be recovered and must be filled in by hand.", file=sys.stderr)
+    else:
+        print(text)
+
+
 def run_ansible_playbooks(hostname, cfg):
     """
     Schedules every entry in smlm_ansible_playbooks (see the JSON section
@@ -1470,6 +1508,24 @@ def main():
         config = primary.load_config()
         virt_srv = config.get("VIRT_SRV", "")
         env_vm_name = os.environ.get("_vm_name") or None
+
+        # Read-only: dump the target's LIVE configuration back into JSON
+        # instead of installing — see export_smlm_config()'s own docstring.
+        # Optional 4th arg is an output file path; without it, prints to
+        # stdout. Never runs automatically.
+        if len(sys.argv) > 2 and sys.argv[2] == "--export-config":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            if len(nodes) > 1:
+                print("WARNING: multiple 'smlm' nodes found — exporting only the first ({})".format(
+                    nodes[0][0]), file=sys.stderr)
+            export_smlm_config(nodes[0][0], "mgrctl exec --", cfg,
+                                sys.argv[3] if len(sys.argv) > 3 else None)
+            return
+
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
             setup_smlm_podman(vm_name, virt_srv, cfg)
         return
@@ -1499,6 +1555,16 @@ def main():
     # function call).
     if len(sys.argv) > 2 and sys.argv[2] == "--test-failover":
         smlm_db_failover_test(vm_name, cfg)
+        return
+
+    # Read-only: dump the target's LIVE configuration back into JSON instead
+    # of installing — see export_smlm_config()'s own docstring. Optional 4th
+    # arg is an output file path; without it, prints to stdout. Never runs
+    # automatically.
+    if len(sys.argv) > 2 and sys.argv[2] == "--export-config":
+        ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
+        export_smlm_config(vm_name, "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns), cfg,
+                            sys.argv[3] if len(sys.argv) > 3 else None)
         return
 
     # Schedule smlm_ansible_playbooks instead of installing when requested —
