@@ -36,7 +36,7 @@
 `setup_lab.py` · **One JSON/YAML file, one command.**
 Describe VMs, Kubernetes clusters (RKE2/K3s), and add-ons declaratively; it builds everything in the right order.
 
-`install_<addon>` · **65 ready-made add-ons.**
+`install_<addon>` · **66 ready-made add-ons.**
 Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni (activation keys, RBAC, Content Lifecycle Management, Ansible integration, and more), vulnerable demo apps for security training, and more.
 
 [`lab-builder`](#web-ui-lab-builder) · **A dynamic web UI.**
@@ -932,6 +932,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | StackState monitoring integration |
 | [`trento`](https://www.trento-project.io/) | SAP infrastructure monitoring |
+| [`prometheus`](https://prometheus.io/) | Standalone Prometheus server (podman container, no Kubernetes) — scrapes an `smlm`/`uyuni` server's own bundled exporters (`smlm_monitoring_enabled`) or any custom `prometheus_scrape_configs` targets |
 </details>
 
 <a id="addons-ai"></a>
