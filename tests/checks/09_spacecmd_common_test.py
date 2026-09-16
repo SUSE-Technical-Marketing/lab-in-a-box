@@ -2200,6 +2200,47 @@ check("ensure_kickstart_profile: existing profile + already-set variable/key -> 
       not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
               for c in cmds))
 
+# -- image stores / profiles / import ------------------------------------------
+fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_image_store("host1", "mgrctl exec --", {
+    "label": "suse-registry", "uri": "registry.suse.com", "type": "registry",
+})
+create_cmd = next((c[1] for c in fake.calls if "image.store.create" in c[1]), "")
+check("ensure_image_store: create call carries label/uri/type/empty-credentials as JSON",
+      '["suse-registry", "registry.suse.com", "registry", {}]' in create_cmd)
+
+fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(
+    returncode=0, stdout=json.dumps([{"label": "suse-registry"}])))])
+sc.ssh_run = fake
+sc.ensure_image_store("host1", "mgrctl exec --", {"label": "suse-registry"})
+check("ensure_image_store: existing store -> no create call",
+      not any("image.store.create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("image.profile.listImageProfiles", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_image_profile("host1", "mgrctl exec --", {
+    "label": "test-profile", "type": "dockerfile", "store": "suse-registry",
+    "path": "https://github.com/x/y.git#main:docker", "activation_key": "1-key",
+})
+create_cmd = next((c[1] for c in fake.calls if "image.profile.create" in c[1]), "")
+check("ensure_image_profile: create call carries every field in the right order",
+      '["test-profile", "dockerfile", "suse-registry", '
+      '"https://github.com/x/y.git#main:docker", "1-key"]' in create_cmd)
+
+fake = FakeSSH(responses=[("image.importContainerImage", FakeResult(returncode=0, stdout="[42]"))])
+sc.ssh_run = fake
+sc.import_container_image("host1", "mgrctl exec --", "bci/bci-base", "latest", 1000010000,
+                           "suse-registry", "1-key")
+call = next((c[1] for c in fake.calls if "image.importContainerImage" in c[1]), "")
+check("import_container_image: schedules with name/version/build_host_id/store/activation_key",
+      '["bci/bci-base", "latest", 1000010000, "suse-registry", "1-key", null]' in call)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.import_images("host1", "mgrctl exec --", {}, "smlm")
+check("import_images: no-op (and no die) when smlm_image_imports is unset", len(fake.calls) == 0)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

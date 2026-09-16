@@ -278,6 +278,45 @@
 #                             child_channels are all applied idempotently on every run (diffed
 #                             against the server's own current list first).
 #
+# OPTIONAL – image management (Images -> Stores/Profiles/Build/Import in the Web UI). API-only —
+# confirmed live 2026-09-16 that spacecmd has NO native subcommand for any of this; every call goes
+# through the raw 'api' passthrough against image.store.*/image.profile.*/image.* (three separate
+# handler classes — see libs/spacecmd_common.py). Stores run automatically on every install
+# (idempotent), BEFORE profiles below (a profile references a store by label):
+#   smlm_image_stores          : [{
+#                                 "label": "...", "uri": "registry.suse.com",
+#                                 "type": "registry" | "os_image",
+#                                 "username": "...", "password": "..."   # both optional — omit
+#                                                                        # for a public registry
+#                               }, ...]
+#                             `type` must be one of the labels the target server's own
+#                             image.store.listImageStoreTypes returns ("registry"/"os_image" on a
+#                             stock SMLM 5.2 server, confirmed live — re-check on other versions).
+#                             registry.suse.com needs no credentials at all for SUSE's own public
+#                             images (confirmed live).
+#   smlm_image_profiles        : [{
+#                                 "label": "...", "type": "dockerfile" | "kiwi",
+#                                 "store": "...",    # NAME REFERENCE into smlm_image_stores above
+#                                 "path": "https://github.com/USER/project.git#branch:folder",
+#                                 "activation_key": "..."   # mandatory per the official docs —
+#                                                            # determines which channels the
+#                                                            # build/import can see
+#                               }, ...]
+#   smlm_image_imports         : [{
+#                                 "name": "...", "version": "latest", "store": "...",
+#                                 "build_host_id": 1000010001,   # NUMERIC Uyuni system id of an
+#                                                                 # already-registered system with
+#                                                                 # the "Container Build Host"
+#                                                                 # entitlement enabled — this
+#                                                                 # module cannot enable that
+#                                                                 # itself; findable via
+#                                                                 # 'spacecmd system_list'
+#                                 "activation_key": "..."        # optional
+#                               }, ...]
+#                             Run with:  install_smlm.py <lab.json> --import-images
+#                             (never runs automatically — scheduling an import is not idempotent,
+#                             same reasoning as --run-ansible-playbooks/--run-clm-actions).
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
 # smlm_orgs entry (scoped to that org — same field name either way):
@@ -756,10 +795,12 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     environments = cfg.get("smlm_environments") or []
     distributions = cfg.get("smlm_distributions") or []
     kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    image_stores = cfg.get("smlm_image_stores") or []
+    image_profiles = cfg.get("smlm_image_profiles") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles):
+            or distributions or kickstart_profiles or image_stores or image_profiles):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
@@ -772,6 +813,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # combined smlm_system_groups with smlm_activation_key_groups.
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
@@ -1367,10 +1410,12 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
     environments = cfg.get("smlm_environments") or []
     distributions = cfg.get("smlm_distributions") or []
     kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    image_stores = cfg.get("smlm_image_stores") or []
+    image_profiles = cfg.get("smlm_image_profiles") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles):
+            or distributions or kickstart_profiles or image_stores or image_profiles):
         exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
         admin_user = cfg.get("smlm_admin_user") or "admin"
         admin_pass = cfg.get("smlm_admin_pass") or "admin123"
@@ -1379,6 +1424,8 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
@@ -1570,6 +1617,22 @@ def main():
                     nodes[0][0]), file=sys.stderr)
             export_smlm_config(nodes[0][0], "mgrctl exec --", cfg,
                                 sys.argv[3] if len(sys.argv) > 3 else None)
+            return
+
+        # Schedule smlm_image_imports instead of installing when requested —
+        # deliberately a separate, explicit trigger, same reasoning as
+        # --run-ansible-playbooks: scheduling an import is not idempotent
+        # (each call creates a brand-new action).
+        if len(sys.argv) > 2 and sys.argv[2] == "--import-images":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin") or "admin"
+            password = cfg.get("smlm_password") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):

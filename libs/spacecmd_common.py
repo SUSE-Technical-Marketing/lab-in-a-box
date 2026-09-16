@@ -1039,6 +1039,175 @@ def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
         ensure_kickstart_profile(hostname, exec_prefix, ks)
 
 
+# ── Image management (Images -> Stores/Profiles/Build/Import) ──────────────
+# Confirmed live 2026-09-16 against a real SMLM 5.2 server: spacecmd has NO
+# native subcommand for any of this (confirmed by the exact same "Could not
+# find method" probing technique used for access.*/ansible.* elsewhere in
+# this module) — every call here goes through the raw 'api' passthrough,
+# against three separate handler classes found the same way: image.store.*
+# (ImageStoreHandler), image.profile.* (ImageProfileHandler), and the
+# unprefixed image.* (ImageInfoHandler, e.g. importContainerImage/
+# scheduleImageBuild). image.store.create/image.profile.create both
+# confirmed live: return `[<numeric id>]` (a one-element LIST, not a bare
+# int) on success.
+
+def image_store_exists(hostname, exec_prefix, label):
+    """Whether `label` appears among image.store.listImageStores' real
+    JSON output (confirmed live: a server always has at least one,
+    "SUSE Manager OS Image Store", auto-created out of the box)."""
+    r = _api_call(hostname, exec_prefix, "image.store.listImageStores", [])
+    try:
+        stores = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        stores = []
+    return label in [s.get("label") for s in stores]
+
+
+def ensure_image_store(hostname, exec_prefix, store):
+    """
+    Idempotently create one image store (Images -> Stores in the Web UI)
+    via image.store.create, from one entry of <prefix>_image_stores:
+    {"label", "uri", "type": "registry" | "os_image", "username",
+    "password"}. `type` must be one of the labels the server's own
+    image.store.listImageStoreTypes returns (confirmed live: "registry" and
+    "os_image" on a stock SMLM 5.2 server — re-check on other versions,
+    this module can't enumerate them without a live call). credentials are
+    optional — omit username/password for a public registry (e.g.
+    registry.suse.com, confirmed live: no credentials needed for SUSE's
+    own public images).
+    """
+    label = store.get("label")
+    if not label:
+        die("image_stores: an entry is missing required 'label'")
+    if image_store_exists(hostname, exec_prefix, label):
+        print("  Image store '{}' already exists — leaving it alone".format(label))
+        return
+    uri = store.get("uri")
+    store_type = store.get("type")
+    if not (uri and store_type):
+        die("image store '{}': uri and type are both required to create it".format(label))
+    credentials = {}
+    if store.get("username"):
+        credentials["username"] = store["username"]
+        credentials["password"] = store.get("password") or ""
+    r = _api_call(hostname, exec_prefix, "image.store.create", [label, uri, store_type, credentials])
+    if r.returncode != 0:
+        die("could not create image store '{}': {}".format(label, (r.stderr or r.stdout or "").strip()))
+    print("  Created image store '{}' ({})".format(label, uri))
+
+
+def ensure_image_stores(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_image_stores — see ensure_image_store()'s own
+    docstring. No-op if the field is unset or empty."""
+    for store in cfg.get("{}_image_stores".format(prefix)) or []:
+        ensure_image_store(hostname, exec_prefix, store)
+
+
+def image_profile_exists(hostname, exec_prefix, label):
+    """Whether `label` appears among image.profile.listImageProfiles' real
+    JSON output."""
+    r = _api_call(hostname, exec_prefix, "image.profile.listImageProfiles", [])
+    try:
+        profiles = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        profiles = []
+    return label in [p.get("label") for p in profiles]
+
+
+def ensure_image_profile(hostname, exec_prefix, profile):
+    """
+    Idempotently create one image profile (build instructions — Images ->
+    Profiles in the Web UI) via image.profile.create, from one entry of
+    <prefix>_image_profiles: {"label", "type": "dockerfile" | "kiwi",
+    "store", "path", "activation_key"}. `store` is a NAME REFERENCE into
+    <prefix>_image_stores above (define it there, not inline here) —
+    confirmed live this doesn't validate the store exists at creation time,
+    but a later build against a nonexistent store would obviously fail, so
+    this module still treats it as required. `path` is a Dockerfile/Kiwi
+    source location — for a git-hosted Dockerfile,
+    "https://github.com/USER/project.git#branch:folder" (confirmed live
+    against the official docs' own example format); for Kiwi, a local
+    filesystem path or similarly git-hosted location. `activation_key`
+    determines which software channels the build/import has access to —
+    the official docs describe this as mandatory for both container and
+    OS image profiles.
+    """
+    label = profile.get("label")
+    if not label:
+        die("image_profiles: an entry is missing required 'label'")
+    if image_profile_exists(hostname, exec_prefix, label):
+        print("  Image profile '{}' already exists — leaving it alone".format(label))
+        return
+    image_type = profile.get("type")
+    store = profile.get("store")
+    path = profile.get("path")
+    activation_key = profile.get("activation_key") or ""
+    if not (image_type and store and path):
+        die("image profile '{}': type, store and path are all required to create it".format(label))
+    r = _api_call(hostname, exec_prefix, "image.profile.create",
+                  [label, image_type, store, path, activation_key])
+    if r.returncode != 0:
+        die("could not create image profile '{}': {}".format(label, (r.stderr or r.stdout or "").strip()))
+    print("  Created image profile '{}'".format(label))
+
+
+def ensure_image_profiles(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_image_profiles — see ensure_image_profile()'s
+    own docstring. No-op if the field is unset or empty. Must run AFTER
+    ensure_image_stores() (a profile references a store by label)."""
+    for profile in cfg.get("{}_image_profiles".format(prefix)) or []:
+        ensure_image_profile(hostname, exec_prefix, profile)
+
+
+def import_container_image(hostname, exec_prefix, name, version, build_host_id, store_label,
+                            activation_key=""):
+    """
+    Schedules a container image import/inspection via
+    image.importContainerImage — NOT idempotent (each call schedules a
+    brand-new action, confirmed by the method's own "schedules ... action"
+    semantics, same reasoning as every other explicit-trigger operation in
+    this module — run_ansible_playbooks/run_clm_actions/run_scap_scans).
+    `build_host_id` is the NUMERIC Uyuni system ID of an already-registered
+    system with the "Container Build Host" entitlement enabled (this
+    module has no way to enable that entitlement itself — see
+    system_addentitlement in the Web UI or via spacecmd directly) —
+    findable via 'spacecmd system_list'. Returns the scheduled action's
+    numeric id on success; dies with the real server error otherwise
+    (e.g. a build host lacking the required entitlement).
+    """
+    r = _api_call(hostname, exec_prefix, "image.importContainerImage",
+                  [name, version or "", build_host_id, store_label, activation_key, None])
+    if r.returncode != 0:
+        die("could not schedule import of image '{}:{}': {}".format(
+            name, version or "latest", (r.stderr or r.stdout or "").strip()))
+    print("  Scheduled import of image '{}:{}' from store '{}'".format(
+        name, version or "latest", store_label))
+    return r.stdout
+
+
+def import_images(hostname, exec_prefix, cfg, prefix):
+    """
+    Runs every entry in <prefix>_image_imports through
+    import_container_image() — see its own docstring for why this is a
+    SEPARATE, explicit trigger (install_smlm.py's own
+    --import-images/--run-recurring-schedules-style flag), never part of
+    the automatic install flow: entry shape is {"name", "version",
+    "build_host_id", "store", "activation_key"}.
+    """
+    imports = cfg.get("{}_image_imports".format(prefix)) or []
+    if not imports:
+        print("No {}_image_imports configured — nothing to import".format(prefix))
+        return
+    for entry in imports:
+        name = entry.get("name")
+        build_host_id = entry.get("build_host_id")
+        store = entry.get("store")
+        if not (name and build_host_id and store):
+            die("{}_image_imports: an entry needs 'name', 'build_host_id' and 'store'".format(prefix))
+        import_container_image(hostname, exec_prefix, name, entry.get("version"), build_host_id,
+                                store, entry.get("activation_key") or "")
+
+
 def org_exists(hostname, exec_prefix, org_name):
     """
     Whether `org_name` already appears as an exact line in `spacecmd
