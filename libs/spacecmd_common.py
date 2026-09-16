@@ -859,6 +859,186 @@ def ensure_config_channels(hostname, exec_prefix, cfg, prefix):
                                 binary=bool(f.get("binary")))
 
 
+def distribution_exists(hostname, exec_prefix, name):
+    """Whether `name` appears as an exact line in `spacecmd distribution_list`'s
+    output (one name per line, no header, confirmed live 2026-09-16)."""
+    r = _spacecmd(hostname, exec_prefix, "distribution_list")
+    return name in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def ensure_distribution(hostname, exec_prefix, dist):
+    """
+    Idempotently create one autoinstall tree ("Kickstart Distribution" in
+    the Web UI) via spacecmd's native distribution_create, from one entry
+    of <prefix>_distributions: {"name", "path", "base_channel",
+    "install_type"}. `path` is a directory ALREADY PRESENT ON THE SERVER'S
+    OWN FILESYSTEM containing a real, extracted product installer tree
+    (confirmed live: distribution_create itself validates this — it dies
+    with "The initrd could not be found at the specified location:
+    <path>/boot/x86_64/loader/initrd" if the tree isn't really there) —
+    this module has no way to create or upload that tree itself; mirror an
+    ISO's own extracted layout (e.g. via `mount -o loop`) onto that path
+    out of band first. `install_type` is one of the labels
+    distribution_create's own --help lists (e.g. "sles15generic",
+    "sles16generic", "rhel_9", "generic_rpm" — run `distribution_create
+    --help` on the server for the exact current set, since it changes with
+    each SMLM/Uyuni release).
+
+    warn()s and returns (does NOT die) on a creation failure — confirmed
+    live 2026-09-16 that a missing install tree is an ordinary, expected
+    real-world state (media populated out of band, on its own schedule),
+    not a config mistake, and unlike a die() here would otherwise abort
+    every orchestration step that runs after ensure_distributions() in the
+    caller — users/access-groups/orgs/image-stores included, none of which
+    have anything to do with kickstart. A kickstart profile referencing a
+    distribution that failed this way is skipped the same way, with its
+    own clear warning — see ensure_kickstart_profile().
+    """
+    name = dist.get("name")
+    if not name:
+        die("distributions: an entry is missing required 'name'")
+    if distribution_exists(hostname, exec_prefix, name):
+        print("  Distribution '{}' already exists — leaving it alone".format(name))
+        return
+    path = dist.get("path")
+    base_channel = dist.get("base_channel")
+    install_type = dist.get("install_type")
+    if not (path and base_channel and install_type):
+        die("distribution '{}': path, base_channel and install_type are all required to "
+            "create it".format(name))
+    r = _spacecmd(hostname, exec_prefix, "distribution_create -n {} -p {} -b {} -t {}".format(
+        shlex.quote(name), shlex.quote(path), shlex.quote(base_channel), shlex.quote(install_type)))
+    if r.returncode != 0:
+        warn("could not create distribution '{}' — its own install tree may not be populated "
+             "at '{}' yet (a real product ISO extracted there): {}".format(
+                 name, path, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Created distribution '{}'".format(name))
+
+
+def ensure_distributions(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_distributions — see ensure_distribution()'s own
+    docstring. No-op if the field is unset or empty."""
+    for dist in cfg.get("{}_distributions".format(prefix)) or []:
+        ensure_distribution(hostname, exec_prefix, dist)
+
+
+def kickstart_exists(hostname, exec_prefix, name):
+    """Whether `name` appears as an exact line in `spacecmd kickstart_list`'s
+    output (one label per line, no header, confirmed live 2026-09-16)."""
+    r = _spacecmd(hostname, exec_prefix, "kickstart_list")
+    return name in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def kickstart_variables(hostname, exec_prefix, name):
+    """Returns {key: value} of a kickstart profile's current custom
+    variables, via spacecmd's native kickstart_listvariables (one
+    "key = value" line per entry, confirmed live 2026-09-16 — a profile
+    always carries at least "org = <id>" even with none of its own set)."""
+    r = _spacecmd(hostname, exec_prefix, "kickstart_listvariables {}".format(shlex.quote(name)))
+    result = {}
+    for line in (r.stdout or "").splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
+def ensure_kickstart_profile(hostname, exec_prefix, ks):
+    """
+    Idempotently create the kickstart profile described by one entry of
+    <prefix>_kickstart_profiles: {"name", "distribution", "root_password",
+    "virt_type": "none" (default) | "para_host" | "qemu" | "xenfv" |
+    "xenpv", "variables": {"key": "value", ...}, "activation_keys": [...],
+    "child_channels": [...]}. `distribution` is a NAME REFERENCE into
+    <prefix>_distributions (define it there, not inline here) — spacecmd's
+    own kickstart_create requires it to already exist. root_password is
+    only used at creation time (spacecmd hashes it server-side into the
+    profile's own "Advanced Options" — confirmed live: kickstart_details
+    shows a real $5$... sha256 hash, never the plaintext back), so a
+    repeat run against an already-existing profile can't detect or fix a
+    changed password — delete and recreate the profile if it needs to
+    change. variables/activation_keys are applied idempotently on every
+    run via kickstart_addvariable/kickstart_addactivationkeys, diffed
+    against kickstart_listvariables/kickstart_listactivationkeys first, so
+    a repeat run never re-adds an already-present one.
+    """
+    name = ks.get("name")
+    if not name:
+        die("kickstart_profiles: an entry is missing required 'name'")
+
+    if kickstart_exists(hostname, exec_prefix, name):
+        print("  Kickstart profile '{}' already exists — leaving it alone".format(name))
+    else:
+        distribution = ks.get("distribution")
+        root_password = ks.get("root_password")
+        if not (distribution and root_password):
+            die("kickstart profile '{}': distribution and root_password are both required to "
+                "create it".format(name))
+        # The referenced distribution may legitimately not exist yet — its own
+        # ensure_distribution() call warns (not dies) when the install tree isn't
+        # populated, see that function's own docstring. Check first and skip
+        # cleanly with the same reasoning, rather than letting kickstart_create's
+        # own less-clear error stand in for it.
+        if not distribution_exists(hostname, exec_prefix, distribution):
+            warn("kickstart profile '{}': distribution '{}' doesn't exist yet (see "
+                 "ensure_distribution()'s own warning above, if any) — skipping".format(
+                     name, distribution))
+            return
+        virt_type = ks.get("virt_type") or "none"
+        r = _spacecmd(hostname, exec_prefix, "kickstart_create -n {} -d {} -p {} -v {}".format(
+            shlex.quote(name), shlex.quote(distribution), shlex.quote(root_password),
+            shlex.quote(virt_type)))
+        if r.returncode != 0:
+            warn("could not create kickstart profile '{}': {}".format(
+                name, (r.stderr or r.stdout or "").strip()))
+            return
+        print("  Created kickstart profile '{}'".format(name))
+
+    existing_vars = kickstart_variables(hostname, exec_prefix, name)
+    for key, value in (ks.get("variables") or {}).items():
+        if existing_vars.get(key) == str(value):
+            continue
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addvariable {} {} {}".format(
+            shlex.quote(name), shlex.quote(key), shlex.quote(str(value))))
+        if r.returncode != 0:
+            warn("could not set variable '{}' on kickstart profile '{}': {}".format(
+                key, name, (r.stderr or r.stdout or "").strip()))
+
+    existing_keys = set(line.strip() for line in (_spacecmd(
+        hostname, exec_prefix, "kickstart_listactivationkeys {}".format(shlex.quote(name))
+    ).stdout or "").splitlines() if line.strip())
+    missing_keys = [k for k in (ks.get("activation_keys") or []) if k not in existing_keys]
+    if missing_keys:
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addactivationkeys {} {}".format(
+            shlex.quote(name), " ".join(shlex.quote(k) for k in missing_keys)))
+        if r.returncode != 0:
+            warn("could not link activation key(s) ({}) to kickstart profile '{}': {}".format(
+                ", ".join(missing_keys), name, (r.stderr or r.stdout or "").strip()))
+
+    existing_channels = set(line.strip() for line in (_spacecmd(
+        hostname, exec_prefix, "kickstart_listchildchannels {}".format(shlex.quote(name))
+    ).stdout or "").splitlines() if line.strip())
+    missing_channels = [c for c in (ks.get("child_channels") or []) if c not in existing_channels]
+    if missing_channels:
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addchildchannels {} {}".format(
+            shlex.quote(name), " ".join(shlex.quote(c) for c in missing_channels)))
+        if r.returncode != 0:
+            warn("could not link child channel(s) ({}) to kickstart profile '{}': {}".format(
+                ", ".join(missing_channels), name, (r.stderr or r.stdout or "").strip()))
+
+
+def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_kickstart_profiles — see
+    ensure_kickstart_profile()'s own docstring. No-op if the field is
+    unset or empty. Must run AFTER ensure_distributions() (a profile
+    references a distribution by name) — same real ordering hazard as
+    ensure_system_groups() vs ensure_activation_key(), see that function's
+    own docstring."""
+    for ks in cfg.get("{}_kickstart_profiles".format(prefix)) or []:
+        ensure_kickstart_profile(hostname, exec_prefix, ks)
+
+
 def org_exists(hostname, exec_prefix, org_name):
     """
     Whether `org_name` already appears as an exact line in `spacecmd

@@ -245,6 +245,39 @@
 #                             way instead — list their username in that group's own "users" field
 #                             below, which runs in the correct order.
 #
+# OPTIONAL – autoinstall trees ("Kickstart Distributions") and Kickstart/AutoYaST profiles.
+# Distributions run automatically on every install (idempotent), BEFORE smlm_activation_key* so a
+# kickstart profile below can reference one; profiles run AFTER activation keys, so
+# activation_keys entries can link to a real key. See libs/spacecmd_common.py's
+# ensure_distribution()/ensure_kickstart_profile() for the full real-server behavior confirmed
+# live 2026-09-16 (most importantly: distribution_create itself VALIDATES that `path` already
+# contains a real, extracted installer tree — this module cannot create or upload one):
+#   smlm_distributions         : [{
+#                                 "name": "...", "path": "/srv/www/htdocs/pub/install-trees/...",
+#                                 "base_channel": "...", "install_type": "sles15generic"
+#                               }, ...]
+#                             `path` must already exist on the SERVER's own filesystem with a
+#                             real extracted product ISO/installer tree under it (e.g. mount the
+#                             ISO with `mount -o loop` and copy/rsync it there out of band first)
+#                             — distribution_create dies with a clear "initrd could not be found"
+#                             error otherwise. `install_type` is one of the labels
+#                             `distribution_create --help` lists on the target server (changes per
+#                             SMLM/Uyuni release — e.g. sles15generic, sles16generic, rhel_9,
+#                             generic_rpm).
+#   smlm_kickstart_profiles    : [{
+#                                 "name": "...", "distribution": "...", "root_password": "...",
+#                                 "virt_type": "none",   # default; or para_host/qemu/xenfv/xenpv
+#                                 "variables": {"key": "value", ...},
+#                                 "activation_keys": ["..."], "child_channels": ["..."]
+#                               }, ...]
+#                             `distribution` is a NAME REFERENCE into smlm_distributions above
+#                             (define it there, not inline here). root_password is ONLY used at
+#                             creation time — spacecmd hashes it server-side and there is no API
+#                             to read or change it back on a repeat run, so a changed password
+#                             needs the profile deleted and recreated. variables/activation_keys/
+#                             child_channels are all applied idempotently on every run (diffed
+#                             against the server's own current list first).
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
 # smlm_orgs entry (scoped to that org — same field name either way):
@@ -721,9 +754,12 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     custom_info_keys = cfg.get("smlm_custom_info_keys") or []
     system_tags = cfg.get("smlm_system_tags") or []
     environments = cfg.get("smlm_environments") or []
+    distributions = cfg.get("smlm_distributions") or []
+    kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
-            or system_groups or custom_info_keys or system_tags or environments):
+            or system_groups or custom_info_keys or system_tags or environments
+            or distributions or kickstart_profiles):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
@@ -735,10 +771,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # or access server group: 'prod'") the first time a lab actually
         # combined smlm_system_groups with smlm_activation_key_groups.
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        # Kickstart profiles AFTER activation keys: a profile can link to one
+        # via kickstart_addactivationkeys, which needs the key to already exist
+        # — same ordering reasoning as system groups vs activation keys above.
+        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
@@ -1324,9 +1365,12 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
     custom_info_keys = cfg.get("smlm_custom_info_keys") or []
     system_tags = cfg.get("smlm_system_tags") or []
     environments = cfg.get("smlm_environments") or []
+    distributions = cfg.get("smlm_distributions") or []
+    kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
-            or system_groups or custom_info_keys or system_tags or environments):
+            or system_groups or custom_info_keys or system_tags or environments
+            or distributions or kickstart_profiles):
         exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
         admin_user = cfg.get("smlm_admin_user") or "admin"
         admin_pass = cfg.get("smlm_admin_pass") or "admin123"
@@ -1334,10 +1378,12 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")

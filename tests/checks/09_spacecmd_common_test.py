@@ -2109,6 +2109,97 @@ check("export_config: no smlm_access_groups key at all when the current org has 
       "smlm_access_groups" not in result)
 
 
+# -- ensure_distribution / ensure_kickstart_profile ---------------------------
+fake = FakeSSH(responses=[("distribution_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+sc.ensure_distribution("host1", "mgrctl exec --", {
+    "name": "test-dist", "path": "/srv/www/htdocs/pub/install-trees/x",
+    "base_channel": "chan1", "install_type": "sles15generic",
+})
+create_cmd = next((c[1] for c in fake.calls if "distribution_create" in c[1]), "")
+check("ensure_distribution: creates with the right flags",
+      "-n test-dist" in create_cmd and "-p /srv/www/htdocs/pub/install-trees/x" in create_cmd
+      and "-b chan1" in create_cmd and "-t sles15generic" in create_cmd)
+
+fake = FakeSSH(responses=[("distribution_list", FakeResult(returncode=0, stdout="test-dist\n"))])
+sc.ssh_run = fake
+sc.ensure_distribution("host1", "mgrctl exec --", {"name": "test-dist"})
+check("ensure_distribution: existing distribution -> no create call",
+      not any("distribution_create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("distribution_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_create", FakeResult(returncode=1, stderr="initrd could not be found")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_distribution("host1", "mgrctl exec --", {
+        "name": "test-dist", "path": "/no/tree", "base_channel": "c", "install_type": "t",
+    })
+except SystemExit:
+    died = True
+check("ensure_distribution: a missing install tree warns, doesn't die (a real, expected, "
+      "self-populated-out-of-band state, confirmed live 2026-09-16 — must not abort every "
+      "orchestration step after it)", died is False)
+
+fake = FakeSSH(responses=[
+    ("kickstart_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_list", FakeResult(returncode=0, stdout="")),  # distribution NOT there
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+        "name": "test-ks", "distribution": "missing-dist", "root_password": "pw",
+    })
+except SystemExit:
+    died = True
+check("ensure_kickstart_profile: skips cleanly (warns, doesn't die) when its own distribution "
+      "doesn't exist yet, without ever calling kickstart_create", died is False
+      and not any("kickstart_create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    # More specific "kickstart_list*" substrings MUST be checked before the bare
+    # "kickstart_list" — same substring-ordering pitfall as org_list/org_listusers
+    # earlier in this file (confirmed live 2026-09-16: without this ordering,
+    # kickstart_listvariables/listactivationkeys/listchildchannels all silently
+    # got kickstart_list's own response instead).
+    ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\n")),
+    ("kickstart_listactivationkeys", FakeResult(returncode=0, stdout="")),
+    ("kickstart_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("kickstart_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_list", FakeResult(returncode=0, stdout="test-dist\n")),
+])
+sc.ssh_run = fake
+sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+    "name": "test-ks", "distribution": "test-dist", "root_password": "pw",
+    "variables": {"lab": "solar-system"}, "activation_keys": ["1-key"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_kickstart_profile: creates when its distribution exists",
+      any("kickstart_create -n test-ks -d test-dist -p pw -v none" in c for c in cmds))
+check("ensure_kickstart_profile: sets a variable not already present",
+      any("kickstart_addvariable test-ks lab solar-system" in c for c in cmds))
+check("ensure_kickstart_profile: links an activation key not already present",
+      any("kickstart_addactivationkeys test-ks 1-key" in c for c in cmds))
+
+fake = FakeSSH(responses=[
+    ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\nlab = solar-system\n")),
+    ("kickstart_listactivationkeys", FakeResult(returncode=0, stdout="1-key\n")),
+    ("kickstart_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("kickstart_list", FakeResult(returncode=0, stdout="test-ks\n")),
+])
+sc.ssh_run = fake
+sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+    "name": "test-ks", "distribution": "test-dist", "root_password": "pw",
+    "variables": {"lab": "solar-system"}, "activation_keys": ["1-key"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_kickstart_profile: existing profile + already-set variable/key -> no writes at all",
+      not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
+              for c in cmds))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
