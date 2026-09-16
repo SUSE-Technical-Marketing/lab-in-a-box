@@ -2241,6 +2241,29 @@ sc.ssh_run = fake
 sc.import_images("host1", "mgrctl exec --", {}, "smlm")
 check("import_images: no-op (and no die) when smlm_image_imports is unset", len(fake.calls) == 0)
 
+# -- server monitoring ----------------------------------------------------------
+fake = FakeSSH(responses=[("admin.monitoring.getStatus", FakeResult(
+    returncode=0, stdout=json.dumps([{"node": "disabled", "tomcat": "disabled"}])))])
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {"smlm_monitoring_enabled": "true"}, "smlm")
+cmds = [c[1] for c in fake.calls]
+check("ensure_monitoring: enables when the flag is set and status shows disabled",
+      any("admin.monitoring.enable" in c for c in cmds))
+check("ensure_monitoring: restarts tomcat/taskomatic right after a fresh enable",
+      any("systemctl restart tomcat taskomatic" in c for c in cmds))
+
+fake = FakeSSH(responses=[("admin.monitoring.getStatus", FakeResult(
+    returncode=0, stdout=json.dumps([{"node": "enabled", "tomcat": "enabled"}])))])
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {"smlm_monitoring_enabled": "true"}, "smlm")
+check("ensure_monitoring: already enabled -> no enable/restart calls at all", len(fake.calls) == 1)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_monitoring: no-op when the flag is unset", len(fake.calls) == 0)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

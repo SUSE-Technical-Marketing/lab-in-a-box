@@ -1208,6 +1208,74 @@ def import_images(hostname, exec_prefix, cfg, prefix):
                                 store, entry.get("activation_key") or "")
 
 
+def monitoring_status(hostname, exec_prefix):
+    """
+    Returns the server's own bundled-exporter status as a dict via
+    admin.monitoring.getStatus, confirmed live 2026-09-16:
+    {"node": "enabled"|"disabled", "tomcat": ..., "postgres": ...,
+    "taskomatic": ..., "self_monitoring": ...} — a stock server starts with
+    every key "disabled". Takes no arguments.
+    """
+    r = _api_call(hostname, exec_prefix, "admin.monitoring.getStatus", [])
+    try:
+        result = json.loads(r.stdout or "[]")
+        return result[0] if result else {}
+    except (ValueError, TypeError, IndexError):
+        return {}
+
+
+def ensure_monitoring(hostname, exec_prefix, cfg, prefix):
+    """
+    Idempotently enables the server's own bundled Prometheus exporters
+    (node/tomcat/postgres/taskomatic/self_monitoring) via
+    admin.monitoring.enable, gated by <prefix>_monitoring_enabled (a plain
+    "true"/truthy flag — enable takes no arguments of its own, confirmed
+    live against AdminMonitoringHandler.java: it's a pure on/off toggle for
+    exporters already bundled in the image, NOT a "point at an external
+    Prometheus" call — Uyuni's own monitoring model is pull-based, a
+    separate Prometheus scrapes THIS server's exposed exporter ports, it
+    never pushes to one). No-op if the flag is falsy or unset, or if
+    monitoring_status() already shows "node": "enabled" (checked as the
+    representative key — confirmed live all five flip together on one
+    enable() call).
+
+    Per the official docs (documentation.suse.com/suma/5.2 Monitoring
+    guide, confirmed live 2026-09-16 restart actually starts the exporter
+    listeners — getStatus alone doesn't): a fresh enable() needs Tomcat AND
+    Taskomatic restarted before the exporters actually start listening.
+    Restarts them ONLY on the transition from disabled to enabled (an
+    already-enabled server is left running, same "don't disrupt what's
+    already healthy" reasoning as run_install_with_pg_hba_guard elsewhere
+    in this project) — via a plain `systemctl restart` through the same
+    exec_prefix, not spacecmd (there's no spacecmd-native way to restart a
+    server-side service).
+
+    Real exporter ports, confirmed live against the same docs page (open
+    these on the server's firewall/security group for a REMOTE Prometheus
+    to reach it): node 9100, postgres 9187, tomcat JMX 5556, taskomatic JMX
+    5557, taskomatic direct 9800, plus the message-queue job at
+    "<server>:80/rhn/metrics" (no separate port — it's Apache/the existing
+    web port with a different metrics path).
+    """
+    if not (cfg.get("{}_monitoring_enabled".format(prefix)) in ("true", True)):
+        return
+    status = monitoring_status(hostname, exec_prefix)
+    if status.get("node") == "enabled":
+        print("  Server monitoring already enabled — leaving it alone")
+        return
+    r = _api_call(hostname, exec_prefix, "admin.monitoring.enable", [])
+    if r.returncode != 0:
+        die("could not enable server monitoring: {}".format((r.stderr or r.stdout or "").strip()))
+    print("  Enabled server monitoring (node/tomcat/postgres/taskomatic exporters)")
+    r = _run(hostname, exec_prefix, "systemctl restart tomcat taskomatic")
+    if r.returncode != 0:
+        warn("monitoring was enabled, but restarting tomcat/taskomatic to actually start the "
+             "exporter listeners failed — restart them manually: {}".format(
+                 (r.stderr or r.stdout or "").strip()))
+    else:
+        print("  Restarted tomcat/taskomatic so the exporters actually start listening")
+
+
 def org_exists(hostname, exec_prefix, org_name):
     """
     Whether `org_name` already appears as an exact line in `spacecmd

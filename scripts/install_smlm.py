@@ -278,6 +278,25 @@
 #                             child_channels are all applied idempotently on every run (diffed
 #                             against the server's own current list first).
 #
+# OPTIONAL – server self-monitoring (Admin -> Manager Configuration -> Monitoring in the Web UI).
+# Confirmed live 2026-09-16 against documentation.suse.com/suma/5.2's own Monitoring guide AND the
+# real AdminMonitoringHandler.java source: this enables the node/tomcat/postgres/taskomatic
+# exporters ALREADY BUNDLED in the server image (a pure on/off toggle, takes no arguments of its
+# own) — it does NOT point the server at an external Prometheus. Uyuni's monitoring model is
+# pull-based: an EXTERNAL Prometheus (e.g. the "prometheus" addon, install_prometheus.py) scrapes
+# THIS server's own exposed exporter ports; the server never pushes to one.
+#   smlm_monitoring_enabled    : "true" to enable (default: unset/false, no-op). Idempotent —
+#                             checked against the server's own admin.monitoring.getStatus first.
+#                             Restarts Tomcat/Taskomatic ONLY on the disabled->enabled transition
+#                             (required per the official docs for the exporters to actually start
+#                             listening — confirmed live), never on an already-enabled server.
+#                             Real exporter ports to open on this server's firewall/AWS security
+#                             group (aws_open_ports) for a remote Prometheus to reach it: 9100
+#                             (node), 9187 (postgres), 5556 (tomcat JMX), 5557 (taskomatic JMX),
+#                             9800 (taskomatic direct) — plus the existing web port (80/443) for
+#                             the message-queue job at metrics path /rhn/metrics (confirmed live,
+#                             same doc page).
+#
 # OPTIONAL – image management (Images -> Stores/Profiles/Build/Import in the Web UI). API-only —
 # confirmed live 2026-09-16 that spacecmd has NO native subcommand for any of this; every call goes
 # through the raw 'api' passthrough against image.store.*/image.profile.*/image.* (three separate
@@ -800,7 +819,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles or image_stores or image_profiles):
+            or distributions or kickstart_profiles or image_stores or image_profiles
+            or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
@@ -811,6 +831,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # exist yet server-side — confirmed live 2026-09-15 ("Unable to locate
         # or access server group: 'prod'") the first time a lab actually
         # combined smlm_system_groups with smlm_activation_key_groups.
+        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
@@ -1415,13 +1436,15 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles or image_stores or image_profiles):
+            or distributions or kickstart_profiles or image_stores or image_profiles
+            or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
         admin_user = cfg.get("smlm_admin_user") or "admin"
         admin_pass = cfg.get("smlm_admin_pass") or "admin123"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
