@@ -328,6 +328,50 @@ check("create_vm (autoinstall): xorriso extraction quotes the ISO source path to
       "'/iso/ubuntu-24.04-live-server-amd64.iso'" in extract_call[-1])
 
 
+# ── kickstart/autoyast/preseed (--location-based installs): two real bugs found
+# live 2026-09-17, back to back, the first time this path was actually
+# live-tested end to end. (1) --location with a bare hypervisor-local path
+# fails ("Cannot access install tree on remote connection") whenever
+# virt-install runs on a different host than the hypervisor — fixed by
+# ensure_iso_install_tree() (see its own tests in
+# 10_lab_creation_core_test.py); this block only verifies backends.py's own
+# call site actually uses its return value as --location. (2) once that was
+# fixed and a real kickstart install actually ran end to end, the domain came
+# back up on plain SeaBIOS/legacy firmware and failed to boot ("Boot failed:
+# not a bootable disk") — this --location-based branch builds its OWN argv
+# from scratch (not base_args above) and had never included --boot at all,
+# silently ignoring VM_BOOT (every lab JSON in this project defaults to
+# "uefi") regardless of what firmware the guest's own kickstart bootloader
+# step assumed.
+_real_ensure_iso_install_tree = backends.ensure_iso_install_tree
+iso_tree_calls = []
+backends.ensure_iso_install_tree = lambda remote_host, iso_loc, iso_image: (
+    iso_tree_calls.append((remote_host, iso_loc, iso_image))
+    or "http://hv1:8890/{}/".format(iso_image))
+subproc_calls.clear()
+backend.create_vm(
+    "vm1", "2", "4096", "40", "network=default,model=virtio",
+    config_method="install_iso", install_type="kickstart",
+    iso_image="rhel-10.2-x86_64-dvd.iso", iso_loc="/iso", boot="uefi",
+)
+backends.ensure_iso_install_tree = _real_ensure_iso_install_tree
+check("create_vm (kickstart): calls ensure_iso_install_tree with the hypervisor/iso_loc/iso_image",
+      iso_tree_calls == [("hv1", "/iso", "rhel-10.2-x86_64-dvd.iso")])
+install_call = next(c for c in subproc_calls if "virt-install" in c[0])
+check("create_vm (kickstart): --location uses ensure_iso_install_tree's own URL, not a bare path",
+      install_call[install_call.index("--location") + 1] == "http://hv1:8890/rhel-10.2-x86_64-dvd.iso/")
+check("create_vm (kickstart): --boot carries the resolved boot_flag (matches VM_BOOT, "
+      "not virt-install's own legacy-BIOS default)",
+      "--boot" in install_call and install_call[install_call.index("--boot") + 1] == "uefi")
+check("create_vm (kickstart): --extra-args still carries the real inst.ks= URL",
+      "inst.ks=" in install_call[install_call.index("--extra-args") + 1])
+check("create_vm (kickstart): --extra-args carries inst.text — confirmed live 2026-09-17 "
+      "that without it, RHEL10's own Anaconda silently tries to start its default "
+      "graphical/WebUI path in a --noautoconsole environment and hangs forever with "
+      "zero further disk/network activity, no error at all",
+      "inst.text" in install_call[install_call.index("--extra-args") + 1])
+
+
 # ── prepare_install_iso() autoinstall hostname: found live 2026-09-03, on the
 # same VM as the two bugs above, once it actually finished installing and
 # booted the real (fixed) disk — `hostname` inside the freshly-installed,
@@ -741,6 +785,25 @@ try:
 except SystemExit:
     died = True
 check("_run_install_with_pg_hba_guard: dies if mgradm install's own exit code is non-zero", died)
+
+# setup_uyuni(): install_cmd's --organization must be shell-quoted as ONE
+# argument. Real bug found live 2026-09-13 in install_smlm.py's identical
+# command-construction pattern: an unquoted multi-word --organization
+# ("SUSE Test") got split by the remote shell into two tokens, and mgradm
+# misinterpreted the stray second word as its own optional FQDN positional
+# argument ("Test is not a valid FQDN"), failing the whole install. Same
+# latent bug existed here — uyuni_org just never happened to contain a
+# space in practice, so it was never hit live.
+install_uyuni.ssh_run = FakeSSH()
+install_uyuni.reboot_vm = lambda virt_srv, hostname: None
+install_uyuni.check_ssh_conn = lambda hostname: None
+install_uyuni.time.sleep = lambda s: None
+captured_install_cmd = []
+install_uyuni._run_install_with_pg_hba_guard = lambda hostname, cmd: captured_install_cmd.append(cmd)
+install_uyuni._ensure_server_container_active = lambda hostname: None
+install_uyuni.setup_uyuni("host1", "virt1", {"uyuni_org": "SUSE Test"})
+check("setup_uyuni(): a multi-word uyuni_org is shell-quoted as ONE argument, not split",
+      "--organization 'SUSE Test'" in captured_install_cmd[0])
 
 
 # ── Bug 6: CLM stuck-build restart-and-retry wrapper ─────────────────────────

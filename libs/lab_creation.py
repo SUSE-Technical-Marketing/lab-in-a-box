@@ -973,6 +973,79 @@ def run_libvirt_tool(binary, remote_host, virt_srv, args, **kwargs):
     return ssh_run(remote_host, cmd, check=check, capture=capture)
 
 
+_INSTALL_ISO_HTTP_PORT = 8890
+
+
+def ensure_iso_install_tree(remote_host, iso_loc, iso_image):
+    """
+    Idempotently loop-mounts `iso_image` (already present at
+    `{iso_loc}/{iso_image}` on `remote_host`, the KVM hypervisor) read-only
+    and serves it over HTTP directly from `remote_host` itself, so
+    virt-install's `--location` can reach it as a real HTTP install tree.
+    Returns the http:// URL to pass as `--location`.
+
+    Confirmed live 2026-09-17: `--location <bare filesystem path>` fails
+    with "Cannot access install tree on remote connection" whenever
+    virt-install itself runs on a DIFFERENT host than the hypervisor (this
+    project's own default architecture: automation VM -> qemu+ssh ->
+    hypervisor) — virt-install inspects the path on ITS OWN local
+    filesystem to extract the installer's kernel/initrd, never over the
+    remote libvirt connection. This is a real, general gap in every
+    `--location`-based install (kickstart/autoyast/preseed via
+    config_method "install_iso"), not specific to any one distro — Ubuntu's
+    own autoinstall branch sidesteps it entirely by using `--cdrom`
+    instead (no filesystem inspection needed), and its own comment right
+    above that code already flagged this exact `--location` limitation
+    before this function existed to actually fix it.
+
+    Mount and HTTP server are both idempotent (skip if already present) and
+    SHARED across every ISO ever installed this way — one small
+    `python3 -m http.server` systemd unit on the hypervisor, serving
+    `{iso_loc}/.mounted-isos/` (every mounted ISO gets its own subdirectory
+    under there, named after the ISO's own filename), not one server per
+    ISO. The loop mount is also persisted in /etc/fstab with `nofail` (a
+    single, exact-line, dedup-checked append — never blocks a hypervisor
+    reboot if the ISO/mount ever goes missing) so it survives a hypervisor
+    reboot without needing this function to run again first.
+    """
+    mount_dir = "{}/.mounted-isos/{}".format(iso_loc, iso_image)
+    iso_path = "{}/{}".format(iso_loc, iso_image)
+
+    mounted = ssh_run(remote_host, "mountpoint -q {}".format(shlex.quote(mount_dir)), check=False)
+    if mounted.returncode != 0:
+        ssh_run(remote_host, "mkdir -p {}".format(shlex.quote(mount_dir)))
+        r = ssh_run(remote_host, "mount -o loop,ro {} {}".format(
+            shlex.quote(iso_path), shlex.quote(mount_dir)), check=False)
+        if r.returncode != 0:
+            die("could not loop-mount ISO '{}' on '{}': {}".format(iso_image, remote_host,
+                                                                     (r.stderr or r.stdout or "").strip()))
+
+    fstab_line = "{} {} iso9660 loop,ro,nofail 0 0".format(iso_path, mount_dir)
+    ssh_run(remote_host, "grep -qxF {} /etc/fstab || echo {} >> /etc/fstab".format(
+        shlex.quote(fstab_line), shlex.quote(fstab_line)))
+
+    serve_root = "{}/.mounted-isos".format(iso_loc)
+    active = ssh_run(remote_host, "systemctl is-active install-iso-server.service", check=False)
+    if active.returncode != 0:
+        unit = (
+            "[Unit]\n"
+            "Description=Install-tree HTTP server for lab-in-a-box install_iso "
+            "(kickstart/autoyast/preseed) — shared across every mounted ISO\n"
+            "After=network-online.target\n"
+            "Wants=network-online.target\n\n"
+            "[Service]\n"
+            "WorkingDirectory={}\n"
+            "ExecStart=/usr/bin/python3 -m http.server {}\n"
+            "Restart=always\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n"
+        ).format(serve_root, _INSTALL_ISO_HTTP_PORT)
+        ssh_run(remote_host, "cat > /etc/systemd/system/install-iso-server.service <<'EOF'\n{}EOF".format(unit))
+        ssh_run(remote_host, "systemctl daemon-reload && systemctl enable --now install-iso-server.service")
+
+    return "http://{}:{}/{}/".format(remote_host, _INSTALL_ISO_HTTP_PORT, iso_image)
+
+
 def check_ssh_conn(vm_name, tcp_port=22, retry_interval=2, retry_limit=100):
     """
     Poll a host's TCP port until it accepts a connection. Mirrors check_ssh_conn (bash).

@@ -1067,6 +1067,64 @@ check("check_ssh_only_reachability: still returns the correct True/False result 
       "once past that", result is True)
 
 
+# ── ensure_iso_install_tree: real bug found live 2026-09-17 ─────────────────
+# virt-install's --location with a bare hypervisor-local path fails with
+# "Cannot access install tree on remote connection" whenever virt-install
+# itself runs on a different host than the hypervisor (this project's own
+# default architecture) — it inspects the path on ITS OWN local filesystem,
+# never over the remote libvirt connection. Fixed by loop-mounting the ISO
+# ON the hypervisor and serving it over HTTP directly from there instead —
+# see the function's own docstring for the full story.
+fake = FakeRun(responses=[
+    ("mountpoint -q", FakeCompleted(returncode=1)),   # not yet mounted
+    ("systemctl is-active install-iso-server.service", FakeCompleted(returncode=1)),  # not yet running
+])
+lc.subprocess.run = fake
+url = lc.ensure_iso_install_tree("hv1", "/iso", "rhel-10.2-x86_64-dvd.iso")
+cmds = [c[0] for c in fake.calls]
+check("ensure_iso_install_tree: returns an http:// URL naming the hypervisor and the ISO",
+      url == "http://hv1:8890/rhel-10.2-x86_64-dvd.iso/")
+check("ensure_iso_install_tree: not-yet-mounted -> mkdir then a loop,ro mount",
+      any("mkdir -p" in c and "/iso/.mounted-isos/rhel-10.2-x86_64-dvd.iso" in c for c in cmds)
+      and any("mount -o loop,ro" in c and "/iso/rhel-10.2-x86_64-dvd.iso" in c for c in cmds))
+check("ensure_iso_install_tree: persists the mount in /etc/fstab with nofail (dedup-checked append)",
+      any("/etc/fstab" in c and "nofail" in c and "grep -qxF" in c for c in cmds))
+check("ensure_iso_install_tree: not-yet-running -> writes and enables the shared HTTP-server systemd unit",
+      any("install-iso-server.service" in c and "cat >" in c for c in cmds)
+      and any("systemctl daemon-reload && systemctl enable --now install-iso-server.service" in c for c in cmds))
+unit_write_call = next(c for c in cmds if "install-iso-server.service" in c and "cat >" in c)
+check("ensure_iso_install_tree: the HTTP server's own WorkingDirectory is the SHARED "
+      "mounted-isos root, not this one ISO's own subdirectory (one server for every ISO)",
+      "WorkingDirectory=/iso/.mounted-isos" in unit_write_call
+      and "WorkingDirectory=/iso/.mounted-isos/rhel-10.2-x86_64-dvd.iso" not in unit_write_call)
+
+# Already mounted + server already running -> no mkdir/mount/unit-write calls at all,
+# just the URL (idempotent) and the harmless fstab dedup check.
+fake = FakeRun(responses=[
+    ("mountpoint -q", FakeCompleted(returncode=0)),
+    ("systemctl is-active install-iso-server.service", FakeCompleted(returncode=0)),
+])
+lc.subprocess.run = fake
+url = lc.ensure_iso_install_tree("hv1", "/iso", "rhel-10.2-x86_64-dvd.iso")
+cmds = [c[0] for c in fake.calls]
+check("ensure_iso_install_tree: already mounted + server already running -> no mount/unit-write calls",
+      not any("mount -o loop" in c for c in cmds) and not any("cat >" in c for c in cmds))
+check("ensure_iso_install_tree: still returns the correct URL when everything was already in place",
+      url == "http://hv1:8890/rhel-10.2-x86_64-dvd.iso/")
+
+fake = FakeRun(responses=[
+    ("mountpoint -q", FakeCompleted(returncode=1)),
+    ("mount -o loop,ro", FakeCompleted(returncode=1, stderr="mount: wrong fs type")),
+])
+lc.subprocess.run = fake
+died = False
+try:
+    lc.ensure_iso_install_tree("hv1", "/iso", "bogus.iso")
+except SystemExit:
+    died = True
+check("ensure_iso_install_tree: a real mount failure dies with a clear error naming the ISO/host", died)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

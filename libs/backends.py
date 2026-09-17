@@ -49,6 +49,7 @@ from lab_creation import (
     ssh_run, run_libvirt_tool,
     resolve_install_type, setup_salt,
     resolve_kvm_host, locate_kvm_host,
+    ensure_iso_install_tree,
 )
 import lab_creation as _lc
 
@@ -880,10 +881,28 @@ class LibvirtBackend(VMBackend):
                 self._virsh("start", vm_name)
                 return
 
-            location_arg = "{}/{}".format(iso_loc, iso_image)
+            # A bare hypervisor-local path here fails with "Cannot access install
+            # tree on remote connection" whenever virt-install runs on a
+            # different host than the hypervisor (this project's own default
+            # architecture) — see ensure_iso_install_tree()'s own docstring for
+            # the full explanation and why Ubuntu's --cdrom-based autoinstall
+            # branch above never hit this. Serves the ISO over HTTP directly
+            # from the hypervisor instead, which works the same way regardless
+            # of where virt-install itself runs.
+            location_arg = ensure_iso_install_tree(remote_host, iso_loc, iso_image)
             extra_args_by_type = {
                 "autoyast": "autoyast=http://{}/lab_creation/install_iso/{}.xml".format(mydns, vm_name),
-                "kickstart": "inst.ks=http://{}/lab_creation/install_iso/{}.ks inst.sshd".format(mydns, vm_name),
+                # inst.text (a KERNEL command-line arg, distinct from the kickstart
+                # file's own `text` directive — that only picks the install UI's
+                # style, not whether it even tries to start a display at all):
+                # confirmed live 2026-09-17 that without it, RHEL10's own Anaconda
+                # silently attempts to start its default (graphical/WebUI) install
+                # path in a --noautoconsole, no-display environment — no error, no
+                # further disk or network activity at all, forever. A well-known
+                # RHEL8+ kickstart gotcha; --location's own kickstart file `text`
+                # line stopped being sufficient on its own some releases back.
+                "kickstart": "inst.ks=http://{}/lab_creation/install_iso/{}.ks inst.sshd inst.text".format(
+                    mydns, vm_name),
                 "preseed": "auto=true priority=critical url=http://{}/lab_creation/install_iso/{}.preseed".format(mydns, vm_name),
             }
             extra_args = extra_args_by_type[itype]
@@ -892,6 +911,16 @@ class LibvirtBackend(VMBackend):
             r = self._virt_install(
                 "--name", vm_name, "--vcpus", str(vm_cpu), "--memory", str(vm_mem),
                 "--os-variant", os_variant,
+                # This call builds its own argv from scratch (not base_args above) and had
+                # never included --boot at all — confirmed live 2026-09-17: it silently fell
+                # back to virt-install's own legacy-BIOS default regardless of VM_BOOT
+                # ("uefi" by default in every existing lab JSON), producing a real,
+                # confusing "Boot failed: not a bootable disk" once the *other*
+                # --location bug (see ensure_iso_install_tree()) was fixed and the
+                # installer could finally run — kickstart's own bootloader step correctly
+                # wrote BIOS boot code, but the actual firmware the domain used to boot
+                # afterward never matched.
+                "--boot", boot_flag,
                 "--location", location_arg,
                 "--extra-args", "{} console=ttyS0,115200n8".format(extra_args),
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
