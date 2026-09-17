@@ -5,8 +5,13 @@
 #
 # JSON section: "nv_testing" — NeuVector security testing workloads (nginx/node/redis pods)
 #
-#   nv_testing_ns   : [OPTIONAL] Kubernetes namespace                  (default: demo)
-#   nv_testing_name : [OPTIONAL] Service name and ingress hostname     (default: nv-testing)
+#   nv_testing_ns       : [OPTIONAL] Kubernetes namespace                  (default: demo)
+#   nv_testing_name     : [OPTIONAL] Service name and ingress hostname     (default: nv-testing)
+#   nv_testing_attacker : [OPTIONAL] "1" to re-apply the attacker pod manifest a second
+#                                     time (it's already in the main template list and
+#                                     deploys unconditionally either way — see
+#                                     setup_nv_testing()'s own docstring for why this flag
+#                                     doesn't actually gate anything, a preserved bash oddity)
 
 __version__ = "526bc48"
 

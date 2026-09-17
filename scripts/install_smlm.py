@@ -90,7 +90,17 @@
 #   smlm_reportdb_user    : Report DB username         (default: reportuser)
 #   smlm_reportdb_pass    : Report DB password         (default: reportuser123)
 #   smlm_admin_user       : SMLM web UI admin username (default: admin)
-#   smlm_admin_pass       : SMLM web UI admin password (default: admin123)
+#   smlm_admin_pass       : SMLM web UI admin password (default: admin123 for
+#                            smlm_deployment "kubernetes"; "Smlm12345" for "podman"
+#                            — mgradm's own product-specific default, matching
+#                            install_uyuni.py's own "Uyuni12345" precedent)
+#   smlm_email            : admin account email, "podman" deployment only, passed to
+#                            `mgradm install`'s own --email flag  (default: admin@lab.local)
+#   smlm_org              : organization name created at install time, "podman"
+#                            deployment only                     (default: lab)
+#   smlm_ssl_password     : password for the self-signed SSL cert `mgradm install`
+#                            generates, "podman" deployment only  (default: same as
+#                            smlm_admin_pass)
 #
 # OPTIONAL – Helm / release
 #   smlm_version          : Helm chart version         (empty = latest, e.g. "5.2.0")
@@ -676,8 +686,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
 
     print("- Installing SUSE Multi-Linux Manager server")
-    admin = cfg.get("smlm_admin") or "admin"
-    password = cfg.get("smlm_password") or "Smlm12345"
+    admin = cfg.get("smlm_admin_user") or "admin"
+    password = cfg.get("smlm_admin_pass") or "Smlm12345"
     org = cfg.get("smlm_org") or "lab"
     # Same flag set as install_uyuni.py's own live-verified `mgradm install
     # podman ...` invocation (mgradm/podman mechanics are identical between
@@ -1475,8 +1485,8 @@ def export_smlm_config(hostname, exec_prefix, cfg, output_path=None):
     server-side). Prints the result as pretty JSON to stdout, or writes it
     to `output_path` if given. Read-only — issues no write calls at all.
     """
-    admin = cfg.get("smlm_admin") or "admin"
-    password = cfg.get("smlm_password") or "Smlm12345"
+    admin = cfg.get("smlm_admin_user") or "admin"
+    password = cfg.get("smlm_admin_pass") or "Smlm12345"
     result = sc.export_config(hostname, exec_prefix, admin, password, "smlm")
     text = json.dumps(result, indent=2)
     if output_path:
@@ -1652,8 +1662,8 @@ def main():
                 print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
                       file=sys.stderr)
                 sys.exit(1)
-            admin = cfg.get("smlm_admin") or "admin"
-            password = cfg.get("smlm_password") or "Smlm12345"
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
             sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
             sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
