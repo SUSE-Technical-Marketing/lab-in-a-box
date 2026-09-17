@@ -7,6 +7,7 @@
 # server behavior. Run from 09_spacecmd_common.sh, in its own container —
 # see tests/run_tests.sh.
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -198,6 +199,33 @@ check("follow-up: config channels added", any("activationkey_addconfigchannels 1
 check("follow-up: config deployment enabled", any("activationkey_enableconfigdeployment 1-mykey" in c for c in cmds))
 check("follow-up: groups added", any("activationkey_addgroups 1-mykey group-a group-b" in c for c in cmds))
 check("follow-up: contact method set", any("activationkey_setcontactmethod 1-mykey default" in c for c in cmds))
+
+# -- ensure_activation_key: a failed child-channel link now surfaces, not --
+# -- silently swallowed -------------------------------------------------------
+# Real bug found live 2026-09-14: activationkey_addchildchannels genuinely
+# fails ("Invalid channel") whenever a listed child channel (e.g. the
+# "managertools-*" channels that provide venv-salt-minion) was never
+# actually added to the server — easy to do, since nothing else implies
+# syncing it just because an activation key references it. This call's own
+# return code used to be discarded outright, so the failure never surfaced
+# anywhere: the activation key looked fine, but clients bootstrapped
+# against it silently got the wrong (unlinked) channel set.
+fake = FakeSSH(responses=[
+    ("activationkey_list", FakeResult(stdout="")),
+    ("activationkey_addchildchannels", FakeResult(returncode=1, stderr="Invalid channel")),
+])
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_activation_key("host1", "mgrctl exec --", {
+    "smlm_activation_key": "1-mykey",
+    "smlm_activation_key_base_channel": "sle-product-base",
+    "smlm_activation_key_child_channels": "managertools-sle15-pool-x86_64-sp7",
+}, "smlm")
+check("ensure_activation_key: a failed child-channel link now calls warn(), not silently ignored",
+      len(warned) == 1)
+check("ensure_activation_key: the warning names the actual channel and the real server error",
+      warned and "managertools-sle15-pool-x86_64-sp7" in warned[0] and "Invalid channel" in warned[0])
 
 # -- ensure_activation_key: follow-ups use the REAL (org-id-prefixed) name --
 # (confirmed live, 2026-08-28: creating "-n 1-otherkey" was actually stored
@@ -599,6 +627,96 @@ except SystemExit:
     died = True
 check("ensure_orgs: entry missing 'name' dies", died)
 
+# -- user_exists / ensure_user / ensure_users --------------------------------
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout="admin\nalice\n"))])
+sc.ssh_run = fake
+check("user_exists: found", sc.user_exists("host1", "mgrctl exec --", "alice") is True)
+check("user_exists: not found", sc.user_exists("host1", "mgrctl exec --", "bob") is False)
+
+# Existing user -> no user_create call, but roles are still (idempotently) applied.
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="alice\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Roles: org_admin")),
+])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {"username": "alice", "roles": ["org_admin"]})
+cmds = [c[1] for c in fake.calls]
+check("ensure_user: existing user -> no user_create call", not any("user_create" in c for c in cmds))
+check("ensure_user: already-held role -> no user_addrole call", not any("user_addrole" in c for c in cmds))
+
+# Missing user, all required fields present -> created, then roles granted.
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="")),
+    ("user_details", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {
+    "username": "curie", "password": "pw", "first_name": "Marie", "last_name": "Curie",
+    "email": "curie@edge.mydemo.lab", "roles": ["channel_admin"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_user: missing user -> user_create called with the right argv",
+      any("user_create -u curie -p pw -f Marie -l Curie -e curie@edge.mydemo.lab" in c for c in cmds))
+check("ensure_user: no --pam flag when not requested",
+      not any("--pam" in c for c in cmds))
+check("ensure_user: roles granted after creation",
+      any("user_addrole curie channel_admin" in c for c in cmds))
+
+# pam flag appended when set.
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+sc.ensure_user("host1", "mgrctl exec --", {
+    "username": "turing", "password": "pw", "first_name": "Alan", "last_name": "Turing",
+    "email": "turing@edge.mydemo.lab", "pam": True,
+})
+check("ensure_user: --pam appended when requested",
+      any("-e turing@edge.mydemo.lab --pam" in c[1] for c in fake.calls))
+
+# Missing user, a required field absent -> dies rather than silently skip.
+fake = FakeSSH(responses=[("user_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_user("host1", "mgrctl exec --", {"username": "incomplete", "password": "pw"})
+except SystemExit:
+    died = True
+check("ensure_user: missing user + missing required field dies", died)
+
+# Entry missing 'username' dies.
+died = False
+try:
+    sc.ensure_user("host1", "mgrctl exec --", {"password": "pw"})
+except SystemExit:
+    died = True
+check("ensure_user: entry missing 'username' dies", died)
+
+# ensure_users: orchestrates a list, no-op when unset.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_users("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_users: no-op when field unset", len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[
+    ("user_list", FakeResult(returncode=0, stdout="")),
+    ("user_details", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+cfg = {
+    "smlm_users": [
+        {"username": "curie", "password": "pw", "first_name": "Marie", "last_name": "Curie",
+         "email": "curie@edge.mydemo.lab", "roles": ["channel_admin"]},
+        {"username": "turing", "password": "pw", "first_name": "Alan", "last_name": "Turing",
+         "email": "turing@edge.mydemo.lab", "roles": ["config_admin"]},
+    ]
+}
+sc.ensure_users("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --", cfg, "smlm")
+cmds = [c[1] for c in fake.calls]
+check("ensure_users: creates every listed user",
+      any("user_create -u curie" in c for c in cmds) and any("user_create -u turing" in c for c in cmds))
+check("ensure_users: grants each user's own roles",
+      any("user_addrole curie channel_admin" in c for c in cmds)
+      and any("user_addrole turing config_admin" in c for c in cmds))
+
 # -- access_group_exists / ensure_access_group -------------------------------
 fake = FakeSSH(responses=[("access.listRoles", FakeResult(returncode=0, stdout="read-only-ops\nother-group\n"))])
 sc.ssh_run = fake
@@ -686,7 +804,10 @@ try:
     sc.ensure_user_role("host1", "mgrctl exec --", "bob", "read-only-ops")
 except SystemExit:
     died = True
-check("ensure_user_role: user_addrole failure (e.g. unknown user) dies", died)
+check("ensure_user_role: user_addrole failure warns, doesn't die (confirmed live: even a "
+      "satellite_admin session gets the identical rejection for a custom access-group label, "
+      "so this can't be treated as a config mistake worth aborting the whole run over)",
+      died is False)
 
 # -- ensure_access_groups: full orchestration --------------------------------
 fake = FakeSSH(responses=[
@@ -1306,6 +1427,67 @@ except SystemExit:
     died = True
 check("ensure_activation_key_groups: addgroups failure dies", died)
 
+# -- activation_key_child_channels / ensure_activation_key_child_channels ----
+# Real bug found live 2026-09-15: ensure_activation_key()'s own child-
+# channel linking only ever ran at CREATION time — an already-existing key
+# (the normal case on every run after the first) skipped it entirely, so a
+# lab JSON edit adding/correcting child_channels for an existing key had
+# silently NO EFFECT: confirmed live that several of solar-system-lab.
+# json's own keys had ZERO "SUSE Multi-Linux Manager Client Tools" channel
+# linked at all, because they were created once with an empty
+# child_channels field and every later fix to add the right channel never
+# got applied since the key already existed. Same fix shape as groups.
+fake = FakeSSH(responses=[("activationkey_listchildchannels",
+                            FakeResult(returncode=0, stdout="chan-a\nchan-b\n"))])
+sc.ssh_run = fake
+check("activation_key_child_channels: returns the current set",
+      sc.activation_key_child_channels("host1", "mgrctl exec --", "1-mykey") == {"chan-a", "chan-b"})
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=1, stderr="no such key"))])
+sc.ssh_run = fake
+check("activation_key_child_channels: returns empty set on failure",
+      sc.activation_key_child_channels("host1", "mgrctl exec --", "bogus") == set())
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels("host1", "mgrctl exec --", {}, "uyuni")
+sc.ensure_activation_key_child_channels("host1", "mgrctl exec --", {"uyuni_activation_key": "1-mykey"}, "uyuni")
+check("ensure_activation_key_child_channels: no-op when key or child_channels field is unset",
+      len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=0, stdout="chan-a\n"))])
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels(
+    "host1", "mgrctl exec --",
+    {"uyuni_activation_key": "1-mykey", "uyuni_activation_key_child_channels": "chan-a"}, "uyuni")
+check("ensure_activation_key_child_channels: all already linked -> no addchildchannels call",
+      len(fake.calls) == 2 and not any("activationkey_addchildchannels" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("activationkey_listchildchannels", FakeResult(returncode=0, stdout="chan-a\n"))])
+sc.ssh_run = fake
+sc.ensure_activation_key_child_channels(
+    "host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+    {"smlm_activation_key": "1-mykey", "smlm_activation_key_child_channels": "chan-a managertools-sle15-pool-x86_64-sp7"},
+    "smlm")
+add_cmd = next((c[1] for c in fake.calls if "activationkey_addchildchannels" in c[1]), "")
+check("ensure_activation_key_child_channels: links only the missing channel — this is what "
+      "actually fixes an existing key whose lab JSON gained a Client Tools channel later",
+      "activationkey_addchildchannels 1-mykey managertools-sle15-pool-x86_64-sp7" in add_cmd)
+
+fake = FakeSSH(responses=[
+    ("activationkey_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("activationkey_addchildchannels", FakeResult(returncode=1, stderr="Invalid channel")),
+])
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_activation_key_child_channels(
+    "host1", "mgrctl exec --",
+    {"uyuni_activation_key": "1-mykey", "uyuni_activation_key_child_channels": "not-yet-synced-channel"}, "uyuni")
+check("ensure_activation_key_child_channels: addchildchannels failure warns (not dies — a channel "
+      "not yet synced is a real, recoverable, expected transient state, not a fatal misconfiguration)",
+      len(warned) == 1 and "not-yet-synced-channel" in warned[0] and "Invalid channel" in warned[0])
+
 # -- ensure_activation_keys: list orchestration reuses per-key functions -----
 fake = FakeSSH(responses=[
     ("activationkey_listgroups", FakeResult(returncode=0, stdout="")),
@@ -1408,7 +1590,8 @@ try:
     sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["bogus.lab"])
 except SystemExit:
     died = True
-check("ensure_group_systems: addsystems failure dies", died)
+check("ensure_group_systems: addsystems failure warns, doesn't die (not-yet-registered "
+      "systems are expected and self-heal on a later run)", died is False)
 
 # -- ensure_system_groups: orchestration, no-op, validation ------------------
 fake = FakeSSH()
@@ -1780,6 +1963,305 @@ try:
 except SystemExit:
     died = True
 check("ensure_client_registered: dies if the key never appears as pending", died)
+
+
+# -- describe_activation_key / describe_system_group / describe_access_groups /
+#    export_config -- reading a live server back into lab-in-a-box JSON --------
+# Fixture text below is copied verbatim from a real activationkey_details/
+# group_details run against a live SMLM 5.2 server (2026-09-16), not invented,
+# since this whole feature exists to parse that exact real output shape.
+_REAL_AK_DETAILS = """Key:                    1-sles15sp7
+Description:            mercury.mydemo.lab - SLES 15 SP7
+Universal Default:      False
+Usage Limit:            0
+Deploy Config Channels: False
+Contact Method:         default
+
+Software Channels
+-----------------
+sle-product-sles15-sp7-pool-x86_64
+ |-- managertools-sle15-pool-x86_64-sp7
+ |-- managertools-sle15-updates-x86_64-sp7
+ |-- sle-module-basesystem15-sp7-pool-x86_64
+ |-- sle-module-basesystem15-sp7-updates-x86_64
+ |-- sle-product-sles15-sp7-updates-x86_64
+ |-- sle15-sp7-installer-updates-x86_64
+
+Configuration Channels
+----------------------
+
+Entitlements
+------------
+
+
+System Groups
+-------------
+prod
+
+Packages
+--------
+"""
+
+fake = FakeSSH(responses=[("activationkey_details", FakeResult(returncode=0, stdout=_REAL_AK_DETAILS))])
+sc.ssh_run = fake
+ak = sc.describe_activation_key("host1", "mgrctl exec --", "1-sles15sp7", "smlm")
+check("describe_activation_key: strips the numeric org-id prefix off the key name",
+      ak["smlm_activation_key"] == "sles15sp7")
+check("describe_activation_key: description round-trips exactly as the server has it",
+      ak["smlm_activation_key_desc"] == "mercury.mydemo.lab - SLES 15 SP7")
+check("describe_activation_key: base channel is the first (non-indented) software channel line",
+      ak["smlm_activation_key_base_channel"] == "sle-product-sles15-sp7-pool-x86_64")
+check("describe_activation_key: child channels are every ' |-- '-prefixed line, space-joined",
+      ak["smlm_activation_key_child_channels"] ==
+      "managertools-sle15-pool-x86_64-sp7 managertools-sle15-updates-x86_64-sp7 "
+      "sle-module-basesystem15-sp7-pool-x86_64 sle-module-basesystem15-sp7-updates-x86_64 "
+      "sle-product-sles15-sp7-updates-x86_64 sle15-sp7-installer-updates-x86_64")
+check("describe_activation_key: groups", ak["smlm_activation_key_groups"] == "prod")
+check("describe_activation_key: an EMPTY section (Configuration Channels here) contributes no "
+      "field at all — confirmed live 2026-09-16 this used to bleed the NEXT header's own text in "
+      "as bogus content when the boundary regex assumed two blank lines instead of one",
+      "smlm_activation_key_config_channels" not in ak)
+check("describe_activation_key: an empty Entitlements section is also omitted, not an empty string",
+      "smlm_activation_key_entitlements" not in ak)
+
+_REAL_GROUP_DETAILS = """ID:                17
+Name:              star
+Description:       The G-type main-sequence star at the center of the system
+Number of Systems: 0
+
+Members
+-------
+"""
+fake = FakeSSH(responses=[("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS))])
+sc.ssh_run = fake
+sg = sc.describe_system_group("host1", "mgrctl exec --", "star")
+check("describe_system_group: name/description round-trip",
+      sg == {"name": "star", "description": "The G-type main-sequence star at the center of the system"})
+
+_REAL_GROUP_DETAILS_WITH_MEMBERS = """ID:                20
+Name:              terrestrial-planets
+Description:       Rocky planets with solid surfaces
+Number of Systems: 3
+
+Members
+-------
+earth.mydemo.lab
+mars.mydemo.lab
+mercury.mydemo.lab
+"""
+fake = FakeSSH(responses=[("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS_WITH_MEMBERS))])
+sc.ssh_run = fake
+sg = sc.describe_system_group("host1", "mgrctl exec --", "terrestrial-planets")
+check("describe_system_group: members list populated when non-empty",
+      sg["systems"] == ["earth.mydemo.lab", "mars.mydemo.lab", "mercury.mydemo.lab"])
+
+fake = FakeSSH(responses=[
+    ("access.listRoles", FakeResult(returncode=0, stdout=json.dumps(
+        [{"label": "engineering", "description": "Content, config and Salt formula authoring"}]))),
+    ("access.listPermissions", FakeResult(returncode=0, stdout=json.dumps([
+        {"namespace": "software.manage.list", "access_mode": {"value": "W"}},
+        {"namespace": "config.channels", "access_mode": {"value": "W"}},
+    ]))),
+])
+sc.ssh_run = fake
+groups = sc.describe_access_groups("host1", "mgrctl exec --")
+check("describe_access_groups: returns one entry per role with label/description/permissions",
+      groups == [{
+          "label": "engineering", "description": "Content, config and Salt formula authoring",
+          "permissions": [{"namespace": "software.manage.list", "mode": "W"},
+                           {"namespace": "config.channels", "mode": "W"}],
+      }])
+
+# export_config: full orchestration, mocking only the top-level list commands (activation-key/
+# group/access-group DETAIL parsing is already covered above by the real fixtures).
+fake = FakeSSH(responses=[
+    # "org_listusers" MUST be checked before "org_list" — FakeSSH matches the
+    # first substring hit in list order, and "org_list" is itself a substring
+    # of "org_listusers" (confirmed live 2026-09-16: without this ordering,
+    # every org_listusers call silently got org_list's own response instead).
+    ("org_listusers", FakeResult(returncode=0, stdout="edgeadmin\nlovelace\n")),
+    ("softwarechannel_list", FakeResult(returncode=0, stdout="chan1\nchan2\n")),
+    ("activationkey_list", FakeResult(returncode=0, stdout="1-sles15sp7\n")),
+    ("activationkey_details", FakeResult(returncode=0, stdout=_REAL_AK_DETAILS)),
+    ("group_list", FakeResult(returncode=0, stdout="star\n")),
+    ("group_details", FakeResult(returncode=0, stdout=_REAL_GROUP_DETAILS)),
+    ("access.listRoles", FakeResult(returncode=0, stdout="[]")),
+    ("org_list", FakeResult(returncode=0, stdout="Default\nedge\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Organisation:  Default\n")),
+])
+sc.ssh_run = fake
+result = sc.export_config("host1", "mgrctl exec --", "admin", "pw", "smlm")
+check("export_config: top-level admin/org fields", result["smlm_admin"] == "admin" and result["smlm_org"] == "Default")
+check("export_config: channels list", result["smlm_channels"] == ["chan1", "chan2"])
+check("export_config: activation keys via describe_activation_key",
+      len(result["smlm_activation_keys"]) == 1
+      and result["smlm_activation_keys"][0]["smlm_activation_key"] == "sles15sp7")
+check("export_config: system groups via describe_system_group",
+      result["smlm_system_groups"] ==
+      [{"name": "star", "description": "The G-type main-sequence star at the center of the system"}])
+check("export_config: skips the CALLER'S OWN org (Default) from smlm_orgs, keeps others",
+      [o["name"] for o in result["smlm_orgs"]] == ["edge"])
+check("export_config: every non-own org carries a best-effort username list and an explicit "
+      "warning that passwords/other fields could not be recovered",
+      result["smlm_orgs"][0]["existing_users"] == ["edgeadmin", "lovelace"]
+      and "_export_note" in result["smlm_orgs"][0])
+check("export_config: no smlm_access_groups key at all when the current org has none",
+      "smlm_access_groups" not in result)
+
+
+# -- ensure_distribution / ensure_kickstart_profile ---------------------------
+fake = FakeSSH(responses=[("distribution_list", FakeResult(returncode=0, stdout=""))])
+sc.ssh_run = fake
+sc.ensure_distribution("host1", "mgrctl exec --", {
+    "name": "test-dist", "path": "/srv/www/htdocs/pub/install-trees/x",
+    "base_channel": "chan1", "install_type": "sles15generic",
+})
+create_cmd = next((c[1] for c in fake.calls if "distribution_create" in c[1]), "")
+check("ensure_distribution: creates with the right flags",
+      "-n test-dist" in create_cmd and "-p /srv/www/htdocs/pub/install-trees/x" in create_cmd
+      and "-b chan1" in create_cmd and "-t sles15generic" in create_cmd)
+
+fake = FakeSSH(responses=[("distribution_list", FakeResult(returncode=0, stdout="test-dist\n"))])
+sc.ssh_run = fake
+sc.ensure_distribution("host1", "mgrctl exec --", {"name": "test-dist"})
+check("ensure_distribution: existing distribution -> no create call",
+      not any("distribution_create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("distribution_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_create", FakeResult(returncode=1, stderr="initrd could not be found")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_distribution("host1", "mgrctl exec --", {
+        "name": "test-dist", "path": "/no/tree", "base_channel": "c", "install_type": "t",
+    })
+except SystemExit:
+    died = True
+check("ensure_distribution: a missing install tree warns, doesn't die (a real, expected, "
+      "self-populated-out-of-band state, confirmed live 2026-09-16 — must not abort every "
+      "orchestration step after it)", died is False)
+
+fake = FakeSSH(responses=[
+    ("kickstart_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_list", FakeResult(returncode=0, stdout="")),  # distribution NOT there
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+        "name": "test-ks", "distribution": "missing-dist", "root_password": "pw",
+    })
+except SystemExit:
+    died = True
+check("ensure_kickstart_profile: skips cleanly (warns, doesn't die) when its own distribution "
+      "doesn't exist yet, without ever calling kickstart_create", died is False
+      and not any("kickstart_create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    # More specific "kickstart_list*" substrings MUST be checked before the bare
+    # "kickstart_list" — same substring-ordering pitfall as org_list/org_listusers
+    # earlier in this file (confirmed live 2026-09-16: without this ordering,
+    # kickstart_listvariables/listactivationkeys/listchildchannels all silently
+    # got kickstart_list's own response instead).
+    ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\n")),
+    ("kickstart_listactivationkeys", FakeResult(returncode=0, stdout="")),
+    ("kickstart_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("kickstart_list", FakeResult(returncode=0, stdout="")),
+    ("distribution_list", FakeResult(returncode=0, stdout="test-dist\n")),
+])
+sc.ssh_run = fake
+sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+    "name": "test-ks", "distribution": "test-dist", "root_password": "pw",
+    "variables": {"lab": "solar-system"}, "activation_keys": ["1-key"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_kickstart_profile: creates when its distribution exists",
+      any("kickstart_create -n test-ks -d test-dist -p pw -v none" in c for c in cmds))
+check("ensure_kickstart_profile: sets a variable not already present",
+      any("kickstart_addvariable test-ks lab solar-system" in c for c in cmds))
+check("ensure_kickstart_profile: links an activation key not already present",
+      any("kickstart_addactivationkeys test-ks 1-key" in c for c in cmds))
+
+fake = FakeSSH(responses=[
+    ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\nlab = solar-system\n")),
+    ("kickstart_listactivationkeys", FakeResult(returncode=0, stdout="1-key\n")),
+    ("kickstart_listchildchannels", FakeResult(returncode=0, stdout="")),
+    ("kickstart_list", FakeResult(returncode=0, stdout="test-ks\n")),
+])
+sc.ssh_run = fake
+sc.ensure_kickstart_profile("host1", "mgrctl exec --", {
+    "name": "test-ks", "distribution": "test-dist", "root_password": "pw",
+    "variables": {"lab": "solar-system"}, "activation_keys": ["1-key"],
+})
+cmds = [c[1] for c in fake.calls]
+check("ensure_kickstart_profile: existing profile + already-set variable/key -> no writes at all",
+      not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
+              for c in cmds))
+
+# -- image stores / profiles / import ------------------------------------------
+fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_image_store("host1", "mgrctl exec --", {
+    "label": "suse-registry", "uri": "registry.suse.com", "type": "registry",
+})
+create_cmd = next((c[1] for c in fake.calls if "image.store.create" in c[1]), "")
+check("ensure_image_store: create call carries label/uri/type/empty-credentials as JSON",
+      '["suse-registry", "registry.suse.com", "registry", {}]' in create_cmd)
+
+fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(
+    returncode=0, stdout=json.dumps([{"label": "suse-registry"}])))])
+sc.ssh_run = fake
+sc.ensure_image_store("host1", "mgrctl exec --", {"label": "suse-registry"})
+check("ensure_image_store: existing store -> no create call",
+      not any("image.store.create" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("image.profile.listImageProfiles", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_image_profile("host1", "mgrctl exec --", {
+    "label": "test-profile", "type": "dockerfile", "store": "suse-registry",
+    "path": "https://github.com/x/y.git#main:docker", "activation_key": "1-key",
+})
+create_cmd = next((c[1] for c in fake.calls if "image.profile.create" in c[1]), "")
+check("ensure_image_profile: create call carries every field in the right order",
+      '["test-profile", "dockerfile", "suse-registry", '
+      '"https://github.com/x/y.git#main:docker", "1-key"]' in create_cmd)
+
+fake = FakeSSH(responses=[("image.importContainerImage", FakeResult(returncode=0, stdout="[42]"))])
+sc.ssh_run = fake
+sc.import_container_image("host1", "mgrctl exec --", "bci/bci-base", "latest", 1000010000,
+                           "suse-registry", "1-key")
+call = next((c[1] for c in fake.calls if "image.importContainerImage" in c[1]), "")
+check("import_container_image: schedules with name/version/build_host_id/store/activation_key",
+      '["bci/bci-base", "latest", 1000010000, "suse-registry", "1-key", null]' in call)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.import_images("host1", "mgrctl exec --", {}, "smlm")
+check("import_images: no-op (and no die) when smlm_image_imports is unset", len(fake.calls) == 0)
+
+# -- server monitoring ----------------------------------------------------------
+fake = FakeSSH(responses=[("admin.monitoring.getStatus", FakeResult(
+    returncode=0, stdout=json.dumps([{"node": "disabled", "tomcat": "disabled"}])))])
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {"smlm_monitoring_enabled": "true"}, "smlm")
+cmds = [c[1] for c in fake.calls]
+check("ensure_monitoring: enables when the flag is set and status shows disabled",
+      any("admin.monitoring.enable" in c for c in cmds))
+check("ensure_monitoring: restarts tomcat/taskomatic right after a fresh enable",
+      any("systemctl restart tomcat taskomatic" in c for c in cmds))
+
+fake = FakeSSH(responses=[("admin.monitoring.getStatus", FakeResult(
+    returncode=0, stdout=json.dumps([{"node": "enabled", "tomcat": "enabled"}])))])
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {"smlm_monitoring_enabled": "true"}, "smlm")
+check("ensure_monitoring: already enabled -> no enable/restart calls at all", len(fake.calls) == 1)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_monitoring("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_monitoring: no-op when the flag is unset", len(fake.calls) == 0)
 
 
 if failures:

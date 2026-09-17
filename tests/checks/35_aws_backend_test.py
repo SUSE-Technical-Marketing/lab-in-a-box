@@ -89,6 +89,29 @@ resolved = backends.AWSBackend.resolve(
 check("resolve() picks up optional networking/key fields",
       (resolved.subnet_id, resolved.security_group_id, resolved.key_name) == ("subnet-1", "sg-1", "labkey"))
 
+# ── resolve(): AWS_PROFILE wins outright over leftover raw keys ────────────
+# Confirmed live 2026-09-13: resolve_cloud_account()'s merge only overrides
+# same-named keys, so a cloud_account that sets AWS_PROFILE (to switch to
+# SSO) still had /etc/lab_creation.cfg's own unrelated, stale
+# AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN come through in the same effective
+# config — and the `aws` CLI's own credential chain checks those explicit
+# env vars BEFORE AWS_PROFILE, so a stale/expired key silently defeated a
+# freshly-configured, working SSO profile (RequestExpired even though the
+# profile worked fine when tested directly). resolve() must ignore any
+# access/secret/session-token fields entirely once a profile is set.
+resolved = backends.AWSBackend.resolve(
+    {}, "vm1",
+    {"AWS_REGION": "eu-central-1", "AWS_PROFILE": "sso-profile",
+     "AWS_ACCESS_KEY_ID": "ASIA-STALE", "AWS_SECRET_ACCESS_KEY": "stale-secret",
+     "AWS_SESSION_TOKEN": "stale-token"},
+    False)
+check("resolve(): AWS_PROFILE set -> access_key is ignored entirely, not just unused",
+      resolved.profile == "sso-profile" and resolved.access_key is None)
+check("resolve(): AWS_PROFILE set -> secret_key is ignored entirely",
+      resolved.secret_key is None)
+check("resolve(): AWS_PROFILE set -> session_token is ignored entirely",
+      resolved.session_token is None)
+
 
 backend = backends.AWSBackend("eu-central-1", profile="lab")
 
@@ -205,6 +228,21 @@ def _fake_run(args, **kwargs):
     calls.append(args)
     if "describe-images" in args:
         return _cp(0, stdout=json.dumps({"Images": [{"RootDeviceName": "/dev/sda1"}]}))
+    # Internet-Gateway/route management (added 2026-09-13) runs for every
+    # create_vm() call that has a subnet configured — every test below that
+    # sets subnet_id needs these mocked as "already fine" (an IGW already
+    # attached, the default route already present) so it stays a pure no-op
+    # and doesn't interfere with what these particular tests are actually
+    # asserting. The dedicated Internet-Gateway test section further down
+    # uses its own separate fixture to exercise the real create/attach/
+    # add-route paths.
+    if "describe-subnets" in args:
+        return _cp(0, stdout=json.dumps({"Subnets": [{"VpcId": "vpc-1"}]}))
+    if "describe-internet-gateways" in args:
+        return _cp(0, stdout=json.dumps({"InternetGateways": [{"InternetGatewayId": "igw-1"}]}))
+    if "describe-route-tables" in args:
+        return _cp(0, stdout=json.dumps({"RouteTables": [
+            {"RouteTableId": "rtb-1", "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1"}]}]}))
     if "describe-instances" in args:
         # Serves get_ip()'s post-create poll (create_vm() calls it via _poll_for_ip) — a real
         # PublicIpAddress here so the poll succeeds on its first check, not a 180s timeout.
@@ -256,6 +294,153 @@ check("create_vm() explicitly requests a public IP whenever a subnet is configur
       "found live-testing 2026-09-09: a subnet with MapPublicIpOnLaunch=false, a common "
       "real-world default, otherwise leaves the instance unreachable — see TODO)",
       "--associate-public-ip-address" in run_instances_call)
+
+
+# ── create_vm(): auto-raises vm_dsk_gb to the AMI's own minimum root volume size ──
+# Confirmed live 2026-09-13: ensure_cloud_dns_vm() always requests an 8 GiB root
+# volume regardless of which AMI a given lab actually configures — a real SLES
+# 15 SP7 BYOS AMI's own snapshot needs >= 10 GiB, so run-instances rejected it
+# with InvalidBlockDeviceMapping. Fixed once in create_vm() itself (the one
+# place that already knows the AMI's real minimum), not in every caller.
+def _fake_run_with_bdm(min_gb):
+    def _run(args, **kwargs):
+        if "describe-images" in args:
+            return _cp(0, stdout=json.dumps({"Images": [{
+                "RootDeviceName": "/dev/sda1",
+                "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": min_gb}}],
+            }]}))
+        return _fake_run(args, **kwargs)
+    return _run
+
+
+b6 = backends.AWSBackend("eu-central-1", profile="lab")
+b6._user_data_by_vm["vm1"] = ""
+calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_with_bdm(10)):
+    b6.create_vm("vm1", 1, 512, 8, None, config_method="cloud-init", iso_image="ami-sles15sp7")
+run_instances_call = next(c for c in calls if "run-instances" in c)
+check("create_vm(): a requested vm_dsk_gb smaller than the AMI's own minimum is raised to that minimum",
+      json.loads(run_instances_call[run_instances_call.index("--block-device-mappings") + 1])[0]["Ebs"]["VolumeSize"]
+      == 10)
+
+calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_with_bdm(10)):
+    b6.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-sles15sp7")
+run_instances_call = next(c for c in calls if "run-instances" in c)
+check("create_vm(): a requested vm_dsk_gb already BIGGER than the AMI's minimum is left unchanged, "
+      "never shrunk",
+      json.loads(run_instances_call[run_instances_call.index("--block-device-mappings") + 1])[0]["Ebs"]["VolumeSize"]
+      == 40)
+
+
+# ── create_vm(): security-group access management ───────────────────────────
+# Confirmed live 2026-09-13: a freshly-created AWS node got a real IP/DNS
+# entry but check_ssh_conn() then exhausted its retry limit — the security
+# group had no inbound rule at all for traffic from outside AWS's own
+# network (only a self-referencing member-to-member rule). create_vm() must
+# always ensure SSH from this automation node's own public IP, plus any
+# extra "aws_open_ports" the lab JSON configures (e.g. SMLM's own 443/4505/
+# 4506) — added at the user's own explicit request after diagnosing that bug.
+def _fake_run_sg(existing_rules, calls_out):
+    def _run(args, **kwargs):
+        calls_out.append(args)
+        if "describe-images" in args:
+            return _cp(0, stdout=json.dumps({"Images": [{"RootDeviceName": "/dev/sda1"}]}))
+        if "describe-security-groups" in args:
+            return _cp(0, stdout=json.dumps({"SecurityGroups": [{"IpPermissions": existing_rules}]}))
+        if "authorize-security-group-ingress" in args:
+            return _cp(0, stdout="")
+        if "describe-instances" in args:
+            return _cp(0, stdout=json.dumps(
+                {"Reservations": [{"Instances": [{"InstanceId": "i-new", "PublicIpAddress": "203.0.113.10"}]}]}))
+        if "run-instances" in args:
+            return _cp(0, stdout=json.dumps({"Instances": [{"InstanceId": "i-new"}]}))
+        return _cp(0, stdout="")
+    return _run
+
+
+b_sg = backends.AWSBackend("eu-central-1", profile="lab", security_group_id="sg-1")
+b_sg._user_data_by_vm["vm1"] = ""
+b_sg._cached_public_ip = "198.51.100.7"  # avoid a real network call in this test
+sg_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], sg_calls)):
+    b_sg.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x",
+                    open_ports=["443", "4505", "4506"])
+authorize_calls = [c for c in sg_calls if "authorize-security-group-ingress" in c]
+check("create_vm(): opens SSH (22) from this automation node's own public IP",
+      any("22" in c and "198.51.100.7/32" in c for c in authorize_calls))
+check("create_vm(): opens every extra port from aws_open_ports, to 0.0.0.0/0",
+      all(any(p in c and "0.0.0.0/0" in c for c in authorize_calls) for p in ("443", "4505", "4506")))
+check("create_vm(): authorizes exactly 4 rules (SSH + 3 open_ports), no more",
+      len(authorize_calls) == 4)
+
+# Already-open rules are never re-authorized (idempotent).
+sg_calls = []
+existing = [
+    {"FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "IpRanges": [{"CidrIp": "198.51.100.7/32"}]},
+    {"FromPort": 443, "ToPort": 443, "IpProtocol": "tcp", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+]
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg(existing, sg_calls)):
+    b_sg.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x",
+                    open_ports=["443"])
+check("create_vm(): never re-authorizes a rule that already exists (idempotent)",
+      not any("authorize-security-group-ingress" in c for c in sg_calls))
+
+# No security group configured at all -> no-op, no describe/authorize calls.
+b_nosg = backends.AWSBackend("eu-central-1", profile="lab")
+b_nosg._user_data_by_vm["vm1"] = ""
+sg_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], sg_calls)):
+    b_nosg.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x",
+                      open_ports=["443"])
+check("create_vm(): no security_group_id configured -> never touches security groups at all",
+      not any("security-group" in c for call in sg_calls for c in call))
+
+# A port with an explicit non-tcp protocol ("69/udp") is parsed correctly.
+sg_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], sg_calls)):
+    b_sg.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x",
+                    open_ports=["69/udp"])
+authorize_calls = [c for c in sg_calls if "authorize-security-group-ingress" in c]
+check("create_vm(): aws_open_ports entries support an explicit '<port>/<protocol>' suffix",
+      any("69" in c and "udp" in c and "0.0.0.0/0" in c for c in authorize_calls))
+
+
+# ── _own_public_ip(): fetched once via checkip.amazonaws.com, then cached ──
+class _FakeUrlopenResponse:
+    def __init__(self, text):
+        self._text = text
+
+    def read(self):
+        return self._text.encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+b_ip = backends.AWSBackend("eu-central-1", profile="lab")
+with mock.patch.object(backends.urllib.request, "urlopen",
+                        return_value=_FakeUrlopenResponse("203.0.113.55\n")) as m_urlopen:
+    ip1 = b_ip._own_public_ip()
+    ip2 = b_ip._own_public_ip()
+check("_own_public_ip(): returns the real (mocked) response, stripped of whitespace",
+      ip1 == "203.0.113.55")
+check("_own_public_ip(): only fetches once — the second call is served from cache",
+      m_urlopen.call_count == 1)
+
+died = []
+b_ip_fail = backends.AWSBackend("eu-central-1", profile="lab")
+with mock.patch.object(backends.urllib.request, "urlopen", side_effect=OSError("network unreachable")), \
+     mock.patch.object(backends, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)):
+    try:
+        b_ip_fail._own_public_ip()
+    except SystemExit:
+        pass
+check("_own_public_ip(): dies clearly if it can't reach the public-IP-lookup service at all",
+      any("public IP" in m for m in died))
 
 
 # ── cloud_instance_type: explicit override bypasses _pick_instance_type() entirely ──
@@ -322,6 +507,149 @@ check("_aws() omits AWS_SESSION_TOKEN entirely for a long-lived key pair (none c
 # ── host_resources(): a large constant, not a real capacity query ─────────
 check("host_resources() returns a (cpu, mem_mb, disk_mb) tuple that never reads as 'no capacity'",
       backend.host_resources() == (9999, 999999, 999999))
+
+
+# ── create_vm(): Internet Gateway + default-route management ───────────────
+# Confirmed live 2026-09-13: a real AWS account's VPC had no Internet
+# Gateway attached at all, and its route table had no 0.0.0.0/0 route —
+# every AWS node still got a real public IP (assigned/NAT'd regardless),
+# passed every security-group/NACL/guest-firewall check, yet remained
+# completely unreachable, since packets had no path to arrive by in the
+# first place. Automated at the user's own explicit request ("add it as
+# part of the process of using aws") rather than left as a one-off manual
+# CLI fix.
+def _fake_run_igw(vpc_igws, route_tables, calls_out, created_igw_id="igw-new1"):
+    def _run(args, **kwargs):
+        calls_out.append(args)
+        if "describe-images" in args:
+            return _cp(0, stdout=json.dumps({"Images": [{"RootDeviceName": "/dev/sda1"}]}))
+        if "describe-subnets" in args:
+            return _cp(0, stdout=json.dumps({"Subnets": [{"VpcId": "vpc-1"}]}))
+        if "describe-internet-gateways" in args:
+            return _cp(0, stdout=json.dumps({"InternetGateways": vpc_igws}))
+        if "create-internet-gateway" in args:
+            return _cp(0, stdout=json.dumps({"InternetGateway": {"InternetGatewayId": created_igw_id}}))
+        if "attach-internet-gateway" in args:
+            return _cp(0, stdout="")
+        if "describe-route-tables" in args:
+            return _cp(0, stdout=json.dumps({"RouteTables": route_tables}))
+        if "create-route" in args:
+            return _cp(0, stdout="")
+        if "describe-security-groups" in args:
+            return _cp(0, stdout=json.dumps({"SecurityGroups": [{"IpPermissions": []}]}))
+        if "authorize-security-group-ingress" in args:
+            return _cp(0, stdout="")
+        if "describe-instances" in args:
+            return _cp(0, stdout=json.dumps(
+                {"Reservations": [{"Instances": [{"InstanceId": "i-new", "PublicIpAddress": "203.0.113.10"}]}]}))
+        if "run-instances" in args:
+            return _cp(0, stdout=json.dumps({"Instances": [{"InstanceId": "i-new"}]}))
+        return _cp(0, stdout="")
+    return _run
+
+
+b_igw = backends.AWSBackend("eu-central-1", profile="lab", subnet_id="subnet-1")
+b_igw._user_data_by_vm["vm1"] = ""
+
+# Nothing exists at all -> creates + attaches an IGW, then adds the route.
+igw_calls = []
+with mock.patch.object(backends.subprocess, "run",
+                        side_effect=_fake_run_igw([], [{"RouteTableId": "rtb-1", "Routes": []}], igw_calls)):
+    b_igw.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x")
+check("create_vm(): creates a new Internet Gateway when none is attached to the VPC",
+      any("create-internet-gateway" in c for c in igw_calls))
+check("create_vm(): attaches the newly-created Internet Gateway to the VPC",
+      any("attach-internet-gateway" in c and "igw-new1" in c and "vpc-1" in c for c in igw_calls))
+check("create_vm(): adds the missing 0.0.0.0/0 route pointing at the (new) Internet Gateway",
+      any("create-route" in c and "0.0.0.0/0" in c and "igw-new1" in c for c in igw_calls))
+
+# An IGW is already attached AND the route already exists -> fully idempotent, no-op.
+igw_calls = []
+existing_igw = [{"InternetGatewayId": "igw-existing"}]
+existing_rt = [{"RouteTableId": "rtb-1", "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-existing"}]}]
+with mock.patch.object(backends.subprocess, "run",
+                        side_effect=_fake_run_igw(existing_igw, existing_rt, igw_calls)):
+    b_igw.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x")
+check("create_vm(): an already-attached IGW is reused, never creates a second one",
+      not any("create-internet-gateway" in c for c in igw_calls))
+check("create_vm(): an already-present 0.0.0.0/0 route is left alone, never duplicated",
+      not any("create-route" in c for c in igw_calls))
+
+# An IGW exists but the route table has no 0.0.0.0/0 route yet -> reuses the
+# existing IGW, only adds the missing route.
+igw_calls = []
+with mock.patch.object(backends.subprocess, "run",
+                        side_effect=_fake_run_igw(existing_igw, [{"RouteTableId": "rtb-1", "Routes": []}], igw_calls)):
+    b_igw.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x")
+check("create_vm(): reuses an existing IGW but still adds a missing default route",
+      not any("create-internet-gateway" in c for c in igw_calls)
+      and any("create-route" in c and "igw-existing" in c for c in igw_calls))
+
+# No subnet configured at all -> no-op, never touches IGW/route-table APIs.
+b_no_subnet = backends.AWSBackend("eu-central-1", profile="lab")
+b_no_subnet._user_data_by_vm["vm1"] = ""
+igw_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_igw([], [], igw_calls)):
+    b_no_subnet.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x")
+check("create_vm(): no subnet configured at all -> never touches Internet Gateway/route-table APIs",
+      not any("internet-gateway" in c or "route-table" in c or "create-route" in c
+              for call in igw_calls for c in call))
+
+
+# ── _find_instance(): a duplicate Name tag must not fool the lookup right ──
+# after create_vm() ────────────────────────────────────────────────────────
+# Confirmed live 2026-09-13: EC2 Name tags aren't unique. setup_vm.py (unlike
+# setup_lab.py's own full run) doesn't destroy a pre-existing same-named
+# instance first, so create_vm() can find itself with TWO instances tagged
+# Name=vm1 — an old one and the one it just made. Before this fix, _find_
+# instance()'s tag-only lookup returned "the first" match with no ordering
+# guarantee, and create_vm()'s own post-create get_ip() poll silently
+# returned the WRONG (old) instance's IP.
+b_dup = backends.AWSBackend("eu-central-1", profile="lab")
+b_dup._user_data_by_vm["vm1"] = ""
+dup_calls = []
+
+
+def _fake_run_dup_name_tag(args, **kwargs):
+    dup_calls.append(args)
+    if "describe-images" in args:
+        return _cp(0, stdout=json.dumps({"Images": [{"RootDeviceName": "/dev/sda1"}]}))
+    if "run-instances" in args:
+        return _cp(0, stdout=json.dumps({"Instances": [{"InstanceId": "i-new"}]}))
+    if "describe-instances" in args:
+        if "--instance-ids" in args:
+            # The exact-ID lookup create_vm() should now use: only the
+            # correct, freshly-created instance is visible this way.
+            return _cp(0, stdout=json.dumps({"Reservations": [
+                {"Instances": [{"InstanceId": "i-new", "PublicIpAddress": "198.51.100.99"}]}]}))
+        # The old, ambiguous tag-only lookup: BOTH instances match, old one first —
+        # exactly the ordering that returned the wrong IP live.
+        return _cp(0, stdout=json.dumps({"Reservations": [{"Instances": [
+            {"InstanceId": "i-old", "PublicIpAddress": "203.0.113.1"},
+            {"InstanceId": "i-new", "PublicIpAddress": "198.51.100.99"},
+        ]}]}))
+    return _cp(0, stdout="")
+
+
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_dup_name_tag):
+    dup_ip = b_dup.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
+                              iso_image="ami-0123456789abcdef0")
+check("create_vm() returns the IP of the instance it JUST created, not an old "
+      "same-named one that happens to sort first in a tag-only lookup",
+      dup_ip == "198.51.100.99")
+
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_dup_name_tag):
+    check("get_ip() called again afterwards still targets the cached InstanceId, "
+          "not the ambiguous tag", b_dup.get_ip("vm1") == "198.51.100.99")
+
+# A backend instance that never created "vm1" itself (nothing cached — e.g. a
+# separate destroy_vm.py invocation) must still fall back to the tag lookup.
+b_fresh = backends.AWSBackend("eu-central-1", profile="lab")
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_dup_name_tag):
+    fallback_ip = b_fresh.get_ip("vm1")
+check("get_ip() falls back to the tag-based lookup when no InstanceId is cached "
+      "for this vm_name (e.g. a fresh backend instance in a separate script run)",
+      fallback_ip in ("203.0.113.1", "198.51.100.99"))
 
 
 if failures:
