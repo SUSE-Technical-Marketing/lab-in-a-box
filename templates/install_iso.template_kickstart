@@ -20,7 +20,7 @@ rootpw --iscrypted $ROOT_PWD_HASH
 
 # SSH
 services --enabled=sshd
-sshkey --username=root "$ROOT_SSH_KEY"
+sshkey --username=root "$ROOT_SSH_PUBKEY"
 
 # Minimal package set
 %packages --ignoremissing

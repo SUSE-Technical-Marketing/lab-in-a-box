@@ -2077,20 +2077,21 @@ def prepare_install_iso(
     served over HTTP by the automation VM's web server — nothing needs to be
     copied to the hypervisor.
 
-    NOTE on ROOT_SSH_KEY vs ROOT_SSH_PUBKEY (a pre-existing bash inconsistency,
-    preserved as-is since it isn't actually broken): `lab_creation.cfg`
-    documents ROOT_SSH_KEY as the literal pubkey CONTENT (see
-    templates/lab_creation.cfg.example: "REPLACE ME with cat ~/.ssh/<key>.pub"),
-    and that's exactly how the kickstart/autoyast templates use it
-    ($ROOT_SSH_KEY echoed straight into authorized_keys). But this function
-    (and prepare_virt_customize_for_vm) ALSO probes "${ROOT_SSH_KEY}.pub" as if
-    it were a file PATH — which, given ROOT_SSH_KEY normally holds key
-    content rather than a path, is never actually a real file, so that branch
-    is always false in practice and this always falls through to
-    ~/.ssh/id_rsa.pub for ROOT_SSH_PUBKEY (used by the preseed template).
-    Since admins are instructed to set ROOT_SSH_KEY to their id_rsa.pub
-    content anyway, both end up injecting the same key in practice — kept
-    faithful to bash rather than "fixed", since nothing is actually corrupted.
+    NOTE on ROOT_SSH_KEY vs ROOT_SSH_PUBKEY: previously the kickstart/autoyast
+    templates echoed the raw `ROOT_SSH_KEY` config value straight into
+    authorized_keys, on the assumption that admins keep it in sync with their
+    real ~/.ssh/id_rsa.pub — confirmed live 2026-09-17 that this assumption
+    doesn't hold in practice (this environment's own lab_creation.cfg
+    ROOT_SSH_KEY had drifted from the automation VM's actual id_rsa.pub,
+    silently baking an unusable key into every kickstart/autoyast install —
+    the VM would provision successfully but be permanently SSH-unreachable,
+    "Permission denied (publickey)"). All four install types now use
+    ROOT_SSH_PUBKEY instead, which always falls through to the automation
+    VM's real, current ~/.ssh/id_rsa.pub (see below) unless root_ssh_key
+    points at an actual, existing key-PATH override — matching how ignition/
+    combustion/cloud-init already behave. ROOT_SSH_KEY itself is kept as a
+    render var only for backward compatibility with any custom templates
+    that might still reference it.
 
     NOTE on ROOT_PWD_HASH: bash used to escape '$' in the hash before this
     point — verified empirically (see lab_creation.bash's prepare_install_iso)

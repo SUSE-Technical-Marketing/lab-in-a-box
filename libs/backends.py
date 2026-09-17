@@ -922,7 +922,19 @@ class LibvirtBackend(VMBackend):
                 # afterward never matched.
                 "--boot", boot_flag,
                 "--location", location_arg,
-                "--extra-args", "{} console=ttyS0,115200n8".format(extra_args),
+                # TERM=vt100: confirmed live 2026-09-17, with hard evidence (real disk
+                # writes and CPU time appearing only after manually sending one
+                # arbitrary keystroke to the guest's serial console) — Anaconda's own
+                # text-mode UI (newt/slang) queries the terminal's capabilities on
+                # startup via a cursor-position-report escape sequence and BLOCKS
+                # waiting for a reply. With --noautoconsole, nothing is ever attached
+                # to answer that query, so without an explicit TERM= telling it the
+                # terminal's capabilities up front (skipping the query entirely), the
+                # install hangs forever right after Anaconda's own startup banner —
+                # not a slow install, a genuine indefinite wait with zero further
+                # disk/network activity. A well-known class of gotcha for any
+                # serial-console-only unattended TUI install, not kickstart-specific.
+                "--extra-args", "{} console=ttyS0,115200n8 TERM=vt100".format(extra_args),
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                 *(extra_disk_args + [
