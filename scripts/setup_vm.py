@@ -156,6 +156,13 @@ def provision_vm(definition, config, defaults, vm_name):
         # libvirt/Harvester (absorbed by their own **kwargs, same as every other cloud-only
         # kwarg here). See README's Compute backends table.
         cloud_instance_type=env.get("cloud_instance_type", ""),
+        # aws_open_ports: an explicit per-node/common lab-JSON list of extra ports
+        # (e.g. ["443", "4505", "4506"], or "69/udp" for non-tcp) AWSBackend.create_vm()
+        # opens on the security group, in addition to always opening SSH from this
+        # automation node's own IP — added 2026-09-13, see AWSBackend._ensure_
+        # security_group_access()'s own docstring for the real bug this fixes.
+        # Ignored by every other backend (absorbed by their own **kwargs).
+        open_ports=env.get("aws_open_ports") or [],
     )
     if created_ip:
         env["myip"] = created_ip

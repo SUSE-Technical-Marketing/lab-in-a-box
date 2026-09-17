@@ -94,6 +94,83 @@ with mock.patch.object(primary, "cloud_account_path", return_value=None):
 check("load_cloud_account: dies on a missing account", any("not found" in m for m in died))
 
 
+# ── primary.list_cloud_accounts / find_cloud_account_for_cloudtype ─────────
+# Auto-discovery (added 2026-09-12): a cloud-backend node with no explicit
+# "cloud_account" should use an encrypted credentials file automatically if
+# exactly one matches its provider, instead of silently falling back to
+# plaintext lab_creation.cfg keys — the point of the encrypted-store feature
+# in the first place.
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "aws-only", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-east-1\n")
+    _write(d, "gcp-only", ".json", json.dumps({"cloudtype": "gcp", "GCP_PROJECT": "p"}))
+    _write(d, "not-an-account", ".cfg", "just some text with no cloudtype\n")
+    cfg_disc = {"CREDENTIALS_PATH": d}
+
+    accounts = primary.list_cloud_accounts(cfg_disc)
+    check("list_cloud_accounts: finds every parseable file with a cloudtype",
+          set(accounts) == {("aws-only", "aws"), ("gcp-only", "gcp")})
+    check("list_cloud_accounts: a file with no cloudtype is skipped, not an error",
+          all(name != "not-an-account" for name, _ in accounts))
+
+    found, matches = primary.find_cloud_account_for_cloudtype("aws", cfg_disc)
+    check("find_cloud_account_for_cloudtype: exactly one match -> returns its name",
+          found == "aws-only" and matches == ["aws-only"])
+
+    found2, matches2 = primary.find_cloud_account_for_cloudtype("hetzner", cfg_disc)
+    check("find_cloud_account_for_cloudtype: no match -> (None, [])", found2 is None and matches2 == [])
+
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "aws-one", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-east-1\n")
+    _write(d, "aws-two", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-west-2\n")
+    found3, matches3 = primary.find_cloud_account_for_cloudtype("aws", {"CREDENTIALS_PATH": d})
+    check("find_cloud_account_for_cloudtype: two matches -> (None, both names) — ambiguous",
+          found3 is None and sorted(matches3) == ["aws-one", "aws-two"])
+
+
+# ── backends.resolve_cloud_account / effective_backend_name: auto-discovery ──
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "aws-auto", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=eu-central-1\nAWS_PROFILE=auto\n")
+    auto_cfg = {"CREDENTIALS_PATH": d, "SHARED": "keep-me"}
+
+    acct, eff, ct = backends.resolve_cloud_account(
+        {"nodes": {"vm1": {"backend": "aws"}}, "common": {}}, auto_cfg, "vm1")
+    check("resolve_cloud_account: backend=aws + no cloud_account + exactly one aws "
+          "credentials file -> auto-discovered and used",
+          acct == "aws-auto" and ct == "aws" and eff["AWS_PROFILE"] == "auto")
+    check("resolve_cloud_account: auto-discovered account still merges over lab_creation.cfg,"
+          " preserving unrelated keys", eff["SHARED"] == "keep-me")
+
+    check("effective_backend_name: auto-discovers the same account for its cloudtype",
+          backends.effective_backend_name(
+              {"nodes": {"vm1": {"backend": "aws"}}, "common": {}}, auto_cfg, "vm1") == "aws")
+
+    # libvirt (no cloud backend at all) must never trigger a credentials scan
+    acct_lv, eff_lv, ct_lv = backends.resolve_cloud_account(
+        {"nodes": {"vm1": {}}, "common": {}}, auto_cfg, "vm1")
+    check("resolve_cloud_account: a libvirt node (no backend set) never auto-discovers anything",
+          acct_lv == "" and eff_lv is auto_cfg and ct_lv is None)
+
+    # zero matching accounts -> unchanged fallback (today's behaviour, not a hard error)
+    acct_none, eff_none, ct_none = backends.resolve_cloud_account(
+        {"nodes": {"vm1": {"backend": "hetzner"}}, "common": {}}, auto_cfg, "vm1")
+    check("resolve_cloud_account: backend set but no matching credentials file -> "
+          "falls back to lab_creation.cfg unchanged, no error",
+          acct_none == "" and eff_none is auto_cfg and ct_none is None)
+
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "aws-x", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-east-1\n")
+    _write(d, "aws-y", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-west-2\n")
+    ambiguous_cfg = {"CREDENTIALS_PATH": d}
+    died = []
+    with mock.patch.object(backends, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)):
+        try:
+            backends.resolve_cloud_account({"nodes": {"vm1": {"backend": "aws"}}, "common": {}}, ambiguous_cfg, "vm1")
+        except SystemExit:
+            pass
+    check("resolve_cloud_account: two matching credentials files -> dies clearly instead of guessing",
+          any("cloud_account" in m and "aws-x" in m and "aws-y" in m for m in died))
+
+
 # ── backends.resolve_cloud_account: passthrough vs. merge ────────────────────
 base_cfg = {"AWS_REGION": "eu-central-1", "AWS_PROFILE": "default", "SHARED": "keep-me"}
 
