@@ -229,6 +229,8 @@ def setup_grafana(hostname, cfg):
 
 
 def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
         sys.exit(1)
