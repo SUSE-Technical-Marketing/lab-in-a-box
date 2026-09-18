@@ -7,14 +7,22 @@
 # installed" task.
 #
 # Usage:
-#   ansible-playbook -i <inventory> ensure_packages.yml -e "packages=vim,htop"
+#   ansible-playbook -i <inventory> ensure_packages.yml -e "packages=vim,wget"
 - name: Ensure a package list is installed, whatever the distro
   hosts: all
   become: true
   vars:
     # Comma-separated, overridable with -e "packages=..." — a small,
     # genuinely harmless default so a first run has something to do.
-    packages: "vim,htop"
+    # Confirmed live 2026-09-18 against this lab's own real fleet: "htop"
+    # (the original default) isn't in mercury.mydemo.lab's (SLES 15.7)
+    # currently REGISTERED channels at all — ansible.builtin.package
+    # dispatched correctly to zypper, but the install itself failed with
+    # "No provider of 'htop' found", a real content-availability gap, not
+    # a playbook bug. wget is in every base product channel this lab
+    # actually registers against (SLES/SL-Micro/Leap/RHEL family/Debian/
+    # Ubuntu) — re-verified live on mercury specifically after the swap.
+    packages: "vim,wget"
   tasks:
     - name: Install {{ packages }}
       ansible.builtin.package:

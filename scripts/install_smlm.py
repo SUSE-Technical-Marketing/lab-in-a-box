@@ -387,7 +387,10 @@
 #                             the real Web UI workflow documents (see libs/spacecmd_common.py's
 #                             ensure_ansible_control_node() for exactly what this does and does
 #                             not cover). A system must be registered (e.g. via client_registration)
-#                             BEFORE this can find it.
+#                             BEFORE this can find it. Runs automatically on every install; for
+#                             smlm_deployment "podman" specifically, also reachable directly
+#                             without a full re-install via:
+#                               install_smlm.py <lab.json> --enable-ansible-control-nodes
 #   smlm_ansible_paths        : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
 #                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
@@ -1750,6 +1753,23 @@ def main():
             password = cfg.get("smlm_admin_pass") or "Smlm12345"
             sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
             sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        # Enable smlm_ansible_control_nodes' entitlement (+ highstate apply) without
+        # re-running the whole podman install — same reasoning as --import-images:
+        # a scoped, explicit trigger, not folded into the automatic flow's own
+        # already-idempotent ensure_ansible_control_node() call, just faster to reach
+        # on an already-installed server than a full setup_smlm_podman() re-run.
+        if len(sys.argv) > 2 and sys.argv[2] == "--enable-ansible-control-nodes":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.ensure_ansible_control_node(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
