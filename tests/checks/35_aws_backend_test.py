@@ -406,6 +406,26 @@ check("create_vm(): aws_open_ports entries support an explicit '<port>/<protocol
       any("69" in c and "udp" in c and "0.0.0.0/0" in c for c in authorize_calls))
 
 
+# ── ensure_ports_open(): VMBackend.ensure_ports_open() override, standalone (no create_vm) ──
+# Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — opens a port for an
+# ALREADY-EXISTING host (e.g. the WireGuard overlay hub named via
+# OVERLAY_HUB_HOST) without creating/touching any specific VM.
+b_ports = backends.AWSBackend("eu-central-1", profile="lab", security_group_id="sg-1")
+b_ports._cached_public_ip = "198.51.100.7"
+ports_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], ports_calls)):
+    b_ports.ensure_ports_open(["51820/udp"])
+authorize_calls = [c for c in ports_calls if "authorize-security-group-ingress" in c]
+check("ensure_ports_open(): opens the requested port with no VM name/create_vm() call involved",
+      any("51820" in c and "udp" in c and "0.0.0.0/0" in c for c in authorize_calls))
+check("ensure_ports_open(): still opens SSH from this automation node's own IP, same as create_vm()",
+      any("22" in c and "198.51.100.7/32" in c for c in authorize_calls))
+
+check("VMBackend.ensure_ports_open() base implementation is a documented no-op for every "
+      "other backend (LibvirtBackend has no override)",
+      backends.LibvirtBackend.ensure_ports_open is backends.VMBackend.ensure_ports_open)
+
+
 # ── _own_public_ip(): fetched once via checkip.amazonaws.com, then cached ──
 class _FakeUrlopenResponse:
     def __init__(self, text):

@@ -189,6 +189,30 @@ Then, for each node in the lab JSON, either:
 
 Nodes that don't specify `kvm_host` and boxes with only one configured host behave exactly as before this feature existed — nothing changes for a single-hypervisor lab.
 
+### Cross-cloud WireGuard overlay
+
+A cloud lab node generally cannot reach another cloud account's private network, or the home libvirt lab, over the network at all — each is its own isolated VPC/network. `common.overlay: true` in the lab JSON joins every node in that lab to a hub-and-spoke WireGuard overlay (`libs/overlay.py`) so they can reach each other as if on one LAN:
+
+```mermaid
+graph TD
+    Hub["Overlay hub<br/>(cloud VM, stable public IP)"]
+    Home["Home automation VM<br/>(libvirt lab)"]
+    A["Cloud node — account A"]
+    B["Cloud node — account B"]
+    Home -- "wg0 spoke" --> Hub
+    A -- "wg0 spoke" --> Hub
+    B -- "wg0 spoke" --> Hub
+```
+
+The hub is not new bespoke infra — it's an automation VM (the same component that already runs BIND) given `net.ipv4.ip_forward=1` and a `wg0` server interface, the same move `ensure_cloud_dns_vm()` already makes for DNS, applied to routing instead. Name it either way in `/etc/lab_creation.cfg`:
+
+- `OVERLAY_HUB_HOST` — an already-running host you designate yourself (any existing cloud VM, or even this automation VM), turned into the hub in place.
+- `OVERLAY_HUB_ACCOUNT` — a cloud account name (see `setup_credentials.py`); a small dedicated hub VM (`lab-overlay-hub-<backend>[-<account>]`) is auto-created/reused there, exactly like the cloud DNS VM's own naming.
+
+Each spoke gets one address from `OVERLAY_CIDR` (default `10.99.0.0/16`, hub always `.1`), allocated sequentially and tracked on the hub itself; `OVERLAY_WG_PORT` (default `51820`) is the hub's listen port. Joining/leaving happens automatically as part of `setup_vm.py`/`destroy_vm.py` — nothing else to run by hand.
+
+**Known gap:** this does not yet register overlay IPs in DNS, and does not yet provide real-subnet (non-WireGuard) reachability into a cloud VPC — only nodes that are themselves overlay members are reachable. See the repo TODO's own design notes for the full estimate and what a further DNS/VPC-routing pass would add.
+
 ### Library loading order
 
 Every script sources configuration in this order:

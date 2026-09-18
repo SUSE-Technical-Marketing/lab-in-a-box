@@ -1777,20 +1777,39 @@ def ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
 
 def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_ansible_paths: a list of {control_node_id, type,
-    path} dicts. Idempotent, safe to call on every run — unlike
+    Orchestrates <prefix>_ansible_paths: a list of {control_node_id | system,
+    type, path} dicts. Idempotent, safe to call on every run — unlike
     schedule_ansible_playbook below, which is NOT (see module docstring for
     why the two are treated differently). No-op if the field is unset or
-    empty. NOT live-tested.
+    empty.
+
+    Each entry names its control node EITHER way: 'control_node_id' (the
+    raw numeric Uyuni system ID, the original — and still supported —
+    shape), or 'system' (a hostname, resolved via _system_id() — added
+    2026-09-18, same helper ensure_ansible_control_node()/
+    ensure_grafana_formula() already use live-verified). 'system' is the
+    friendlier option: a numeric id is fragile in a static lab-JSON file
+    (it's only known after the system is actually registered, and isn't
+    guaranteed stable across a re-registration) — the original "no
+    name-to-ID resolution is provided here" limitation this function's own
+    history notes was written before _system_id() existed to solve exactly
+    this. Live-verified 2026-09-18: registered charon.mydemo.lab's own
+    example playbook directory + dynamic inventory script this way against
+    the real sol.mydemo.lab server.
     """
     paths = cfg.get("{}_ansible_paths".format(prefix)) or []
     for p in paths:
         control_node_id = p.get("control_node_id")
+        system = p.get("system")
         path = p.get("path")
         path_type = p.get("type")
-        if control_node_id is None or not path or not path_type:
+        if control_node_id is None and not system:
             die("{}_ansible_paths: an entry is missing required "
-                "'control_node_id'/'type'/'path'".format(prefix))
+                "'control_node_id' or 'system'".format(prefix))
+        if not path or not path_type:
+            die("{}_ansible_paths: an entry is missing required 'type'/'path'".format(prefix))
+        if control_node_id is None:
+            control_node_id = _system_id(hostname, exec_prefix, system)
         ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
 
 

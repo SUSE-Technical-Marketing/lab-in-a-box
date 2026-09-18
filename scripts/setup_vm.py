@@ -35,6 +35,7 @@ from lab_creation import (  # noqa: E402
 )
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
+import overlay  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
 
@@ -201,6 +202,49 @@ def provision_vm(definition, config, defaults, vm_name):
     check_ssh_conn(vm_name)
     backend.reboot_vm(vm_name)
     check_ssh_conn(vm_name)
+
+    # Cross-cloud WireGuard overlay (see libs/overlay.py) — opt-in via
+    # common.overlay/OVERLAY_ENABLED, 2026-09-18. Joins this node to the
+    # overlay AFTER it's confirmed reachable over SSH (the check_ssh_conn()
+    # calls just above), same as every other post-boot provisioning step
+    # here. The hub itself is either an operator-designated existing host
+    # (OVERLAY_HUB_HOST) or a dedicated cloud VM auto-created/reused in
+    # OVERLAY_HUB_ACCOUNT — see overlay.ensure_overlay_hub()'s own
+    # docstring for why it needs its own account, independent of this
+    # node's. OVERLAY_HUB_ACCOUNT may ALSO be set alongside OVERLAY_HUB_HOST
+    # (added 2026-09-18, live-testing found the gap): an existing host still
+    # needs its cloud firewall/security-group opened for the WireGuard port
+    # — HUB_HOST alone never touches the cloud API at all (that's the
+    # point, for a host on a backend this tool has no account for), so
+    # naming the account too is what makes that port-opening automatic
+    # instead of a manual step.
+    overlay_enabled = str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() in (
+        "1", "true", "yes")
+    if overlay_enabled:
+        overlay_cidr = env.get("OVERLAY_CIDR") or overlay.DEFAULT_OVERLAY_CIDR
+        wg_port = int(env.get("OVERLAY_WG_PORT") or overlay.DEFAULT_WG_PORT)
+        hub_host = env.get("OVERLAY_HUB_HOST")
+        hub_account = env.get("OVERLAY_HUB_ACCOUNT")
+        if hub_host:
+            if hub_account:
+                hub_backend, _hub_backend_name = backends.get_backend_for_account(
+                    hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+                hub_backend.ensure_ports_open(["{}/udp".format(wg_port)])
+            hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub_ready(
+                hub_host, wg_port=wg_port, overlay_cidr=overlay_cidr)
+        else:
+            if not hub_account:
+                die("overlay is enabled (\"overlay\": true) but neither OVERLAY_HUB_HOST nor "
+                    "OVERLAY_HUB_ACCOUNT is set in lab_creation.cfg — the overlay hub needs one "
+                    "or the other to know where to run")
+            hub_backend, hub_backend_name = backends.get_backend_for_account(
+                hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+            hub_host, hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub(
+                hub_backend, hub_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path,
+                wg_port=wg_port, overlay_cidr=overlay_cidr)
+        overlay.ensure_overlay_spoke(vm_name, vm_name, hub_host, hub_pubkey, wg_port,
+                                      overlay_cidr=overlay_cidr)
+
     log("\t\tVM \"{}\" created".format(vm_name))
 
 

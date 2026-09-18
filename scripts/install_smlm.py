@@ -391,11 +391,18 @@
 #                             smlm_deployment "podman" specifically, also reachable directly
 #                             without a full re-install via:
 #                               install_smlm.py <lab.json> --enable-ansible-control-nodes
-#   smlm_ansible_paths        : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
+#   smlm_ansible_paths        : [{"system": "ansible-ctrl.mydemo.lab", "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
-#                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
-#                             'spacecmd system_list' or the Web UI) — no name-based resolution is
-#                             provided here.
+#                             Names the control node either way: "system" (a hostname, resolved
+#                             automatically — the same mechanism smlm_ansible_control_nodes/
+#                             smlm_grafana_formulas already use) or "control_node_id" (the raw
+#                             NUMERIC Uyuni system ID, findable via 'spacecmd system_list' or the
+#                             Web UI, if you already have it). "path" is a DIRECTORY for type
+#                             "playbook" (this project's own install_ansible_control_node.py addon
+#                             puts example playbooks under /srv/ansible/playbooks by default), or
+#                             the exact inventory FILE/script path for type "inventory" (e.g.
+#                             /srv/ansible/inventory/uyuni_dynamic_inventory.py — that same addon's
+#                             own default).
 #   smlm_ansible_playbooks    : [{"control_node_id": 1000010001,
 #                                  "playbook_path": "/srv/ansible/playbooks/site.yml",
 #                                  "inventory_path": "/srv/ansible/inventory/hosts",
@@ -1755,11 +1762,14 @@ def main():
             sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
-        # Enable smlm_ansible_control_nodes' entitlement (+ highstate apply) without
-        # re-running the whole podman install — same reasoning as --import-images:
-        # a scoped, explicit trigger, not folded into the automatic flow's own
-        # already-idempotent ensure_ansible_control_node() call, just faster to reach
-        # on an already-installed server than a full setup_smlm_podman() re-run.
+        # Enable smlm_ansible_control_nodes' entitlement (+ highstate apply) AND
+        # register smlm_ansible_paths, without re-running the whole podman install —
+        # same reasoning as --import-images: a scoped, explicit trigger, not folded
+        # into the automatic flow's own already-idempotent calls, just faster to
+        # reach on an already-installed server than a full setup_smlm_podman()
+        # re-run. Mirrors the automatic flow's own ordering (entitlement first,
+        # since a path registration on a system that isn't yet a recognised control
+        # node was never confirmed to work).
         if len(sys.argv) > 2 and sys.argv[2] == "--enable-ansible-control-nodes":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
@@ -1770,6 +1780,7 @@ def main():
             password = cfg.get("smlm_admin_pass") or "Smlm12345"
             sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
             sc.ensure_ansible_control_node(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            sc.ensure_ansible_paths(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):

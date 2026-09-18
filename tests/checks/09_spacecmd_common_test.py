@@ -902,7 +902,32 @@ try:
                              {"uyuni_ansible_paths": [{"type": "playbook", "path": "/x"}]}, "uyuni")
 except SystemExit:
     died = True
-check("ensure_ansible_paths: entry missing 'control_node_id' dies", died)
+check("ensure_ansible_paths: entry missing 'control_node_id'/'system' dies", died)
+
+died = False
+try:
+    sc.ensure_ansible_paths(
+        "host1", "mgrctl exec --",
+        {"uyuni_ansible_paths": [{"control_node_id": 123, "path": "/x"}]}, "uyuni")
+except SystemExit:
+    died = True
+check("ensure_ansible_paths: entry missing 'type' dies", died)
+
+# -- ensure_ansible_paths: 'system' name resolved via _system_id() (added 2026-09-18) --
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+cfg = {"smlm_ansible_paths": [
+    {"system": "charon.mydemo.lab", "type": "playbook", "path": "/srv/ansible/playbooks"},
+]}
+sc.ensure_ansible_paths("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_paths: a 'system' hostname is resolved to its numeric id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_ansible_paths: the resolved id is used for the real createAnsiblePath call",
+      any("ansible.createAnsiblePath" in c and '"server_id": 42' in c for c in cmds))
 
 # -- schedule_ansible_playbook: overload selection by arg shape --------------
 fake = FakeSSH(responses=[("schedulePlaybook", FakeResult(returncode=0, stdout="42\n"))])

@@ -147,11 +147,17 @@
 #                             ensure_ansible_control_node() for exactly what this does and does
 #                             not cover). A system must be registered (e.g. via client_registration)
 #                             BEFORE this can find it.
-#   uyuni_ansible_paths       : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
+#   uyuni_ansible_paths       : [{"system": "ansible-ctrl.mydemo.lab", "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
-#                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
-#                             'spacecmd system_list' or the Web UI) — no name-based resolution is
-#                             provided here.
+#                             Names the control node either way: "system" (a hostname, resolved
+#                             automatically — the same mechanism uyuni_ansible_control_nodes
+#                             already uses) or "control_node_id" (the raw NUMERIC Uyuni system ID,
+#                             findable via 'spacecmd system_list' or the Web UI, if you already have
+#                             it). "path" is a DIRECTORY for type "playbook" (this project's own
+#                             install_ansible_control_node.py addon puts example playbooks under
+#                             /srv/ansible/playbooks by default), or the exact inventory FILE/script
+#                             path for type "inventory" (e.g. /srv/ansible/inventory/uyuni_dynamic_
+#                             inventory.py — that same addon's own default).
 #   uyuni_ansible_playbooks   : [{"control_node_id": 1000010001,
 #                                  "playbook_path": "/srv/ansible/playbooks/site.yml",
 #                                  "inventory_path": "/srv/ansible/inventory/hosts",

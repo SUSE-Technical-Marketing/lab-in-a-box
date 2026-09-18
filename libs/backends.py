@@ -299,6 +299,24 @@ class VMBackend(object):
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
         raise NotImplementedError
 
+    def ensure_ports_open(self, open_ports):
+        """
+        Best-effort: opens `open_ports` (same shape as create_vm()'s own
+        open_ports kwarg — e.g. ["51820/udp"], default protocol tcp) for
+        this account's compute, independent of creating any particular VM.
+        Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — the overlay
+        hub can be an ALREADY-EXISTING host (OVERLAY_HUB_HOST), which never
+        goes through create_vm()'s own open_ports handling, so the caller
+        needs a standalone way to still get the port opened automatically
+        for a real cloud backend.
+
+        No-op by default (matches every backend's existing "absorbed by
+        **kwargs, ignored" stance on open_ports elsewhere) — only
+        AWSBackend overrides this today, delegating to its own
+        _ensure_security_group_access().
+        """
+        pass
+
 
 class LibvirtBackend(VMBackend):
     """
@@ -2137,6 +2155,19 @@ class AWSBackend(VMBackend):
             log("- Opening {}/{} from {} on security group {}".format(to_port, proto, cidr, self.security_group_id))
             self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
                        "--protocol", proto, "--port", str(to_port), "--cidr", cidr)
+
+    def ensure_ports_open(self, open_ports):
+        """
+        VMBackend.ensure_ports_open() override — delegates straight to
+        _ensure_security_group_access(), which already adds whatever's
+        missing from `open_ports` (plus the unconditional SSH-from-this-
+        automation-node rule) to self.security_group_id. The only
+        difference from calling it via create_vm() is that this can run
+        against an account with NO specific VM being created at all (see
+        overlay.py's OVERLAY_HUB_ACCOUNT, used alongside an already-existing
+        OVERLAY_HUB_HOST).
+        """
+        self._ensure_security_group_access(open_ports)
 
     def _ensure_internet_gateway(self):
         """
@@ -4128,3 +4159,36 @@ def get_backend(definition, config, vm_name, for_existing=False, vm_img_loc=None
                                 vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
     inst.account = account
     return inst
+
+
+def get_backend_for_account(account_name, config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
+    """
+    Resolves a backend purely from a named cloud account, independent of
+    any specific lab node — added 2026-09-18 for overlay.ensure_overlay_hub()
+    (the overlay hub lives in its OWN designated account, via
+    OVERLAY_HUB_ACCOUNT, which may differ from — or not even appear in —
+    any lab node's own backend/cloud_account).
+
+    Mirrors get_backend() minus the per-node backend/cloud_account
+    resolution. Safe because every backend_cls.resolve() classmethod only
+    ever reads from `config` (the account's own merged config) and uses
+    `vm_name` for error messages — never `definition` itself (confirmed by
+    inspection across all 8 cloud backends) — so a synthetic single-node
+    definition is fine here.
+    """
+    acct = primary.load_cloud_account(account_name, config=config)
+    cloudtype = acct.get("CLOUDTYPE", "")
+    if not cloudtype:
+        die("cloud account '{}' has no CLOUDTYPE set".format(account_name))
+    backend_cls = BACKENDS.get(cloudtype)
+    if backend_cls is None:
+        die("cloud account '{}' has unknown CLOUDTYPE '{}' — supported backends: {}".format(
+            account_name, cloudtype, ", ".join(sorted(BACKENDS))))
+
+    merged = dict(config)
+    merged.update(acct)
+    vm_name = "lab-overlay-hub"
+    inst = backend_cls.resolve({"nodes": {vm_name: {}}}, vm_name, merged, False,
+                                vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+    inst.account = account_name
+    return inst, cloudtype
