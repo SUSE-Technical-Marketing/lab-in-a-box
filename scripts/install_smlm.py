@@ -43,6 +43,18 @@
 #                           multi-linux-manager/5.2's own server-deployment
 #                           guide.
 #
+# OPTIONAL – credential store
+#   smlm_scc_account      : name of an encrypted credential_kind "scc" file under
+#                           /etc/lab_creation/credentials/ (see README's Credentials
+#                           section, scripts/setup_credentials.py) to read
+#                           smlm_scc_user/smlm_scc_password/smlm_scc_regcode from
+#                           instead of this JSON section's own plaintext fields.
+#                           Auto-discovered if exactly one "scc" credential file
+#                           exists and this is left unset; the plaintext fields
+#                           above remain fully valid either way — set them
+#                           directly if you'd rather not use the credential store
+#                           at all.
+#
 # OPTIONAL but STRONGLY RECOMMENDED when smlm_deployment is "podman" —
 # MANDATORY in practice if smlm_channels or smlm_activation_keys are also set
 #   smlm_scc_user         : SAME field/meaning as the kubernetes-mode field
@@ -431,6 +443,10 @@
 #   install_smlm.py <lab.json> --cve-audit CVE-YYYY-NNNNN
 # prints every system's patch status for that CVE (AFFECTED_PATCH_INAPPLICABLE/
 # AFFECTED_PATCH_APPLICABLE/NOT_AFFECTED/PATCHED).
+#   install_smlm.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN
+# same, for container/OS images instead of systems (audit.listImagesByPatchStatus — the ENTIRE
+# real 'audit' namespace is these two methods; ground-truthed 2026-09-18 directly against the
+# real API docs, confirming no separate "Beta" audit surface exists beyond this).
 #
 # OPTIONAL – dev/QA/prod environment topology. A THIN COMPOSITION layer over the primitives
 # above plus system groups/tags — Uyuni itself has no native "environment" or "release" object
@@ -467,6 +483,32 @@
 #                             directly if that resolution fails. Run schedules with:
 #                             install_smlm.py <lab.json> --run-recurring-schedules (never automatic
 #                             — recurring-action idempotency was never confirmed).
+#   smlm_grafana_formulas     : [{
+#                                 "system": "sol.mydemo.lab",        # required, a registered client
+#                                 "admin_user": "admin",             # optional (default: admin)
+#                                 "admin_pass": "...",               # optional (default: admin)
+#                                 "prometheus": [{"key": "Prometheus", "url": "http://host:9090",
+#                                                 "user": "...", "password": "..."}, ...],
+#                                 # optional — default: one entry, http://localhost:9090
+#                                 "reportdb": true,                  # optional (default: false)
+#                                 "is_hub": false,                   # optional (default: false) — this
+#                                 #  Report DB aggregates peripheral servers (Hub topology)
+#                                 "dashboards": {"uyuni": true, "uyuni_clients": true,
+#                                                "postgresql": true, "apache": true}  # all default true
+#                               }, ...]
+#                             Applies SMLM's own built-in "grafana" Salt formula (installs and
+#                             configures Grafana ON the target system, wires up a Prometheus
+#                             datasource, and — if reportdb is set — auto-provisions a read-only
+#                             reportdb Postgres user plus the formula's own ready-made dashboards).
+#                             Distinct from this project's own standalone install_prometheus.py/
+#                             install_grafana.py addons (podman containers, no Salt involved at
+#                             all) — this is SMLM's own turnkey mechanism, see
+#                             libs/spacecmd_common.py's ensure_grafana_formula() for the full detail
+#                             and where every field/default came from (ground-truthed directly
+#                             against github.com/SUSE/salt-formulas' real grafana-formula source,
+#                             not guessed). Prerequisites the real formula itself enforces, not
+#                             checked here: not available on SMLM Proxy, needs a monitoring add-on
+#                             subscription, and Prometheus already installed on the target system.
 #
 # READ-ONLY — export a live server's own current configuration back into JSON shaped like
 # this "smlm" section (channels, activation keys, system groups, the calling admin's own org's
@@ -539,14 +581,14 @@ def _validate(v):
         # also set, since mgr-sync has no other way to learn which channels
         # are entitled (see setup_smlm_podman()'s own die() for the runtime
         # version of this same check).
-        v.vreq("smlm", "smlm_scc_regcode")
+        v.vreq_or_credential("smlm", "smlm_scc_regcode", "scc", account_field="smlm_scc_account")
         if cfg.get("smlm_channels") or cfg.get("smlm_activation_keys"):
-            v.vreq("smlm", "smlm_scc_user")
-            v.vreq("smlm", "smlm_scc_password")
+            v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+            v.vreq_or_credential("smlm", "smlm_scc_password", "scc", account_field="smlm_scc_account")
     else:
         v.vreq("smlm", "smlm_fqdn")
-        v.vreq("smlm", "smlm_scc_user")
-        v.vreq("smlm", "smlm_scc_password")
+        v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+        v.vreq_or_credential("smlm", "smlm_scc_password", "scc", account_field="smlm_scc_account")
     v.vns("smlm")
     v.vver("smlm")
     v.vbool("smlm", "smlm_super_privileged")
@@ -861,6 +903,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_grafana_formula(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
 
 
@@ -1471,6 +1514,7 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_grafana_formula(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin_user, admin_pass)
 
 
@@ -1581,6 +1625,18 @@ def cve_audit(hostname, cfg, cve_id):
     print(sc.list_systems_by_patch_status(hostname, exec_prefix, cve_id))
 
 
+def cve_audit_images(hostname, cfg, cve_id):
+    """Prints audit.listImagesByPatchStatus's raw result for `cve_id` — the
+    container/OS-image counterpart of cve_audit() above, same real 'audit'
+    namespace, see libs/spacecmd_common.py's list_images_by_patch_status()."""
+    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
+    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    admin_user = cfg.get("smlm_admin_user") or "admin"
+    admin_pass = cfg.get("smlm_admin_pass") or "admin123"
+    sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
+    print(sc.list_images_by_patch_status(hostname, exec_prefix, cve_id))
+
+
 def run_recurring_schedules(hostname, cfg):
     """
     Runs every smlm_environments entry's recurring_schedule (see the JSON
@@ -1607,6 +1663,7 @@ def main():
              "       {0} <lab.json> --run-clm-actions   # build/promote smlm_content_lifecycle_actions\n"
              "       {0} <lab.json> --run-scap-scans   # schedule smlm_scap_scans\n"
              "       {0} <lab.json> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
+             "       {0} <lab.json> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
              "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules"
              ).format(Path(__file__).name)
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
@@ -1618,6 +1675,22 @@ def main():
     definition = primary.load_definition(json_file)
 
     cfg = definition.get("smlm", {}) or {}
+    # smlm_scc_user/smlm_scc_password/smlm_scc_regcode may alternatively come
+    # from an encrypted "scc"-kind credential file (see README's Credentials
+    # section) — resolved once, here, so every call site below (podman-mode
+    # install, Kubernetes-mode registry secret, the validation checks further
+    # down) sees the SAME already-resolved values with zero code change of
+    # its own. A fresh dict, not mutating the caller's own definition —
+    # falls straight through to today's plaintext values unchanged whenever
+    # no matching credential file is used.
+    scc_creds = ac.resolve_credential(cfg, "scc", {
+        "scc_user": "smlm_scc_user", "scc_password": "smlm_scc_password",
+        "scc_regcode": "smlm_scc_regcode",
+    }, account_key="smlm_scc_account")
+    cfg = dict(cfg)
+    cfg["smlm_scc_user"] = scc_creds["scc_user"]
+    cfg["smlm_scc_password"] = scc_creds["scc_password"]
+    cfg["smlm_scc_regcode"] = scc_creds["scc_regcode"]
 
     # "podman" deployment — traditional mgradm/podman install directly on a
     # dedicated host/VM, no Kubernetes cluster involved at all (see
@@ -1734,6 +1807,12 @@ def main():
     # third argument.
     if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit":
         cve_audit(vm_name, cfg, sys.argv[3])
+        return
+
+    # audit.listImagesByPatchStatus's own CLI entry point — same shape as
+    # --cve-audit above, for container/OS images instead of systems.
+    if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit-images":
+        cve_audit_images(vm_name, cfg, sys.argv[3])
         return
 
     # Create smlm_environments' recurring_schedule entries instead of

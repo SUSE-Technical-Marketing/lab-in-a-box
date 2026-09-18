@@ -1,18 +1,24 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box — creates/encrypts cloud-provider credential files
+# Part of lab-in-a-box — creates/encrypts cloud-provider and external-service
+# credential files
 # Author/s: Raul Mahiques
 # License: GPLv3
 
 """
-setup_credentials.py — create or encrypt a cloud-provider credentials file
-under /etc/lab_creation/credentials/ (configurable via lab_creation.cfg's
-CREDENTIALS_PATH). See libs/primary.py's try_load_cloud_account() for how
-these are read back, and libs/crypto_store.py for the actual cipher.
+setup_credentials.py — create or encrypt a cloud-provider OR external-service
+(SCC, SUSE Application Collection, …) credentials file under
+/etc/lab_creation/credentials/ (configurable via lab_creation.cfg's
+CREDENTIALS_PATH). See libs/primary.py's try_load_cloud_account()/
+try_load_service_credential() for how these are read back, and
+libs/crypto_store.py for the actual cipher. Plaintext-in-lab-JSON remains
+fully valid for either kind of credential — this store is an optional
+alternative, never a requirement.
 
 Usage:
     setup_credentials.py
-        Interactive: pick a provider, fill in its fields, write a new
-        <provider>-<account>.yaml, encrypted by default.
+        Interactive: pick cloud provider or external service, fill in its
+        fields, write a new <provider-or-kind>-<account>.yaml, encrypted by
+        default.
 
     setup_credentials.py --encrypt-existing <file>
         Encrypt the sensitive fields (password/secret/token-shaped keys) of
@@ -97,6 +103,28 @@ PROVIDER_FIELDS = {
     ],
 }
 
+# External-SERVICE credentials (SCC, SUSE Application Collection, …) —
+# added 2026-09-18. Same file format/directory/encryption as
+# PROVIDER_FIELDS above, but marked with a "credential_kind" field instead
+# of "cloudtype" (see libs/primary.py's find_service_credential_for_kind()/
+# libs/addon_common.py's resolve_credential()) so the two concepts never
+# collide: a file is either a cloud account or a service credential, never
+# both. One credential file per kind is reusable across every addon that
+# needs it (e.g. a single "scc" file for install_smlm.py's smlm_scc_user
+# AND any other addon that later wants SCC credentials too), regardless of
+# each addon's own JSON-field prefix — see each field's own canonical name.
+SERVICE_CREDENTIAL_FIELDS = {
+    "scc": [
+        ("scc_user", True, False),
+        ("scc_password", True, True),
+        ("scc_regcode", False, True),
+    ],
+    "appcollection": [
+        ("appcollection_user", True, False),
+        ("appcollection_password", True, True),
+    ],
+}
+
 # --encrypt-existing's own heuristic for "this plaintext value looks like a
 # secret" — an allowlist table like PROVIDER_FIELDS isn't available there
 # (the input file might not even name a known provider), so this falls back
@@ -168,6 +196,76 @@ def write_account_file(out_path, provider, fields, encrypt):
     return out_path
 
 
+def _choose_kind():
+    kinds = sorted(SERVICE_CREDENTIAL_FIELDS)
+    print("Service credential kind:")
+    for i, name in enumerate(kinds, 1):
+        print("  {}) {}".format(i, name))
+    choice = input("Choice: ").strip()
+    try:
+        return kinds[int(choice) - 1]
+    except (ValueError, IndexError):
+        die("Invalid choice '{}'".format(choice))
+
+
+def build_service_fields(kind):
+    """Like build_account_fields(), for SERVICE_CREDENTIAL_FIELDS[kind]."""
+    print("\nEnter credentials for '{}':".format(kind))
+    fields = {}
+    for key, required, sensitive in SERVICE_CREDENTIAL_FIELDS[kind]:
+        val = _prompt_field(key, required, sensitive)
+        if val:
+            fields[key] = val
+    return fields
+
+
+def write_credential_file(out_path, kind, fields, encrypt):
+    """Like write_account_file(), but marks the file with 'credential_kind'
+    instead of 'cloudtype' — see SERVICE_CREDENTIAL_FIELDS's own comment."""
+    import yaml
+
+    payload = {"credential_kind": kind}
+    if encrypt:
+        passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
+        plaintext = yaml.safe_dump(fields, sort_keys=False).encode("utf-8")
+        payload.update(crypto_store.encrypt_cascade(passphrase, plaintext))
+    else:
+        payload["unencrypted"] = True
+        payload.update(fields)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    out_path.chmod(0o600)
+    return out_path
+
+
+def interactive_build_service(credentials_dir):
+    """Mode C: prompt for credential kind + account name + every field, then
+    write <kind>-<account>.yaml (encrypted unless declined)."""
+    kind = _choose_kind()
+
+    account_name = input("Account name (the file will be named "
+                         "<kind>-<name>.yaml — that whole name is what "
+                         "you'll put in, e.g., smlm_scc_account): ").strip()
+    if not account_name:
+        die("An account name is required")
+
+    stem = "{}-{}".format(kind, account_name)
+    out_path = Path(credentials_dir) / "{}.yaml".format(stem)
+    if out_path.exists():
+        if input("{} already exists — overwrite? [y/N] ".format(out_path)).strip().lower() != "y":
+            die("Aborted — not overwriting {}".format(out_path))
+
+    fields = build_service_fields(kind)
+    encrypt = input("\nEncrypt this file? [Y/n] ").strip().lower() != "n"
+
+    write_credential_file(out_path, kind, fields, encrypt)
+    print("\nWrote {} ({}).".format(out_path, "encrypted" if encrypt else "UNENCRYPTED"))
+    print("Reference it in your lab JSON as, e.g.:  \"smlm_scc_account\": \"{}\"  (or leave unset "
+          "to auto-discover it, since it's the only '{}' credential file)".format(stem, kind))
+    return out_path
+
+
 def interactive_build(credentials_dir):
     """Mode A: prompt for provider + account name + every field, then write
     <provider>-<account>.yaml (encrypted unless declined)."""
@@ -222,7 +320,8 @@ def encrypt_existing(path):
 
     already = [k for k, v in data.items() if isinstance(v, dict) and v.get("encrypted") is True]
     to_encrypt = [k for k, v in data.items()
-                  if isinstance(v, str) and k not in ("cloudtype",) and _looks_sensitive(k)]
+                  if isinstance(v, str) and k not in ("cloudtype", "credential_kind")
+                  and _looks_sensitive(k)]
 
     if not to_encrypt:
         print("No plaintext sensitive-looking fields found in {} "
@@ -278,7 +377,14 @@ def main():
     # prompt sequence to end early — confirmed live 2026-09-11: without this,
     # either one surfaces as a raw Python traceback instead of a clean abort.
     try:
-        interactive_build(credentials_dir)
+        print("What kind of credential?")
+        print("  1) Cloud provider (used to create/manage VMs — cloud_account)")
+        print("  2) External service (SCC, SUSE Application Collection, … — e.g. smlm_scc_account)")
+        choice = input("Choice: ").strip()
+        if choice == "2":
+            interactive_build_service(credentials_dir)
+        else:
+            interactive_build(credentials_dir)
     except (EOFError, KeyboardInterrupt):
         die("\nAborted (no more input).")
 

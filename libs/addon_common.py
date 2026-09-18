@@ -83,6 +83,30 @@ class Validator:
         if v and not re.match(r'^[0-9]+$', str(v)):
             self.errors.append("[ERROR] {}.{}='{}': must be a port number".format(section, field, v))
 
+    def vreq_or_credential(self, section, field, kind, account_field=None):
+        """
+        Like vreq(), but also satisfied by the external-service credential
+        store (see resolve_credential() below) — added 2026-09-18. Passes if
+        EITHER the plaintext <section>.<field> is set, OR <section>.
+        <account_field> (default "<kind>_account") names an explicit
+        credential file (trusted without decrypting it here — --validate
+        never prompts for a passphrase; a bad reference still fails loudly
+        at real run time), OR exactly one credential_kind==kind file is
+        auto-discoverable. Only errors if none of the three apply.
+        """
+        if self._get(section, field):
+            return
+        account_field = account_field or "{}_account".format(kind)
+        if self._get(section, account_field):
+            return
+        _, matches = primary.find_service_credential_for_kind(kind)
+        if len(matches) == 1:
+            return
+        self.errors.append(
+            "[ERROR] {0}.{1} is required (no default) — set it directly, set {0}.{2} to a real "
+            "'{3}' credential file, or leave both unset with exactly one '{3}' credential file "
+            "in the store to auto-discover".format(section, field, account_field, kind))
+
 
 def require_k8s_name(cfg, field, default):
     """
@@ -243,3 +267,58 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
     if argv and argv[0] == "--capabilities":
         print(json.dumps(plugin or {}, indent=2))
         sys.exit(0)
+
+
+# ── External-service credentials ────────────────────────────────────────────
+
+def resolve_credential(cfg, kind, field_map, account_key=None, config=None):
+    """
+    Resolves a named external-service credential (SCC, SUSE Application
+    Collection, …) from /etc/lab_creation/credentials/ the same way
+    backends.resolve_cloud_account() already does for cloud providers —
+    added 2026-09-18 per explicit user request. An addon's own plaintext
+    lab-JSON fields remain fully valid and are the fallback whenever no
+    matching credentials file is used; this is purely additive.
+
+    Resolution order:
+      1. cfg.get(account_key) (default "<kind>_account") names a real
+         credentials file with credential_kind == kind -> use it.
+      2. No explicit name, but exactly one such file exists -> auto-use it
+         (mirrors resolve_cloud_account()'s own auto-discovery).
+      3. No explicit name and more than one matching file exists ->
+         genuinely ambiguous, die() rather than guess.
+      4. Otherwise (no explicit name, zero matching files) -> every field
+         comes straight from cfg via field_map, exactly as before this
+         feature existed.
+
+    kind      : credential_kind to look for, e.g. "scc", "appcollection".
+    field_map : {canonical_field: cfg_key} — canonical_field is the kind's
+                own credential-file field name (e.g. "scc_user"), cfg_key is
+                this addon's own lab-JSON field (e.g. "smlm_scc_user") that
+                a plaintext fallback (or a mismatched/missing credential
+                file's own field) reads. One credential file's canonical
+                fields work unchanged across every addon that needs that
+                kind, regardless of each addon's own JSON-field prefix.
+    account_key : JSON field naming an explicit account (default
+                "<kind>_account"). Only meaningful if the caller's own
+                schema documents it.
+
+    Returns {canonical_field: value} — every field_map key present, ""
+    where genuinely unset everywhere.
+    """
+    from lab_creation import die
+
+    account_key = account_key or "{}_account".format(kind)
+    name = cfg.get(account_key)
+    if not name:
+        found, matches = primary.find_service_credential_for_kind(kind, config)
+        if len(matches) > 1:
+            die("multiple '{}' credential files match ({}) — set '{}' explicitly".format(
+                kind, ", ".join(matches), account_key))
+        name = found
+
+    if name:
+        data = primary.load_service_credential(name, config)
+        return {canon: (data.get(canon) or cfg.get(cfg_key) or "")
+                for canon, cfg_key in field_map.items()}
+    return {canon: (cfg.get(cfg_key) or "") for canon, cfg_key in field_map.items()}

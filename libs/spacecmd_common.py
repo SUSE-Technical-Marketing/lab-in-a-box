@@ -2237,6 +2237,44 @@ def list_systems_by_patch_status(hostname, exec_prefix, cve_id, patch_status_lab
     return r.stdout or ""
 
 
+def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labels=None):
+    """
+    Returns the raw text of audit.listImagesByPatchStatus(cveId[,
+    statusLabels]) — the CVE-audit-adjacent counterpart of
+    list_systems_by_patch_status() above, for container/OS IMAGES rather
+    than registered systems. Real, confirmed method (documentation.suse.com/
+    multi-linux-manager's own API reference, 'audit' namespace — ground-
+    truthed 2026-09-18 directly against the real API docs: the ENTIRE
+    'audit' namespace has exactly two methods, listSystemsByPatchStatus
+    and this one; earlier speculation elsewhere in this project's own
+    history about a separate Beta "policy-based" system.scap.* surface
+    (listPolicies/listScapContent/listTailoringFiles/
+    scheduleBetaXccdfScanCustom/scheduleBetaXccdfScanWithPolicy) was
+    checked against the real, current API index too and confirmed to NOT
+    EXIST at all — the real system.scap namespace has exactly the 5
+    methods this module's own scap_scan_*/ensure_scap_scan/run_scap_scans
+    functions already fully cover (deleteXccdfScan/getXccdfScanDetails/
+    getXccdfScanRuleResults/listXccdfScans/scheduleXccdfScan) — nothing
+    "Beta" was actually left unimplemented there; that earlier TODO note
+    was itself unconfirmed speculation, not a real deferred feature.
+
+    Same 'api' passthrough as its sibling (no spacecmd subcommand for
+    'audit' at all), same read-only/no-idempotency-concern shape, same
+    optional `patch_status_labels` filter (one or more of
+    {"AFFECTED_PATCH_INAPPLICABLE", "AFFECTED_PATCH_APPLICABLE",
+    "NOT_AFFECTED", "PATCHED"}). NOT live-tested (no server available in
+    this project's dev/CI environment with the 'cve-server-channels'
+    taskomatic job's own pre-generated data the real API depends on —
+    same caveat the official docs state for both methods in this
+    namespace).
+    """
+    args = [cve_id, list(patch_status_labels)] if patch_status_labels else [cve_id]
+    r = _api_call(hostname, exec_prefix, "audit.listImagesByPatchStatus", args)
+    if r.returncode != 0:
+        die("could not audit images for CVE '{}': {}".format(cve_id, (r.stderr or r.stdout or "").strip()))
+    return r.stdout or ""
+
+
 # ─── dev/QA/prod environment topology ────────────────────────────────────────
 # System groups, multi-key activation-key/group linkage, custom-info tags,
 # recurring patch schedules, and a thin composition layer over all of the
@@ -2575,6 +2613,134 @@ def ensure_recurring_schedule(hostname, exec_prefix, entity_type, entity_id, cro
             schedule_type, entity_type, entity_id, (r.stderr or r.stdout or "").strip()))
     print("  Created recurring {} schedule for {} {} (cron: {})".format(
         schedule_type, entity_type, entity_id, cron_expr))
+
+
+def _system_id(hostname, exec_prefix, target_system):
+    """
+    Resolves `target_system` (a hostname/minion id) to its real numeric
+    system id via system.getId — needed for formula.* below, which (unlike
+    every spacecmd-native call in this module) takes a numeric sid, not a
+    hostname string. Real, confirmed method (documentation.suse.com/
+    multi-linux-manager's own API reference, system.getId(sessionKey,
+    name) -> array of {id, name, last_checkin, ...} structs — one per
+    system whose name/hostname matches, since Uyuni doesn't enforce unique
+    hostnames). Dies on zero or more-than-one match — this project's own
+    FQDN convention (every node's hostname IS its minion id, see module
+    docstring) means more than one match is a genuine ambiguity, not
+    something to guess through.
+    """
+    r = _api_call(hostname, exec_prefix, "system.getId", [target_system])
+    if r.returncode != 0:
+        die("could not resolve system id for '{}': {}".format(
+            target_system, (r.stderr or r.stdout or "").strip()))
+    try:
+        matches = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("system.getId('{}') returned unparseable output: {}".format(target_system, r.stdout))
+    if not matches:
+        die("no system named '{}' found on the server".format(target_system))
+    if len(matches) > 1:
+        die("more than one system named '{}' found on the server — genuinely ambiguous".format(
+            target_system))
+    return matches[0]["id"]
+
+
+def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_grafana_formulas: applies SMLM/Uyuni's own
+    built-in "grafana" Salt formula (SUSE's own bundled monitoring-
+    dashboard formula — see github.com/SUSE/salt-formulas/tree/master/
+    grafana-formula, ground-truthed directly against its real
+    metadata/form.yml and .spec file, 2026-09-18, NOT guessed) to a
+    target system. Distinct from this project's own standalone
+    install_prometheus.py/install_grafana.py addons (podman containers,
+    no Salt/formula involved at all) — this is SMLM's own turnkey
+    mechanism: the formula installs and configures Grafana itself on the
+    target system, wires up a Prometheus datasource, and (if reportdb is
+    enabled) auto-provisions a read-only reportdb Postgres user plus the
+    formula's own ready-made dashboards, no separate dashboard-building
+    work needed.
+
+    No native spacecmd subcommand exists for the formula.* namespace at
+    all (confirmed absent from spacecmd's own command list) — goes
+    through the generic 'api' passthrough, same as ansible.*/access.*/
+    contentmanagement.* elsewhere in this module. Two real API calls per
+    entry: formula.setFormulasOfServer (assigns/enables the formula) then
+    formula.setSystemFormulaData (configures it) — both confirmed real,
+    exact signatures via documentation.suse.com/multi-linux-manager's own
+    API reference (system.html/formula.html), not spacecmd docs (which
+    don't cover this namespace). Idempotent: re-running with the same
+    config re-applies the same formula/data, which the real API already
+    treats as a plain overwrite (no create-vs-update distinction to get
+    wrong here, unlike e.g. activation-key AppStreams).
+
+    Each <prefix>_grafana_formulas entry:
+      {system, admin_user, admin_pass, prometheus: [{key, url, user,
+       password}, ...], reportdb, is_hub, dashboards: {uyuni,
+       uyuni_clients, postgresql, apache}}
+    Only "system" is required — every other field mirrors a real
+    grafana-formula pillar key with that formula's own real default
+    (admin_user/admin_pass: "admin"; prometheus: a single entry pointing
+    at http://localhost:9090 if omitted; reportdb/is_hub: False;
+    dashboards.*: True for uyuni/uyuni_clients/postgresql/apache — the
+    formula's own real defaults, confirmed via its form.yml, not this
+    project's own guess). The formula's own Kubernetes/SAP dashboard
+    toggles (default False, niche) are deliberately not exposed here to
+    keep this field surface reasonable — they stay at the formula's own
+    off-by-default value; extend this function if a lab genuinely needs
+    them.
+
+    Prerequisite the real docs state explicitly and this function does
+    NOT check for (no listFormulas-vs-required-package distinction was
+    researched): Grafana is not available on SMLM Proxy, and the target
+    system needs a monitoring add-on subscription plus Prometheus already
+    installed — a real API error from the server itself is what surfaces
+    if either isn't true, not a pre-flight guess here.
+
+    Ground-truthed via direct research (not live-tested against a real
+    server — none available with a monitoring-entitled client in this
+    project's dev/CI environment).
+    """
+    entries = cfg.get("{}_grafana_formulas".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_grafana_formulas: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "formula.setFormulasOfServer", [sid, ["grafana"]])
+        if r.returncode != 0:
+            die("could not enable the 'grafana' formula on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        prometheus = entry.get("prometheus") or [{"key": "Prometheus", "url": "http://localhost:9090"}]
+        dashboards = entry.get("dashboards") or {}
+        content = {
+            "grafana": {
+                "enabled": True,
+                "admin_user": entry.get("admin_user") or "admin",
+                "admin_pass": entry.get("admin_pass") or "admin",
+                "datasources": {
+                    "prometheus": prometheus,
+                    "reportdb": {
+                        "enabled": bool(entry.get("reportdb")),
+                        "is_hub": bool(entry.get("is_hub")),
+                    },
+                },
+                "dashboards": {
+                    "add_uyuni_dashboard": dashboards.get("uyuni", True),
+                    "add_uyuni_clients_dashboard": dashboards.get("uyuni_clients", True),
+                    "add_postgresql_dasboard": dashboards.get("postgresql", True),
+                    "add_apache_dashboard": dashboards.get("apache", True),
+                },
+            },
+        }
+        r = _api_call(hostname, exec_prefix, "formula.setSystemFormulaData", [sid, "grafana", content])
+        if r.returncode != 0:
+            die("could not configure the 'grafana' formula on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Applied the 'grafana' formula to '{}'".format(system))
 
 
 def ensure_environments(hostname, exec_prefix, cfg, prefix):

@@ -35,6 +35,7 @@ from lab_creation import (  # noqa: E402
 )
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
+from destroy_vm import destroy_vm  # noqa: E402
 
 
 def provision_vm(definition, config, defaults, vm_name):
@@ -231,6 +232,24 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(json_file)
+
+    # Destroy-before-recreate: setup_lab.py's own orchestration already does this
+    # (destroy_vm() unconditionally before provision_vm(), for every node, unless
+    # --keep says it's reusable) — this standalone single-VM entrypoint never did,
+    # forcing a manual `destroy_vm.py` call before every retry or it would die with
+    # "Disk ... is already in use by other guests"/"Domain already exists" instead
+    # of just doing the right thing. Mirrors setup_lab.py's own try/except shape:
+    # destroy_vm() is already safe to call unconditionally (backend.delete_vm()
+    # itself no-ops if the VM doesn't exist, and warns+returns for an "existing"
+    # pre-provisioned node rather than touching it) — the only real difference here
+    # is that a genuine destroy failure should abort outright (die()), since unlike
+    # setup_lab.py's multi-node loop there is no "next node" to continue on to.
+    try:
+        destroy_vm(definition, config, defaults, vm_name)
+    except SystemExit:
+        pass  # "existing" node refusal, or nothing to destroy on a first run
+    except RuntimeError as e:
+        die("destroy before recreate failed for '{}': {}".format(vm_name, e))
 
     provision_vm(definition, config, defaults, vm_name)
 

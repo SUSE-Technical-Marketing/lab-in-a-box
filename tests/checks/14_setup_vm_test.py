@@ -156,6 +156,69 @@ finally:
 check("main --help: exits 0 and prints usage", code == 0 and "Usage" in buf.getvalue())
 
 
+# ── main(): destroy-before-recreate ──────────────────────────────────────────
+# Confirmed live 2026-09-17/18: setup_vm.py's own standalone entrypoint never
+# did this — setup_lab.py's own orchestration always calls destroy_vm() before
+# provision_vm() for every node (unless --keep says it's reusable), but a
+# direct `setup_vm.py <lab.json> <vm>` retry after a failed attempt died with
+# "Disk ... is already in use by other guests" instead of just recreating,
+# forcing a manual destroy_vm.py call first every time. Mirrors setup_lab.py's
+# own try/except shape (destroy_vm() is already safe to call unconditionally),
+# except a genuine destroy failure aborts outright here — there's no "next
+# node" to continue on to the way setup_lab.py's multi-node loop has.
+setup_vm.primary.load_defaults = lambda: defaults
+setup_vm.primary.load_config = lambda: config
+setup_vm.primary.load_definition = lambda json_file: definition
+setup_vm.provision_vm = _rec("provision_vm")
+
+order.clear()
+setup_vm.destroy_vm = _rec("destroy_vm")
+sys.argv = ["setup_vm.py", "lab.json", "vm1"]
+try:
+    setup_vm.main()
+finally:
+    sys.argv = old_argv
+check("main(): destroy_vm() is called before provision_vm()",
+      order == ["destroy_vm", "provision_vm"])
+
+
+def _destroy_vm_system_exit(*a, **kw):
+    order.append("destroy_vm")
+    raise SystemExit(1)
+
+
+order.clear()
+setup_vm.destroy_vm = _destroy_vm_system_exit
+sys.argv = ["setup_vm.py", "lab.json", "vm1"]
+try:
+    setup_vm.main()
+finally:
+    sys.argv = old_argv
+check("main(): a SystemExit from destroy_vm() (nothing to destroy, or an "
+      "'existing' node refusal) does not stop provision_vm() from running",
+      order == ["destroy_vm", "provision_vm"])
+
+
+def _destroy_vm_runtime_error(*a, **kw):
+    order.append("destroy_vm")
+    raise RuntimeError("simulated destroy failure")
+
+
+order.clear()
+setup_vm.destroy_vm = _destroy_vm_runtime_error
+sys.argv = ["setup_vm.py", "lab.json", "vm1"]
+died = False
+try:
+    setup_vm.main()
+except SystemExit:
+    died = True
+finally:
+    sys.argv = old_argv
+check("main(): a genuine RuntimeError from destroy_vm() aborts (die()) "
+      "instead of proceeding to provision_vm()",
+      died and order == ["destroy_vm"])
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

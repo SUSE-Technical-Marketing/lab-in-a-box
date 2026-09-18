@@ -202,6 +202,10 @@
 #   install_uyuni.py <lab.json> --cve-audit CVE-YYYY-NNNNN
 # prints every system's patch status for that CVE (AFFECTED_PATCH_INAPPLICABLE/
 # AFFECTED_PATCH_APPLICABLE/NOT_AFFECTED/PATCHED).
+#   install_uyuni.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN
+# same, for container/OS images instead of systems (audit.listImagesByPatchStatus — the ENTIRE
+# real 'audit' namespace is these two methods; ground-truthed 2026-09-18 directly against the
+# real API docs, confirming no separate "Beta" audit surface exists beyond this).
 #
 # OPTIONAL – dev/QA/prod environment topology. A THIN COMPOSITION layer over the primitives
 # above plus system groups/tags — Uyuni itself has no native "environment" or "release" object
@@ -583,6 +587,17 @@ def cve_audit(hostname, cfg, cve_id):
     print(sc.list_systems_by_patch_status(hostname, exec_prefix, cve_id))
 
 
+def cve_audit_images(hostname, cfg, cve_id):
+    """Prints audit.listImagesByPatchStatus's raw result for `cve_id` — the
+    container/OS-image counterpart of cve_audit() above, same real 'audit'
+    namespace, see libs/spacecmd_common.py's list_images_by_patch_status()."""
+    exec_prefix = "mgrctl exec --"
+    admin = cfg.get("uyuni_admin") or "admin"
+    password = cfg.get("uyuni_password") or "Uyuni12345"
+    sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+    print(sc.list_images_by_patch_status(hostname, exec_prefix, cve_id))
+
+
 def run_recurring_schedules(hostname, cfg):
     """
     Runs every uyuni_environments entry's recurring_schedule (see the JSON
@@ -649,6 +664,13 @@ def main():
     if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit":
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
             cve_audit(vm_name, cfg, sys.argv[3])
+        return
+
+    # audit.listImagesByPatchStatus's own CLI entry point — same shape as
+    # --cve-audit above, for container/OS images instead of systems.
+    if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit-images":
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
+            cve_audit_images(vm_name, cfg, sys.argv[3])
         return
 
     # Create uyuni_environments' recurring_schedule entries instead of

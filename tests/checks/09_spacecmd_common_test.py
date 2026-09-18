@@ -1379,6 +1379,32 @@ except SystemExit:
     died = True
 check("list_systems_by_patch_status: server-side failure dies", died)
 
+# -- list_images_by_patch_status (CVE-audit-adjacent, added 2026-09-18) ------
+fake = FakeSSH(responses=[("audit.listImagesByPatchStatus",
+                            FakeResult(returncode=0, stdout="[{'image_id': 1, 'patch_status': 'PATCHED'}]"))])
+sc.ssh_run = fake
+out = sc.list_images_by_patch_status("host1", "mgrctl exec --", "CVE-2024-1234")
+check("list_images_by_patch_status: returns raw output via the api passthrough", "PATCHED" in out)
+call_cmd = fake.calls[0][1]
+check("list_images_by_patch_status: JSON args carry just the CVE id when no status filter given",
+      '"CVE-2024-1234"' in unwrap(call_cmd) and "audit.listImagesByPatchStatus" in call_cmd)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.list_images_by_patch_status("host1", "mgrctl exec --", "CVE-2024-1234",
+                                patch_status_labels=["PATCHED", "NOT_AFFECTED"])
+check("list_images_by_patch_status: passes patch_status_labels as a second JSON arg",
+      '["CVE-2024-1234", ["PATCHED", "NOT_AFFECTED"]]' in fake.calls[0][1])
+
+fake = FakeSSH(responses=[("audit.listImagesByPatchStatus", FakeResult(returncode=1, stderr="invalid CVE"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.list_images_by_patch_status("host1", "mgrctl exec --", "bogus")
+except SystemExit:
+    died = True
+check("list_images_by_patch_status: server-side failure dies", died)
+
 # -- activation_key_groups / ensure_activation_key_groups --------------------
 fake = FakeSSH(responses=[("activationkey_listgroups", FakeResult(returncode=0, stdout="dev-systems\nqa-systems\n"))])
 sc.ssh_run = fake
@@ -2262,6 +2288,91 @@ fake = FakeSSH()
 sc.ssh_run = fake
 sc.ensure_monitoring("host1", "mgrctl exec --", {}, "smlm")
 check("ensure_monitoring: no-op when the flag is unset", len(fake.calls) == 0)
+
+# -- _system_id -----------------------------------------------------------
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}])))])
+sc.ssh_run = fake
+check("_system_id: resolves the numeric id from system.getId's real response shape",
+      sc._system_id("host1", "mgrctl exec --", "sol.mydemo.lab") == 1000010042)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "nosuch.lab")
+except SystemExit:
+    died = True
+check("_system_id: zero matches dies", died)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1}, {"id": 2}])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "ambiguous.lab")
+except SystemExit:
+    died = True
+check("_system_id: more than one match dies (genuinely ambiguous)", died)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=1, stderr="no such method"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "sol.mydemo.lab")
+except SystemExit:
+    died = True
+check("_system_id: server-side failure dies", died)
+
+# -- ensure_grafana_formula -----------------------------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "sol.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_grafana_formulas": [{"system": "sol.mydemo.lab", "admin_pass": "GrafanaPw1",
+                                   "prometheus": [{"key": "Prometheus", "url": "http://sol.mydemo.lab:9090"}],
+                                   "reportdb": True, "is_hub": True}]}
+sc.ensure_grafana_formula("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_grafana_formula: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_grafana_formula: enables the real 'grafana' formula name via setFormulasOfServer",
+      any("formula.setFormulasOfServer" in c and '[42, ["grafana"]]' in c for c in cmds))
+check("ensure_grafana_formula: configures it via setSystemFormulaData with the real pillar shape",
+      any("formula.setSystemFormulaData" in c and '"admin_pass": "GrafanaPw1"' in c
+          and '"url": "http://sol.mydemo.lab:9090"' in c
+          and '"reportdb": {"enabled": true, "is_hub": true}' in c for c in cmds))
+check("ensure_grafana_formula: real dashboard pillar keys default true (incl. the formula's own "
+      "real 'add_postgresql_dasboard' typo, not a corrected spelling)",
+      any('"add_uyuni_dashboard": true' in c and '"add_uyuni_clients_dashboard": true' in c
+          and '"add_postgresql_dasboard": true' in c and '"add_apache_dashboard": true' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_grafana_formula("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_grafana_formula: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_grafana_formula("host1", "mgrctl exec --", {"smlm_grafana_formulas": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_grafana_formula: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("formula.setFormulasOfServer", FakeResult(returncode=1, stderr="no monitoring subscription")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_grafana_formula("host1", "mgrctl exec --",
+                               {"smlm_grafana_formulas": [{"system": "sol.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_grafana_formula: a real API failure (e.g. missing subscription) dies with a clear "
+      "message, not silently ignored", died)
 
 
 if failures:
