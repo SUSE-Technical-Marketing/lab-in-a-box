@@ -40,6 +40,7 @@ write_files:
                  addresses: [${mydns}]
 
 runcmd:
+  - grep -qF "${_vm_name}" /etc/hosts || echo "127.0.0.1 ${_vm_name} ${_vm_name%%.*}" >> /etc/hosts
   - netplan generate
   - netplan apply
 CI_UBUNTU
@@ -49,4 +50,12 @@ CI_UBUNTU
     echo '  - sed "s/GRUB_TIMEOUT_STYLE.*/GRUB_TIMEOUT_STYLE=menu/;s/GRUB_TIMEOUT.*/GRUB_TIMEOUT=8/" -i /etc/default/grub -i /etc/default/grub.d/50-cloudimg-settings.cfg'
     echo '  - grub-mkconfig -o /boot/grub/grub.cfg'
   fi
+else
+cat <<CI_FIREWALL
+runcmd:
+  - grep -qF "${_vm_name}" /etc/hosts || echo "127.0.0.1 ${_vm_name} ${_vm_name%%.*}" >> /etc/hosts
+  - systemctl disable --now firewalld || true
+  - grep -qF "default ${mygw}" /etc/sysconfig/network/routes 2>/dev/null || printf 'default %s - -\n' "${mygw}" >> /etc/sysconfig/network/routes
+  - ip route show default | grep -q . || ip route add default via ${mygw} || true
+CI_FIREWALL
 fi )

@@ -40,6 +40,7 @@ import k8s  # noqa: E402
 import targets  # noqa: E402
 import apps  # noqa: E402
 import services  # noqa: E402
+import backends  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
 
@@ -339,19 +340,45 @@ def phase_create_vms(definition, config, defaults, json_file, keep):
             continue
 
         env = _merged_env(definition, config, defaults, vm_name)
-        # --keep's reusability check looks at a VM that may already exist,
-        # so it must find whichever host actually has it (locate_kvm_host),
-        # not resource-select a fresh one (resolve_kvm_host, used below by
-        # provision_vm() for genuinely new placement).
-        try:
-            keep_remote_host, keep_virt_srv = lc.locate_kvm_host(definition, vm_name, config)
-        except SystemExit:
-            keep_remote_host, keep_virt_srv = None, None
-        if keep and keep_virt_srv and lc.vm_is_reusable(
-                keep_virt_srv, vm_name, env.get("mymac", ""), env.get("myip", ""),
-                remote_host=keep_remote_host):
+        # --keep's reusability check must ask whichever backend actually
+        # owns this VM (AWS, Harvester, libvirt...) via
+        # get_backend(for_existing=True) — NOT assume libvirt. Previously
+        # this hardcoded lc.locate_kvm_host()/lc.vm_is_reusable() (both
+        # libvirt-only), so a cloud node's keep-check silently printed a
+        # KVM-flavoured "not running on hypervisor (state: not found)" and
+        # concluded "will recreate" — a message that has nothing to do with
+        # the actual backend. A backend that can't even reach its own API
+        # (e.g. an expired AWS SSO token) must never be treated the same as
+        # "VM doesn't exist" — confirmed live 2026-09-15 this conflation
+        # came within one working AWS credential of destroying a real,
+        # hours-in-the-making production SMLM server (sol.mydemo.lab): the
+        # misleading "will recreate" never actually executed only because
+        # the AWS calls happened to fail too. Treat an unreachable backend
+        # as a hard per-node failure instead — same "continue, don't touch
+        # this node" contract as the provisioning try/except below.
+        keep_reusable = False
+        keep_backend_error = None
+        if keep:
+            try:
+                keep_backend = backends.get_backend(definition, config, vm_name, for_existing=True)
+                keep_reusable = keep_backend.vm_is_reusable(
+                    vm_name, env.get("mymac", ""), env.get("myip", ""))
+            except SystemExit:
+                keep_reusable = False  # genuinely not found anywhere (e.g. no configured host has it)
+            except RuntimeError as e:
+                keep_backend_error = e
+
+        if keep_reusable:
             lc.log("  Skipping \"{}{}{}\" — existing VM matches definition".format(lc._RED, vm_name, lc._RESET))
             _report.add_node(vm_name, "reused")
+            continue
+
+        if keep_backend_error is not None:
+            msg = "--keep check for '{}' could not reach its backend (leaving it untouched, " \
+                  "continuing with the remaining nodes): {}".format(vm_name, keep_backend_error)
+            lc.error(msg)
+            _report.add_node(vm_name, "FAILED")
+            _report.add_error(msg)
             continue
 
         lc.purge_known_host(vm_name)
@@ -531,9 +558,24 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
 
 
 def phase_vm_addons(definition, json_file):
+    # A node whose OWN VM creation failed (phase_create_vms recorded it
+    # "FAILED" in _report) can never have its addons installed either — the
+    # host simply doesn't exist. Found live 2026-09-12: without this check,
+    # every addon on such a node still ran, each SSH-ing into a hostname
+    # with no DNS entry / nothing listening, and each addon script's own
+    # die() message ended up blaming something addon-specific (a wrong SCC
+    # product ID, "could not write spacecmd credentials", …) when the real,
+    # single root cause was simply "this node was never created" — already
+    # reported once in the Errors list from phase_create_vms. Skipping here
+    # avoids the noise and the misleading per-addon diagnostics entirely.
+    failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         addons = node_cfg.get("addons", [])
         if not addons:
+            continue
+        if vm_name in failed_nodes:
+            lc.log("Skipping \"{}{}{}\" addons — its own VM creation failed (see the Errors above)".format(
+                lc._RED, vm_name, lc._RESET))
             continue
         lc.log("Installing VM \"{}{}{}\" addons".format(lc._RED, vm_name, lc._RESET))
         lc._level += 1

@@ -1,12 +1,11 @@
 #version=RHEL8
-install
 text
 reboot
 
 # Locale / keyboard
 lang en_US.UTF-8
 keyboard us
-timezone UTC --isUtc
+timezone UTC --utc
 
 # Network
 network --bootproto=static --ip=$myip --netmask=$(python3 -c "import ipaddress; print(ipaddress.IPv4Network('0.0.0.0/$mymask',False).netmask)" 2>/dev/null || echo 255.255.255.0) --gateway=$mygw --nameserver=$mydns --hostname=$_vm_name --activate
@@ -21,7 +20,7 @@ rootpw --iscrypted $ROOT_PWD_HASH
 
 # SSH
 services --enabled=sshd
-sshkey --username=root "$ROOT_SSH_KEY"
+sshkey --username=root "$ROOT_SSH_PUBKEY"
 
 # Minimal package set
 %packages --ignoremissing

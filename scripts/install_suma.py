@@ -10,6 +10,12 @@
 #   suma_reg_username : [OPTIONAL] registry.suse.com login username    (default: admin@mydemo.lab)
 #   suma_reg_pwd      : [OPTIONAL] registry.suse.com login password    (default: aaaaaaaa)
 #   suma_adm_pwd      : [OPTIONAL] SUMA web UI admin password          (default: admin123)
+#   suma_channel      : [OPTIONAL] SCC product/channel identifier the host registers
+#                                  against via `transactional-update register -p ...`
+#                                  (default: SUSE-Manager-Server/5.0/x86_64)
+#   suma_key          : [OPTIONAL] SCC registration key for suma_channel (default: aaaaaa)
+#   suma_channels     : [OPTIONAL] space-separated list of additional channels to wait
+#                                  for sync after install (default: none — skips the wait)
 
 __version__ = "ca2d2d5"
 

@@ -6,9 +6,19 @@
 # tests/run_tests.sh.
 import shlex
 import socket
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Several blocks below do `backends.subprocess.run = _fake_...` — since
+# `backends.subprocess` IS the same shared subprocess module object (not a
+# copy), that reassigns subprocess.run GLOBALLY for the rest of this
+# process, not just within backends.py. Captured here, before any of those
+# run, so process_template()'s own real subprocess.run(["bash", "-c", ...])
+# call (genuine heredoc rendering, nothing to mock) can be restored around
+# any later prepare_install_iso() test that needs it to actually execute.
+_real_subprocess_run = subprocess.run
 
 # Tolerant of pyyaml not being installed in this container — same pattern
 # already used in 11_primary_test.py/13_addon_common_test.py/
@@ -25,6 +35,7 @@ sys.path.insert(0, str(_REPO / "libs"))
 import services  # noqa: E402
 import backends  # noqa: E402
 import lab_creation as lc  # noqa: E402
+import mgradm_common  # noqa: E402
 
 sys.path.insert(0, str(_REPO / "scripts"))
 import install_uyuni  # noqa: E402
@@ -327,6 +338,56 @@ check("create_vm (autoinstall): xorriso extraction quotes the ISO source path to
       "'/iso/ubuntu-24.04-live-server-amd64.iso'" in extract_call[-1])
 
 
+# ── kickstart/autoyast/preseed (--location-based installs): two real bugs found
+# live 2026-09-17, back to back, the first time this path was actually
+# live-tested end to end. (1) --location with a bare hypervisor-local path
+# fails ("Cannot access install tree on remote connection") whenever
+# virt-install runs on a different host than the hypervisor — fixed by
+# ensure_iso_install_tree() (see its own tests in
+# 10_lab_creation_core_test.py); this block only verifies backends.py's own
+# call site actually uses its return value as --location. (2) once that was
+# fixed and a real kickstart install actually ran end to end, the domain came
+# back up on plain SeaBIOS/legacy firmware and failed to boot ("Boot failed:
+# not a bootable disk") — this --location-based branch builds its OWN argv
+# from scratch (not base_args above) and had never included --boot at all,
+# silently ignoring VM_BOOT (every lab JSON in this project defaults to
+# "uefi") regardless of what firmware the guest's own kickstart bootloader
+# step assumed.
+_real_ensure_iso_install_tree = backends.ensure_iso_install_tree
+iso_tree_calls = []
+backends.ensure_iso_install_tree = lambda remote_host, iso_loc, iso_image: (
+    iso_tree_calls.append((remote_host, iso_loc, iso_image))
+    or "http://hv1:8890/{}/".format(iso_image))
+subproc_calls.clear()
+backend.create_vm(
+    "vm1", "2", "4096", "40", "network=default,model=virtio",
+    config_method="install_iso", install_type="kickstart",
+    iso_image="rhel-10.2-x86_64-dvd.iso", iso_loc="/iso", boot="uefi",
+)
+backends.ensure_iso_install_tree = _real_ensure_iso_install_tree
+check("create_vm (kickstart): calls ensure_iso_install_tree with the hypervisor/iso_loc/iso_image",
+      iso_tree_calls == [("hv1", "/iso", "rhel-10.2-x86_64-dvd.iso")])
+install_call = next(c for c in subproc_calls if "virt-install" in c[0])
+check("create_vm (kickstart): --location uses ensure_iso_install_tree's own URL, not a bare path",
+      install_call[install_call.index("--location") + 1] == "http://hv1:8890/rhel-10.2-x86_64-dvd.iso/")
+check("create_vm (kickstart): --boot carries the resolved boot_flag (matches VM_BOOT, "
+      "not virt-install's own legacy-BIOS default)",
+      "--boot" in install_call and install_call[install_call.index("--boot") + 1] == "uefi")
+check("create_vm (kickstart): --extra-args still carries the real inst.ks= URL",
+      "inst.ks=" in install_call[install_call.index("--extra-args") + 1])
+check("create_vm (kickstart): --extra-args carries inst.text — confirmed live 2026-09-17 "
+      "that without it, RHEL10's own Anaconda silently tries to start its default "
+      "graphical/WebUI path in a --noautoconsole environment and hangs forever with "
+      "zero further disk/network activity, no error at all",
+      "inst.text" in install_call[install_call.index("--extra-args") + 1])
+check("create_vm (kickstart): --extra-args carries TERM=vt100 — confirmed live 2026-09-17, "
+      "with hard evidence (real disk writes/CPU time appearing only after manually "
+      "sending one arbitrary keystroke to the guest's serial console): Anaconda's "
+      "newt/slang text UI queries the terminal's capabilities on startup and blocks "
+      "forever waiting for a reply nothing is attached (--noautoconsole) to ever send",
+      "TERM=vt100" in install_call[install_call.index("--extra-args") + 1])
+
+
 # ── prepare_install_iso() autoinstall hostname: found live 2026-09-03, on the
 # same VM as the two bugs above, once it actually finished installing and
 # booted the real (fixed) disk — `hostname` inside the freshly-installed,
@@ -401,6 +462,40 @@ else:
     check("prepare_install_iso (autoinstall): the malicious value's own colon+newline never "
           "appears un-escaped in the rendered YAML (substring check, no pyyaml)",
           "\nssh_pwauth: false" not in autoinstall_user_data)
+
+# ── prepare_install_iso (kickstart/autoyast): must inject ROOT_SSH_PUBKEY
+# (the automation VM's own real, current key), not the raw ROOT_SSH_KEY
+# config-file value ─────────────────────────────────────────────────────
+# Confirmed live 2026-09-17: lab_creation.cfg's ROOT_SSH_KEY had drifted from
+# this automation VM's actual ~/.ssh/id_rsa.pub. Kickstart/autoyast echoed
+# ROOT_SSH_KEY straight into authorized_keys (unlike ignition/combustion/
+# cloud-init/preseed, which all end up using the real id_rsa.pub) — the VM
+# provisioned fine but was permanently SSH-unreachable ("Permission denied
+# (publickey)"), for deimos.mydemo.lab specifically and for every other
+# kickstart/autoyast install generally. A stale/mismatched ROOT_SSH_KEY
+# value must never end up in the rendered answer file again.
+_stale_config_key = "ssh-rsa AAAAstaleconfigkey stale@config"
+_saved_subprocess_run = subprocess.run
+subprocess.run = _real_subprocess_run  # process_template() genuinely shells out — nothing to mock
+try:
+    for _itype, _ext in (("kickstart", "ks"), ("autoyast", "xml")):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "install_iso").mkdir(parents=True)
+            real_tpl = _REPO / "templates" / "install_iso.template_{}".format(_itype)
+            (Path(tmp) / "install_iso" / "template_{}".format(_itype)).write_text(real_tpl.read_text())
+            lc.prepare_install_iso(
+                "deimos.mydemo.lab", tmp, _itype, "rhel-10.2-x86_64-dvd.iso",
+                "52:54:00:aa:bb:cc", "192.168.88.146", "24", "192.168.88.1", "192.168.88.73",
+                "mydemo.lab", "x", root_ssh_key=_stale_config_key,
+            )
+            rendered = (Path(tmp) / "install_iso" / "deimos.mydemo.lab.{}".format(_ext)).read_text()
+        check("prepare_install_iso ({}): the automation VM's real pubkey is injected".format(_itype),
+              pubkey_path.read_text().strip() in rendered)
+        check("prepare_install_iso ({}): a stale/mismatched ROOT_SSH_KEY config value is NOT "
+              "injected".format(_itype),
+              _stale_config_key not in rendered)
+finally:
+    subprocess.run = _saved_subprocess_run
 
 
 # ── copy_vm_image / disk_format: found live on nuc6 (2026-08-31) — create_vm's
@@ -693,12 +788,19 @@ check("push_provisioning_files (cloud-init): the cp step's variable expansions a
 # running install in the background and patching pg_hba the moment uyuni-db
 # is ready, before uyuni-server's first connection attempt — so the ONE
 # install command completes end-to-end.)
-install_uyuni.time.sleep = lambda *a, **kw: None
+# _run_install_with_pg_hba_guard/_ensure_server_container_active now live in
+# libs/mgradm_common.py (moved 2026-09-12 — see that module's own docstring:
+# `from install_uyuni import ...` broke once install_uyuni.py was deployed
+# without its .py suffix). install_uyuni._run_install_with_pg_hba_guard is
+# still the SAME function object (aliased back on import), so calling it
+# through install_uyuni is unchanged — but its actual ssh_run/time/die come
+# from mgradm_common's own module globals now, so that's what needs patching.
+mgradm_common.time.sleep = lambda *a, **kw: None
 
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=0)),
                           ("cat ", FakeResult(returncode=0, stdout="0\n"))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman --admin-login admin")
 launch_calls = [c for h, c, kw in fake.calls if "nohup" in c]
 check("_run_install_with_pg_hba_guard: launches mgradm install in the background",
@@ -714,7 +816,7 @@ check("_run_install_with_pg_hba_guard: pg_hba patch happens after uyuni-db is co
 # Timeout: the rc-file marker never appears -> die(), not a silent return.
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=1))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 try:
     install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=1, poll_interval=1)
     died = False
@@ -726,13 +828,32 @@ check("_run_install_with_pg_hba_guard: dies if the install never finishes within
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
                           ("test -f", FakeResult(returncode=0)),
                           ("cat ", FakeResult(returncode=0, stdout="1\n"))])
-install_uyuni.ssh_run = fake
+mgradm_common.ssh_run = fake
 try:
     install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=5, poll_interval=1)
     died = False
 except SystemExit:
     died = True
 check("_run_install_with_pg_hba_guard: dies if mgradm install's own exit code is non-zero", died)
+
+# setup_uyuni(): install_cmd's --organization must be shell-quoted as ONE
+# argument. Real bug found live 2026-09-13 in install_smlm.py's identical
+# command-construction pattern: an unquoted multi-word --organization
+# ("SUSE Test") got split by the remote shell into two tokens, and mgradm
+# misinterpreted the stray second word as its own optional FQDN positional
+# argument ("Test is not a valid FQDN"), failing the whole install. Same
+# latent bug existed here — uyuni_org just never happened to contain a
+# space in practice, so it was never hit live.
+install_uyuni.ssh_run = FakeSSH()
+install_uyuni.reboot_vm = lambda virt_srv, hostname: None
+install_uyuni.check_ssh_conn = lambda hostname: None
+install_uyuni.time.sleep = lambda s: None
+captured_install_cmd = []
+install_uyuni._run_install_with_pg_hba_guard = lambda hostname, cmd: captured_install_cmd.append(cmd)
+install_uyuni._ensure_server_container_active = lambda hostname: None
+install_uyuni.setup_uyuni("host1", "virt1", {"uyuni_org": "SUSE Test"})
+check("setup_uyuni(): a multi-word uyuni_org is shell-quoted as ONE argument, not split",
+      "--organization 'SUSE Test'" in captured_install_cmd[0])
 
 
 # ── Bug 6: CLM stuck-build restart-and-retry wrapper ─────────────────────────

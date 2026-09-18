@@ -121,10 +121,14 @@ inline below:
     attach a user to a custom group's label too, since a created access
     group becomes an ordinary role label server-side once it exists — no
     separate "add user to access group" API exists or is needed. Deliberate
-    scope cut: this does NOT create user accounts — no user-creation
-    command was confirmed by research, so every name in a group's `users`
-    list must already exist (e.g. an org's own admin from ensure_org) or
-    user_addrole simply fails with a clear error. grantAccess's own
+    CORRECTION (2026-09-15, confirmed live against a real SMLM 5.2 server):
+    the original research here missed that spacecmd DOES have a native
+    user_create subcommand (spacecmd/src/spacecmd/user.py) — `spacecmd --
+    help`'s two-column output lists it, easy to miss by eye, and the
+    earlier docs-only research pass didn't catch it. ensure_users()/
+    ensure_user() below now create user accounts directly, so a group's
+    `users` list no longer requires the account to already exist
+    elsewhere. grantAccess's own
     idempotency on a repeat call for an already-granted namespace wasn't
     confirmed, so ensure_access_group_permissions checks
     access.listPermissions first rather than assuming a repeat call is a
@@ -364,7 +368,7 @@ import shlex
 import time
 from datetime import datetime, timezone
 
-from lab_creation import ssh_run, die
+from lab_creation import ssh_run, die, warn
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
@@ -563,8 +567,23 @@ def ensure_activation_key(hostname, exec_prefix, cfg, prefix):
 
     child_channels = (k("_child_channels") or "").split()
     if child_channels:
-        _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
+        # Confirmed live 2026-09-14: this genuinely fails ("Invalid channel")
+        # whenever a listed child channel isn't actually on the server yet —
+        # e.g. the "managertools-*" channels that provide venv-salt-minion,
+        # easy to reference here without ever having added them via
+        # mgr-sync (they're not implied by their own base product channel).
+        # _spacecmd()'s own return code used to be silently discarded, so
+        # this failure never surfaced anywhere — activation keys looked
+        # created and fine, but clients bootstrapped against them got the
+        # wrong (unlinked) channel set with no visible error at all.
+        r = _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
             shlex.quote(key_name), " ".join(shlex.quote(c) for c in child_channels)))
+        if r.returncode != 0:
+            warn("could not link child channels ({}) to activation key '{}' — check they're "
+                 "actually synced on the server (`mgr-sync add channels`), not just referenced "
+                 "in {}_activation_key_child_channels: {}".format(
+                     ", ".join(child_channels), key_name, prefix,
+                     (r.stderr or r.stdout or "").strip()))
 
     config_channels = (k("_config_channels") or "").split()
     if config_channels:
@@ -840,6 +859,423 @@ def ensure_config_channels(hostname, exec_prefix, cfg, prefix):
                                 binary=bool(f.get("binary")))
 
 
+def distribution_exists(hostname, exec_prefix, name):
+    """Whether `name` appears as an exact line in `spacecmd distribution_list`'s
+    output (one name per line, no header, confirmed live 2026-09-16)."""
+    r = _spacecmd(hostname, exec_prefix, "distribution_list")
+    return name in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def ensure_distribution(hostname, exec_prefix, dist):
+    """
+    Idempotently create one autoinstall tree ("Kickstart Distribution" in
+    the Web UI) via spacecmd's native distribution_create, from one entry
+    of <prefix>_distributions: {"name", "path", "base_channel",
+    "install_type"}. `path` is a directory ALREADY PRESENT ON THE SERVER'S
+    OWN FILESYSTEM containing a real, extracted product installer tree
+    (confirmed live: distribution_create itself validates this — it dies
+    with "The initrd could not be found at the specified location:
+    <path>/boot/x86_64/loader/initrd" if the tree isn't really there) —
+    this module has no way to create or upload that tree itself; mirror an
+    ISO's own extracted layout (e.g. via `mount -o loop`) onto that path
+    out of band first. `install_type` is one of the labels
+    distribution_create's own --help lists (e.g. "sles15generic",
+    "sles16generic", "rhel_9", "generic_rpm" — run `distribution_create
+    --help` on the server for the exact current set, since it changes with
+    each SMLM/Uyuni release).
+
+    warn()s and returns (does NOT die) on a creation failure — confirmed
+    live 2026-09-16 that a missing install tree is an ordinary, expected
+    real-world state (media populated out of band, on its own schedule),
+    not a config mistake, and unlike a die() here would otherwise abort
+    every orchestration step that runs after ensure_distributions() in the
+    caller — users/access-groups/orgs/image-stores included, none of which
+    have anything to do with kickstart. A kickstart profile referencing a
+    distribution that failed this way is skipped the same way, with its
+    own clear warning — see ensure_kickstart_profile().
+    """
+    name = dist.get("name")
+    if not name:
+        die("distributions: an entry is missing required 'name'")
+    if distribution_exists(hostname, exec_prefix, name):
+        print("  Distribution '{}' already exists — leaving it alone".format(name))
+        return
+    path = dist.get("path")
+    base_channel = dist.get("base_channel")
+    install_type = dist.get("install_type")
+    if not (path and base_channel and install_type):
+        die("distribution '{}': path, base_channel and install_type are all required to "
+            "create it".format(name))
+    r = _spacecmd(hostname, exec_prefix, "distribution_create -n {} -p {} -b {} -t {}".format(
+        shlex.quote(name), shlex.quote(path), shlex.quote(base_channel), shlex.quote(install_type)))
+    if r.returncode != 0:
+        warn("could not create distribution '{}' — its own install tree may not be populated "
+             "at '{}' yet (a real product ISO extracted there): {}".format(
+                 name, path, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Created distribution '{}'".format(name))
+
+
+def ensure_distributions(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_distributions — see ensure_distribution()'s own
+    docstring. No-op if the field is unset or empty."""
+    for dist in cfg.get("{}_distributions".format(prefix)) or []:
+        ensure_distribution(hostname, exec_prefix, dist)
+
+
+def kickstart_exists(hostname, exec_prefix, name):
+    """Whether `name` appears as an exact line in `spacecmd kickstart_list`'s
+    output (one label per line, no header, confirmed live 2026-09-16)."""
+    r = _spacecmd(hostname, exec_prefix, "kickstart_list")
+    return name in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def kickstart_variables(hostname, exec_prefix, name):
+    """Returns {key: value} of a kickstart profile's current custom
+    variables, via spacecmd's native kickstart_listvariables (one
+    "key = value" line per entry, confirmed live 2026-09-16 — a profile
+    always carries at least "org = <id>" even with none of its own set)."""
+    r = _spacecmd(hostname, exec_prefix, "kickstart_listvariables {}".format(shlex.quote(name)))
+    result = {}
+    for line in (r.stdout or "").splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
+def ensure_kickstart_profile(hostname, exec_prefix, ks):
+    """
+    Idempotently create the kickstart profile described by one entry of
+    <prefix>_kickstart_profiles: {"name", "distribution", "root_password",
+    "virt_type": "none" (default) | "para_host" | "qemu" | "xenfv" |
+    "xenpv", "variables": {"key": "value", ...}, "activation_keys": [...],
+    "child_channels": [...]}. `distribution` is a NAME REFERENCE into
+    <prefix>_distributions (define it there, not inline here) — spacecmd's
+    own kickstart_create requires it to already exist. root_password is
+    only used at creation time (spacecmd hashes it server-side into the
+    profile's own "Advanced Options" — confirmed live: kickstart_details
+    shows a real $5$... sha256 hash, never the plaintext back), so a
+    repeat run against an already-existing profile can't detect or fix a
+    changed password — delete and recreate the profile if it needs to
+    change. variables/activation_keys are applied idempotently on every
+    run via kickstart_addvariable/kickstart_addactivationkeys, diffed
+    against kickstart_listvariables/kickstart_listactivationkeys first, so
+    a repeat run never re-adds an already-present one.
+    """
+    name = ks.get("name")
+    if not name:
+        die("kickstart_profiles: an entry is missing required 'name'")
+
+    if kickstart_exists(hostname, exec_prefix, name):
+        print("  Kickstart profile '{}' already exists — leaving it alone".format(name))
+    else:
+        distribution = ks.get("distribution")
+        root_password = ks.get("root_password")
+        if not (distribution and root_password):
+            die("kickstart profile '{}': distribution and root_password are both required to "
+                "create it".format(name))
+        # The referenced distribution may legitimately not exist yet — its own
+        # ensure_distribution() call warns (not dies) when the install tree isn't
+        # populated, see that function's own docstring. Check first and skip
+        # cleanly with the same reasoning, rather than letting kickstart_create's
+        # own less-clear error stand in for it.
+        if not distribution_exists(hostname, exec_prefix, distribution):
+            warn("kickstart profile '{}': distribution '{}' doesn't exist yet (see "
+                 "ensure_distribution()'s own warning above, if any) — skipping".format(
+                     name, distribution))
+            return
+        virt_type = ks.get("virt_type") or "none"
+        r = _spacecmd(hostname, exec_prefix, "kickstart_create -n {} -d {} -p {} -v {}".format(
+            shlex.quote(name), shlex.quote(distribution), shlex.quote(root_password),
+            shlex.quote(virt_type)))
+        if r.returncode != 0:
+            warn("could not create kickstart profile '{}': {}".format(
+                name, (r.stderr or r.stdout or "").strip()))
+            return
+        print("  Created kickstart profile '{}'".format(name))
+
+    existing_vars = kickstart_variables(hostname, exec_prefix, name)
+    for key, value in (ks.get("variables") or {}).items():
+        if existing_vars.get(key) == str(value):
+            continue
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addvariable {} {} {}".format(
+            shlex.quote(name), shlex.quote(key), shlex.quote(str(value))))
+        if r.returncode != 0:
+            warn("could not set variable '{}' on kickstart profile '{}': {}".format(
+                key, name, (r.stderr or r.stdout or "").strip()))
+
+    existing_keys = set(line.strip() for line in (_spacecmd(
+        hostname, exec_prefix, "kickstart_listactivationkeys {}".format(shlex.quote(name))
+    ).stdout or "").splitlines() if line.strip())
+    missing_keys = [k for k in (ks.get("activation_keys") or []) if k not in existing_keys]
+    if missing_keys:
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addactivationkeys {} {}".format(
+            shlex.quote(name), " ".join(shlex.quote(k) for k in missing_keys)))
+        if r.returncode != 0:
+            warn("could not link activation key(s) ({}) to kickstart profile '{}': {}".format(
+                ", ".join(missing_keys), name, (r.stderr or r.stdout or "").strip()))
+
+    existing_channels = set(line.strip() for line in (_spacecmd(
+        hostname, exec_prefix, "kickstart_listchildchannels {}".format(shlex.quote(name))
+    ).stdout or "").splitlines() if line.strip())
+    missing_channels = [c for c in (ks.get("child_channels") or []) if c not in existing_channels]
+    if missing_channels:
+        r = _spacecmd(hostname, exec_prefix, "kickstart_addchildchannels {} {}".format(
+            shlex.quote(name), " ".join(shlex.quote(c) for c in missing_channels)))
+        if r.returncode != 0:
+            warn("could not link child channel(s) ({}) to kickstart profile '{}': {}".format(
+                ", ".join(missing_channels), name, (r.stderr or r.stdout or "").strip()))
+
+
+def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_kickstart_profiles — see
+    ensure_kickstart_profile()'s own docstring. No-op if the field is
+    unset or empty. Must run AFTER ensure_distributions() (a profile
+    references a distribution by name) — same real ordering hazard as
+    ensure_system_groups() vs ensure_activation_key(), see that function's
+    own docstring."""
+    for ks in cfg.get("{}_kickstart_profiles".format(prefix)) or []:
+        ensure_kickstart_profile(hostname, exec_prefix, ks)
+
+
+# ── Image management (Images -> Stores/Profiles/Build/Import) ──────────────
+# Confirmed live 2026-09-16 against a real SMLM 5.2 server: spacecmd has NO
+# native subcommand for any of this (confirmed by the exact same "Could not
+# find method" probing technique used for access.*/ansible.* elsewhere in
+# this module) — every call here goes through the raw 'api' passthrough,
+# against three separate handler classes found the same way: image.store.*
+# (ImageStoreHandler), image.profile.* (ImageProfileHandler), and the
+# unprefixed image.* (ImageInfoHandler, e.g. importContainerImage/
+# scheduleImageBuild). image.store.create/image.profile.create both
+# confirmed live: return `[<numeric id>]` (a one-element LIST, not a bare
+# int) on success.
+
+def image_store_exists(hostname, exec_prefix, label):
+    """Whether `label` appears among image.store.listImageStores' real
+    JSON output (confirmed live: a server always has at least one,
+    "SUSE Manager OS Image Store", auto-created out of the box)."""
+    r = _api_call(hostname, exec_prefix, "image.store.listImageStores", [])
+    try:
+        stores = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        stores = []
+    return label in [s.get("label") for s in stores]
+
+
+def ensure_image_store(hostname, exec_prefix, store):
+    """
+    Idempotently create one image store (Images -> Stores in the Web UI)
+    via image.store.create, from one entry of <prefix>_image_stores:
+    {"label", "uri", "type": "registry" | "os_image", "username",
+    "password"}. `type` must be one of the labels the server's own
+    image.store.listImageStoreTypes returns (confirmed live: "registry" and
+    "os_image" on a stock SMLM 5.2 server — re-check on other versions,
+    this module can't enumerate them without a live call). credentials are
+    optional — omit username/password for a public registry (e.g.
+    registry.suse.com, confirmed live: no credentials needed for SUSE's
+    own public images).
+    """
+    label = store.get("label")
+    if not label:
+        die("image_stores: an entry is missing required 'label'")
+    if image_store_exists(hostname, exec_prefix, label):
+        print("  Image store '{}' already exists — leaving it alone".format(label))
+        return
+    uri = store.get("uri")
+    store_type = store.get("type")
+    if not (uri and store_type):
+        die("image store '{}': uri and type are both required to create it".format(label))
+    credentials = {}
+    if store.get("username"):
+        credentials["username"] = store["username"]
+        credentials["password"] = store.get("password") or ""
+    r = _api_call(hostname, exec_prefix, "image.store.create", [label, uri, store_type, credentials])
+    if r.returncode != 0:
+        die("could not create image store '{}': {}".format(label, (r.stderr or r.stdout or "").strip()))
+    print("  Created image store '{}' ({})".format(label, uri))
+
+
+def ensure_image_stores(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_image_stores — see ensure_image_store()'s own
+    docstring. No-op if the field is unset or empty."""
+    for store in cfg.get("{}_image_stores".format(prefix)) or []:
+        ensure_image_store(hostname, exec_prefix, store)
+
+
+def image_profile_exists(hostname, exec_prefix, label):
+    """Whether `label` appears among image.profile.listImageProfiles' real
+    JSON output."""
+    r = _api_call(hostname, exec_prefix, "image.profile.listImageProfiles", [])
+    try:
+        profiles = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        profiles = []
+    return label in [p.get("label") for p in profiles]
+
+
+def ensure_image_profile(hostname, exec_prefix, profile):
+    """
+    Idempotently create one image profile (build instructions — Images ->
+    Profiles in the Web UI) via image.profile.create, from one entry of
+    <prefix>_image_profiles: {"label", "type": "dockerfile" | "kiwi",
+    "store", "path", "activation_key"}. `store` is a NAME REFERENCE into
+    <prefix>_image_stores above (define it there, not inline here) —
+    confirmed live this doesn't validate the store exists at creation time,
+    but a later build against a nonexistent store would obviously fail, so
+    this module still treats it as required. `path` is a Dockerfile/Kiwi
+    source location — for a git-hosted Dockerfile,
+    "https://github.com/USER/project.git#branch:folder" (confirmed live
+    against the official docs' own example format); for Kiwi, a local
+    filesystem path or similarly git-hosted location. `activation_key`
+    determines which software channels the build/import has access to —
+    the official docs describe this as mandatory for both container and
+    OS image profiles.
+    """
+    label = profile.get("label")
+    if not label:
+        die("image_profiles: an entry is missing required 'label'")
+    if image_profile_exists(hostname, exec_prefix, label):
+        print("  Image profile '{}' already exists — leaving it alone".format(label))
+        return
+    image_type = profile.get("type")
+    store = profile.get("store")
+    path = profile.get("path")
+    activation_key = profile.get("activation_key") or ""
+    if not (image_type and store and path):
+        die("image profile '{}': type, store and path are all required to create it".format(label))
+    r = _api_call(hostname, exec_prefix, "image.profile.create",
+                  [label, image_type, store, path, activation_key])
+    if r.returncode != 0:
+        die("could not create image profile '{}': {}".format(label, (r.stderr or r.stdout or "").strip()))
+    print("  Created image profile '{}'".format(label))
+
+
+def ensure_image_profiles(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_image_profiles — see ensure_image_profile()'s
+    own docstring. No-op if the field is unset or empty. Must run AFTER
+    ensure_image_stores() (a profile references a store by label)."""
+    for profile in cfg.get("{}_image_profiles".format(prefix)) or []:
+        ensure_image_profile(hostname, exec_prefix, profile)
+
+
+def import_container_image(hostname, exec_prefix, name, version, build_host_id, store_label,
+                            activation_key=""):
+    """
+    Schedules a container image import/inspection via
+    image.importContainerImage — NOT idempotent (each call schedules a
+    brand-new action, confirmed by the method's own "schedules ... action"
+    semantics, same reasoning as every other explicit-trigger operation in
+    this module — run_ansible_playbooks/run_clm_actions/run_scap_scans).
+    `build_host_id` is the NUMERIC Uyuni system ID of an already-registered
+    system with the "Container Build Host" entitlement enabled (this
+    module has no way to enable that entitlement itself — see
+    system_addentitlement in the Web UI or via spacecmd directly) —
+    findable via 'spacecmd system_list'. Returns the scheduled action's
+    numeric id on success; dies with the real server error otherwise
+    (e.g. a build host lacking the required entitlement).
+    """
+    r = _api_call(hostname, exec_prefix, "image.importContainerImage",
+                  [name, version or "", build_host_id, store_label, activation_key, None])
+    if r.returncode != 0:
+        die("could not schedule import of image '{}:{}': {}".format(
+            name, version or "latest", (r.stderr or r.stdout or "").strip()))
+    print("  Scheduled import of image '{}:{}' from store '{}'".format(
+        name, version or "latest", store_label))
+    return r.stdout
+
+
+def import_images(hostname, exec_prefix, cfg, prefix):
+    """
+    Runs every entry in <prefix>_image_imports through
+    import_container_image() — see its own docstring for why this is a
+    SEPARATE, explicit trigger (install_smlm.py's own
+    --import-images/--run-recurring-schedules-style flag), never part of
+    the automatic install flow: entry shape is {"name", "version",
+    "build_host_id", "store", "activation_key"}.
+    """
+    imports = cfg.get("{}_image_imports".format(prefix)) or []
+    if not imports:
+        print("No {}_image_imports configured — nothing to import".format(prefix))
+        return
+    for entry in imports:
+        name = entry.get("name")
+        build_host_id = entry.get("build_host_id")
+        store = entry.get("store")
+        if not (name and build_host_id and store):
+            die("{}_image_imports: an entry needs 'name', 'build_host_id' and 'store'".format(prefix))
+        import_container_image(hostname, exec_prefix, name, entry.get("version"), build_host_id,
+                                store, entry.get("activation_key") or "")
+
+
+def monitoring_status(hostname, exec_prefix):
+    """
+    Returns the server's own bundled-exporter status as a dict via
+    admin.monitoring.getStatus, confirmed live 2026-09-16:
+    {"node": "enabled"|"disabled", "tomcat": ..., "postgres": ...,
+    "taskomatic": ..., "self_monitoring": ...} — a stock server starts with
+    every key "disabled". Takes no arguments.
+    """
+    r = _api_call(hostname, exec_prefix, "admin.monitoring.getStatus", [])
+    try:
+        result = json.loads(r.stdout or "[]")
+        return result[0] if result else {}
+    except (ValueError, TypeError, IndexError):
+        return {}
+
+
+def ensure_monitoring(hostname, exec_prefix, cfg, prefix):
+    """
+    Idempotently enables the server's own bundled Prometheus exporters
+    (node/tomcat/postgres/taskomatic/self_monitoring) via
+    admin.monitoring.enable, gated by <prefix>_monitoring_enabled (a plain
+    "true"/truthy flag — enable takes no arguments of its own, confirmed
+    live against AdminMonitoringHandler.java: it's a pure on/off toggle for
+    exporters already bundled in the image, NOT a "point at an external
+    Prometheus" call — Uyuni's own monitoring model is pull-based, a
+    separate Prometheus scrapes THIS server's exposed exporter ports, it
+    never pushes to one). No-op if the flag is falsy or unset, or if
+    monitoring_status() already shows "node": "enabled" (checked as the
+    representative key — confirmed live all five flip together on one
+    enable() call).
+
+    Per the official docs (documentation.suse.com/suma/5.2 Monitoring
+    guide, confirmed live 2026-09-16 restart actually starts the exporter
+    listeners — getStatus alone doesn't): a fresh enable() needs Tomcat AND
+    Taskomatic restarted before the exporters actually start listening.
+    Restarts them ONLY on the transition from disabled to enabled (an
+    already-enabled server is left running, same "don't disrupt what's
+    already healthy" reasoning as run_install_with_pg_hba_guard elsewhere
+    in this project) — via a plain `systemctl restart` through the same
+    exec_prefix, not spacecmd (there's no spacecmd-native way to restart a
+    server-side service).
+
+    Real exporter ports, confirmed live against the same docs page (open
+    these on the server's firewall/security group for a REMOTE Prometheus
+    to reach it): node 9100, postgres 9187, tomcat JMX 5556, taskomatic JMX
+    5557, taskomatic direct 9800, plus the message-queue job at
+    "<server>:80/rhn/metrics" (no separate port — it's Apache/the existing
+    web port with a different metrics path).
+    """
+    if not (cfg.get("{}_monitoring_enabled".format(prefix)) in ("true", True)):
+        return
+    status = monitoring_status(hostname, exec_prefix)
+    if status.get("node") == "enabled":
+        print("  Server monitoring already enabled — leaving it alone")
+        return
+    r = _api_call(hostname, exec_prefix, "admin.monitoring.enable", [])
+    if r.returncode != 0:
+        die("could not enable server monitoring: {}".format((r.stderr or r.stdout or "").strip()))
+    print("  Enabled server monitoring (node/tomcat/postgres/taskomatic exporters)")
+    r = _run(hostname, exec_prefix, "systemctl restart tomcat taskomatic")
+    if r.returncode != 0:
+        warn("monitoring was enabled, but restarting tomcat/taskomatic to actually start the "
+             "exporter listeners failed — restart them manually: {}".format(
+                 (r.stderr or r.stdout or "").strip()))
+    else:
+        print("  Restarted tomcat/taskomatic so the exporters actually start listening")
+
+
 def org_exists(hostname, exec_prefix, org_name):
     """
     Whether `org_name` already appears as an exact line in `spacecmd
@@ -942,12 +1378,14 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
     {name, admin_user, admin_pass, admin_email, admin_first_name,
     admin_last_name, prefix, pam, trust_with: [...], share_channels: [...],
     share_channels_access}, PLUS whatever <prefix>_activation_key*/
-    <prefix>_config_channels/<prefix>_access_groups keys that org itself
-    needs — reusing the exact same field names as the top-level config,
-    since once this function re-authenticates as that org's own admin,
-    ensure_activation_key/ensure_config_channels/ensure_appstreams/
-    ensure_access_groups work completely unchanged (org-scoping is entirely
-    a function of which session is active — see module docstring). For each
+    <prefix>_config_channels/<prefix>_access_groups/<prefix>_system_groups/
+    <prefix>_users keys that org itself needs — reusing the exact same
+    field names as the top-level config, since once this function
+    re-authenticates as that org's own admin, ensure_activation_key/
+    ensure_config_channels/ensure_appstreams/ensure_access_groups/
+    ensure_system_groups/ensure_users work completely unchanged
+    (org-scoping is entirely a function of which session is active — see
+    module docstring). For each
     org, in list order (so a later org can trust_with an earlier one):
       1. re-authenticate as the DEFAULT admin, then create the org if it
          doesn't exist yet
@@ -990,9 +1428,15 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
             ensure_channel_sharing(hostname, exec_prefix, ch, share_access)
 
         ensure_config_channels(hostname, exec_prefix, org, prefix)
+        # System groups BEFORE any activation key — same reorder, same
+        # reason, as the top-level orchestration in install_smlm.py/
+        # install_uyuni.py: ensure_activation_key()'s own group-linking dies
+        # if the named group doesn't exist yet server-side.
+        ensure_system_groups(hostname, exec_prefix, org, prefix)
         ensure_activation_key(hostname, exec_prefix, org, prefix)
         ensure_appstreams(hostname, exec_prefix, org, prefix)
         ensure_activation_key_packages(hostname, exec_prefix, org, prefix)
+        ensure_users(hostname, exec_prefix, org, prefix)
         ensure_access_groups(hostname, exec_prefix, org, prefix)
 
     ensure_spacecmd_config(hostname, exec_prefix, default_admin_user, default_admin_pass)
@@ -1085,20 +1529,118 @@ def user_has_role(hostname, exec_prefix, username, role):
 
 def ensure_user_role(hostname, exec_prefix, username, role):
     """
-    Idempotently attach `role` (a fixed role label like "org_admin" or a
-    custom access group's own label — both are ordinary role labels
-    server-side once the group exists) to an ALREADY-EXISTING user via
-    spacecmd's native user_addrole. Does not create the user — dies with
-    whatever error user_addrole itself returns if `username` doesn't exist.
-    NOT live-tested.
+    Idempotently attach `role` to an ALREADY-EXISTING user via spacecmd's
+    native user_addrole. Does not create the user — a missing username is
+    reported the same way as any other user_addrole failure (see below).
+
+    CONFIRMED LIVE 2026-09-15 against a real SMLM 5.2 server, contradicting
+    this module's own earlier assumption: user.addRole (user_addrole)
+    ONLY accepts the fixed/builtin role labels (activation_key_admin,
+    channel_admin, config_admin, image_admin, org_admin, regular_user,
+    satellite_admin, system_group_admin) — a custom access group's own
+    label is REJECTED outright ("Role with the label [X] cannot be
+    assigned/revoked from the user"), and this is unconditional: even the
+    default satellite_admin session gets the identical rejection, not just
+    a less-privileged org admin. The real XML-RPC method for attaching a
+    user to a custom Access Group was not found among the reasonable
+    candidates probed live (access.setUserAccessGroups/addUserAccessGroup/
+    setUsers/grantAccessGroup, user.setAccessGroups/addAssignedRoles — all
+    404 "Could not find method"), so ensure_access_groups()'s own `users`
+    field is currently UNIMPLEMENTABLE via any spacecmd/XML-RPC call this
+    module could locate — warn(), don't die(), so a lab with a mix of
+    builtin-role and custom-group user assignments still gets the builtin
+    ones applied and every other orchestration step still runs. Attach
+    users to a custom access group by hand via the Web UI until the real
+    API is found.
     """
     if user_has_role(hostname, exec_prefix, username, role):
         print("  User '{}' already has role '{}' — leaving it alone".format(username, role))
         return
     r = _spacecmd(hostname, exec_prefix, "user_addrole {} {}".format(shlex.quote(username), shlex.quote(role)))
     if r.returncode != 0:
-        die("could not add role '{}' to user '{}': {}".format(role, username, (r.stderr or r.stdout or "").strip()))
+        warn("could not add role '{}' to user '{}' — if '{}' is a custom access group's own "
+             "label, this is a known, currently-unresolved API gap (see this function's own "
+             "docstring), not a config mistake: {}".format(
+                 role, username, role, (r.stderr or r.stdout or "").strip()))
+        return
     print("  Added role '{}' to user '{}'".format(role, username))
+
+
+def user_exists(hostname, exec_prefix, username):
+    """
+    Whether `username` already appears as an exact line in `spacecmd
+    user_list`'s output (one username per line, no header, confirmed live
+    2026-09-15 — same shape as org_list). Exact match, same reasoning as
+    org_exists.
+    """
+    r = _spacecmd(hostname, exec_prefix, "user_list")
+    return username in [line.strip() for line in (r.stdout or "").splitlines()]
+
+
+def ensure_user(hostname, exec_prefix, user):
+    """
+    Idempotently create the user account described by one entry of
+    <prefix>_users, via spacecmd's native user_create (confirmed live
+    2026-09-15 against a real SMLM 5.2 server — see this module's own
+    top-of-file notes on ensure_access_groups for the research correction).
+    Builtin roles (fixed labels from `spacecmd user_listavailableroles`:
+    activation_key_admin, channel_admin, config_admin, image_admin,
+    org_admin, regular_user, satellite_admin, system_group_admin — confirmed
+    live against the same server) are applied via `roles`, reusing
+    ensure_user_role() so a repeat run never re-grants an already-held role.
+
+    A custom access group's own label is an ordinary role label too once the
+    group exists, BUT ensure_users() runs BEFORE ensure_access_groups() at
+    every call site in this module (an access group's own `users` list needs
+    the account to already exist) — so a custom label put in `roles` here
+    would try to attach a role that doesn't exist yet and fail. Grant custom
+    labels the other way instead: list the username in that access group's
+    own `users` field, which runs in the correct order already. Reserve
+    `roles` here for the fixed builtin labels, which have no such ordering
+    dependency.
+    """
+    username = user.get("username")
+    if not username:
+        die("users: an entry is missing required 'username'")
+
+    if user_exists(hostname, exec_prefix, username):
+        print("  User '{}' already exists — leaving it alone".format(username))
+    else:
+        password = user.get("password")
+        first_name = user.get("first_name")
+        last_name = user.get("last_name")
+        email = user.get("email")
+        if not (password and first_name and last_name and email):
+            die("user '{}': password, first_name, last_name and email are all required to "
+                "create it".format(username))
+
+        cmd = "user_create -u {u} -p {p} -f {f} -l {l} -e {e}".format(
+            u=shlex.quote(username), p=shlex.quote(password),
+            f=shlex.quote(first_name), l=shlex.quote(last_name), e=shlex.quote(email))
+        if user.get("pam"):
+            cmd += " --pam"
+        r = _spacecmd(hostname, exec_prefix, cmd)
+        if r.returncode != 0:
+            die("could not create user '{}': {}".format(username, (r.stderr or r.stdout or "").strip()))
+        print("  Created user '{}'".format(username))
+
+    for role in user.get("roles") or []:
+        ensure_user_role(hostname, exec_prefix, username, role)
+
+
+def ensure_users(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_users: a list of {username, password, first_name,
+    last_name, email, pam: false, roles: [...]} dicts — see ensure_user()
+    for per-entry behavior. No-op if <prefix>_users is unset or empty.
+    Called both at the top level (default-org users) and per-org from
+    ensure_orgs (org-scoped users), same pattern as ensure_access_groups —
+    and deliberately BEFORE ensure_access_groups() at each of those call
+    sites, since an access group's own `users` list needs the account to
+    already exist.
+    """
+    for user in cfg.get("{}_users".format(prefix)) or []:
+        ensure_user(hostname, exec_prefix, user)
 
 
 def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
@@ -1106,13 +1648,22 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
     Orchestrates <prefix>_access_groups: a list of {label, description,
     permissions_from: [...], permissions: [{namespace, mode}], users: [...]}
     dicts. Each entry: create the access group (or skip if it exists), grant
-    its requested namespaces, then attach it as a role to every already-
-    existing username in `users` (see ensure_user_role — no user accounts
-    are created here). No-op if <prefix>_access_groups is unset or empty.
-    Called both at the top level (default-org users) and per-org from
-    ensure_orgs (org-scoped users) — the 'access' namespace is reached
-    through the same session-is-org-scoping mechanism as everything else in
-    this module. NOT live-tested.
+    its requested namespaces, then TRY to attach it as a role to every
+    already-existing username in `users` via ensure_user_role. No-op if
+    <prefix>_access_groups is unset or empty. Called both at the top level
+    (default-org users) and per-org from ensure_orgs (org-scoped users) —
+    the 'access' namespace is reached through the same session-is-org-
+    scoping mechanism as everything else in this module.
+
+    Group creation and permission-granting are confirmed live (2026-09-15,
+    real SMLM 5.2 server) and work correctly. The `users` attachment step is
+    ALSO confirmed live — and confirmed BROKEN: see ensure_user_role()'s own
+    docstring for the real, reproducible API rejection this hits for every
+    custom label, regardless of caller privilege. That call now warns
+    instead of dying, so this orchestrator still finishes (and every other
+    <prefix>_access_groups entry, plus every step after it in the caller's
+    own orchestration, still runs) even though `users` currently has no
+    working effect.
     """
     groups = cfg.get("{}_access_groups".format(prefix)) or []
     for group in groups:
@@ -1708,6 +2259,71 @@ def ensure_activation_keys(hostname, exec_prefix, cfg, prefix):
         ensure_appstreams(hostname, exec_prefix, key_cfg, prefix)
         ensure_activation_key_packages(hostname, exec_prefix, key_cfg, prefix)
         ensure_activation_key_groups(hostname, exec_prefix, key_cfg, prefix)
+        ensure_activation_key_child_channels(hostname, exec_prefix, key_cfg, prefix)
+
+
+def activation_key_child_channels(hostname, exec_prefix, key_name):
+    """Returns the set of child channel labels currently linked to
+    activation key `key_name`, via spacecmd's native
+    activationkey_listchildchannels."""
+    r = _spacecmd(hostname, exec_prefix, "activationkey_listchildchannels {}".format(shlex.quote(key_name)))
+    if r.returncode != 0:
+        return set()
+    return set(line.strip() for line in (r.stdout or "").splitlines() if line.strip())
+
+
+def ensure_activation_key_child_channels(hostname, exec_prefix, cfg, prefix):
+    """
+    Idempotently ensures every child channel listed in
+    <prefix>_activation_key_child_channels is linked to
+    <prefix>_activation_key, via spacecmd's native
+    activationkey_addchildchannels. Same shape as
+    ensure_activation_key_groups: a real list API exists
+    (activationkey_listchildchannels), so this is genuinely idempotent and
+    called unconditionally (not just at key-creation time) — generalizing
+    that same pattern from groups to child channels.
+
+    This is the real fix for a gap found live 2026-09-15: ensure_
+    activation_key()'s own child-channel linking only ever runs at
+    CREATION time — an already-existing key (the normal case on every run
+    after the first) skips it entirely, so a lab JSON edit adding/
+    correcting child_channels for an existing activation key silently had
+    no effect at all until now. Confirmed live: several of solar-system-
+    lab.json's own activation keys (leap16, rhel9, debian13,
+    debian13arm64, oraclelinux9, amazonlinux2, amazonlinux2023) had NO
+    Client Tools channel linked whatsoever — not a creation-time-only gap,
+    a total, silent absence — because they were created once, early, with
+    an empty child_channels field, and every later JSON fix to add the
+    right channel never got applied since the key already existed.
+
+    No-op if either the key or the child-channels field is unset. Calling
+    this alongside ensure_activation_key's own creation-time linking is
+    harmless — it just finds nothing new to add if that path already
+    handled it.
+    """
+    key_name = cfg.get("{}_activation_key".format(prefix))
+    spec = (cfg.get("{}_activation_key_child_channels".format(prefix)) or "").split()
+    if not key_name or not spec:
+        return
+    key_name = resolve_activation_key_name(hostname, exec_prefix, key_name)
+
+    existing = activation_key_child_channels(hostname, exec_prefix, key_name)
+    missing = [c for c in spec if c not in existing]
+    if not missing:
+        print("  Activation key '{}' already linked to all requested child channels — "
+              "leaving it alone".format(key_name))
+        return
+
+    r = _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
+        shlex.quote(key_name), " ".join(shlex.quote(c) for c in missing)))
+    if r.returncode != 0:
+        warn("could not link child channels ({}) to activation key '{}' — check they're "
+             "actually synced on the server (`mgr-sync add channels`), not just referenced "
+             "in {}_activation_key_child_channels: {}".format(
+                 ", ".join(missing), key_name, prefix, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Linked {} child channel(s) to activation key '{}': {}".format(
+        len(missing), key_name, ", ".join(missing)))
 
 
 def activation_key_groups(hostname, exec_prefix, key_name):
@@ -1791,7 +2407,19 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     Idempotently ensures every system name in `systems` is a member of
     `group_name`, via spacecmd's native group_addsystems — adds only the
     ones not already listed by group_listsystems. No-op if `systems` is
-    empty. NOT live-tested.
+    empty.
+
+    Confirmed live 2026-09-15: group_addsystems silently skips any name in
+    the list that isn't (yet) a real registered system, AS LONG AS at least
+    one other name in the same call IS real — but if EVERY name in one call
+    is invalid, it fails outright instead (exit 1, empty stderr). A
+    `systems` list built from a lab's own node hostnames routinely contains
+    names not registered yet (client_registration pending or intentionally
+    never a client, e.g. the server's own hostname in a "star"-type group)
+    — self-healing once they do register, exactly like
+    ensure_activation_key_child_channels' own not-yet-synced-channel case.
+    warn(), don't die(), so one not-yet-ready group doesn't abort every
+    other orchestration step after it.
     """
     if not systems:
         return
@@ -1803,7 +2431,9 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     r = _spacecmd(hostname, exec_prefix, "group_addsystems {} {}".format(
         shlex.quote(group_name), " ".join(shlex.quote(s) for s in missing)))
     if r.returncode != 0:
-        die("could not add systems to group '{}': {}".format(group_name, (r.stderr or r.stdout or "").strip()))
+        warn("could not add system(s) ({}) to group '{}' — they may not be registered systems yet: "
+             "{}".format(", ".join(missing), group_name, (r.stderr or r.stdout or "").strip()))
+        return
     print("  Added {} system(s) to group '{}': {}".format(len(missing), group_name, ", ".join(missing)))
 
 
@@ -2122,3 +2752,228 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
 
     saltkey_accept(hostname, exec_prefix, client_hostname)
     print("  Accepted salt key for '{}'".format(client_hostname))
+
+
+# ── Config export: read a live server back into lab-in-a-box JSON ──────────
+# Added 2026-09-16 at the user's explicit request ("generate a lab
+# definition based on the configuration of an existing server") — the
+# reverse of every ensure_* function above: read-only spacecmd/API calls,
+# parsed back into the exact <prefix>_* field shapes ensure_activation_keys/
+# ensure_system_groups/ensure_access_groups/ensure_orgs already consume, so
+# the result can be pasted straight into a lab JSON's "smlm"/"uyuni" section.
+# Two real, confirmed-live API gaps limit what's recoverable, documented
+# where they bite below rather than silently guessed around:
+#   - passwords are one-way hashed server-side — a re-imported user/org
+#     admin always needs a real password filled in by hand.
+#   - a custom access group's own member list isn't queryable for any org
+#     other than the CALLING session's own (user.getDetails/access.listRoles
+#     are both hard org-scoped, even for a satellite_admin — see
+#     ensure_user_role()'s own docstring for the identical constraint on
+#     the write side) — so smlm_access_groups' `users` field is exported
+#     only for the org this session is currently authenticated as.
+
+def describe_activation_key(hostname, exec_prefix, key_name, prefix):
+    """
+    Reads one activation key's live configuration via spacecmd's native
+    activationkey_details and returns it as a dict using the same
+    <prefix>_activation_key* field names ensure_activation_key() consumes —
+    a direct, valid entry for <prefix>_activation_keys.
+
+    `key_name` is the key's real, org-id-prefixed label as spacecmd knows
+    it (e.g. "1-sles15sp7", confirmed live: activationkey_create's own
+    org-id-prefixing, see ensure_activation_key()'s neighboring code) — the
+    returned <prefix>_activation_key value has that numeric prefix stripped
+    back off, matching what a lab JSON actually specifies (the prefix is
+    applied server-side at creation time, never part of the caller's own
+    input).
+    """
+    text = _spacecmd(hostname, exec_prefix, "activationkey_details {}".format(
+        shlex.quote(key_name))).stdout or ""
+
+    def field(label):
+        m = re.search(r"^{}:\s*(.*)$".format(re.escape(label)), text, re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    def section(header):
+        # Stop at the next section header (a line immediately followed by a
+        # dashes-only line) or end of string, NOT at the first blank line —
+        # confirmed live 2026-09-16 that an EMPTY section (e.g. "Configuration
+        # Channels" with nothing under it) is followed by only ONE blank line
+        # before the next header, not two, so a "\n\n" stop bled straight
+        # into the next header's own text.
+        m = re.search(r"^{}\n-+\n(.*?)(?=\n[A-Za-z][^\n]*\n-+\n|\Z)".format(re.escape(header)),
+                       text, re.MULTILINE | re.DOTALL)
+        return [line.strip() for line in (m.group(1).splitlines() if m else []) if line.strip()]
+
+    channel_lines = section("Software Channels")
+    base_channel = channel_lines[0].lstrip("|- ").strip() if channel_lines else ""
+    child_channels = [line.lstrip("|- ").strip() for line in channel_lines[1:]]
+
+    entry = {
+        "{}_activation_key".format(prefix): re.sub(r"^\d+-", "", key_name),
+        "{}_activation_key_desc".format(prefix): field("Description"),
+        "{}_activation_key_base_channel".format(prefix): base_channel,
+    }
+    if child_channels:
+        entry["{}_activation_key_child_channels".format(prefix)] = " ".join(child_channels)
+    groups = section("System Groups")
+    if groups:
+        entry["{}_activation_key_groups".format(prefix)] = " ".join(groups)
+    config_channels = section("Configuration Channels")
+    if config_channels:
+        entry["{}_activation_key_config_channels".format(prefix)] = " ".join(config_channels)
+    entitlements = field("Entitlements") or ",".join(section("Entitlements"))
+    if entitlements:
+        entry["{}_activation_key_entitlements".format(prefix)] = entitlements
+    packages = section("Packages")
+    if packages:
+        entry["{}_activation_key_packages".format(prefix)] = " ".join(packages)
+    if (field("Universal Default") or "").strip().lower() == "true":
+        entry["{}_activation_key_universal_default".format(prefix)] = "true"
+    contact_method = field("Contact Method")
+    if contact_method and contact_method != "default":
+        entry["{}_activation_key_contact_method".format(prefix)] = contact_method
+    return entry
+
+
+def describe_system_group(hostname, exec_prefix, name):
+    """
+    Reads one system group's live members via spacecmd's native
+    group_details, and returns a dict matching one <prefix>_system_groups
+    entry: {"name": ..., "description": ..., "systems": [...]}.
+    """
+    text = _spacecmd(hostname, exec_prefix, "group_details {}".format(shlex.quote(name))).stdout or ""
+    m = re.search(r"^Description:\s*(.*)$", text, re.MULTILINE)
+    description = m.group(1).strip() if m else name
+    m = re.search(r"^Members\n-+\n(.*?)\Z", text, re.MULTILINE | re.DOTALL)
+    systems = [line.strip() for line in (m.group(1).splitlines() if m else []) if line.strip()]
+    entry = {"name": name, "description": description}
+    if systems:
+        entry["systems"] = systems
+    return entry
+
+
+def describe_access_groups(hostname, exec_prefix):
+    """
+    Reads every custom access group VISIBLE TO THE CURRENT SESSION'S OWN
+    ORG via access.listRoles + access.listPermissions, and returns a list
+    of <prefix>_access_groups entries: {"label", "description",
+    "permissions": [{"namespace", "mode"}]}. No `users` field — see this
+    module's own top-of-section note on why that can't be recovered for
+    any org other than the caller's own, and even for the caller's own org
+    there's no API to map a namespace-permission grant back to the
+    individual users holding that role (only the reverse: user -> roles,
+    itself org-scoped and, for custom labels specifically, further gated by
+    the same real getAssignableRoles restriction ensure_user_role()'s
+    docstring documents). Callers wanting `users` populated must add it by
+    hand.
+    """
+    r = _api_call(hostname, exec_prefix, "access.listRoles", [])
+    try:
+        roles = json.loads(r.stdout or "[]")
+    except (ValueError, TypeError):
+        roles = []
+
+    groups = []
+    for role in roles:
+        label = role.get("label")
+        if not label:
+            continue
+        perms_r = _api_call(hostname, exec_prefix, "access.listPermissions", [label])
+        try:
+            perms = json.loads(perms_r.stdout or "[]")
+        except (ValueError, TypeError):
+            perms = []
+        permissions = [
+            {"namespace": p["namespace"], "mode": (p.get("access_mode") or {}).get("value", "R")}
+            for p in perms if p.get("namespace")
+        ]
+        entry = {"label": label, "description": role.get("description") or label}
+        if permissions:
+            entry["permissions"] = permissions
+        groups.append(entry)
+    return groups
+
+
+def export_config(hostname, exec_prefix, admin, password, prefix):
+    """
+    Reads a live server's current configuration back into a dict shaped
+    exactly like a lab JSON's "smlm"/"uyuni" top-level section (same
+    <prefix>_* field names ensure_channels_synced/ensure_activation_keys/
+    ensure_system_groups/ensure_access_groups/ensure_orgs already consume)
+    — the reverse of every ensure_* function in this module. Read-only:
+    issues no write calls at all.
+
+    Covers: every software channel currently on the server
+    (<prefix>_channels), every activation key with its full detail
+    (<prefix>_activation_keys, via describe_activation_key), every system
+    group with its current members (<prefix>_system_groups, via
+    describe_system_group), the CURRENT org's own custom access groups
+    (<prefix>_access_groups, via describe_access_groups — see its own
+    docstring for the real org-scoping limit), and every OTHER org
+    (<prefix>_orgs) with its own username list (org_listusers, confirmed
+    live to work cross-org even though user.getDetails does not) — each
+    flagged with an "_export_note" key (not a real schema field — strip it
+    before use) since admin_pass/password/first_name/last_name/email can
+    never be recovered from a live server (passwords are one-way hashed)
+    and must be filled in by hand before this is usable to actually
+    recreate that org/its users elsewhere.
+    """
+    ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+
+    channels = [line.strip() for line in
+                (_spacecmd(hostname, exec_prefix, "softwarechannel_list").stdout or "").splitlines()
+                if line.strip()]
+
+    key_names = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "activationkey_list").stdout or "").splitlines()
+                 if line.strip()]
+    activation_keys = [describe_activation_key(hostname, exec_prefix, k, prefix) for k in key_names]
+
+    group_names = [line.strip() for line in
+                   (_spacecmd(hostname, exec_prefix, "group_list").stdout or "").splitlines()
+                   if line.strip()]
+    system_groups = [describe_system_group(hostname, exec_prefix, g) for g in group_names]
+
+    access_groups = describe_access_groups(hostname, exec_prefix)
+
+    org_names = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "org_list").stdout or "").splitlines()
+                 if line.strip()]
+    details = _spacecmd(hostname, exec_prefix, "user_details {}".format(shlex.quote(admin))).stdout or ""
+    m = re.search(r"^Organisation:\s*(.*)$", details, re.MULTILINE)
+    own_org = m.group(1).strip() if m else None
+
+    orgs = []
+    for org_name in org_names:
+        if org_name == own_org:
+            continue
+        users = [line.strip() for line in
+                 (_spacecmd(hostname, exec_prefix, "org_listusers {}".format(shlex.quote(org_name))).stdout
+                  or "").splitlines() if line.strip()]
+        orgs.append({
+            "name": org_name,
+            "_export_note": "admin_user/admin_pass/admin_email cannot be recovered from a live "
+                             "server (passwords are one-way hashed) — fill these in by hand before "
+                             "this org can be recreated elsewhere. 'existing_users' below is a "
+                             "best-effort username list (org_listusers); none of their own "
+                             "password/first_name/last_name/email could be recovered either "
+                             "(user.getDetails is hard org-scoped, even for a satellite_admin) — "
+                             "use it as a checklist, not a ready-to-use {}_users list.".format(prefix),
+            "existing_users": users,
+        })
+
+    result = {
+        "{}_admin".format(prefix): admin,
+        "{}_org".format(prefix): own_org or "",
+        "{}_channels".format(prefix): channels,
+    }
+    if activation_keys:
+        result["{}_activation_keys".format(prefix)] = activation_keys
+    if system_groups:
+        result["{}_system_groups".format(prefix)] = system_groups
+    if access_groups:
+        result["{}_access_groups".format(prefix)] = access_groups
+    if orgs:
+        result["{}_orgs".format(prefix)] = orgs
+    return result

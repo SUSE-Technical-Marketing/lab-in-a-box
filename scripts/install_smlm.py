@@ -7,11 +7,80 @@
 #
 # ─── JSON section: "smlm" ───────────────────────────────────────────────────────
 #
-# MANDATORY
+# OPTIONAL – deployment mode
+#   smlm_deployment        : "kubernetes" (default) = the Helm-chart deployment
+#                           documented at this file's own Kubernetes-guide
+#                           reference link above, target node is any
+#                           Kubernetes cluster's first server node.
+#                           "podman" = the traditional mgradm/podman
+#                           deployment directly on a dedicated host/VM (no
+#                           Kubernetes at all), per
+#                           documentation.suse.com/multi-linux-manager/5.2/en/
+#                           docs/installation-and-upgrade/'s own bare-metal
+#                           install guide — see setup_smlm_podman()'s own
+#                           docstring. Target node(s): any node listing
+#                           "smlm" in its own addons[] list.
+#
+# MANDATORY when smlm_deployment is "kubernetes" (the default)
 #   smlm_fqdn             : Fully-qualified domain name for the SMLM server
 #                           (e.g. "smlm.cluster1.mydemo.lab")
-#   smlm_scc_user         : SUSE Customer Center (SCC) username (mirroring credentials)
-#   smlm_scc_password     : SUSE Customer Center (SCC) password
+#   smlm_scc_user         : SUSE Customer Center (SCC) account username — used
+#                           to `podman login registry.suse.com` to pull the
+#                           chart's entitled images (mirroring credentials)
+#   smlm_scc_password     : SUSE Customer Center (SCC) account password
+#
+# MANDATORY when smlm_deployment is "podman"
+#   smlm_scc_regcode      : SUSE Customer Center (SCC) registration code —
+#                           NOT an "account"/"subscription ID": this is the
+#                           per-subscription code shown on scc.suse.com next
+#                           to each of your subscriptions, and IS what
+#                           identifies which subscription to activate against
+#                           (SUSEConnect has no separate concept of a
+#                           subscription id). Registers both the base OS
+#                           product (`SUSEConnect -r <code>`) and the SMLM
+#                           extension module (`SUSEConnect -p <product> -r
+#                           <code>`) — confirmed via documentation.suse.com/
+#                           multi-linux-manager/5.2's own server-deployment
+#                           guide.
+#
+# OPTIONAL but STRONGLY RECOMMENDED when smlm_deployment is "podman" —
+# MANDATORY in practice if smlm_channels or smlm_activation_keys are also set
+#   smlm_scc_user         : SAME field/meaning as the kubernetes-mode field
+#                           above, reused here for TWO separate reasons:
+#                           (1) `mgradm install podman` pulls SMLM's entitled
+#                           container images from registry.suse.com, which
+#                           needs its own `podman login` — separate from,
+#                           and IN ADDITION TO, the SUSEConnect host
+#                           registration above. Confirmed via the same
+#                           official doc's own "if the install fails, log in
+#                           to the registry" section — this one alone is
+#                           merely recommended, since the docs frame it as a
+#                           fallback. (2) mgr-sync has no visibility into
+#                           which channels/products are entitled until these
+#                           SAME credentials are registered as its own
+#                           "organization credentials" via `mgr-sync add
+#                           credentials` — confirmed real command (Uyuni's
+#                           own cli-sync reference), REQUIRED whenever
+#                           smlm_channels or smlm_activation_keys are set, or
+#                           the channel sync will simply never find anything
+#                           (setup_smlm_podman() dies with a clear message if
+#                           channels/activation keys are requested without
+#                           these two fields). If omitted (and no channels
+#                           requested), setup_smlm_podman() skips the
+#                           registry login and relies on SUSEConnect's own
+#                           registration alone for the image pull.
+#   smlm_scc_password     : SAME field/meaning as the kubernetes-mode field above.
+#   smlm_scc_product      : Exact SCC extension-product identifier for the
+#                           "SUSE Multi-Linux Manager" module —
+#                           `SUSEConnect -p <that> -r <smlm_scc_regcode>`.
+#                           Default (used if unset): "Multi-Linux-Manager-
+#                           Server-SLE/5.2/x86_64" — confirmed via
+#                           documentation.suse.com/multi-linux-manager/5.2's
+#                           own server-deployment guide (quoted directly, not
+#                           guessed), but that guide was published as "5.2
+#                           RC" — override this field if your real server
+#                           rejects the default once SUSE Multi-Linux
+#                           Manager 5.2 reaches GA and the identifier shifts.
 #
 # OPTIONAL – passwords/credentials
 #   smlm_db_admin_user    : DB admin username          (default: mlmadmin)
@@ -21,7 +90,17 @@
 #   smlm_reportdb_user    : Report DB username         (default: reportuser)
 #   smlm_reportdb_pass    : Report DB password         (default: reportuser123)
 #   smlm_admin_user       : SMLM web UI admin username (default: admin)
-#   smlm_admin_pass       : SMLM web UI admin password (default: admin123)
+#   smlm_admin_pass       : SMLM web UI admin password (default: admin123 for
+#                            smlm_deployment "kubernetes"; "Smlm12345" for "podman"
+#                            — mgradm's own product-specific default, matching
+#                            install_uyuni.py's own "Uyuni12345" precedent)
+#   smlm_email            : admin account email, "podman" deployment only, passed to
+#                            `mgradm install`'s own --email flag  (default: admin@lab.local)
+#   smlm_org              : organization name created at install time, "podman"
+#                            deployment only                     (default: lab)
+#   smlm_ssl_password     : password for the self-signed SSL cert `mgradm install`
+#                            generates, "podman" deployment only  (default: same as
+#                            smlm_admin_pass)
 #
 # OPTIONAL – Helm / release
 #   smlm_version          : Helm chart version         (empty = latest, e.g. "5.2.0")
@@ -151,6 +230,122 @@
 #                             libs/spacecmd_common.py for what's confirmed vs. inferred here
 #                             (trust's bidirectionality in particular).
 #
+# OPTIONAL – user accounts. List of objects, usable at the top level (scoped to the default
+# org) or nested inside an smlm_orgs entry (scoped to that org — same field name either way).
+# Runs automatically on every install (idempotent), BEFORE smlm_access_groups below so its own
+# "users" list can reference an account defined here:
+#   smlm_users                 : [{
+#                                 "username": "...", "password": "...", "first_name": "...",
+#                                 "last_name": "...", "email": "...", "pam": false,
+#                                 "roles": ["channel_admin", ...]   # optional, see below
+#                               }, ...]
+#                             password/first_name/last_name/email are required to create the
+#                             account (skipped — not idempotent-creatable — otherwise, same
+#                             convention as an org's own admin_user/admin_pass/admin_email).
+#                             "roles" are applied on every run via spacecmd's native user_addrole
+#                             (idempotent — diffed against the user's current roles first), but
+#                             ONLY use it for one of the fixed labels from 'spacecmd
+#                             user_listavailableroles' (activation_key_admin, channel_admin,
+#                             config_admin, image_admin, org_admin, regular_user, satellite_admin,
+#                             system_group_admin) — those always exist. Do NOT put a custom access
+#                             group's own label here: smlm_users runs BEFORE smlm_access_groups
+#                             below (an access group's own "users" list needs the account to
+#                             already exist), so the custom role wouldn't exist yet and
+#                             user_addrole would fail. Attach a user to a custom group the other
+#                             way instead — list their username in that group's own "users" field
+#                             below, which runs in the correct order.
+#
+# OPTIONAL – autoinstall trees ("Kickstart Distributions") and Kickstart/AutoYaST profiles.
+# Distributions run automatically on every install (idempotent), BEFORE smlm_activation_key* so a
+# kickstart profile below can reference one; profiles run AFTER activation keys, so
+# activation_keys entries can link to a real key. See libs/spacecmd_common.py's
+# ensure_distribution()/ensure_kickstart_profile() for the full real-server behavior confirmed
+# live 2026-09-16 (most importantly: distribution_create itself VALIDATES that `path` already
+# contains a real, extracted installer tree — this module cannot create or upload one):
+#   smlm_distributions         : [{
+#                                 "name": "...", "path": "/srv/www/htdocs/pub/install-trees/...",
+#                                 "base_channel": "...", "install_type": "sles15generic"
+#                               }, ...]
+#                             `path` must already exist on the SERVER's own filesystem with a
+#                             real extracted product ISO/installer tree under it (e.g. mount the
+#                             ISO with `mount -o loop` and copy/rsync it there out of band first)
+#                             — distribution_create dies with a clear "initrd could not be found"
+#                             error otherwise. `install_type` is one of the labels
+#                             `distribution_create --help` lists on the target server (changes per
+#                             SMLM/Uyuni release — e.g. sles15generic, sles16generic, rhel_9,
+#                             generic_rpm).
+#   smlm_kickstart_profiles    : [{
+#                                 "name": "...", "distribution": "...", "root_password": "...",
+#                                 "virt_type": "none",   # default; or para_host/qemu/xenfv/xenpv
+#                                 "variables": {"key": "value", ...},
+#                                 "activation_keys": ["..."], "child_channels": ["..."]
+#                               }, ...]
+#                             `distribution` is a NAME REFERENCE into smlm_distributions above
+#                             (define it there, not inline here). root_password is ONLY used at
+#                             creation time — spacecmd hashes it server-side and there is no API
+#                             to read or change it back on a repeat run, so a changed password
+#                             needs the profile deleted and recreated. variables/activation_keys/
+#                             child_channels are all applied idempotently on every run (diffed
+#                             against the server's own current list first).
+#
+# OPTIONAL – server self-monitoring (Admin -> Manager Configuration -> Monitoring in the Web UI).
+# Confirmed live 2026-09-16 against documentation.suse.com/suma/5.2's own Monitoring guide AND the
+# real AdminMonitoringHandler.java source: this enables the node/tomcat/postgres/taskomatic
+# exporters ALREADY BUNDLED in the server image (a pure on/off toggle, takes no arguments of its
+# own) — it does NOT point the server at an external Prometheus. Uyuni's monitoring model is
+# pull-based: an EXTERNAL Prometheus (e.g. the "prometheus" addon, install_prometheus.py) scrapes
+# THIS server's own exposed exporter ports; the server never pushes to one.
+#   smlm_monitoring_enabled    : "true" to enable (default: unset/false, no-op). Idempotent —
+#                             checked against the server's own admin.monitoring.getStatus first.
+#                             Restarts Tomcat/Taskomatic ONLY on the disabled->enabled transition
+#                             (required per the official docs for the exporters to actually start
+#                             listening — confirmed live), never on an already-enabled server.
+#                             Real exporter ports to open on this server's firewall/AWS security
+#                             group (aws_open_ports) for a remote Prometheus to reach it: 9100
+#                             (node), 9187 (postgres), 5556 (tomcat JMX), 5557 (taskomatic JMX),
+#                             9800 (taskomatic direct) — plus the existing web port (80/443) for
+#                             the message-queue job at metrics path /rhn/metrics (confirmed live,
+#                             same doc page).
+#
+# OPTIONAL – image management (Images -> Stores/Profiles/Build/Import in the Web UI). API-only —
+# confirmed live 2026-09-16 that spacecmd has NO native subcommand for any of this; every call goes
+# through the raw 'api' passthrough against image.store.*/image.profile.*/image.* (three separate
+# handler classes — see libs/spacecmd_common.py). Stores run automatically on every install
+# (idempotent), BEFORE profiles below (a profile references a store by label):
+#   smlm_image_stores          : [{
+#                                 "label": "...", "uri": "registry.suse.com",
+#                                 "type": "registry" | "os_image",
+#                                 "username": "...", "password": "..."   # both optional — omit
+#                                                                        # for a public registry
+#                               }, ...]
+#                             `type` must be one of the labels the target server's own
+#                             image.store.listImageStoreTypes returns ("registry"/"os_image" on a
+#                             stock SMLM 5.2 server, confirmed live — re-check on other versions).
+#                             registry.suse.com needs no credentials at all for SUSE's own public
+#                             images (confirmed live).
+#   smlm_image_profiles        : [{
+#                                 "label": "...", "type": "dockerfile" | "kiwi",
+#                                 "store": "...",    # NAME REFERENCE into smlm_image_stores above
+#                                 "path": "https://github.com/USER/project.git#branch:folder",
+#                                 "activation_key": "..."   # mandatory per the official docs —
+#                                                            # determines which channels the
+#                                                            # build/import can see
+#                               }, ...]
+#   smlm_image_imports         : [{
+#                                 "name": "...", "version": "latest", "store": "...",
+#                                 "build_host_id": 1000010001,   # NUMERIC Uyuni system id of an
+#                                                                 # already-registered system with
+#                                                                 # the "Container Build Host"
+#                                                                 # entitlement enabled — this
+#                                                                 # module cannot enable that
+#                                                                 # itself; findable via
+#                                                                 # 'spacecmd system_list'
+#                                 "activation_key": "..."        # optional
+#                               }, ...]
+#                             Run with:  install_smlm.py <lab.json> --import-images
+#                             (never runs automatically — scheduling an import is not idempotent,
+#                             same reasoning as --run-ansible-playbooks/--run-clm-actions).
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
 # smlm_orgs entry (scoped to that org — same field name either way):
@@ -158,12 +353,12 @@
 #                                 "label": "...", "description": "...",
 #                                 "permissions_from": ["existing-role-label", ...],
 #                                 "permissions": [{"namespace": "...", "mode": "R" | "W"}, ...],
-#                                 "users": ["existing-username", ...]
+#                                 "users": ["username", ...]
 #                               }, ...]
-#                             Does NOT create user accounts — every name in "users" must already
-#                             exist (e.g. an org's own admin_user above) or attaching the role
-#                             fails with a clear error. Every access_* operation goes through the
-#                             raw 'api' passthrough (spacecmd has no native subcommand for this
+#                             Each username must exist by the time this runs — defined above via
+#                             smlm_users, or an org's own admin_user, or attaching the role fails
+#                             with a clear error. Every access_* operation goes through the raw
+#                             'api' passthrough (spacecmd has no native subcommand for this
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
@@ -273,6 +468,19 @@
 #                             install_smlm.py <lab.json> --run-recurring-schedules (never automatic
 #                             — recurring-action idempotency was never confirmed).
 #
+# READ-ONLY — export a live server's own current configuration back into JSON shaped like
+# this "smlm" section (channels, activation keys, system groups, the calling admin's own org's
+# custom access groups, and a best-effort username list for every OTHER org), instead of
+# installing anything. Never runs automatically. Prints to stdout, or writes to a file:
+#   install_smlm.py <lab.json> --export-config [output.json]
+# Real, confirmed limits (see libs/spacecmd_common.py's export_config()/describe_access_groups()
+# for the full detail): passwords can never be recovered (one-way hashed server-side) — every
+# smlm_orgs entry's admin_pass and any smlm_users entry's password must be filled in by hand
+# before the result is usable to actually recreate that org/its users elsewhere. A custom access
+# group's own member list is only exportable for the CALLING session's own org — user.getDetails
+# and access.listRoles are both hard org-scoped, even for a satellite_admin (same constraint
+# ensure_user_role()'s own docstring documents on the write side).
+#
 # NOTE: RKE2 (default) or K3s, with Traefik. On RKE2, Traefik is enabled
 #       through the 'ingress-controller' option and the extra TCP ports 4505,
 #       4506 (Salt) and 5432 (report DB) are exposed via a rke2-traefik
@@ -283,12 +491,20 @@ __version__ = "39753e7"
 
 PLUGIN = {
     "name": "smlm",
-    "targets": ["container"],
-    "layers": ["kubernetes"],
+    # "container"/"kubernetes" is the original Helm-chart deployment (smlm_deployment
+    # unset or "kubernetes", the default — unchanged). "vm"/"baremetal"/"standalone-
+    # container" is the traditional mgradm/podman deployment (smlm_deployment: "podman",
+    # added 2026-09-11 — see setup_smlm_podman()'s own docstring) — the two modes are
+    # dispatched completely differently in main() below, so both target shapes are
+    # listed here rather than picking one.
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["kubernetes", "standalone-container"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }
 
+import json
+import os
 import shlex
 import subprocess
 import sys
@@ -303,19 +519,493 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, die, log  # noqa: E402
+from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log  # noqa: E402
 
 
 def _validate(v):
-    v.vreq("smlm", "smlm_fqdn")
-    v.vreq("smlm", "smlm_scc_user")
-    v.vreq("smlm", "smlm_scc_password")
+    cfg = v.definition.get("smlm", {}) or {}
+    if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
+        # Traditional mgradm/podman deployment (see setup_smlm_podman()) — no
+        # Kubernetes cluster/fqdn-for-ingress fields apply here at all.
+        # smlm_scc_product has a real, confirmed default (see the JSON
+        # section comment above) so it's not required here; smlm_scc_regcode
+        # has no possible default (per-customer) and always is.
+        # smlm_scc_user/smlm_scc_password are recommended (needed for
+        # `podman login registry.suse.com`) but not unconditionally
+        # required — setup_smlm_podman() degrades to relying on SUSEConnect
+        # alone if they're absent, per the official docs' own framing of the
+        # registry login as a fallback, not a strict prerequisite. They
+        # BECOME required the moment smlm_channels/smlm_activation_keys are
+        # also set, since mgr-sync has no other way to learn which channels
+        # are entitled (see setup_smlm_podman()'s own die() for the runtime
+        # version of this same check).
+        v.vreq("smlm", "smlm_scc_regcode")
+        if cfg.get("smlm_channels") or cfg.get("smlm_activation_keys"):
+            v.vreq("smlm", "smlm_scc_user")
+            v.vreq("smlm", "smlm_scc_password")
+    else:
+        v.vreq("smlm", "smlm_fqdn")
+        v.vreq("smlm", "smlm_scc_user")
+        v.vreq("smlm", "smlm_scc_password")
     v.vns("smlm")
     v.vver("smlm")
     v.vbool("smlm", "smlm_super_privileged")
     v.vbool("smlm", "smlm_db_ha")
     v.vbool("smlm", "smlm_db_ha_sync")
     v.vport("smlm", "smlm_db_ha_replicas")
+
+
+# ─── Traditional (mgradm/podman) deployment — added 2026-09-11 ─────────────
+# User request: install_uyuni.py must refer ONLY to the open-source Uyuni
+# project; a genuine SMLM install needs its own real deployment path, not
+# borrowed Uyuni branding — per documentation.suse.com/multi-linux-manager/
+# 5.2's own container-deployment/mlm/ vs container-deployment/uyuni/ page
+# split (both exist as parallel, officially documented install guides for
+# the SAME mgradm/podman tool, just sourced from different repos/registries).
+
+def setup_smlm_podman(hostname, virt_srv, cfg):
+    """
+    Install SUSE Multi-Linux Manager the traditional way: mgradm/podman
+    directly on a dedicated host/VM, no Kubernetes at all. Reuses
+    libs/mgradm_common.py's proven mgradm-install/container-health-wait
+    helpers (run_install_with_pg_hba_guard/ensure_server_container_active —
+    shared with install_uyuni.py, not duplicated, since that logic works
+    around a real, subtly-timed upstream mgradm/podman/postgres-image race
+    condition confirmed live 2026-08-28; moved to libs/ 2026-09-12 after a
+    real deployed-environment failure — `from install_uyuni import ...`
+    raised ModuleNotFoundError once install_uyuni.py was actually deployed
+    without its .py suffix, confirmed live running setup_lab.py for real —
+    see mgradm_common.py's own docstring) — the underlying tool and
+    container mechanics are identical between Uyuni and SMLM; what genuinely
+    differs is where mgradm/mgrctl and the server's own container images
+    come from.
+
+    install_uyuni.py adds Uyuni's own free community OBS repo — no
+    entitlement needed, by design (open source). A real SMLM install instead
+    needs the host registered against SCC with the actual SUSE Multi-Linux
+    Manager module, so mgradm/mgrctl — and the entitled images mgradm itself
+    pulls later from registry.suse.com — are the real, licensed product, not
+    the community build. Confirmed against documentation.suse.com/
+    multi-linux-manager/5.2's own server-deployment guide (quoted directly,
+    2026-09-12 — this corrected an earlier version of this function that
+    only did the SUSEConnect step and neither installed podman on a plain
+    SLES base nor logged into the image registry, both of which the real
+    docs show as necessary):
+      - smlm_scc_regcode : the SCC registration code for the base SLES/SL
+                            Micro product (`SUSEConnect -r <code>`) — this
+                            is NOT a separate "subscription ID": the regcode
+                            itself is what identifies which subscription to
+                            activate against, there's no other identifier.
+                            ALSO passed to the module registration below
+                            (`-p <product> -r <code>`, confirmed from docs —
+                            an earlier version of this code omitted -r there).
+      - smlm_scc_product : the exact SCC extension-product identifier for
+                            the "SUSE Multi-Linux Manager" module. Defaults
+                            to "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
+                            (quoted directly from the official docs, not
+                            guessed) if unset — override if a future GA
+                            release renames it.
+      - smlm_scc_user/smlm_scc_password : SCC account credentials (NOT the
+                            regcode) for `podman login registry.suse.com` —
+                            the docs' own troubleshooting section shows this
+                            as needed when the image pull isn't already
+                            authorized through the SUSEConnect registration
+                            alone. Optional here (skipped with a warning if
+                            unset) since the docs frame it as a fallback,
+                            not always strictly required.
+      - On plain SLES 15 SP7 (not SL Micro), podman is NOT preinstalled and
+        needs its own free module (`SUSEConnect -p sle-module-containers/
+        15.7/x86_64`) plus `zypper in podman` + enabling the podman socket —
+        confirmed from the same docs. SL Micro ships podman by default, same
+        assumption install_uyuni.py's own (Micro-only) code already made.
+
+    NOT live-tested (no real SCC registration code available in this
+    project's dev/CI environment) — the mgradm/podman install portion itself
+    reuses install_uyuni.py's own live-tested mechanism verbatim; everything
+    else in this function is new and unverified against a real server.
+    """
+    from mgradm_common import run_install_with_pg_hba_guard, ensure_server_container_active
+
+    regcode = cfg.get("smlm_scc_regcode")
+    product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
+    email = cfg.get("smlm_email") or "admin@lab.local"
+
+    print("- Registering the host with SCC")
+    ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
+    # sle-module-containers MUST be registered before the SMLM extension
+    # itself — confirmed live 2026-09-13: SCC's own registration server
+    # rejects the SMLM module outright ("requires one of these products to
+    # be activated first: Containers Module 15 SP7 x86_64", HTTP 422) if
+    # attempted first. An earlier version of this function registered the
+    # containers module later, only in the plain-SLES package-install
+    # branch below (where it's ALSO needed, for podman itself) — too late
+    # for this dependency check, which happens regardless of base OS. Free
+    # module, no regcode needed, same as the official docs' own example.
+    ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
+    r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
+                check=False)
+    if r.returncode != 0:
+        die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
+            "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
+            "own docstring for how to find it)".format(product, hostname))
+
+    scc_user = cfg.get("smlm_scc_user")
+    scc_password = cfg.get("smlm_scc_password")
+    if scc_user and scc_password:
+        # Separate from the SUSEConnect registration above: mgradm pulls
+        # SMLM's entitled container images from registry.suse.com, which
+        # needs its own podman login, per the docs' own troubleshooting
+        # section (see this function's own docstring).
+        print("- Logging into registry.suse.com")
+        ssh_run(hostname, "echo {} | podman login -u {} --password-stdin registry.suse.com".format(
+            shlex.quote(scc_password), shlex.quote(scc_user)), check=False)
+    else:
+        print("- smlm_scc_user/smlm_scc_password not set — skipping podman login to "
+              "registry.suse.com; relying on SUSEConnect registration alone to authorize "
+              "the image pull (see setup_smlm_podman()'s own docstring)")
+
+    print("- Installing mgradm tooling")
+    pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
+    is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
+    if is_transactional:
+        # SL Micro base — ships podman by default; package changes land in a
+        # new snapshot that only takes effect after a reboot, same as
+        # install_uyuni.py's own (Micro-only) assumption.
+        ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
+        reboot_vm(virt_srv, hostname)
+        time.sleep(5)
+        check_ssh_conn(hostname)
+    else:
+        # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
+        # does NOT ship podman by default; needs an explicit podman
+        # install/enable first (confirmed from the official docs). The
+        # containers module itself is already registered above, before the
+        # SMLM module registration attempt — no need to repeat it here.
+        ssh_run(hostname, "zypper --non-interactive install -y podman")
+        ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+        ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
+
+    print("- Installing SUSE Multi-Linux Manager server")
+    admin = cfg.get("smlm_admin_user") or "admin"
+    password = cfg.get("smlm_admin_pass") or "Smlm12345"
+    org = cfg.get("smlm_org") or "lab"
+    # Same flag set as install_uyuni.py's own live-verified `mgradm install
+    # podman ...` invocation (mgradm/podman mechanics are identical between
+    # the two products) — see that script's own comment on why --admin-email
+    # doesn't exist (it's the top-level --email flag instead). Every value
+    # shell-quoted — confirmed live 2026-09-13: an unquoted multi-word
+    # --organization ("SUSE Test") got split by the remote shell into
+    # `--organization SUSE` plus a stray `Test` token, which mgradm then
+    # misinterpreted as its own optional FQDN positional argument ("Test is
+    # not a valid FQDN"). install_uyuni.py has this identical latent bug —
+    # never touched here (still Uyuni-only, per the user's own instruction),
+    # but its own uyuni_org just never happened to contain a space.
+    install_cmd = (
+        "mgradm install podman "
+        "--admin-login {} "
+        "--admin-password {} "
+        "--email {} "
+        "--ssl-password {} "
+        "--organization {}".format(
+            shlex.quote(admin), shlex.quote(password), shlex.quote(email),
+            shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
+    run_install_with_pg_hba_guard(hostname, install_cmd)
+
+    time.sleep(60)
+    ssh_run(hostname, "reboot", check=False)
+    time.sleep(5)
+    check_ssh_conn(hostname)
+    ensure_server_container_active(hostname)
+
+    print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
+
+    # smlm_channels is a JSON array in every real lab definition (see the
+    # JSON section's own docs), but this variable's "or ''" default and the
+    # later plain .format(channels) both assumed a pre-joined string — a
+    # real, confirmed-live 2026-09-14 bug: .format() on a Python list just
+    # stringifies its repr ("['a', 'b']"), producing ONE malformed shell
+    # argument instead of space-separated channel labels, so `mgr-sync add
+    # channels` was never actually invoked correctly in any run before now.
+    # Accept either shape (a list, the real-world case, or a pre-joined
+    # string, kept for backward compatibility) and always build the actual
+    # command from a normalized list.
+    channels = cfg.get("smlm_channels") or []
+    if isinstance(channels, str):
+        channels = channels.split()
+
+    # Real bug found live 2026-09-14: an activation key's own
+    # *_activation_key_child_channels (e.g. the "managertools-*" channels
+    # that actually provide venv-salt-minion) are only ever REFERENCED by
+    # ensure_activation_key()'s own activationkey_addchildchannels call —
+    # nothing ever adds those channels to the server in the first place if
+    # they're not also separately listed in smlm_channels. The link call
+    # then fails with "Invalid channel" (previously silent — see
+    # ensure_activation_key()'s own fix in spacecmd_common.py), and every
+    # client bootstrapped against that key gets the wrong tooling package
+    # with no visible error anywhere: confirmed live, this is why a real
+    # SLES15 client kept getting classic salt-minion instead of SUSE's own
+    # venv-salt-minion (the bootstrap script's own venv-enabled marker file
+    # 404s until its owning channel is actually synced), and the SMLM
+    # server's hardened salt-master then rejected it outright ("protocol
+    # version 2, minimum required 3"). Fold every activation key's own
+    # child channels into what actually gets synced, deduplicated against
+    # smlm_channels, so this can't happen silently again.
+    for key_cfg in ([cfg] + list(cfg.get("smlm_activation_keys") or [])):
+        for c in (key_cfg.get("smlm_activation_key_child_channels") or "").split():
+            if c not in channels:
+                channels.append(c)
+
+    if channels or cfg.get("smlm_activation_keys"):
+        # Unlike the podman-registry login above (a fallback the docs frame
+        # as optional), this step IS required: mgr-sync has no visibility
+        # into which channels/products are entitled until the server's own
+        # SCC "organization credentials" (mirror credentials) are registered
+        # via `mgr-sync add credentials` — confirmed real command (Uyuni's
+        # own cli-sync reference: `add` covers "channels, organization
+        # credentials, or products").
+        #
+        # Confirmed live 2026-09-14 (real SMLM 5.2 server) the actual
+        # non-interactive prompt shape, which this project's earlier guesses
+        # (SCC user/password only, then a 4-line admin+SCC-pair guess) both
+        # got wrong: `mgr-sync add credentials` asks for FIVE lines total —
+        # first a Login/Password pair for the server's own local admin
+        # account (smlm_admin/smlm_password, the account `mgradm install`
+        # just created; this round is printed under a "Please enter the
+        # credentials of SUSE Multi-Linux Manager Administrator" banner),
+        # THEN three more prompts for the real SCC mirror credentials:
+        # "User to add:", "Password to add:", and "Confirm password:" (the
+        # SCC password a second time). Feeding fewer lines left a later
+        # prompt waiting forever and the whole call died silently — a
+        # local-admin-only 2-line feed died with "General error: EOF when
+        # reading a line" at the SCC "User to add:" prompt; a 4-line feed
+        # (missing the confirmation) died with a bare "General error:" at
+        # "Confirm password:" — both silent, unnoticed no-ops under this
+        # function's own check=False. Verified live: this exact 5-line
+        # sequence gets "Successfully added credentials."
+        if not (scc_user and scc_password):
+            die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
+                "are not — mgr-sync cannot see any entitled channels without the SCC organization "
+                "credentials registered on '{}' first (`mgr-sync add credentials`)".format(hostname))
+        print("- Registering SCC organization (mirror) credentials with mgr-sync")
+        # -i is required: confirmed live (libs/spacecmd_common.py's own
+        # _run() docstring, 2026-08-28) that `mgrctl exec` does NOT forward
+        # stdin unless given -i explicitly — omitting it here would silently
+        # send this input_text nowhere instead of erroring.
+        ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
+                input_text="{}\n{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password, scc_password),
+                check=False)
+
+    if channels:
+        count = 0
+        print("- Waiting for channel list to sync")
+        while True:
+            time.sleep(10)
+            count += 1
+            print("Retry {}".format(count), end="\r")
+            out = ssh_run(hostname, "mgrctl exec -- mgr-sync list channels 2>/dev/null",
+                          check=False, capture=True).stdout or ""
+            if any("no channels found." not in line.lower() for line in out.splitlines()):
+                break
+        time.sleep(300)
+        channel_args = " ".join(shlex.quote(c) for c in channels)
+        ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
+        ensure_channel_sync_monitor(hostname, admin, password)
+
+    sync_channels = (cfg.get("smlm_sync_channels") or "").split()
+    config_channels = cfg.get("smlm_config_channels") or []
+    orgs = cfg.get("smlm_orgs") or []
+    access_groups = cfg.get("smlm_access_groups") or []
+    ansible_paths = cfg.get("smlm_ansible_paths") or []
+    content_projects = cfg.get("smlm_content_projects") or []
+    activation_keys = cfg.get("smlm_activation_keys") or []
+    system_groups = cfg.get("smlm_system_groups") or []
+    custom_info_keys = cfg.get("smlm_custom_info_keys") or []
+    system_tags = cfg.get("smlm_system_tags") or []
+    environments = cfg.get("smlm_environments") or []
+    distributions = cfg.get("smlm_distributions") or []
+    kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    image_stores = cfg.get("smlm_image_stores") or []
+    image_profiles = cfg.get("smlm_image_profiles") or []
+    if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
+            or access_groups or ansible_paths or content_projects or activation_keys
+            or system_groups or custom_info_keys or system_tags or environments
+            or distributions or kickstart_profiles or image_stores or image_profiles
+            or cfg.get("smlm_monitoring_enabled")):
+        exec_prefix = "mgrctl exec --"
+        sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
+        sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        # System groups BEFORE any activation key: ensure_activation_key()/
+        # ensure_activation_keys() link a key to <prefix>_activation_key_groups
+        # via activationkey_addgroups, which dies if the named group doesn't
+        # exist yet server-side — confirmed live 2026-09-15 ("Unable to locate
+        # or access server group: 'prod'") the first time a lab actually
+        # combined smlm_system_groups with smlm_activation_key_groups.
+        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        # Kickstart profiles AFTER activation keys: a profile can link to one
+        # via kickstart_addactivationkeys, which needs the key to already exist
+        # — same ordering reasoning as system groups vs activation keys above.
+        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
+
+
+_CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
+# Installed by lab-in-a-box's install_smlm.py (ensure_channel_sync_monitor) —
+# checks every software channel present on this SMLM server for a clean,
+# completed reposync, and re-triggers any that never synced, errored, or
+# were left interrupted by something like a mid-flight server restart. Runs
+# periodically via smlm-channel-sync-monitor.timer (see the matching
+# .service unit next to this file).
+#
+# Triggers AT MOST ONE resync per run — confirmed live 2026-09-14:
+# spacewalk-repo-sync only ever allows a single instance system-wide
+# ("attempting to run more than one instance... Exiting"), and taskomatic
+# does not automatically retry a collision. Triggering every pending
+# channel each run (the original behavior) caused this project's own
+# monitor to self-collide with itself: taskomatic tried to launch several
+# at once, only one ever actually got the lock, and every other channel
+# lost the race, got no log file, and sat untried for a full cycle since
+# nothing else prompted a retry sooner. Firing one at a time, and only when
+# nothing is already running, means every trigger this monitor issues has
+# a real, uncontested chance to actually run.
+set -uo pipefail
+
+LOG_DIR=/var/log/rhn/reposync
+LOGFILE=/var/log/smlm-channel-sync-monitor.log
+ADMIN=__ADMIN__
+PASSWORD=__PASSWORD__
+
+log() {
+    echo "$(date -Is) $*" >> "$LOGFILE"
+}
+
+spacecmd_() {
+    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>/dev/null
+}
+
+if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
+    log "a reposync is already running -- nothing to trigger this cycle"
+    exit 0
+fi
+
+CHANNELS=$(spacecmd_ softwarechannel_list)
+if [ -z "$CHANNELS" ]; then
+    log "no software channels found on the server -- nothing to check"
+    exit 0
+fi
+
+for channel in $CHANNELS; do
+    reposync_log="$LOG_DIR/$channel.log"
+    reason=""
+
+    if ! podman exec uyuni-server test -f "$reposync_log"; then
+        reason="never synced (no reposync log)"
+    else
+        tail_lines=$(podman exec uyuni-server tail -n 20 "$reposync_log" 2>/dev/null)
+        if echo "$tail_lines" | tail -n 3 | grep -qF "Sync completed."; then
+            continue
+        elif echo "$tail_lines" | grep -qiE 'error|traceback'; then
+            reason="last reposync log shows an error"
+        elif ! podman exec uyuni-server pgrep -f "spacewalk-repo-sync --channel $channel " >/dev/null 2>&1; then
+            reason="incomplete reposync log with no active sync process (interrupted)"
+        fi
+    fi
+
+    if [ -n "$reason" ]; then
+        log "channel '$channel': $reason -- triggering resync"
+        spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
+        exit 0
+    fi
+done
+"""
+
+_CHANNEL_SYNC_MONITOR_SERVICE = """[Unit]
+Description=Check SMLM software channels for a failed/interrupted reposync and retry
+After=uyuni-server.service
+Wants=uyuni-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smlm-channel-sync-monitor.sh
+"""
+
+_CHANNEL_SYNC_MONITOR_TIMER = """[Unit]
+Description=Periodically check SMLM software channels for a failed/interrupted reposync
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def ensure_channel_sync_monitor(hostname, admin, password):
+    """
+    Deploys a HOST-level (not container-internal) systemd service+timer that
+    periodically checks every software channel present on the SMLM server
+    for a clean, completed reposync, and re-triggers any that never synced,
+    errored, or were left interrupted — confirmed live 2026-09-14 that a
+    mid-flight `mgradm restart` orphaned exactly this kind of stuck,
+    half-downloaded channel log (no "Sync completed." line, no error either,
+    just abandoned) with nothing to notice or recover on its own.
+
+    Deliberately host-level, not inside the uyuni-server container itself:
+    that container runs with `--rm` and is fully recreated (fresh
+    filesystem, `/etc` included — only the explicit named volumes survive)
+    on every restart/upgrade, so anything installed inside it — including a
+    systemd timer — would be silently lost the next time mgradm or systemd
+    recycles it. The host's own systemd is not ephemeral, matching how
+    uyuni-server.service/uyuni-db.service themselves already manage the
+    container from outside it. The monitor script itself just reaches in via
+    `podman exec uyuni-server ...` for every actual check/action, the same
+    way this project's own live troubleshooting did tonight.
+
+    Failure detection, per channel (matching each channel's own
+    /var/log/rhn/reposync/<label>.log inside the container):
+      - no log file at all -> never synced
+      - last lines contain "error"/"traceback" -> failed
+      - doesn't end with "Sync completed." AND no spacewalk-repo-sync
+        process is currently running for that channel -> interrupted
+      - otherwise (ends with "Sync completed.") -> healthy, left alone
+
+    Re-trigger uses `spacecmd softwarechannel_syncrepos <label>` (confirmed
+    live, real command, verified it actually resumes a stuck sync) rather
+    than `mgr-sync sync channel <label>` — the latter needs the same
+    fragile interactive multi-round credential prompt as `mgr-sync add
+    credentials` (see that function's own docstring), unsafe to script
+    unattended from a timer.
+    """
+    script = _CHANNEL_SYNC_MONITOR_SCRIPT.replace(
+        "__ADMIN__", shlex.quote(admin)).replace("__PASSWORD__", shlex.quote(password))
+
+    print("- Installing the channel-sync failure monitor (checks every 30 min)")
+    ssh_run(hostname, "cat > /usr/local/sbin/smlm-channel-sync-monitor.sh <<'EOF'\n{}EOF".format(script),
+            check=False)
+    ssh_run(hostname, "chmod 755 /usr/local/sbin/smlm-channel-sync-monitor.sh", check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.service <<'EOF'\n{}EOF".format(
+        _CHANNEL_SYNC_MONITOR_SERVICE), check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.timer <<'EOF'\n{}EOF".format(
+        _CHANNEL_SYNC_MONITOR_TIMER), check=False)
+    ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-channel-sync-monitor.timer",
+            check=False)
 
 
 # ─── Traefik configuration ───────────────────────────────────────────────────
@@ -749,27 +1439,63 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
     custom_info_keys = cfg.get("smlm_custom_info_keys") or []
     system_tags = cfg.get("smlm_system_tags") or []
     environments = cfg.get("smlm_environments") or []
+    distributions = cfg.get("smlm_distributions") or []
+    kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    image_stores = cfg.get("smlm_image_stores") or []
+    image_profiles = cfg.get("smlm_image_profiles") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
-            or system_groups or custom_info_keys or system_tags or environments):
+            or system_groups or custom_info_keys or system_tags or environments
+            or distributions or kickstart_profiles or image_stores or image_profiles
+            or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
         admin_user = cfg.get("smlm_admin_user") or "admin"
         admin_pass = cfg.get("smlm_admin_pass") or "admin123"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
         sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
         sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin_user, admin_pass)
+
+
+def export_smlm_config(hostname, exec_prefix, cfg, output_path=None):
+    """
+    Reads `hostname`'s live SMLM configuration back into JSON shaped
+    exactly like a lab definition's "smlm" section (see
+    libs/spacecmd_common.py's export_config() for exactly what's covered
+    and its real, confirmed-live limits — most notably: activation keys,
+    channels, and system groups round-trip cleanly, but user/org
+    passwords can never be recovered, since they're one-way hashed
+    server-side). Prints the result as pretty JSON to stdout, or writes it
+    to `output_path` if given. Read-only — issues no write calls at all.
+    """
+    admin = cfg.get("smlm_admin_user") or "admin"
+    password = cfg.get("smlm_admin_pass") or "Smlm12345"
+    result = sc.export_config(hostname, exec_prefix, admin, password, "smlm")
+    text = json.dumps(result, indent=2)
+    if output_path:
+        Path(output_path).write_text(text + "\n")
+        print("# Wrote live config from '{}' to {}".format(hostname, output_path), file=sys.stderr)
+        print("# Review the _export_note field(s) under smlm_orgs before using this — "
+              "passwords could not be recovered and must be filled in by hand.", file=sys.stderr)
+    else:
+        print(text)
 
 
 def run_ansible_playbooks(hostname, cfg):
@@ -893,6 +1619,59 @@ def main():
 
     cfg = definition.get("smlm", {}) or {}
 
+    # "podman" deployment — traditional mgradm/podman install directly on a
+    # dedicated host/VM, no Kubernetes cluster involved at all (see
+    # setup_smlm_podman()'s own docstring). Dispatched via k8s.addon_nodes()
+    # (any node with "smlm" in its addons[] list), same shape as
+    # install_uyuni.py's own main() — NOT k8s.first_server_node(), which only
+    # makes sense for the Kubernetes/Helm-chart deployment below.
+    if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
+        if not cfg.get("smlm_scc_regcode"):
+            print("ERROR: smlm_scc_regcode is required in the 'smlm' JSON section "
+                  "when smlm_deployment is 'podman'", file=sys.stderr)
+            sys.exit(1)
+
+        config = primary.load_config()
+        virt_srv = config.get("VIRT_SRV", "")
+        env_vm_name = os.environ.get("_vm_name") or None
+
+        # Read-only: dump the target's LIVE configuration back into JSON
+        # instead of installing — see export_smlm_config()'s own docstring.
+        # Optional 4th arg is an output file path; without it, prints to
+        # stdout. Never runs automatically.
+        if len(sys.argv) > 2 and sys.argv[2] == "--export-config":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            if len(nodes) > 1:
+                print("WARNING: multiple 'smlm' nodes found — exporting only the first ({})".format(
+                    nodes[0][0]), file=sys.stderr)
+            export_smlm_config(nodes[0][0], "mgrctl exec --", cfg,
+                                sys.argv[3] if len(sys.argv) > 3 else None)
+            return
+
+        # Schedule smlm_image_imports instead of installing when requested —
+        # deliberately a separate, explicit trigger, same reasoning as
+        # --run-ansible-playbooks: scheduling an import is not idempotent
+        # (each call creates a brand-new action).
+        if len(sys.argv) > 2 and sys.argv[2] == "--import-images":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
+            setup_smlm_podman(vm_name, virt_srv, cfg)
+        return
+
     if not cfg.get("smlm_fqdn"):
         print("ERROR: smlm_fqdn is required in the 'smlm' JSON section", file=sys.stderr)
         sys.exit(1)
@@ -918,6 +1697,16 @@ def main():
     # function call).
     if len(sys.argv) > 2 and sys.argv[2] == "--test-failover":
         smlm_db_failover_test(vm_name, cfg)
+        return
+
+    # Read-only: dump the target's LIVE configuration back into JSON instead
+    # of installing — see export_smlm_config()'s own docstring. Optional 4th
+    # arg is an output file path; without it, prints to stdout. Never runs
+    # automatically.
+    if len(sys.argv) > 2 and sys.argv[2] == "--export-config":
+        ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
+        export_smlm_config(vm_name, "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns), cfg,
+                            sys.argv[3] if len(sys.argv) > 3 else None)
         return
 
     # Schedule smlm_ansible_playbooks instead of installing when requested —

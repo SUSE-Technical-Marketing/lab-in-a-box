@@ -65,7 +65,7 @@
         <interpreter>shell</interpreter>
         <source><![CDATA[#!/bin/sh
 mkdir -p /root/.ssh
-echo "$ROOT_SSH_KEY" >> /root/.ssh/authorized_keys
+echo "$ROOT_SSH_PUBKEY" >> /root/.ssh/authorized_keys
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 ]]></source>

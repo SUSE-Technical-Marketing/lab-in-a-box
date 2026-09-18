@@ -104,6 +104,22 @@ check("phase_vm_addons: runs on the owning node", all(env["_vm_name"] == "vm1" f
 check("phase_vm_addons: a node with no addons is skipped entirely",
       not any("vm2" == env.get("_vm_name") for _, env in run_calls))
 
+# A node whose OWN VM creation failed must never have its addons attempted
+# either — found live 2026-09-12: every addon on such a node was SSH-ing
+# into a host that was never created, each addon's own die() message then
+# misleadingly blaming something addon-specific instead of the real, single
+# cause (already reported once from phase_create_vms).
+run_calls.clear()
+setup_lab._report = setup_lab._RunReport()
+setup_lab._report.add_node("vm1", "FAILED")
+definition3b = {"nodes": {"vm1": {"addons": ["mariadb"]}, "vm2": {"addons": ["openldap"]}}}
+setup_lab.phase_vm_addons(definition3b, "lab.json")
+check("phase_vm_addons: a node whose own VM creation FAILED never has its addons attempted",
+      not any(env.get("_vm_name") == "vm1" for _, env in run_calls))
+check("phase_vm_addons: a DIFFERENT node (not FAILED) still gets its addons installed normally",
+      any(env.get("_vm_name") == "vm2" for _, env in run_calls))
+setup_lab._report = setup_lab._RunReport()
+
 
 # ── apps.collect_addon_names: every addon referenced anywhere in the lab ───
 addon_def = {
@@ -170,11 +186,26 @@ check("phase_create_vms: an 'existing' node is never destroyed or provisioned",
 check("phase_create_vms: an 'existing' node is still waited on for SSH",
       calls["check_ssh_conn"] == ["existing1"])
 
+# --keep's reusability check dispatches through backends.get_backend(for_existing=True)
+# so it asks whichever backend actually owns the VM (AWS, Harvester, libvirt...),
+# not a hardcoded libvirt lookup — see setup_lab.py's own comment on this block for
+# the real incident (2026-09-15) that motivated the fix. Mocked here via a fake
+# backend object rather than lc.locate_kvm_host/lc.vm_is_reusable.
+class FakeBackend:
+    def __init__(self, reusable=None, error=None):
+        self._reusable = reusable
+        self._error = error
+
+    def vm_is_reusable(self, vm_name, mymac, myip):
+        if self._error is not None:
+            raise self._error
+        return self._reusable
+
+
 # keep=True, VM matches definition -> skipped (not destroyed/recreated).
 for k in calls:
     calls[k].clear()
-setup_lab.lc.locate_kvm_host = lambda definition, vm_name, config: ("hv1", "qemu+ssh://...")
-setup_lab.lc.vm_is_reusable = lambda virt_srv, vm_name, mymac, myip, remote_host=None: True
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(reusable=True)
 definition5 = {"nodes": {"vm1": {"myip": "10.0.0.1", "mymac": "aa:bb:cc:dd:ee:01"}}}
 setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=True)
 check("phase_create_vms: --keep + a reusable VM is skipped (no destroy/recreate)",
@@ -183,33 +214,46 @@ check("phase_create_vms: --keep + a reusable VM is skipped (no destroy/recreate)
 # keep=True, but the VM doesn't match (or doesn't exist) -> destroyed and recreated.
 for k in calls:
     calls[k].clear()
-setup_lab.lc.vm_is_reusable = lambda virt_srv, vm_name, mymac, myip, remote_host=None: False
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(reusable=False)
 setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=True)
 check("phase_create_vms: --keep + a non-reusable VM is destroyed and recreated",
       calls["destroy"] == ["vm1"] and calls["provision"] == ["vm1"])
 
-# keep=True, VM never existed (locate_kvm_host raises) -> destroyed (no-op) and recreated.
+# keep=True, VM never existed anywhere (get_backend's own resolve() raises,
+# e.g. locate_kvm_host found no host with this domain) -> destroyed (no-op) and recreated.
 for k in calls:
     calls[k].clear()
 
 
-def _no_such_vm(definition, vm_name, config):
+def _no_such_vm(*a, **kw):
     raise SystemExit(1)
 
 
-setup_lab.lc.locate_kvm_host = _no_such_vm
+setup_lab.backends.get_backend = _no_such_vm
 setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=True)
 check("phase_create_vms: --keep + a VM that doesn't exist yet is still (re)created",
       calls["destroy"] == ["vm1"] and calls["provision"] == ["vm1"])
 
+# keep=True, backend can't even be reached (e.g. an expired cloud SSO token) ->
+# must NOT be treated as "doesn't exist, will recreate" — that conflation is
+# exactly what nearly destroyed a real production server live. The node is left
+# untouched (no destroy/provision) and recorded as FAILED instead.
+for k in calls:
+    calls[k].clear()
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(error=RuntimeError("token expired"))
+setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=True)
+check("phase_create_vms: --keep + an unreachable backend leaves the VM untouched, not recreated",
+      calls["destroy"] == [] and calls["provision"] == [])
+check("phase_create_vms: --keep + an unreachable backend is recorded as FAILED",
+      any(name == "vm1" and status == "FAILED" for name, status in setup_lab._report.nodes))
+
 # keep=False: always destroyed and recreated, reusability never even considered.
 for k in calls:
     calls[k].clear()
-setup_lab.lc.locate_kvm_host = lambda definition, vm_name, config: ("hv1", "qemu+ssh://...")
-# vm_is_reusable() returns True here, but `keep and keep_virt_srv and
-# vm_is_reusable(...)` short-circuits on `keep` being False, so this is
-# never even consulted — proving the destroy/recreate still happens either way.
-setup_lab.lc.vm_is_reusable = lambda *a, **kw: True
+# vm_is_reusable() returns True here, but `keep` being False means get_backend()
+# for the keep-check is never even called — proving the destroy/recreate still
+# happens either way.
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(reusable=True)
 setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=False)
 check("phase_create_vms: without --keep, the VM is always destroyed and recreated",
       calls["destroy"] == ["vm1"] and calls["provision"] == ["vm1"])
@@ -228,7 +272,7 @@ def _provision_second_node_dies(definition, config, defaults, vm_name):
 
 
 setup_lab.provision_vm = _provision_second_node_dies
-setup_lab.lc.vm_is_reusable = lambda *a, **kw: False
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(reusable=False)
 definition6 = {"nodes": {
     "vm_first": {"myip": "10.0.0.10", "mymac": "aa:bb:cc:dd:ee:10"},
     "vm_slow": {"myip": "10.0.0.11", "mymac": "aa:bb:cc:dd:ee:11"},
