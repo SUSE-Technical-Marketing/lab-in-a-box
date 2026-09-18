@@ -908,6 +908,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | SMLM proxy |
 | `client_registration` | Register any VM as a Salt client of an existing `uyuni`/`smlm` server (activation key bootstrap + salt-key acceptance) |
 | [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager (SUMA), installed directly on the OS via `mgradm` — not Kubernetes |
+| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | Provisions a real Ansible control node: installs `ansible-core`, pushes example playbooks + a dynamic inventory script that queries `uyuni`/`smlm`'s own system list, sets up SSH access to the rest of the lab. Pairs with `uyuni`/`smlm`'s own `*_ansible_control_nodes` field, which enables the server-side "Ansible Control Node" entitlement |
 </details>
 
 <a id="addons-storage"></a>

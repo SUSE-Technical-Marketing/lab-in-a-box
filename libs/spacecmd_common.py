@@ -150,10 +150,17 @@ inline below:
     is a pre-existing REGISTERED system with the "Ansible Control Node"
     add-on entitlement already enabled; playbook/inventory files already
     live on its filesystem, managed out-of-band (e.g. git) — this module
-    has no way to enable that entitlement itself (no matching method was
-    found in the ansible.* or system.* namespaces during research), so it's
-    a documented prerequisite, not something ensure_ansible_paths can set
-    up for you. createAnsiblePath/schedulePlaybook both need the control
+    has no way to enable that entitlement itself" — CORRECTED 2026-09-18: that
+    claim was itself unconfirmed prior research that never independently verified
+    system.addEntitlements against the real entitlement label. Ground-truthed this
+    time directly against Uyuni's own Java source (java/core/.../domain/entitlement/
+    AnsibleControlNodeEntitlement.java + EntitlementManager.ANSIBLE_CONTROL_NODE_ENTITLED
+    = "ansible_control_node"), not guessed — see ensure_ansible_control_node() below,
+    which enables it via exactly that. Playbook/inventory FILE CONTENT still lives on
+    the control node's own filesystem, managed out-of-band (e.g. git) — enabling the
+    entitlement only makes the server recognise the system as a valid control node
+    target for the functions below, it does not and cannot create file content there.
+    createAnsiblePath/schedulePlaybook both need the control
     node's NUMERIC Uyuni system ID (not a hostname) — no name-to-ID
     resolution is provided here; stacking another unverified guess on top
     of an already-multi-step feature wasn't worth it, so the JSON just
@@ -1677,6 +1684,60 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
 
         for username in group.get("users") or []:
             ensure_user_role(hostname, exec_prefix, username, label)
+
+
+def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_ansible_control_nodes: a list of {system} dicts.
+    Enables the real "Ansible Control Node" add-on entitlement on each
+    (system.addEntitlements, label "ansible_control_node" — ground-truthed
+    2026-09-18 directly against Uyuni's own Java source, see module
+    docstring's own correction above), then schedules a highstate apply
+    (system.scheduleApplyHighstate) so the real 'ansible' package actually
+    gets installed there — the documented real workflow is literally "check
+    the box, then Apply Highstate" (documentation.suse.com/multi-linux-
+    manager's own "Setup Ansible Control Node" guide), so this mirrors it
+    exactly rather than guessing that the entitlement alone is enough.
+
+    Idempotent, safe to call on every run (unlike schedule_ansible_playbook
+    below): addEntitlements' own real API description says an entitlement
+    the server already has is "quietly ignored", and re-applying a
+    highstate is itself idempotent salt-side — this is NOT scheduling a
+    one-shot custom action the way a playbook run is. No-op if the field is
+    unset or empty. Uses _system_id() to resolve the numeric sid these
+    calls need from a hostname, same as ensure_grafana_formula().
+
+    Only enables the entitlement + triggers the package install — it does
+    NOT create the playbook/inventory FILE CONTENT itself (see module
+    docstring: no method exists anywhere to push that), and does NOT set
+    up SSH keys from the control node to any managed target (the real
+    docs' own "Establishing Communication with Ansible Nodes" step) — both
+    genuinely need real file content, handled by this project's own
+    install_ansible_control_node.py addon instead, which SSHes directly to
+    the control node (a VM-provisioning concern, not a spacecmd/API one).
+    NOT live-tested (no server available in this project's dev/CI
+    environment).
+    """
+    entries = cfg.get("{}_ansible_control_nodes".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_ansible_control_nodes: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "system.addEntitlements", [sid, ["ansible_control_node"]])
+        if r.returncode != 0:
+            die("could not enable the Ansible Control Node entitlement on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+        if r.returncode != 0:
+            die("could not schedule a highstate apply on '{}' to install ansible: {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and scheduled a "
+              "highstate apply to install ansible".format(system, sid))
 
 
 def ansible_path_exists(hostname, exec_prefix, control_node_id, path):

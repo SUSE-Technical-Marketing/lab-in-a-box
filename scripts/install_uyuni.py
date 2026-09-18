@@ -133,11 +133,20 @@
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
-# content; the control node must already be a registered system with the "Ansible Control Node"
-# add-on entitlement enabled, with playbook/inventory files already on its filesystem, managed
-# out-of-band e.g. via git). Path registration runs automatically on every install (idempotent);
-# playbook execution is a SEPARATE, explicit trigger — see "--run-ansible-playbooks" below —
-# since scheduling a run is not idempotent (each call creates a brand-new run):
+# content; playbook/inventory files must already be on the control node's own filesystem — this
+# project's own install_ansible_control_node.py addon puts real example content there, or manage
+# it out-of-band e.g. via git). Entitlement enabling and path registration both run automatically
+# on every install (idempotent); playbook execution is a SEPARATE, explicit trigger — see
+# "--run-ansible-playbooks" below — since scheduling a run is not idempotent (each call creates a
+# brand-new run):
+#   uyuni_ansible_control_nodes : [{"system": "ansible-ctrl.mydemo.lab"}, ...]
+#                             Enables the real "Ansible Control Node" add-on entitlement on each
+#                             already-registered system (system.addEntitlements) and schedules a
+#                             highstate apply to install the ansible package — the same two steps
+#                             the real Web UI workflow documents (see libs/spacecmd_common.py's
+#                             ensure_ansible_control_node() for exactly what this does and does
+#                             not cover). A system must be registered (e.g. via client_registration)
+#                             BEFORE this can find it.
 #   uyuni_ansible_paths       : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
 #                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
@@ -419,6 +428,7 @@ def setup_uyuni(hostname, virt_srv, cfg):
         sc.ensure_activation_keys(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_users(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "uyuni")
+        sc.ensure_ansible_control_node(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "uyuni")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "uyuni")

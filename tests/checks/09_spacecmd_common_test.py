@@ -2374,6 +2374,48 @@ except SystemExit:
 check("ensure_grafana_formula: a real API failure (e.g. missing subscription) dies with a clear "
       "message, not silently ignored", died)
 
+# -- ensure_ansible_control_node (added 2026-09-18) ------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}
+sc.ensure_ansible_control_node("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_control_node: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_ansible_control_node: enables the real 'ansible_control_node' entitlement label",
+      any("system.addEntitlements" in c and '[42, ["ansible_control_node"]]' in c for c in cmds))
+check("ensure_ansible_control_node: schedules a highstate apply so 'ansible' actually gets installed",
+      any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_ansible_control_node("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_ansible_control_node: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_ansible_control_node("host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_ansible_control_node: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("system.addEntitlements", FakeResult(returncode=1, stderr="not a salt-entitled system")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_ansible_control_node(
+        "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_ansible_control_node: a real API failure dies with a clear message, not silently "
+      "ignored", died)
+
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
