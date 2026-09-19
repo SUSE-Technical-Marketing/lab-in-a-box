@@ -54,10 +54,25 @@ SMLM/Uyuni system group names are sanitized into valid Ansible group names
 (letters/digits/underscore only — see _sanitize_group_name()) before use,
 since Ansible group names may not contain hyphens and this lab's own real
 system groups do (e.g. "galilean-moons").
+
+The control node itself is normally ALSO a registered SMLM system (it has
+to be, to hold the Ansible Control Node entitlement) and so naturally
+appears in this inventory too — but install_ansible_control_node.py only
+ever installs its own SSH key on every OTHER lab node, never on itself
+(the control node has no reason to SSH to itself under normal use). A
+real, live-reported failure (2026-09-19): SMLM's own "Schedule Playbook"
+run against the FULL inventory tried to SSH to the control node as just
+another target and failed outright ("Permission denied"). Fixed the
+standard Ansible way: whichever inventory host's name matches this
+script's OWN local FQDN (socket.getfqdn()) gets "ansible_connection":
+"local" in its hostvars, so Ansible runs tasks against it directly
+instead of over SSH — confirmed live to match the real SMLM system name
+exactly (both "charon.mydemo.lab").
 """
 import json
 import os
 import re
+import socket
 import ssl
 import sys
 import xmlrpc.client
@@ -154,11 +169,15 @@ def build_inventory():
                 inventory["all"]["children"].append(ansible_group_name)
             grouped_names.update(member_names)
 
+        local_fqdn = socket.getfqdn()
         for system in systems:
             name = system.get("name")
             if not name:
                 continue
-            hostvars[name] = {"uyuni_system_id": system.get("id")}
+            hv = {"uyuni_system_id": system.get("id")}
+            if name == local_fqdn:
+                hv["ansible_connection"] = "local"
+            hostvars[name] = hv
             if name not in grouped_names:
                 inventory["ungrouped"]["hosts"].append(name)
 

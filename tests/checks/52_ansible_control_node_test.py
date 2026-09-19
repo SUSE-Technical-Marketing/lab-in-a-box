@@ -258,6 +258,25 @@ check("build_inventory(): a merged collision only appears ONCE in 'all'.children
       inv2["all"]["children"].count("gas_giants") == 1)
 
 
+# ── the control node's own entry gets ansible_connection=local ─────────────
+# Real bug found live 2026-09-19: SMLM's own "Schedule Playbook" run
+# against the full inventory tried to SSH to charon.mydemo.lab (the
+# control node itself) as just another target and failed outright
+# ("Permission denied") — install_ansible_control_node.py only ever
+# installs the control node's own SSH key on every OTHER lab node, never
+# on itself. Standard Ansible fix: mark whichever host matches this
+# script's own local FQDN as ansible_connection=local.
+udi.socket.getfqdn = lambda: "charon.mydemo.lab"
+udi.xmlrpc.client.ServerProxy = lambda *a, **kw: _FakeProxy(
+    systems=[{"name": "charon.mydemo.lab", "id": 7}, {"name": "venus.mydemo.lab", "id": 8}],
+    groups_and_members={})
+inv3 = udi.build_inventory()
+check("build_inventory(): the control node's own hostvars get ansible_connection=local",
+      inv3["_meta"]["hostvars"]["charon.mydemo.lab"].get("ansible_connection") == "local")
+check("build_inventory(): every OTHER host is untouched — no ansible_connection set at all",
+      "ansible_connection" not in inv3["_meta"]["hostvars"]["venus.mydemo.lab"])
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
