@@ -16,6 +16,8 @@ Usage:
 
 __version__ = "ca2d2d5"
 
+import ipaddress
+import socket
 import sys
 from pathlib import Path
 
@@ -204,46 +206,85 @@ def provision_vm(definition, config, defaults, vm_name):
     check_ssh_conn(vm_name)
 
     # Cross-cloud WireGuard overlay (see libs/overlay.py) — opt-in via
-    # common.overlay/OVERLAY_ENABLED, 2026-09-18. Joins this node to the
-    # overlay AFTER it's confirmed reachable over SSH (the check_ssh_conn()
-    # calls just above), same as every other post-boot provisioning step
-    # here. The hub itself is either an operator-designated existing host
-    # (OVERLAY_HUB_HOST) or a dedicated cloud VM auto-created/reused in
-    # OVERLAY_HUB_ACCOUNT — see overlay.ensure_overlay_hub()'s own
-    # docstring for why it needs its own account, independent of this
-    # node's. OVERLAY_HUB_ACCOUNT may ALSO be set alongside OVERLAY_HUB_HOST
-    # (added 2026-09-18, live-testing found the gap): an existing host still
-    # needs its cloud firewall/security-group opened for the WireGuard port
-    # — HUB_HOST alone never touches the cloud API at all (that's the
-    # point, for a host on a backend this tool has no account for), so
-    # naming the account too is what makes that port-opening automatic
-    # instead of a manual step.
+    # common.overlay/OVERLAY_ENABLED. SITE-TO-SITE, not per-node: only each
+    # site's automation VM (the home site's own "mysource" host, or a
+    # small dedicated gateway VM for a non-hub cloud account) ever joins
+    # the overlay itself — this node just gets a persistent local route to
+    # every OTHER known site's real subnet, via its own site's gateway.
+    # Corrected 2026-09-18 (see overlay.py's own module docstring for the
+    # full story): a first version made every node its own WireGuard peer
+    # and used an arbitrary lab node (not an automation VM) as hub — both
+    # were real mistakes caught live-testing, not a design choice.
     overlay_enabled = str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() in (
         "1", "true", "yes")
     if overlay_enabled:
         overlay_cidr = env.get("OVERLAY_CIDR") or overlay.DEFAULT_OVERLAY_CIDR
         wg_port = int(env.get("OVERLAY_WG_PORT") or overlay.DEFAULT_WG_PORT)
-        hub_host = env.get("OVERLAY_HUB_HOST")
         hub_account = env.get("OVERLAY_HUB_ACCOUNT")
-        if hub_host:
-            if hub_account:
-                hub_backend, _hub_backend_name = backends.get_backend_for_account(
-                    hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
-                hub_backend.ensure_ports_open(["{}/udp".format(wg_port)])
-            hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub_ready(
-                hub_host, wg_port=wg_port, overlay_cidr=overlay_cidr)
+        if not hub_account:
+            die("overlay is enabled (\"overlay\": true) but OVERLAY_HUB_ACCOUNT is not set in "
+                "lab_creation.cfg — the overlay hub needs a designated cloud account to run in")
+        hub_backend, hub_backend_name = backends.get_backend_for_account(
+            hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+        root_ssh_key = Path("/root/.ssh/id_rsa.pub").read_text().strip()
+        hub_host, _hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub(
+            hub_backend, hub_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key,
+            wg_port=wg_port, overlay_cidr=overlay_cidr)
+
+        this_backend_name = backends.effective_backend_name(definition, config, vm_name)
+        this_account, _eff_cfg, _cloudtype = backends.resolve_cloud_account(definition, config, vm_name)
+        this_site = overlay.site_name_for(this_backend_name, this_account)
+        hub_site = overlay.site_name_for(hub_backend_name, getattr(hub_backend, "account", ""))
+
+        gateway_lan_ip = None
+        if this_site == hub_site:
+            # This node's own site IS the hub account's site — the hub is
+            # this site's gateway too. Register the hub's own site subnet
+            # (so OTHER sites can route to this node) and disable AWS
+            # source/dest-check on the hub instance (best-effort, AWS-only
+            # today) so it can actually forward for this node.
+            site_cidr = hub_backend.get_subnet_cidr()
+            if site_cidr:
+                overlay.ensure_overlay_hub_ready(hub_host, wg_port=wg_port, overlay_cidr=overlay_cidr,
+                                                  site_name=hub_site, site_cidr=site_cidr)
+                hub_vm_name = overlay.hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
+                hub_backend.disable_source_dest_check(hub_vm_name)
+                gateway_lan_ip = hub_backend.get_private_ip(hub_vm_name)
+            else:
+                warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "
+                     "across the overlay from other sites".format(hub_backend_name, vm_name))
+        elif this_backend_name in ("libvirt", "harvester"):
+            gateway_host = env.get("mysource")
+            if not gateway_host:
+                die("overlay is enabled but 'mysource' (this site's own automation VM hostname) "
+                    "is not set in lab_creation.cfg")
+            site_cidr = (str(ipaddress.ip_network("{}/{}".format(env["mygw"], env["mymask"]), strict=False))
+                         if env.get("mygw") and env.get("mymask") else None)
+            if site_cidr:
+                overlay.ensure_overlay_site_gateway(this_site, gateway_host, hub_host, hub_pubkey,
+                                                     wg_port, site_cidr, overlay_cidr=overlay_cidr)
+                gateway_lan_ip = socket.gethostbyname(gateway_host)
+            else:
+                warn("- 'mygw'/'mymask' not set — cannot determine this site's own subnet, "
+                     "'{}' will not be routable across the overlay from other sites".format(vm_name))
         else:
-            if not hub_account:
-                die("overlay is enabled (\"overlay\": true) but neither OVERLAY_HUB_HOST nor "
-                    "OVERLAY_HUB_ACCOUNT is set in lab_creation.cfg — the overlay hub needs one "
-                    "or the other to know where to run")
-            hub_backend, hub_backend_name = backends.get_backend_for_account(
-                hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
-            hub_host, hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub(
-                hub_backend, hub_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path,
-                wg_port=wg_port, overlay_cidr=overlay_cidr)
-        overlay.ensure_overlay_spoke(vm_name, vm_name, hub_host, hub_pubkey, wg_port,
-                                      overlay_cidr=overlay_cidr)
+            site_cidr = backend.get_subnet_cidr()
+            if site_cidr:
+                gw_vm_name = overlay.hub_vm_name(this_backend_name, getattr(backend, "account", ""))
+                gw_public_ip = overlay.ensure_site_gateway_vm(
+                    backend, this_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key)
+                overlay.ensure_overlay_site_gateway(this_site, gw_public_ip, hub_host, hub_pubkey,
+                                                     wg_port, site_cidr, overlay_cidr=overlay_cidr)
+                backend.disable_source_dest_check(gw_vm_name)
+                gateway_lan_ip = backend.get_private_ip(gw_vm_name)
+            else:
+                warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "
+                     "across the overlay from other sites".format(this_backend_name, vm_name))
+
+        if gateway_lan_ip:
+            remote_sites = overlay.list_other_sites(hub_host, exclude_site_name=this_site)
+            overlay.ensure_route_via_site_gateway(vm_name, gateway_lan_ip,
+                                                   [cidr for _, cidr in remote_sites])
 
     log("\t\tVM \"{}\" created".format(vm_name))
 

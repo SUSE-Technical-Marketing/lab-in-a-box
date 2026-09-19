@@ -929,6 +929,75 @@ check("ensure_ansible_paths: a 'system' hostname is resolved to its numeric id f
 check("ensure_ansible_paths: the resolved id is used for the real createAnsiblePath call",
       any("ansible.createAnsiblePath" in c and '"server_id": 42' in c for c in cmds))
 
+# -- remove_ansible_path: real ansible.removeAnsiblePath call --------------
+fake = FakeSSH(responses=[("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1"))])
+sc.ssh_run = fake
+sc.remove_ansible_path("host1", "mgrctl exec --", 2)
+cmd = unwrap(fake.calls[0][1])
+check("remove_ansible_path: calls the real, confirmed ansible.removeAnsiblePath method with the "
+      "right path id",
+      "-A 2 ansible.removeAnsiblePath" in cmd)
+
+fake = FakeSSH(responses=[("ansible.removeAnsiblePath", FakeResult(returncode=1, stderr="not found"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.remove_ansible_path("host1", "mgrctl exec --", 999)
+except SystemExit:
+    died = True
+check("remove_ansible_path: dies with a clear message on a real API failure", died)
+
+# -- remove_stale_default_ansible_paths: only the 2 known SMLM-auto-created defaults --
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/etc/ansible/hosts", "id": 1, "type": "inventory", "server_id": 42},
+        {"path": "/srv/ansible/inventory/uyuni_dynamic_inventory.py", "id": 4, "type": "inventory", "server_id": 42},
+        {"path": "/etc/ansible/playbooks", "id": 2, "type": "playbook", "server_id": 42},
+        {"path": "/srv/ansible/playbooks", "id": 3, "type": "playbook", "server_id": 42},
+    ]))),
+    ("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+sc.remove_stale_default_ansible_paths("host1", "mgrctl exec --", 42)
+cmds = [unwrap(c[1]) for c in fake.calls]
+remove_calls = [c for c in cmds if "ansible.removeAnsiblePath" in c]
+check("remove_stale_default_ansible_paths: removes exactly the 2 stale defaults, no more",
+      len(remove_calls) == 2)
+check("remove_stale_default_ansible_paths: removes the stale '/etc/ansible/hosts' default (id 1)",
+      any("-A 1 ansible.removeAnsiblePath" in c for c in remove_calls))
+check("remove_stale_default_ansible_paths: removes the stale '/etc/ansible/playbooks' default (id 2)",
+      any("-A 2 ansible.removeAnsiblePath" in c for c in remove_calls))
+check("remove_stale_default_ansible_paths: does NOT remove the real, working paths (ids 3/4)",
+      not any("-A 3 ansible.removeAnsiblePath" in c or "-A 4 ansible.removeAnsiblePath" in c for c in cmds))
+
+# A control node with only the real paths already registered (a second run, or a server
+# that never auto-created the defaults) -> no removal calls at all.
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/srv/ansible/inventory/uyuni_dynamic_inventory.py", "id": 4, "type": "inventory", "server_id": 42},
+        {"path": "/srv/ansible/playbooks", "id": 3, "type": "playbook", "server_id": 42},
+    ]))),
+])
+sc.ssh_run = fake
+sc.remove_stale_default_ansible_paths("host1", "mgrctl exec --", 42)
+check("remove_stale_default_ansible_paths: idempotent no-op when neither stale default is present",
+      not any("ansible.removeAnsiblePath" in c[1] for c in fake.calls))
+
+# -- ensure_ansible_paths: also cleans up stale defaults on every control node it touches --
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/etc/ansible/hosts", "id": 1, "type": "inventory", "server_id": 42},
+    ]))),
+    ("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+sc.ensure_ansible_paths("host1", "mgrctl exec --",
+                         {"smlm_ansible_paths": [{"control_node_id": 42, "type": "playbook", "path": "/srv/x"}]},
+                         "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_paths: automatically cleans up stale defaults on the control node it just touched",
+      any("ansible.listAnsiblePaths" in c for c in cmds) and any("ansible.removeAnsiblePath" in c for c in cmds))
+
 # -- schedule_ansible_playbook: overload selection by arg shape --------------
 fake = FakeSSH(responses=[("schedulePlaybook", FakeResult(returncode=0, stdout="42\n"))])
 sc.ssh_run = fake

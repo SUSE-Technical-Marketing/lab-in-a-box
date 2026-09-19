@@ -101,10 +101,63 @@ def _distribute_pubkey(pubkey, target_hosts):
             print("  Installed the control node's SSH key on '{}'".format(target))
 
 
+_INVENTORY_ENV_PATH = "/etc/ansible/uyuni_inventory.env"
+
+
+def _find_uyuni_server(definition):
+    """
+    Looks for a node running either the 'smlm' or 'uyuni' addon in this
+    SAME lab definition and returns (hostname, admin_user, admin_pass), or
+    None if neither is present (a lab using this control node addon with
+    no SMLM/Uyuni server at all — the dynamic inventory script then simply
+    isn't usable, which is fine; nothing here depends on it existing).
+    Prefers 'smlm' if both somehow exist (matches install_smlm.py's own
+    field-naming convention for credentials over install_uyuni.py's).
+    """
+    smlm_nodes = list(k8s.addon_nodes(definition, "smlm"))
+    if smlm_nodes:
+        cfg = definition.get("smlm", {}) or {}
+        return smlm_nodes[0][0], cfg.get("smlm_admin_user") or "admin", cfg.get("smlm_admin_pass") or "Smlm12345"
+    uyuni_nodes = list(k8s.addon_nodes(definition, "uyuni"))
+    if uyuni_nodes:
+        cfg = definition.get("uyuni", {}) or {}
+        return uyuni_nodes[0][0], cfg.get("uyuni_admin") or "admin", cfg.get("uyuni_password") or "Uyuni12345"
+    return None
+
+
+def _write_inventory_env(hostname, server_host, admin_user, admin_pass):
+    """
+    Writes UYUNI_HOST/USER/PASS/VERIFY_SSL to _INVENTORY_ENV_PATH on the
+    control node itself (root-only readable — real credentials) — read by
+    the dynamic inventory script's own _load_env_file() as a fallback
+    whenever the process environment doesn't already have them set. Real
+    bug found live 2026-09-18 (see TODO): SMLM's own "Ansible > Schedule
+    Playbook" feature invokes the inventory script via a Salt state
+    running under salt-minion's own process environment, which never
+    inherits anything an operator `export`ed in an interactive shell — the
+    script died every time SMLM itself triggered it, even though it worked
+    fine run by hand with the vars exported first. UYUNI_VERIFY_SSL is
+    always written "false" — this project's own labs use a self-signed
+    cert, the same reality install_smlm.py itself already works around.
+    """
+    env_content = (
+        "UYUNI_HOST={host}\n"
+        "UYUNI_USER={user}\n"
+        "UYUNI_PASS={password}\n"
+        "UYUNI_VERIFY_SSL=false\n"
+    ).format(host=server_host, user=admin_user, password=admin_pass)
+    ssh_run(hostname, "mkdir -p /etc/ansible && cat > {f} && chmod 600 {f}".format(
+        f=shlex.quote(_INVENTORY_ENV_PATH)), input_text=env_content)
+    print("  Wrote {} (UYUNI_HOST={}) so the dynamic inventory script works no matter how "
+          "it's invoked, not just from an interactive shell with the vars exported".format(
+              _INVENTORY_ENV_PATH, server_host))
+
+
 def _push_examples(hostname, templ_addons_loc, playbook_dir, inventory_dir):
     """Pushes this project's own bundled example playbooks + the real Uyuni/SMLM dynamic
     inventory script — static content, no templating needed (the inventory script reads
-    its own UYUNI_HOST/USER/PASS from the environment at run time, never baked in here)."""
+    its own UYUNI_HOST/USER/PASS from the environment, or _INVENTORY_ENV_PATH, at run time,
+    never baked in here)."""
     base = Path(str(templ_addons_loc).rstrip("/")) / "ansible_control_node"
 
     for playbook in ("ping.yml", "ensure_packages.yml", "patch_and_reboot.yml"):
@@ -121,7 +174,7 @@ def _push_examples(hostname, templ_addons_loc, playbook_dir, inventory_dir):
     print("  Pushed the Uyuni/SMLM dynamic inventory script to {}".format(inventory_path))
 
 
-def setup_ansible_control_node(hostname, templ_addons_loc, cfg, managed_nodes):
+def setup_ansible_control_node(hostname, templ_addons_loc, cfg, managed_nodes, definition=None):
     playbook_dir = cfg.get("ansible_control_node_playbook_dir") or "/srv/ansible/playbooks"
     inventory_dir = cfg.get("ansible_control_node_inventory_dir") or "/srv/ansible/inventory"
     key_path = cfg.get("ansible_control_node_ssh_key_path") or "/root/.ssh/id_ansible_ed25519"
@@ -137,6 +190,12 @@ def setup_ansible_control_node(hostname, templ_addons_loc, cfg, managed_nodes):
 
     if push_examples:
         _push_examples(hostname, templ_addons_loc, playbook_dir, inventory_dir)
+        server = _find_uyuni_server(definition) if definition else None
+        if server:
+            _write_inventory_env(hostname, *server)
+        else:
+            print("  NOTE: no 'smlm'/'uyuni' addon node found in this lab — the dynamic "
+                  "inventory script will need UYUNI_HOST/USER/PASS set manually")
 
     print("- Ensuring this control node has its own SSH keypair for reaching managed nodes")
     pubkey = ensure_lab_ssh_key(hostname, key_path=key_path, key_comment="ansible-control-node")
@@ -179,7 +238,7 @@ def main():
         managed_nodes = cfg.get("ansible_control_node_managed_nodes")
         if managed_nodes is None:
             managed_nodes = [n for n in definition.get("nodes", {}) if n != vm_name]
-        setup_ansible_control_node(vm_name, templ_addons_loc, cfg, managed_nodes)
+        setup_ansible_control_node(vm_name, templ_addons_loc, cfg, managed_nodes, definition=definition)
 
 
 if __name__ == "__main__":

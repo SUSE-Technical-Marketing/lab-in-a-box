@@ -26,7 +26,6 @@ import primary  # noqa: E402
 from lab_creation import load_vm_vars, del_from_dns, warn  # noqa: E402
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
-import overlay  # noqa: E402
 
 
 def destroy_vm(definition, config, defaults, vm_name):
@@ -85,29 +84,12 @@ def destroy_vm(definition, config, defaults, vm_name):
     else:
         warn("- No myip known for \"{}\" — skipping DNS cleanup".format(vm_name))
 
-    # Cross-cloud WireGuard overlay cleanup — best-effort, mirrors the DNS-VM
-    # lookup-only convention just above: the hub is shared/persistent and
-    # never destroyed here, only looked up (so a lab that never used the
-    # overlay, or whose hub is already gone, is a silent no-op). See
-    # libs/overlay.py's remove_overlay_spoke()/remove_peer_from_hub() —
-    # neither ever contacts the node itself, only the hub's own recorded
-    # peer state, so this is safe even after delete_vm() below.
-    overlay_enabled = str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() in (
-        "1", "true", "yes")
-    if overlay_enabled:
-        hub_host = env.get("OVERLAY_HUB_HOST")
-        if not hub_host:
-            hub_account = env.get("OVERLAY_HUB_ACCOUNT")
-            if hub_account:
-                hub_backend, hub_backend_name = backends.get_backend_for_account(hub_account, config)
-                _hub_acct = getattr(hub_backend, "account", "") or ""
-                hub_vm_name = ("lab-overlay-hub-{}".format(hub_backend_name) if _hub_acct in ("", "default")
-                               else "lab-overlay-hub-{}-{}".format(hub_backend_name, _hub_acct))
-                if hub_backend.vm_exists(hub_vm_name):
-                    hub_host = hub_backend.get_ip(hub_vm_name)
-        if hub_host:
-            overlay.remove_overlay_spoke(hub_host, vm_name)
-
+    # No cross-cloud WireGuard overlay cleanup needed here — individual lab
+    # nodes are never themselves WireGuard peers (see libs/overlay.py's
+    # module docstring, corrected 2026-09-18): only each site's shared,
+    # persistent gateway is, and destroying one ordinary node never touches
+    # that. The route this node had (if overlay was enabled) is irrelevant
+    # once the node itself is gone.
     backend.delete_vm(vm_name)
     print('#\t\tVM "{}" destroyed\n'.format(vm_name))
 

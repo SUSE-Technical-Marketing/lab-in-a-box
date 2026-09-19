@@ -12,8 +12,8 @@ API reference, 2026-09-18: system.listSystems (every visible system),
 systemgroup.listAllGroups + systemgroup.listSystemsMinimal (group
 membership) — real, confirmed methods, not guessed.
 
-Configuration — environment variables only, never hardcoded credentials
-in this file or the inventory config:
+Configuration — environment variables, never hardcoded credentials in
+this file:
     UYUNI_HOST          Server FQDN, e.g. "sol.mydemo.lab" (required)
     UYUNI_USER          spacecmd-capable login (required)
     UYUNI_PASS          its password (required)
@@ -21,6 +21,19 @@ in this file or the inventory config:
                          set to "false" for this lab's own self-signed
                          cert, same reality install_smlm.py itself works
                          around elsewhere in this project)
+
+Any of these not already present in the process environment are filled in
+from _ENV_FILE_PATH (/etc/ansible/uyuni_inventory.env — a plain KEY=VALUE
+file, written by install_ansible_control_node.py's own
+setup_ansible_control_node() when a smlm/uyuni addon node exists in the
+same lab) if it exists — added 2026-09-18 after a real, live-reported
+failure: SMLM's own "Ansible > Schedule Playbook" feature invokes this
+script via a Salt state running under salt-minion's own process
+environment, which never inherits anything an operator `export`ed in
+their own interactive shell, so the original environment-variables-only
+design broke every time SMLM itself (rather than a human at a terminal)
+ran it. An operator's own already-exported environment variables always
+take priority over the file, so nothing changes for a manual run.
 
 Usage (standard Ansible dynamic inventory contract):
     ansible-playbook -i uyuni_dynamic_inventory.py ping.yml
@@ -36,12 +49,43 @@ Every system's own numeric Uyuni id is exposed as hostvar
 smlm_ansible_control_nodes JSON fields need, handy for cross-referencing
 without a second lookup. Systems in no group at all still appear, under
 the synthetic "ungrouped" group — Ansible's own inventory convention.
+
+SMLM/Uyuni system group names are sanitized into valid Ansible group names
+(letters/digits/underscore only — see _sanitize_group_name()) before use,
+since Ansible group names may not contain hyphens and this lab's own real
+system groups do (e.g. "galilean-moons").
 """
 import json
 import os
+import re
 import ssl
 import sys
 import xmlrpc.client
+
+_RESERVED_GROUP_NAMES = {"all", "ungrouped", "_meta"}
+
+
+def _sanitize_group_name(name):
+    """
+    Ansible group names may only contain letters, digits, and underscores.
+    A real, live-reported bug (2026-09-19): this lab's own SMLM system
+    groups include several with hyphens (e.g. "galilean-moons",
+    "gas-giants", "terrestrial-planets") — using them verbatim as Ansible
+    group names triggers Ansible's own "[WARNING]: Invalid characters were
+    found in group names but not replaced" on stderr. Harmless for a plain
+    `ansible-playbook` run, but SMLM's own "Ansible > Schedule Playbook"
+    Salt-state wrapper treats ANY stderr from the inventory script as a
+    hard failure — confirmed live, the whole playbook run was reported as
+    failed even though the inventory itself parsed and returned correct
+    data. Sanitizing here means nothing is ever emitted for Ansible to
+    warn about in the first place.
+    """
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if sanitized in _RESERVED_GROUP_NAMES:
+        sanitized = "{}_group".format(sanitized)
+    return sanitized
+
+_ENV_FILE_PATH = "/etc/ansible/uyuni_inventory.env"
 
 
 def _die(msg):
@@ -49,7 +93,26 @@ def _die(msg):
     sys.exit(1)
 
 
+def _load_env_file():
+    """Fills in any of UYUNI_HOST/USER/PASS/VERIFY_SSL not already present
+    in the process environment from _ENV_FILE_PATH, if it exists — see
+    module docstring. Silently a no-op if the file is missing (e.g. no
+    smlm/uyuni addon node in this lab, or an operator who prefers setting
+    real env vars by hand). Already-set environment variables always win."""
+    try:
+        with open(_ENV_FILE_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+    except FileNotFoundError:
+        pass
+
+
 def _server_proxy():
+    _load_env_file()
     host = os.environ.get("UYUNI_HOST")
     user = os.environ.get("UYUNI_USER")
     password = os.environ.get("UYUNI_PASS")
@@ -77,10 +140,18 @@ def build_inventory():
             group_name = group.get("name")
             if not group_name:
                 continue
+            ansible_group_name = _sanitize_group_name(group_name)
             members = proxy.systemgroup.listSystemsMinimal(session, group_name)
             member_names = [m.get("name") for m in members if m.get("name")]
-            inventory[group_name] = {"hosts": member_names}
-            inventory["all"]["children"].append(group_name)
+            if ansible_group_name in inventory:
+                # Two different SMLM group names sanitized to the same Ansible
+                # group name (e.g. "gas-giants" and "gas_giants") -> merge
+                # their hosts rather than silently dropping one.
+                inventory[ansible_group_name]["hosts"] = sorted(
+                    set(inventory[ansible_group_name]["hosts"]) | set(member_names))
+            else:
+                inventory[ansible_group_name] = {"hosts": member_names}
+                inventory["all"]["children"].append(ansible_group_name)
             grouped_names.update(member_names)
 
         for system in systems:

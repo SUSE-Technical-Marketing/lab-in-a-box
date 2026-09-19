@@ -1775,6 +1775,71 @@ def ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
     print("  Registered ansible {} path '{}' on control node {}".format(path_type, path, control_node_id))
 
 
+def remove_ansible_path(hostname, exec_prefix, path_id):
+    """
+    Removes a single Ansible path by its numeric id —
+    ansible.removeAnsiblePath(sessionKey, pathId) -> int (1 on success),
+    ground-truthed 2026-09-18 directly against AnsibleHandler.java
+    (java/core/src/main/java/com/redhat/rhn/frontend/xmlrpc/ansible/
+    AnsibleHandler.java — "@return 1 on success", throws
+    EntityNotExistsFaultException if pathId doesn't exist/isn't
+    accessible). CORRECTS this module's own earlier (2026-08-27) research
+    note claiming the confirmed ansible.* method set was only
+    discoverPlaybooks/fetchPlaybookContents/introspectInventory (read-only)
+    plus createAnsiblePath/schedulePlaybook — that survey was itself
+    incomplete: it missed lookupAnsiblePathById, updateAnsiblePath, AND
+    this one, none of which needed guessing, all three sitting in the
+    exact same handler file already fetched for the original research.
+    """
+    r = _api_call(hostname, exec_prefix, "ansible.removeAnsiblePath", [path_id])
+    if r.returncode != 0:
+        die("could not remove ansible path id {}: {}".format(path_id, (r.stderr or r.stdout or "").strip()))
+
+
+# SMLM/Uyuni's own real, confirmed-live behavior (2026-09-18): enabling the
+# "Ansible Control Node" entitlement on a system auto-creates exactly these
+# two AnsiblePath entries, pointing at locations that exist on NO control
+# node this project ever provisions (install_ansible_control_node.py always
+# uses /srv/ansible/... — see that script's own JSON schema doc). Left in
+# place, they're a real, reported trap: SMLM's own "Ansible > Schedule
+# Playbook" flow can pick one of these broken defaults instead of a real,
+# working path registered by ensure_ansible_paths() below, and fail with a
+# confusing "error processing the inventory" message that has nothing to do
+# with the actual inventory script.
+_STALE_DEFAULT_ANSIBLE_PATHS = {("/etc/ansible/hosts", "inventory"), ("/etc/ansible/playbooks", "playbook")}
+
+
+def remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id):
+    """
+    Removes SMLM/Uyuni's own auto-created default Ansible paths (see
+    _STALE_DEFAULT_ANSIBLE_PATHS) from `control_node_id` if present.
+    Idempotent — a no-op if neither default is currently registered (e.g.
+    a second run, or a server version that doesn't auto-create them).
+
+    ansible.listAnsiblePaths' raw output was ASSUMED to need
+    substring-matching rather than real parsing when ansible_path_exists()
+    was first written (2026-08-27) — reconfirmed live 2026-09-18 that it
+    is, in fact, valid JSON (`spacecmd api`'s own passthrough prints it
+    that way for this method), so this function parses it properly rather
+    than repeating that older, more defensive assumption.
+    """
+    r = _api_call(hostname, exec_prefix, "ansible.listAnsiblePaths", [control_node_id])
+    if r.returncode != 0:
+        die("could not list ansible paths on control node {}: {}".format(
+            control_node_id, (r.stderr or r.stdout or "").strip()))
+    try:
+        existing = json.loads(r.stdout or "[]")
+    except ValueError:
+        return
+    for entry in existing:
+        key = (entry.get("path"), entry.get("type"))
+        if key in _STALE_DEFAULT_ANSIBLE_PATHS:
+            remove_ansible_path(hostname, exec_prefix, entry.get("id"))
+            print("  Removed stale default ansible {} path '{}' (id {}) on control node {} — "
+                  "SMLM's own auto-created default, unused by this lab".format(
+                      entry.get("type"), entry.get("path"), entry.get("id"), control_node_id))
+
+
 def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrates <prefix>_ansible_paths: a list of {control_node_id | system,
@@ -1796,8 +1861,15 @@ def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
     this. Live-verified 2026-09-18: registered charon.mydemo.lab's own
     example playbook directory + dynamic inventory script this way against
     the real sol.mydemo.lab server.
+
+    ALSO removes SMLM/Uyuni's own stale auto-created default paths (see
+    remove_stale_default_ansible_paths()) on every control node this
+    touches — added 2026-09-18 after a real, user-reported failure: SMLM's
+    own "Schedule Playbook" flow picked one of those broken defaults
+    instead of the real path registered here, and failed confusingly.
     """
     paths = cfg.get("{}_ansible_paths".format(prefix)) or []
+    touched_control_nodes = set()
     for p in paths:
         control_node_id = p.get("control_node_id")
         system = p.get("system")
@@ -1811,6 +1883,10 @@ def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
         if control_node_id is None:
             control_node_id = _system_id(hostname, exec_prefix, system)
         ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
+        touched_control_nodes.add(control_node_id)
+
+    for control_node_id in touched_control_nodes:
+        remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id)
 
 
 def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_path, inventory_path,

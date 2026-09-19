@@ -191,27 +191,28 @@ Nodes that don't specify `kvm_host` and boxes with only one configured host beha
 
 ### Cross-cloud WireGuard overlay
 
-A cloud lab node generally cannot reach another cloud account's private network, or the home libvirt lab, over the network at all — each is its own isolated VPC/network. `common.overlay: true` in the lab JSON joins every node in that lab to a hub-and-spoke WireGuard overlay (`libs/overlay.py`) so they can reach each other as if on one LAN:
+A cloud lab node generally cannot reach another cloud account's private network, or the home libvirt lab, over the network at all — each is its own isolated VPC/network. `common.overlay: true` in the lab JSON routes this lab's SITES to each other, site-to-site, by their real subnets, over a hub-and-spoke WireGuard overlay (`libs/overlay.py`):
 
 ```mermaid
 graph TD
-    Hub["Overlay hub<br/>(cloud VM, stable public IP)"]
-    Home["Home automation VM<br/>(libvirt lab)"]
-    A["Cloud node — account A"]
-    B["Cloud node — account B"]
-    Home -- "wg0 spoke" --> Hub
-    A -- "wg0 spoke" --> Hub
-    B -- "wg0 spoke" --> Hub
+    Hub["Overlay hub<br/>(gateway VM, stable public IP)"]
+    HomeGW["Home automation VM<br/>(site gateway)"]
+    GWB["Site gateway VM<br/>(account B)"]
+    HomeNode["home lab node"]
+    NodeA["node — account A (hub's own site)"]
+    NodeB["node — account B"]
+    HomeGW -- "wg0 spoke" --> Hub
+    GWB -- "wg0 spoke" --> Hub
+    HomeNode -. "local route" .-> HomeGW
+    NodeB -. "local route" .-> GWB
+    NodeA -. "on the hub's own subnet" .-> Hub
 ```
 
-The hub is not new bespoke infra — it's an automation VM (the same component that already runs BIND) given `net.ipv4.ip_forward=1` and a `wg0` server interface, the same move `ensure_cloud_dns_vm()` already makes for DNS, applied to routing instead. Name it either way in `/etc/lab_creation.cfg`:
+Only each site's own gateway ever joins the overlay itself — never an individual lab node. A "site" is the home libvirt lab or one cloud account; its gateway is either the home site's own automation VM (`mysource` in `/etc/lab_creation.cfg`) or, for a cloud account, a small dedicated VM auto-created/reused there (`lab-overlay-gw-<backend>[-<account>]`, the same naming convention as the cloud DNS VM). Every OTHER node just gets a plain, persistent local route to each other site's real subnet, via its own site's gateway — that's the whole mechanism, no per-node WireGuard membership at all.
 
-- `OVERLAY_HUB_HOST` — an already-running host you designate yourself (any existing cloud VM, or even this automation VM), turned into the hub in place.
-- `OVERLAY_HUB_ACCOUNT` — a cloud account name (see `setup_credentials.py`); a small dedicated hub VM (`lab-overlay-hub-<backend>[-<account>]`) is auto-created/reused there, exactly like the cloud DNS VM's own naming.
+`OVERLAY_HUB_ACCOUNT` (required, in `/etc/lab_creation.cfg`) names the cloud account whose gateway VM is the hub — the one site with a stable public IP everyone else connects to. `OVERLAY_CIDR` (default `10.99.0.0/16`) is used only for the gateways' own point-of-presence addresses on the tunnel, not for routing real traffic; `OVERLAY_WG_PORT` (default `51820`) is the hub's listen port. Joining/leaving and route-pushing happen automatically as part of `setup_vm.py` — nothing else to run by hand.
 
-Each spoke gets one address from `OVERLAY_CIDR` (default `10.99.0.0/16`, hub always `.1`), allocated sequentially and tracked on the hub itself; `OVERLAY_WG_PORT` (default `51820`) is the hub's listen port. Joining/leaving happens automatically as part of `setup_vm.py`/`destroy_vm.py` — nothing else to run by hand.
-
-**Known gap:** this does not yet register overlay IPs in DNS, and does not yet provide real-subnet (non-WireGuard) reachability into a cloud VPC — only nodes that are themselves overlay members are reachable. See the repo TODO's own design notes for the full estimate and what a further DNS/VPC-routing pass would add.
+**Known gaps:** no DNS changes are made (a node is reachable by its real hostname once that name resolves into a now-routed subnet, not before); a site's already-provisioned nodes aren't retroactively re-routed when a new remote site joins later, only refreshed at each node's own provisioning time; AWS needs its site gateway's "source/dest check" disabled to forward traffic (handled automatically) — no equivalent exists yet for the other 7 cloud backends.
 
 ### Library loading order
 

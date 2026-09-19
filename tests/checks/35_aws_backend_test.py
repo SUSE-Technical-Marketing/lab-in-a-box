@@ -426,6 +426,71 @@ check("VMBackend.ensure_ports_open() base implementation is a documented no-op f
       backends.LibvirtBackend.ensure_ports_open is backends.VMBackend.ensure_ports_open)
 
 
+# ── get_private_ip() / get_subnet_cidr() / disable_source_dest_check() ──────
+# Added 2026-09-18 for libs/overlay.py's site-gateway model — a site
+# gateway needs its own private IP (so OTHER nodes in the same subnet can
+# route through it) and its subnet's real CIDR (to advertise to the
+# overlay hub), and needs source/dest-check disabled to actually forward
+# traffic that isn't addressed to itself.
+def _fake_run_site(calls_out):
+    def _run(args, **kwargs):
+        calls_out.append(args)
+        if "describe-instances" in args:
+            return _cp(0, stdout=json.dumps({"Reservations": [{"Instances": [
+                {"InstanceId": "i-gw1", "PrivateIpAddress": "172.31.5.10",
+                 "PublicIpAddress": "203.0.113.20"}]}]}))
+        if "describe-subnets" in args:
+            return _cp(0, stdout=json.dumps({"Subnets": [{"CidrBlock": "172.31.0.0/20"}]}))
+        if "modify-instance-attribute" in args:
+            return _cp(0, stdout="")
+        return _cp(0, stdout="")
+    return _run
+
+
+b_site = backends.AWSBackend("eu-central-1", profile="lab", subnet_id="subnet-1")
+site_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_site(site_calls)):
+    priv_ip = b_site.get_private_ip("gw1")
+    subnet_cidr = b_site.get_subnet_cidr()
+    b_site.disable_source_dest_check("gw1")
+check("get_private_ip(): returns the real PrivateIpAddress from describe-instances",
+      priv_ip == "172.31.5.10")
+check("get_subnet_cidr(): returns the real CidrBlock for self.subnet_id via describe-subnets",
+      subnet_cidr == "172.31.0.0/20")
+check("disable_source_dest_check(): calls modify-instance-attribute with --no-source-dest-check "
+      "on the REAL resolved instance id, not the vm_name",
+      any("modify-instance-attribute" in c and "i-gw1" in c and "--no-source-dest-check" in c
+          for c in site_calls))
+
+# No subnet configured at all -> get_subnet_cidr() is a clean None, no API call attempted.
+b_nosubnet = backends.AWSBackend("eu-central-1", profile="lab")
+nosubnet_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_site(nosubnet_calls)):
+    result = b_nosubnet.get_subnet_cidr()
+check("get_subnet_cidr(): no subnet_id configured -> None, no describe-subnets call made",
+      result is None and not any("describe-subnets" in c for c in nosubnet_calls))
+
+# A vm_name that doesn't resolve to any live instance -> best-effort no-op, never raises/dies.
+def _fake_run_missing(args, **kwargs):
+    if "describe-instances" in args:
+        return _cp(0, stdout=json.dumps({"Reservations": []}))
+    return _cp(0, stdout="")
+
+
+b_missing = backends.AWSBackend("eu-central-1", profile="lab")
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_missing):
+    b_missing.disable_source_dest_check("does-not-exist")  # must not raise
+    result2 = b_missing.get_private_ip("does-not-exist")
+check("get_private_ip(): a vm_name with no live instance -> None, not an exception",
+      result2 is None)
+
+check("VMBackend base defaults: get_private_ip/get_subnet_cidr/disable_source_dest_check are "
+      "documented no-ops for every other backend",
+      backends.LibvirtBackend.get_private_ip is backends.VMBackend.get_private_ip
+      and backends.LibvirtBackend.get_subnet_cidr is backends.VMBackend.get_subnet_cidr
+      and backends.LibvirtBackend.disable_source_dest_check is backends.VMBackend.disable_source_dest_check)
+
+
 # ── _own_public_ip(): fetched once via checkip.amazonaws.com, then cached ──
 class _FakeUrlopenResponse:
     def __init__(self, text):

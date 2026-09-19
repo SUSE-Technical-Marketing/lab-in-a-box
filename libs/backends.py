@@ -317,6 +317,52 @@ class VMBackend(object):
         """
         pass
 
+    def get_private_ip(self, vm_name):
+        """
+        Returns the real PRIVATE/internal IP of an existing instance named
+        vm_name, or None. Added 2026-09-18 for overlay.py's site-gateway
+        routing — another node in the SAME site/subnet routes through its
+        local gateway via this address, never the gateway's public IP
+        (irrelevant for same-subnet traffic, and may not even exist).
+
+        No-op (returns None) by default; only AWSBackend overrides this
+        today — matches every other cloud-only addition's "AWS got it
+        first" pattern elsewhere in this file.
+        """
+        return None
+
+    def get_subnet_cidr(self):
+        """
+        Returns this account's own configured subnet's real CIDR block
+        (e.g. "172.31.0.0/20"), or None if this backend has no such
+        concept or isn't configured with one. Added 2026-09-18 for
+        overlay.py — a site gateway advertises this to the hub as the real,
+        routable subnet other sites should reach it through, instead of a
+        synthetic overlay-only address.
+
+        No-op (returns None) by default; only AWSBackend overrides this
+        today.
+        """
+        return None
+
+    def disable_source_dest_check(self, vm_name):
+        """
+        Best-effort: disables this instance's "source/destination check"
+        (a cloud-provider-level packet filter that drops any packet not
+        addressed TO or FROM the instance's own IP — independent of, and
+        enforced BELOW, the guest's own net.ipv4.ip_forward=1) so it can
+        actually forward traffic for other nodes in its site. Added
+        2026-09-18 for overlay.py's site gateways — without this, a site
+        gateway's ip_forward=1 has no effect at all on a cloud backend that
+        enforces this check; packets are silently dropped before ever
+        reaching the guest kernel.
+
+        No-op by default; only AWSBackend overrides this today (EC2's own
+        SourceDestCheck attribute). No known equivalent implemented yet for
+        the other 7 cloud backends.
+        """
+        pass
+
 
 class LibvirtBackend(VMBackend):
     """
@@ -2168,6 +2214,41 @@ class AWSBackend(VMBackend):
         OVERLAY_HUB_HOST).
         """
         self._ensure_security_group_access(open_ports)
+
+    def get_private_ip(self, vm_name):
+        """VMBackend.get_private_ip() override — EC2's own PrivateIpAddress field."""
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("PrivateIpAddress") or None
+
+    def get_subnet_cidr(self):
+        """VMBackend.get_subnet_cidr() override — describe-subnets on self.subnet_id's own
+        CidrBlock. None if no subnet is configured at all."""
+        if not self.subnet_id:
+            return None
+        result = self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id)
+        subnets = (result or {}).get("Subnets") or []
+        return subnets[0].get("CidrBlock") if subnets else None
+
+    def disable_source_dest_check(self, vm_name):
+        """
+        VMBackend.disable_source_dest_check() override — EC2's own
+        SourceDestCheck instance attribute. Best-effort: a vm_name that
+        doesn't currently resolve to a live instance is a silent no-op
+        (mirrors this project's other best-effort teardown/setup-adjacent
+        cloud calls), not a die() — this is a site gateway's own
+        maintenance step, not a hard provisioning dependency for the node
+        actually being created.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            return
+        instance_id = instance.get("InstanceId")
+        if not instance_id:
+            return
+        self._aws("ec2", "modify-instance-attribute", "--instance-id", instance_id,
+                   "--no-source-dest-check")
+        log("- Disabled source/dest check on '{}' ({}) — required for it to forward traffic "
+            "for other nodes in its site".format(vm_name, instance_id))
 
     def _ensure_internet_gateway(self):
         """
