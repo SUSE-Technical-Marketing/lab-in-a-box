@@ -123,6 +123,11 @@ SERVICE_CREDENTIAL_FIELDS = {
         ("appcollection_user", True, False),
         ("appcollection_password", True, True),
     ],
+    "hermes": [
+        ("hermes_llm_api_key", True, True),
+        ("hermes_telegram_token", False, True),
+        ("hermes_dashboard_password", False, True),
+    ],
 }
 
 # --encrypt-existing's own heuristic for "this plaintext value looks like a
