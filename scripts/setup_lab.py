@@ -546,7 +546,19 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
 
 
 def _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg):
-    addons = clu_cfg.get("addons", [])
+    # NOT clu_cfg.get("addons") — clu_cfg comes from k8s.load_kclu_vars(),
+    # which deliberately keeps only scalar (str/int/float/bool) fields to
+    # mirror bash's own inability to hold an array in a simple shell
+    # variable (see its own docstring). "addons" is a list, so it was
+    # silently dropped there every time, and this function always saw an
+    # empty list — found live-testing install_ds389.py 2026-09-21: a
+    # kclusters.<name>.addons entry (documented in this repo's own
+    # CLAUDE.md as the correct way to configure cluster-level addons) has
+    # never actually installed anything through this path. Every real addon
+    # in solar-system-lab.json sidesteps this by using per-node addons[]
+    # instead (a separate mechanism, phase_vm_addons() below) — that's why
+    # this went unnoticed. Read the raw list straight from the definition.
+    addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
     if not addons:
         lc.log("No Kubernetes cluster addons for \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
         return

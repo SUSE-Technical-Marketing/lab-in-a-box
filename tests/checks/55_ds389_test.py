@@ -73,6 +73,17 @@ check("render_ds389_manifest: the real container ports 3389 (LDAP) and 3636 (LDA
       "containerPort: 3389" in manifest and "containerPort: 3636" in manifest)
 check("render_ds389_manifest: runs as the real dirsrv uid/gid 389, not root",
       "runAsUser: 389" in manifest and "fsGroup: 389" in manifest)
+check("render_ds389_manifest: fsGroup sits at POD level (spec.template.spec.securityContext), "
+      "not per-container — a real Kubernetes API rejection ('unknown field "
+      "...containers[0].securityContext.fsGroup') caught live-testing this addon 2026-09-21, "
+      "even though upstream's own doc sample has this exact same placement error",
+      "\n      securityContext:\n        fsGroup: 389\n" in manifest)
+check("render_ds389_manifest: runAsUser stays container-level, scoped to dirsrv only, and the "
+      "container's own securityContext carries no fsGroup (it isn't a valid field there)",
+      "\n          securityContext:\n            runAsUser: 389\n          volumeMounts:" in manifest)
+check("render_ds389_manifest: runAsUser stays off the chown init container, which must run as "
+      "root to do its job",
+      "runAsUser" not in manifest.split("initContainers:")[1].split("containers:")[0])
 check("render_ds389_manifest: a headless internal Service (clusterIP: None) backs the "
       "StatefulSet's own serviceName, as upstream's own doc requires",
       "clusterIP: None" in manifest and "serviceName: dirsrv-internal" in manifest)

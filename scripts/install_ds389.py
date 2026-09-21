@@ -170,6 +170,17 @@ spec:
       labels:
         app: {name}
     spec:
+      # fsGroup only exists at the POD level (v1.PodSecurityContext), not
+      # per-container (v1.SecurityContext) — a real API rejection caught
+      # live-testing this addon 2026-09-21 ("strict decoding error: unknown
+      # field ...containers[0].securityContext.fsGroup"), even though
+      # upstream's own doc sample nests it under the container the same
+      # (wrong) way. Left at pod level only (not also set on runAsUser)
+      # since a pod-level runAsUser would default onto the initContainer
+      # below too, which needs to run as root to chown the volume in the
+      # first place.
+      securityContext:
+        fsGroup: 389
       initContainers:
         - name: fix-data-perms
           image: busybox
@@ -195,7 +206,6 @@ spec:
               containerPort: 3636
           securityContext:
             runAsUser: 389
-            fsGroup: 389
           volumeMounts:
             - name: data
               mountPath: /data
@@ -281,6 +291,9 @@ def setup_ds389(hostname, mydomain, cfg):
     print("cn=Directory Manager password: {}".format(dm_password))
     print("LDAP:  ldap://<any cluster node>:{}".format(ldap_nodeport))
     print("LDAPS: ldaps://<any cluster node>:{}".format(ldaps_nodeport))
+    print("LDAPS uses a self-signed cert (upstream's own default, confirmed live 2026-09-21) — "
+          "a client that verifies certs (most do by default) needs LDAPTLS_REQCERT=never or a "
+          "real cert dropped in /data/tls/ (see upstream's own doc) until one is configured.")
     print("No backends/suffixes are created automatically — use dsconf/dsctl inside the pod "
           "to create them, per upstream's own documented workflow.")
 

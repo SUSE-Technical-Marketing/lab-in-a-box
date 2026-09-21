@@ -66,8 +66,18 @@ setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name) if "missing" n
 run_calls = []
 setup_lab.subprocess.run = lambda args, env=None, **kw: run_calls.append((args, env)) or FakeCompleted()
 
-clu_cfg = {"addons": ["rancher", "rancher", "longhorn"], "clu_type": "rke2", "mgm_node": "srv1"}
-definition2 = {"nodes": {"srv1": {"kcluster": "c1"}, "agt1": {"kcluster": "c1"}}}
+# clu_cfg deliberately has NO "addons" key — that's what a real
+# k8s.load_kclu_vars() call actually returns (it keeps only scalar fields,
+# so a list like "addons" is always dropped there). _install_cluster_addons
+# must read the addons list from definition["kclusters"][clu_name] directly
+# — regression guard for the real bug found live-testing install_ds389.py
+# 2026-09-21 (a cluster-level addons[] entry never installed anything,
+# always silently empty).
+clu_cfg = {"clu_type": "rke2", "mgm_node": "srv1"}
+definition2 = {
+    "nodes": {"srv1": {"kcluster": "c1"}, "agt1": {"kcluster": "c1"}},
+    "kclusters": {"c1": {"addons": ["rancher", "rancher", "longhorn"]}},
+}
 setup_lab._install_cluster_addons(definition2, config, defaults, "lab.json", "c1", clu_cfg)
 check("_install_cluster_addons: a repeated addon in the list is only run once",
       len(run_calls) == 2)
@@ -80,17 +90,21 @@ check("_install_cluster_addons: invokes the resolved installer with the JSON fil
 
 run_calls.clear()
 died = False
+definition2_missing = {
+    "nodes": definition2["nodes"],
+    "kclusters": {"c1": {"addons": ["totally-missing"]}},
+}
 try:
     setup_lab._install_cluster_addons(
-        definition2, config, defaults, "lab.json", "c1",
-        {"addons": ["totally-missing"], "clu_type": "rke2"})
+        definition2_missing, config, defaults, "lab.json", "c1", {"clu_type": "rke2"})
 except SystemExit:
     died = True
 check("_install_cluster_addons: dies when an addon's install script isn't found", died)
 check("_install_cluster_addons: never invokes subprocess.run for a missing installer", run_calls == [])
 
 run_calls.clear()
-setup_lab._install_cluster_addons(definition2, config, defaults, "lab.json", "c1", {"addons": [], "clu_type": "rke2"})
+definition2_empty = {"nodes": definition2["nodes"], "kclusters": {"c1": {"addons": []}}}
+setup_lab._install_cluster_addons(definition2_empty, config, defaults, "lab.json", "c1", {"clu_type": "rke2"})
 check("_install_cluster_addons: no-op when the cluster has no addons", run_calls == [])
 
 
