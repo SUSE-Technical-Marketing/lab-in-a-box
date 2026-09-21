@@ -725,6 +725,80 @@ def ensure_channels_synced(hostname, exec_prefix, channels):
             die("could not sync channel '{}'".format(ch))
 
 
+def pending_channels(hostname, exec_prefix, channels):
+    """
+    A single, non-blocking check: returns the SUBSET of `channels` that are
+    NOT YET fully synced (empty set = every one of them is genuinely
+    ready). Reuses the exact readiness signal already ground-truthed in
+    install_smlm.py's own ensure_channel_sync_monitor() (its systemd-timer
+    script): a channel is ready when its own reposync log
+    (/var/log/rhn/reposync/<label>.log, inside the server container) ends
+    with "Sync completed." — the same detection that monitor already uses
+    to decide whether a channel needs a re-triggered sync. Uses the SAME
+    exec_prefix convention as the rest of this module (mgrctl exec /
+    kubectl exec), so this works against both podman- and Kubernetes-
+    deployed servers without needing a separate `podman exec uyuni-server`
+    path.
+
+    Factored out of wait_for_channels_synced() 2026-09-21 so a caller can
+    make a one-shot readiness decision (e.g. "is it safe to register
+    synchronously, or should this hand off to a background retry instead")
+    without committing to a blocking poll loop.
+    """
+    pending = set()
+    for ch in channels:
+        log_path = "/var/log/rhn/reposync/{}.log".format(ch)
+        r = _run(hostname, exec_prefix,
+                 "test -f {p} && tail -n 3 {p}".format(p=shlex.quote(log_path)), check=False)
+        if r.returncode == 0 and "Sync completed." in (r.stdout or ""):
+            continue
+        pending.add(ch)
+    return pending
+
+
+def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll_interval=30):
+    """
+    Blocks until every channel label in `channels` shows a genuinely
+    COMPLETED reposync (see pending_channels()) — not merely "exists",
+    which is all ensure_channels_synced() checks before returning (it only
+    triggers a sync if missing, it never waits for one already in flight
+    to finish).
+
+    Added 2026-09-21 per explicit user requirement: registration scripts
+    must wait for channels (and the activation key referencing them) to be
+    genuinely available before registering a client against them — a
+    client bootstrapped against an activation key whose channels are still
+    mid-sync can end up with an incomplete/broken subscription. This
+    project's own TODO documents an extensive, real history of exactly
+    this class of channel-sync race (REAL BUGS #10/#12/#13).
+
+    `timeout=None` waits forever, no deadline — used by a background retry
+    worker (see install_client_registration.py's own use of this) that is
+    deliberately never meant to give up. Any other value dies, listing
+    whichever channels are still not ready, once that many seconds have
+    elapsed without all of them completing. No-op if `channels` is empty.
+    """
+    if not channels:
+        return
+    remaining = set(channels)
+    deadline = None if timeout is None else time.time() + timeout
+    announced = False
+    while True:
+        remaining = pending_channels(hostname, exec_prefix, remaining)
+        if not remaining:
+            break
+        if deadline is not None and time.time() >= deadline:
+            die("timed out after {}s waiting for channel(s) to finish syncing: {}".format(
+                timeout, ", ".join(sorted(remaining))))
+        if not announced:
+            print("  Waiting for channel(s) to finish syncing before continuing: {} …".format(
+                ", ".join(sorted(remaining))))
+            announced = True
+        time.sleep(poll_interval)
+    if announced:
+        print("  All required channels are now fully synced")
+
+
 def _stage_remote_file(hostname, exec_prefix, remote_path, content):
     """Writes `content` to `remote_path` (inside exec_prefix's target) via
     stdin — avoids ever embedding file content as a shell-quoted argv

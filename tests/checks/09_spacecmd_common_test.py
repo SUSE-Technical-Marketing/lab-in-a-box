@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -274,6 +275,84 @@ fake = FakeSSH()
 sc.ssh_run = fake
 sc.ensure_channels_synced("host1", "mgrctl exec --", [])
 check("ensure_channels_synced: truly no-op on empty list", len(fake.calls) == 0)
+
+# -- wait_for_channels_synced: real completion detection + timeout ----------
+# Added 2026-09-21 per explicit user requirement: registration scripts must
+# wait for channels to be genuinely, fully synced (not just "exists"),
+# reusing the exact reposync-log "Sync completed." signal already
+# ground-truthed in install_smlm.py's own channel-sync monitor.
+sc.time.sleep = lambda s: None  # no real waiting in tests
+
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
+sc.ssh_run = fake
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-a", "ch-b"])
+check("wait_for_channels_synced: checks the real reposync log path for each channel",
+      any("/var/log/rhn/reposync/ch-a.log" in c[1] for c in fake.calls)
+      and any("/var/log/rhn/reposync/ch-b.log" in c[1] for c in fake.calls))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.wait_for_channels_synced("host1", "mgrctl exec --", [])
+check("wait_for_channels_synced: no-op on an empty channel list, no SSH calls at all", len(fake.calls) == 0)
+
+# A channel that never completes -> dies once the timeout deadline passes.
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=1, stdout=""))])
+sc.ssh_run = fake
+_now = [1000.0]
+sc.time.time = lambda: _now[0]
+
+
+def _fake_sleep_advance(seconds):
+    _now[0] += 3600  # jump well past any real deadline, no actual waiting
+
+
+sc.time.sleep = _fake_sleep_advance
+died = False
+try:
+    sc.wait_for_channels_synced("host1", "mgrctl exec --", ["stuck-channel"], timeout=60, poll_interval=5)
+except SystemExit:
+    died = True
+check("wait_for_channels_synced: dies with a clear message once the timeout is exceeded, "
+      "rather than hanging forever", died)
+sc.time.time = time.time
+sc.time.sleep = time.sleep
+
+# -- pending_channels: the one-shot, non-blocking check factored out above --
+fake = FakeSSH(responses=[
+    ("reposync/ready.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/not-ready.log", FakeResult(returncode=1, stdout="")),
+])
+sc.ssh_run = fake
+pending = sc.pending_channels("host1", "mgrctl exec --", ["ready", "not-ready"])
+check("pending_channels: returns only the channel(s) NOT yet showing a completed sync",
+      pending == {"not-ready"})
+
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
+sc.ssh_run = fake
+check("pending_channels: an empty result means every channel is genuinely ready",
+      sc.pending_channels("host1", "mgrctl exec --", ["a", "b"]) == set())
+
+check("pending_channels: an empty input list returns an empty result, no SSH calls needed",
+      sc.pending_channels("host1", "mgrctl exec --", []) == set())
+
+# wait_for_channels_synced(timeout=None) waits forever — verify it actually keeps polling
+# instead of dying immediately, then completes once the channel becomes ready.
+poll_count = [0]
+
+
+def _completes_on_third_poll(hostname, cmd, **kwargs):
+    poll_count[0] += 1
+    if poll_count[0] >= 3:
+        return FakeResult(returncode=0, stdout="...\nSync completed.\n")
+    return FakeResult(returncode=1, stdout="")
+
+
+sc.ssh_run = _completes_on_third_poll
+sc.time.sleep = lambda s: None
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["slow-channel"], timeout=None, poll_interval=1)
+check("wait_for_channels_synced: timeout=None polls indefinitely and returns once genuinely ready",
+      poll_count[0] >= 3)
+sc.time.sleep = time.sleep
 
 # -- ensure_appstreams: no-op when key or appstreams unset -------------------
 fake = FakeSSH()

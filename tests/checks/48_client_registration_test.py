@@ -104,8 +104,10 @@ check("addon_node_config: overriding one node never mutates the shared top-level
 # ── install_client_registration.py: end-to-end through main() ──────────────
 import install_client_registration as icr  # noqa: E402
 
+_real_register_client = icr.register_client  # main() tests below stub this out
+
 calls = []
-icr.register_client = lambda vm_name, cfg: calls.append((vm_name, cfg))
+icr.register_client = lambda vm_name, cfg, json_file=None: calls.append((vm_name, cfg))
 icr.primary.load_definition = lambda path: cfg_def
 
 old_argv = sys.argv
@@ -136,6 +138,148 @@ finally:
 check("install_client_registration main(): _vm_name env scopes to one node, override still applied",
       len(calls) == 1 and calls[0][0] == "callisto"
       and calls[0][1]["client_registration_activation_key"] == "1-debian13")
+
+
+# ── register_client(): hands off to a background retry instead of blocking ──
+# Added 2026-09-21 per explicit user requirement: a first version of this
+# fix blocked synchronously (with a timeout) waiting for channels to sync
+# — correctly flagged as a real problem, since with many nodes sharing the
+# same still-syncing channel, each would wait out its own full timeout in
+# turn, potentially adding hours to a deployment. Fixed: if the required
+# channels aren't ALREADY fully synced, hand off to a DETACHED background
+# worker (no artificial timeout, it only stops once registration actually
+# succeeds) and return immediately so the rest of the deployment moves on.
+class _FakeSc:
+    def __init__(self, pending=None):
+        self.calls = []
+        self._pending = pending or set()
+
+    def ensure_spacecmd_config(self, *a, **kw):
+        self.calls.append(("ensure_spacecmd_config", a, kw))
+
+    def ensure_channels_synced(self, *a, **kw):
+        self.calls.append(("ensure_channels_synced", a, kw))
+
+    def ensure_activation_key(self, *a, **kw):
+        self.calls.append(("ensure_activation_key", a, kw))
+
+    def pending_channels(self, hostname, exec_prefix, channels):
+        self.calls.append(("pending_channels", channels))
+        return set(self._pending)
+
+    def wait_for_channels_synced(self, *a, **kw):
+        self.calls.append(("wait_for_channels_synced", a, kw))
+
+    def ensure_client_registered(self, *a, **kw):
+        self.calls.append(("ensure_client_registered", a, kw))
+
+
+launch_calls = []
+icr._launch_background_retry = lambda json_file, vm_name: launch_calls.append((json_file, vm_name))
+
+# -- fast path: channels already fully synced -> registers synchronously, no background retry --
+launch_calls.clear()
+fake_sc = _FakeSc(pending=set())
+icr.sc = fake_sc
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+    "client_registration_sync_channels": "sles15-sp7-pool sles15-sp7-updates",
+    "client_registration_activation_key_base_channel": "sles15-sp7-pool",
+    "client_registration_activation_key_child_channels": "managertools-sles15-sp7-pool",
+}, json_file="lab.json")
+names = [c[0] for c in fake_sc.calls]
+pending_call = next(c for c in fake_sc.calls if c[0] == "pending_channels")
+check("register_client(): checks pending_channels() on the UNION of sync_channels + "
+      "activation key base/child channels",
+      set(pending_call[1]) == {"sles15-sp7-pool", "sles15-sp7-updates", "managertools-sles15-sp7-pool"})
+check("register_client(): fully synced -> registers synchronously (ensure_client_registered called)",
+      "ensure_client_registered" in names)
+check("register_client(): fully synced -> no background retry launched", launch_calls == [])
+
+# -- slow path: channels NOT yet fully synced -> hands off, returns without registering --
+launch_calls.clear()
+fake_sc2 = _FakeSc(pending={"sles15-sp7-pool"})
+icr.sc = fake_sc2
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+    "client_registration_activation_key_base_channel": "sles15-sp7-pool",
+}, json_file="lab.json")
+names2 = [c[0] for c in fake_sc2.calls]
+check("register_client(): channels still pending -> launches a background retry for this node",
+      launch_calls == [("lab.json", "mercury.mydemo.lab")])
+check("register_client(): channels still pending -> does NOT register synchronously "
+      "(that's the whole point — don't block)",
+      "ensure_client_registered" not in names2)
+
+# -- no channels configured at all -> nothing to wait on, registers synchronously --
+launch_calls.clear()
+fake_sc3 = _FakeSc()
+icr.sc = fake_sc3
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+}, json_file="lab.json")
+check("register_client(): no sync_channels/activation-key-channels configured at all -> "
+      "nothing to wait on, registers synchronously without even calling pending_channels()",
+      not any(c[0] == "pending_channels" for c in fake_sc3.calls)
+      and any(c[0] == "ensure_client_registered" for c in fake_sc3.calls)
+      and launch_calls == [])
+
+# -- register_client() refuses to launch a background retry without a json_file --
+fake_sc4 = _FakeSc(pending={"still-syncing"})
+icr.sc = fake_sc4
+died = False
+try:
+    _real_register_client("mercury.mydemo.lab", {
+        "client_registration_server": "sol.mydemo.lab",
+        "client_registration_activation_key": "1-key",
+        "client_registration_activation_key_base_channel": "still-syncing",
+    })  # json_file omitted
+except SystemExit:
+    died = True
+check("register_client(): dies with a clear message if asked to background-retry with no json_file",
+      died)
+
+
+# ── _retry_until_registered(): the background worker's own retry-forever loop ──
+icr.time.sleep = lambda s: None  # no real waiting in tests
+
+# Succeeds on the very first attempt.
+fake_sc5 = _FakeSc()
+icr.sc = fake_sc5
+icr._retry_until_registered("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+})
+check("_retry_until_registered(): a clean first attempt registers and returns (no retry loop)",
+      sum(1 for c in fake_sc5.calls if c[0] == "ensure_client_registered") == 1)
+
+# Fails twice (once via SystemExit/die(), once via a plain exception), then succeeds on the third try.
+attempt_count = [0]
+
+
+class _FlakySc(_FakeSc):
+    def ensure_client_registered(self, *a, **kw):
+        attempt_count[0] += 1
+        if attempt_count[0] == 1:
+            raise SystemExit(1)
+        if attempt_count[0] == 2:
+            raise RuntimeError("transient spacecmd hiccup")
+        self.calls.append(("ensure_client_registered", a, kw))
+
+
+fake_sc6 = _FlakySc()
+icr.sc = fake_sc6
+icr._retry_until_registered("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+})
+check("_retry_until_registered(): survives a SystemExit (die()) from one attempt and keeps retrying",
+      attempt_count[0] == 3)
+check("_retry_until_registered(): survives a plain exception too, and eventually succeeds",
+      any(c[0] == "ensure_client_registered" for c in fake_sc6.calls))
 
 
 if failures:
