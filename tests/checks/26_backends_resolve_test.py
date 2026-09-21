@@ -193,6 +193,62 @@ check("_check_or_generate_mac: declining a conflict never writes a .system_modif
       not Path(path + ".system_modified.json").exists())
 
 
+# ── LibvirtBackend.check_or_generate_mac: real concurrency stress test for
+# the 2026-09-21 _mac_lock ────────────────────────────────────────────────
+# setup_lab.py's new --parallel VM-creation mode means multiple real
+# threads can now call check_or_generate_mac() concurrently for different
+# VMs. The real hazard: list_used_macs() (a live query) and
+# _check_or_generate_mac()'s own generate-a-new-one decision is a genuine
+# TOCTOU window if not held together as one critical section — and a real
+# conflict-resolution path mutates the SHARED `definition` object in
+# place. This directly verifies mutual exclusion (not an indirect side
+# effect): list_used_macs() is monkeypatched to sleep briefly and record
+# its own [enter, exit] interval; if _mac_lock genuinely serializes the
+# whole call, no two threads' intervals can ever overlap.
+import threading  # noqa: E402
+import time as _mac_time  # noqa: E402
+
+intervals = []
+intervals_lock = threading.Lock()
+
+
+def _slow_list_used_macs(self):
+    start = _mac_time.monotonic()
+    _mac_time.sleep(0.01)
+    end = _mac_time.monotonic()
+    with intervals_lock:
+        intervals.append((start, end))
+    return [], {}
+
+
+mac_backend = backends.LibvirtBackend("qemu:///system")
+with mock.patch.object(backends.LibvirtBackend, "list_used_macs", _slow_list_used_macs), \
+     mock.patch.object(backends._lc, "_generate_unused_mac", return_value="52:54:00:aa:bb:99"):
+    defs = [primary.LabDefinition({"nodes": {"vm{}".format(i): {}}},
+                                   "/nonexistent/never-touched-{}.json".format(i), "json")
+            for i in range(10)]
+    mac_threads = [
+        threading.Thread(target=mac_backend.check_or_generate_mac, args=("vm{}".format(i), "", defs[i]))
+        for i in range(10)
+    ]
+    for t in mac_threads:
+        t.start()
+    for t in mac_threads:
+        t.join()
+
+check("check_or_generate_mac: list_used_macs() was actually called by every thread",
+      len(intervals) == 10)
+overlapping = any(
+    a_start < b_end and b_start < a_end
+    for i, (a_start, a_end) in enumerate(intervals)
+    for j, (b_start, b_end) in enumerate(intervals)
+    if i != j
+)
+check("check_or_generate_mac: _mac_lock genuinely serializes concurrent calls — "
+      "no two threads' critical sections ever overlap in time",
+      not overlapping)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

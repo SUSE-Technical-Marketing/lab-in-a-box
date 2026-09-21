@@ -496,6 +496,115 @@ check("main: reaches setup_lab() when addon-config validation passes",
       len(setup_lab_calls) == 1)
 
 
+# ── main(): --parallel / --parallel=N flag parsing ──────────────────────────
+setup_lab_kwcalls = []
+setup_lab.setup_lab = lambda *a, **kw: setup_lab_kwcalls.append(kw)
+
+setup_lab_kwcalls.clear()
+sys.argv = ["setup_lab.py", "lab.json"]
+try:
+    setup_lab.main()
+except SystemExit:
+    pass
+finally:
+    sys.argv = old_argv
+check("main: no --parallel flag at all -> parallel=0 (strictly sequential, unchanged default)",
+      setup_lab_kwcalls[-1]["parallel"] == 0)
+
+setup_lab_kwcalls.clear()
+sys.argv = ["setup_lab.py", "--parallel", "lab.json"]
+try:
+    setup_lab.main()
+except SystemExit:
+    pass
+finally:
+    sys.argv = old_argv
+check("main: bare --parallel defaults to 4 concurrent workers",
+      setup_lab_kwcalls[-1]["parallel"] == 4)
+
+setup_lab_kwcalls.clear()
+sys.argv = ["setup_lab.py", "--parallel=8", "lab.json"]
+try:
+    setup_lab.main()
+except SystemExit:
+    pass
+finally:
+    sys.argv = old_argv
+check("main: --parallel=N honours the explicit worker count",
+      setup_lab_kwcalls[-1]["parallel"] == 8)
+
+sys.argv = ["setup_lab.py", "--parallel=0", "lab.json"]
+died = False
+try:
+    setup_lab.main()
+except SystemExit:
+    died = True
+finally:
+    sys.argv = old_argv
+check("main: --parallel=0 is rejected (use no flag at all for sequential, not =0)", died)
+
+sys.argv = ["setup_lab.py", "--parallel=notanumber", "lab.json"]
+died = False
+try:
+    setup_lab.main()
+except SystemExit:
+    died = True
+finally:
+    sys.argv = old_argv
+check("main: --parallel=<non-integer> dies with a clear message instead of crashing", died)
+
+
+# ── phase_create_vms: parallel=N actually dispatches concurrently ──────────
+# Real threading.Thread-based dispatch (not just "was ThreadPoolExecutor
+# called") — proves every node still gets destroyed+provisioned exactly
+# once, and the run report is populated correctly, when genuinely run on
+# multiple threads at once.
+for k in calls:
+    calls[k].clear()
+
+
+def _provision_records(definition, config, defaults, vm_name):
+    calls["provision"].append(vm_name)
+
+
+setup_lab.provision_vm = _provision_records
+setup_lab.destroy_vm = lambda definition, config, defaults, vm_name: calls["destroy"].append(vm_name)
+setup_lab.backends.get_backend = lambda *a, **kw: FakeBackend(reusable=False)
+setup_lab.targets.is_existing_node = lambda node_cfg: False
+parallel_definition = {"nodes": {
+    "pvm{}".format(i): {"myip": "10.0.1.{}".format(i), "mymac": "aa:bb:cc:dd:ff:{:02x}".format(i)}
+    for i in range(8)
+}}
+setup_lab._report = setup_lab._RunReport()
+setup_lab.phase_create_vms(parallel_definition, config, defaults, "lab.json", keep=False, parallel=4)
+check("phase_create_vms: parallel=4 still destroys+provisions every node exactly once",
+      sorted(calls["destroy"]) == sorted(parallel_definition["nodes"])
+      and sorted(calls["provision"]) == sorted(parallel_definition["nodes"]))
+check("phase_create_vms: parallel=4 records every node as 'created' in the run report",
+      sorted(name for name, status in setup_lab._report.nodes if status == "created")
+      == sorted(parallel_definition["nodes"]))
+
+# A single node's provision_vm() dying under parallel=N still doesn't stop the others.
+for k in calls:
+    calls[k].clear()
+
+
+def _provision_one_dies(definition, config, defaults, vm_name):
+    calls["provision"].append(vm_name)
+    if vm_name == "pvm3":
+        raise SystemExit(1)
+
+
+setup_lab.provision_vm = _provision_one_dies
+setup_lab._report = setup_lab._RunReport()
+setup_lab.phase_create_vms(parallel_definition, config, defaults, "lab.json", keep=False, parallel=4)
+check("phase_create_vms: parallel=4 — one node dying doesn't stop the rest from being attempted",
+      sorted(calls["provision"]) == sorted(parallel_definition["nodes"]))
+check("phase_create_vms: parallel=4 — the dying node is recorded FAILED, others as created",
+      any(name == "pvm3" and status == "FAILED" for name, status in setup_lab._report.nodes)
+      and sum(1 for _, status in setup_lab._report.nodes if status == "created") == 7)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

@@ -16,12 +16,13 @@ setup_lab.py — provision all VMs defined in a lab JSON, set up Kubernetes
 clusters, and install cluster-level and VM-level addons in order.
 
 Usage:
-    setup_lab.py [--keep] [--debug] <lab.json>
+    setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
 """
 
 __version__ = "fdfe335"
 _SCHEMA_VERSION = "1.0"
 
+import concurrent.futures
 import os
 import re
 import shutil
@@ -45,7 +46,7 @@ from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
 
 _HELP_TEXT = """\
-Usage: setup_lab.py [--keep] [--debug] <lab.json>
+Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
 
 Provisions all VMs defined in the lab JSON, sets up Kubernetes clusters, and
 installs cluster-level and VM-level addons in order.
@@ -57,6 +58,15 @@ Options:
   --debug   Stream the full output of every command that is run. Without it
             (default) only lab-in-a-box's own messages are shown; a command's
             output is still shown if it fails or emits a warning/error.
+  --parallel[=N]
+            Create up to N VMs at once instead of one at a time (default
+            without this flag: strictly sequential). Bare --parallel uses a
+            default of 4 concurrent workers. Only the VM-CREATION phase runs
+            in parallel — Kubernetes cluster setup and addon installation
+            still run sequentially, in JSON declaration order, since several
+            addons depend on another node's own addon having completed
+            first (e.g. client_registration needs its server's own smlm/
+            uyuni addon already installed).
 
 The lab definition JSON must contain:
   nodes      — map of VM hostname → node config (myip, mymac, kcluster, …)
@@ -326,10 +336,24 @@ def phase_dns(definition, remote_dns_servers):
     lc._level -= 1
 
 
-def phase_create_vms(definition, config, defaults, json_file, keep):
-    lc.log("Creating VMs")
-    lc._level += 1
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
+def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg, log_prefix=None):
+    """
+    One node's full create-VM flow: existing-host check, --keep reusability
+    check, destroy-before-recreate, provision. Extracted 2026-09-21 from
+    phase_create_vms()'s own sequential loop body so BOTH the sequential
+    and parallel paths share exactly one implementation — no behavior
+    drift between them.
+
+    log_prefix, when given, is set as this call's own per-thread log
+    prefix (see lab_creation.set_log_prefix()) for the duration of the
+    call, then cleared — used by the parallel path so concurrent workers'
+    log lines are attributable instead of racing on the shared ambient
+    indentation. The sequential path passes log_prefix=None (the default)
+    and gets EXACTLY the prior behavior, unchanged.
+    """
+    if log_prefix is not None:
+        lc.set_log_prefix(log_prefix)
+    try:
         lc.log("Node: \"{}{}{}\"".format(lc._RED, vm_name, lc._RESET))
 
         if targets.is_existing_node(node_cfg):
@@ -337,7 +361,7 @@ def phase_create_vms(definition, config, defaults, json_file, keep):
                 lc._RED, vm_name, lc._RESET))
             lc.check_ssh_conn(vm_name)
             _report.add_node(vm_name, "existing")
-            continue
+            return
 
         env = _merged_env(definition, config, defaults, vm_name)
         # --keep's reusability check must ask whichever backend actually
@@ -371,7 +395,7 @@ def phase_create_vms(definition, config, defaults, json_file, keep):
         if keep_reusable:
             lc.log("  Skipping \"{}{}{}\" — existing VM matches definition".format(lc._RED, vm_name, lc._RESET))
             _report.add_node(vm_name, "reused")
-            continue
+            return
 
         if keep_backend_error is not None:
             msg = "--keep check for '{}' could not reach its backend (leaving it untouched, " \
@@ -379,7 +403,7 @@ def phase_create_vms(definition, config, defaults, json_file, keep):
             lc.error(msg)
             _report.add_node(vm_name, "FAILED")
             _report.add_error(msg)
-            continue
+            return
 
         lc.purge_known_host(vm_name)
         # bash's `destroy_vm.sh "${inputFile}" "${_vm_name}"` here has no `||`
@@ -422,6 +446,52 @@ def phase_create_vms(definition, config, defaults, json_file, keep):
             lc.error(msg)
             _report.add_node(vm_name, "FAILED")
             _report.add_error(msg)
+    finally:
+        if log_prefix is not None:
+            lc.set_log_prefix(None)
+
+
+def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
+    """
+    parallel=0 (default): exactly the original sequential behavior, one
+    node at a time, in JSON declaration order — zero change in output or
+    timing from before this option existed.
+
+    parallel=N>0: runs up to N nodes' _create_one_vm() concurrently via a
+    thread pool (these are I/O-bound SSH/subprocess calls, so threads are
+    enough — no need for multiprocessing). Added 2026-09-21, opt-in only,
+    after scoping the real shared-state hazards this requires fixing
+    first: DNS zone-file writes (libs/services.py's _dns_lock) and MAC
+    generation/conflict-resolution (libs/backends.py's _mac_lock) both do
+    a non-atomic read-then-write that two nodes racing concurrently could
+    genuinely corrupt — both are now serialized with a lock, held for the
+    whole critical section, so parallel VM creation is safe regardless of
+    what order threads happen to interleave in. Each worker gets its own
+    log prefix (see _create_one_vm()) so concurrent output stays
+    attributable instead of racing on the shared ambient indentation.
+
+    NOT parallelized here: existing-node/--keep bookkeeping order (each
+    node still resolves this independently, thread-safe either way) and
+    _report's own list.append() calls (safe under the GIL, no lock
+    needed — confirmed, not assumed).
+    """
+    lc.log("Creating VMs")
+    lc._level += 1
+    nodes = list(definition.get("nodes", {}).items())
+
+    if not parallel:
+        for vm_name, node_cfg in nodes:
+            _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = [
+                pool.submit(_create_one_vm, definition, config, defaults, json_file, keep,
+                            vm_name, node_cfg, log_prefix="[{}] ".format(vm_name))
+                for vm_name, node_cfg in nodes
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()  # re-raise anything _create_one_vm's own try/except didn't already catch
+
     lc._level -= 1
 
 
@@ -609,7 +679,7 @@ def phase_vm_addons(definition, json_file):
         lc._level -= 1
 
 
-def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True):
+def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, parallel=0):
     # fresh=False is used by main(), which builds _report itself and seeds it
     # with the preflight's warnings/errors before this runs.
     global _report
@@ -630,7 +700,7 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True):
     if has_k8s:
         phase_dns(definition, remote_dns_servers)
 
-    phase_create_vms(definition, config, defaults, json_file, keep)
+    phase_create_vms(definition, config, defaults, json_file, keep, parallel=parallel)
 
     if has_k8s:
         phase_reboot_and_wait_kept_nodes(definition, config, keep)
@@ -680,9 +750,27 @@ def main():
     keep = "--keep" in args
     debug = "--debug" in args
     lc.set_debug(debug)
-    positional = [a for a in args if a not in ("--keep", "--debug")]
+
+    # --parallel / --parallel=N: bare form defaults to 4 concurrent workers.
+    # 0 (no flag at all) means the original strictly-sequential behavior —
+    # see phase_create_vms()'s own docstring for exactly what this does and
+    # doesn't parallelize.
+    parallel = 0
+    for a in args:
+        if a == "--parallel":
+            parallel = 4
+        elif a.startswith("--parallel="):
+            try:
+                parallel = int(a.split("=", 1)[1])
+            except ValueError:
+                lc.die("--parallel=N: '{}' is not a valid integer".format(a.split("=", 1)[1]))
+            if parallel < 1:
+                lc.die("--parallel=N: N must be at least 1 (got {})".format(parallel))
+
+    positional = [a for a in args if a != "--keep" and a != "--debug" and a != "--parallel"
+                  and not a.startswith("--parallel=")]
     if not positional:
-        lc.die("Usage: setup_lab.py [--keep] [--debug] <lab.json>")
+        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>")
     json_file = positional[0]
 
     defaults = primary.load_defaults()
@@ -718,7 +806,7 @@ def main():
         print_summary()
         sys.exit(1)
 
-    setup_lab(definition, config, defaults, json_file, keep=keep, fresh=False)
+    setup_lab(definition, config, defaults, json_file, keep=keep, fresh=False, parallel=parallel)
 
     # Non-zero exit if any node / cluster / addon failed (or the preflight
     # raised an error), so a scripted caller (or a glance at $?) can tell a

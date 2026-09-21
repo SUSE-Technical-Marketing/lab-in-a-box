@@ -42,12 +42,25 @@ Services:
 
 import shutil
 import subprocess
+import threading
 import urllib.request
 from pathlib import Path
 
 from lab_creation import log, warn, die, ssh_run
 
 NAMED_ZONE_DIR = Path("/var/lib/named")
+
+# Serializes every DNS zone-file mutation below (add_to_dns/del_from_dns/
+# add_service_dns/add_dns_to_named_rr) — added 2026-09-21 for setup_lab.py's
+# parallel VM-creation mode. _dns_add_line/_dns_remove_line/_dns_append_line
+# do a plain read-whole-file -> mutate -> write-whole-file, non-atomically;
+# two nodes' DNS registrations racing on the SAME zone file (every node in a
+# domain shares one .lan/.db file) can genuinely lose an entry — a classic
+# lost-update race, not a hypothetical one. A single process-wide lock is
+# enough (this class only ever runs inside one process — the automation
+# node's own setup_lab.py — never multiple processes contending for the
+# same zone file at once).
+_dns_lock = threading.Lock()
 
 
 class AuxService(object):
@@ -162,14 +175,15 @@ class DNSService(AuxService):
         lan_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
-        for server in (remote_dns_servers or []):
-            self._remote_dns_add(server, lan_file, a_record)
-            self._remote_dns_add(server, rev_file, ptr_record)
-            self._remote(server, "systemctl restart named", check=False)
+        with _dns_lock:
+            for server in (remote_dns_servers or []):
+                self._remote_dns_add(server, lan_file, a_record)
+                self._remote_dns_add(server, rev_file, ptr_record)
+                self._remote(server, "systemctl restart named", check=False)
 
-        self._dns_add_line(lan_file, a_record)
-        self._dns_add_line(rev_file, ptr_record)
-        self.restart_named()
+            self._dns_add_line(lan_file, a_record)
+            self._dns_add_line(rev_file, ptr_record)
+            self.restart_named()
 
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
         """Remove forward and reverse DNS records for a VM."""
@@ -182,16 +196,17 @@ class DNSService(AuxService):
         lan_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
-        for server in (remote_dns_servers or []):
-            # check=False: same non-fatal-secondary-server rationale as
-            # _remote_dns_add above.
-            self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
-            self._remote(server, "sed '/{}/d' -i {}".format(a_record, lan_file), check=False)
-            self._remote(server, "systemctl restart named", check=False)
+        with _dns_lock:
+            for server in (remote_dns_servers or []):
+                # check=False: same non-fatal-secondary-server rationale as
+                # _remote_dns_add above.
+                self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
+                self._remote(server, "sed '/{}/d' -i {}".format(a_record, lan_file), check=False)
+                self._remote(server, "systemctl restart named", check=False)
 
-        self._dns_remove_line(rev_file, ptr_record)
-        self._dns_remove_line(lan_file, a_record)
-        self.restart_named()
+            self._dns_remove_line(rev_file, ptr_record)
+            self._dns_remove_line(lan_file, a_record)
+            self.restart_named()
 
     def add_service_dns(self, definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=None):
         """Add round-robin A records for a cluster service DNS entry."""
@@ -214,18 +229,19 @@ class DNSService(AuxService):
         log("DNS '{}' added pointing to {} nodes of cluster '{}'".format(dns_entry, msg, clu_name))
 
         zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
-        for _, ip in record_targets:
-            record = "{}\tIN A  {}".format(dns_entry, ip)
-            for server in (remote_dns_servers or []):
-                # check=False: same non-fatal-secondary-server rationale as
-                # DNSService.add_to_dns above.
-                self._remote(server, "sed '/{}\tIN A  {}/d' -i {}".format(dns_entry, ip, zone_file), check=False)
-                self._remote(server, "echo -e '{}' >> {}".format(record, zone_file), check=False)
-                self._remote(server, "systemctl restart named", check=False)
-            self._dns_remove_line(zone_file, "{}\tIN A  {}".format(dns_entry, ip))
-            self._dns_append_line(zone_file, record)
+        with _dns_lock:
+            for _, ip in record_targets:
+                record = "{}\tIN A  {}".format(dns_entry, ip)
+                for server in (remote_dns_servers or []):
+                    # check=False: same non-fatal-secondary-server rationale as
+                    # DNSService.add_to_dns above.
+                    self._remote(server, "sed '/{}\tIN A  {}/d' -i {}".format(dns_entry, ip, zone_file), check=False)
+                    self._remote(server, "echo -e '{}' >> {}".format(record, zone_file), check=False)
+                    self._remote(server, "systemctl restart named", check=False)
+                self._dns_remove_line(zone_file, "{}\tIN A  {}".format(dns_entry, ip))
+                self._dns_append_line(zone_file, record)
 
-        self.restart_named()
+            self.restart_named()
 
     def add_dns_to_named_rr(self, definition, dns_entry, node_name, mydomain, remote_dns_servers=None):
         """Add a single round-robin A record (dns_entry -> node_name's own myip)."""
@@ -233,18 +249,19 @@ class DNSService(AuxService):
         record = "{}\tIN A  {}".format(dns_entry, myip)
         zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
 
-        existing = zone_file.read_text().splitlines() if zone_file.exists() else []
-        if record in existing:
-            log("- DNS entry \"{} → {}\" already correct, skipping".format(dns_entry, myip))
-            return
+        with _dns_lock:
+            existing = zone_file.read_text().splitlines() if zone_file.exists() else []
+            if record in existing:
+                log("- DNS entry \"{} → {}\" already correct, skipping".format(dns_entry, myip))
+                return
 
-        log("- add DNS entry \"{}.{}\"".format(dns_entry, mydomain))
+            log("- add DNS entry \"{}.{}\"".format(dns_entry, mydomain))
 
-        for server in (remote_dns_servers or []):
-            self._remote_dns_add(server, zone_file, record)
-            self._remote(server, "systemctl restart named", check=False)
+            for server in (remote_dns_servers or []):
+                self._remote_dns_add(server, zone_file, record)
+                self._remote(server, "systemctl restart named", check=False)
 
-        self._dns_add_line(zone_file, record)
+            self._dns_add_line(zone_file, record)
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────

@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -140,6 +141,20 @@ def _cloud_no_mac(mymac):
     contract; no cloud backend's create_vm() reads its own `network` parameter.
     """
     return mymac or "", None
+
+
+# Serializes MAC generation/conflict-resolution end to end — added 2026-09-21
+# for setup_lab.py's parallel VM-creation mode. Two real, concrete hazards
+# without it: (1) list_used_macs() (a live query) + _check_or_generate_mac()'s
+# own generate-a-new-random-one decision is a genuine TOCTOU window — two
+# threads racing it can both decide the SAME "unused" MAC is free; (2) a
+# real conflict (an explicit mymac already claimed by a different VM) hits
+# an interactive tty prompt (_read_conflict_confirmation) AND mutates+saves
+# the shared `definition` object in place — neither is safe with more than
+# one thread inside this function at once. Held for the WHOLE call, not just
+# the list_used_macs() read, since the decision and any resulting
+# definition mutation/save are part of the same critical section.
+_mac_lock = threading.Lock()
 
 
 def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model):
@@ -462,8 +477,9 @@ class LibvirtBackend(VMBackend):
         """Validate or generate the MAC for a VM — see _check_or_generate_mac()'s
         docstring (this backend's own list_used_macs() supplies the map of
         MACs already in use)."""
-        _, mac_by_domain = self.list_used_macs()
-        return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
+        with _mac_lock:
+            _, mac_by_domain = self.list_used_macs()
+            return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """
@@ -1325,8 +1341,9 @@ class HarvesterBackend(VMBackend):
         return names, mac_by_name
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
-        _, mac_by_name = self.list_used_macs()
-        return _check_or_generate_mac(mac_by_name, vm_name, mymac, definition, bridge, vm_net_model)
+        with _mac_lock:
+            _, mac_by_name = self.list_used_macs()
+            return _check_or_generate_mac(mac_by_name, vm_name, mymac, definition, bridge, vm_net_model)
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as LibvirtBackend's: True = keep, False = destroy and

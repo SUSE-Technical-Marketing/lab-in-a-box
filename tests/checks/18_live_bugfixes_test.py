@@ -1129,6 +1129,72 @@ check("setup_smlm_proxy_prereqs: an embedded single quote in smlm_proxy_fqdn rou
       shlex.split(tls_cmd.split("\n")[1])[0] == "_fqdn=a.b'; rm -rf /; echo '")
 
 
+# ── DNSService: real concurrency stress test for the 2026-09-21 _dns_lock ──
+# setup_lab.py's new --parallel VM-creation mode means multiple real
+# threads can now call add_to_dns() concurrently for DIFFERENT nodes
+# sharing the SAME zone file. _dns_add_line()/_dns_remove_line() do a
+# plain read-whole-file -> mutate -> write-whole-file, non-atomically — a
+# real lost-update race without a lock. This spawns REAL threading.Thread
+# workers (not a mock of the lock itself) hammering add_to_dns()
+# concurrently and verifies every single one of their entries survives.
+#
+# With ssh_run/file-I/O mocked this fast, the actual race window is too
+# narrow for the GIL's own scheduling to reliably interleave two threads
+# mid-read-modify-write in one run — confirmed by hand: with _dns_lock
+# swapped for a no-op, the same test still "passed" most runs purely by
+# luck. So Path.read_text is wrapped here with a small artificial delay —
+# widening the window deterministically — for every caller, including the
+# real _dns_add_line/_dns_remove_line inside add_to_dns() itself. This is
+# what actually proves _dns_lock serializes access, not just that the
+# lock object exists.
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+_real_read_text = Path.read_text
+
+
+def _slow_read_text(self, *a, **kw):
+    result = _real_read_text(self, *a, **kw)
+    _time.sleep(0.005)  # widen the read -> write race window on purpose
+    return result
+
+
+Path.read_text = _slow_read_text
+
+services.ssh_run = lambda *a, **kw: FakeResult()
+stress_svc = services.DNSService()
+stress_svc.restart_named = lambda: None  # avoid a real local `systemctl restart named`
+services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
+
+N_WORKERS = 12
+threads = [
+    threading.Thread(target=stress_svc.add_to_dns,
+                      args=("host{}.paralleltest.lab".format(i), "10.99.0.{}".format(i),
+                            "paralleltest.lab", "99.10"))
+    for i in range(N_WORKERS)
+]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+Path.read_text = _real_read_text  # restore before any later test reads a real file
+
+lan_file = services.NAMED_ZONE_DIR / "paralleltest.lab.lan"
+rev_file = services.NAMED_ZONE_DIR / "99.10.db"
+lan_lines = lan_file.read_text().splitlines()
+rev_lines = rev_file.read_text().splitlines()
+check("DNSService.add_to_dns under real concurrent threads (artificially widened race window): "
+      "every single A record survives — {} of {} present".format(
+          sum(1 for i in range(N_WORKERS) if any("host{}".format(i) in l for l in lan_lines)), N_WORKERS),
+      all(any("host{}".format(i) in line for line in lan_lines) for i in range(N_WORKERS)))
+check("DNSService.add_to_dns under real concurrent threads: every single PTR record survives too",
+      all(any("host{}.paralleltest.lab".format(i) in line for line in rev_lines) for i in range(N_WORKERS)))
+check("DNSService.add_to_dns under real concurrent threads: no duplicate/corrupted lines "
+      "(exactly {} A record lines, not more or fewer)".format(N_WORKERS),
+      len(lan_lines) == N_WORKERS)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
