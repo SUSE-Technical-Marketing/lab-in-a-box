@@ -54,8 +54,10 @@ def load_plugin_from_path(path, name=None):
     which webui/lib/discovery.py otherwise runs into every time. Returns a
     copy of DEFAULT_PLUGIN (with "name" filled in) if the file doesn't exist
     or has no PLUGIN dict of its own — matches load_plugin()'s same
-    graceful fallback, including for a non-Python addon script (e.g.
-    install_ds389, still bash) that raises on import.
+    graceful fallback, including for a non-Python addon script that raises
+    on import (install_ds389 was the last real example of this until it
+    was ported 2026-09-21; the fallback path itself stays, for whatever
+    addon is next to arrive mid-port or genuinely broken).
     """
     plugin = dict(DEFAULT_PLUGIN, name=name)
     if not path or not os.path.isfile(str(path)):
@@ -76,8 +78,9 @@ def load_plugin_from_path(path, name=None):
     except Exception:
         # Any import-time failure (missing dependency, syntax error in an
         # addon under development, a bash script that isn't valid Python at
-        # all — install_ds389 today — …) falls back to the default rather
-        # than breaking validation/orchestration/discovery over one script.
+        # all — install_ds389 was the standing example of this until it was
+        # ported 2026-09-21) falls back to the default rather than breaking
+        # validation/orchestration/discovery over one script.
         pass
     return plugin
 

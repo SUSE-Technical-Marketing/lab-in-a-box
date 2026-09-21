@@ -128,6 +128,9 @@ SERVICE_CREDENTIAL_FIELDS = {
         ("hermes_telegram_token", False, True),
         ("hermes_dashboard_password", False, True),
     ],
+    "ds389": [
+        ("ds389_dm_password", False, True),
+    ],
 }
 
 # --encrypt-existing's own heuristic for "this plaintext value looks like a

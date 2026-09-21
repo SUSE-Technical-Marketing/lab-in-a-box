@@ -116,7 +116,7 @@ All user commands are run **on the automation VM**. It connects to the hyperviso
 
 ### Under the hood
 
-The command-line tools and every add-on are Python 3.11, living in `libs/` and `scripts/` and installed to `/usr/local/lib/lab_creation/` — organized around a small set of shared library modules (`lab_creation.py`, `backends.py`, `services.py`, `spacecmd_common.py`, …) rather than one another. VM creation is behind a pluggable `VMBackend` interface (`LibvirtBackend` today), so the same orchestration code can eventually target other virtualization backends (KubeVirt, Harvester) without touching add-ons. One legacy add-on (`install_ds389`) is still plain bash — it predates the Python port and was already broken in bash, so it wasn't worth porting. The bash-era implementation these replaced lives on, archived, under `legacy_bash/`.
+The command-line tools and every add-on are Python 3.11, living in `libs/` and `scripts/` and installed to `/usr/local/lib/lab_creation/` — organized around a small set of shared library modules (`lab_creation.py`, `backends.py`, `services.py`, `spacecmd_common.py`, …) rather than one another. VM creation is behind a pluggable `VMBackend` interface (`LibvirtBackend` today), so the same orchestration code can eventually target other virtualization backends (KubeVirt, Harvester) without touching add-ons. The bash-era implementations these replaced live on, archived, under `legacy_bash/` — including the original `install_ds389`, the last addon to get a Python port (2026-09-21).
 
 <p align="right"><a href="#top">↑ back to top</a></p>
 
@@ -945,7 +945,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`mariadb`](https://mariadb.org/) | MariaDB database |
 | [`postgresql`](https://www.postgresql.org/) | PostgreSQL database |
 | [`openldap`](https://www.openldap.org/) | OpenLDAP directory service |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) — the one add-on still implemented in bash |
+| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) |
 </details>
 
 <a id="addons-cicd"></a>
@@ -1123,7 +1123,7 @@ Installed Python library modules. Updated by running `install_automation_node_sc
 | `k8s.py` | Kubernetes cluster distro interface (RKE2/K3s) |
 | `addon_common.py` | Shared CLI plumbing every `install_*` addon uses (`--help`/`--version`/`--schema` dispatch, schema validation) |
 
-The four bash helpers (`lab_creation.bash`, `k8s_functions.bash`, `primary_functions.bash`, `extensions.sh`) are also still installed alongside these — kept indefinitely for `install_ds389`, the one addon that never got a Python port.
+`extensions.sh` (empty, unused) is also still installed alongside these. The other three bash helpers (`lab_creation.bash`, `k8s_functions.bash`, `primary_functions.bash`) were removed once `install_ds389` — their last consumer — was ported to Python (2026-09-21); the bash originals live on under `legacy_bash/`.
 
 <p align="right"><a href="#top">↑ back to top</a></p>
 
