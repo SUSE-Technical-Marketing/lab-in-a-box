@@ -226,13 +226,77 @@ def _relax_health_kill_policy(hostname, service_name="uyuni-server"):
     kill reaches genuine "healthy" reliably ~2-3 minutes after start.
     custom.conf is a static file — survives both `mgradm upgrade` (which
     only rewrites generated.conf) and a plain reboot, for either service.
+
+    Also raises the container's own open-file ulimit as high as this host
+    allows, same override point — a real, previously-unresolved outage
+    recurred live 2026-09-22 (solar-system-lab.json, sol.mydemo.lab):
+    Tomcat's default 8192 nofile limit inside the uyuni-server container
+    was fully saturated (8188 open) under real concurrent load
+    (client_registration running against 14 nodes at once), and every
+    further connection failed with "Too many open files" —
+    `catalina.out`'s own repeated "Socket accept failed" traces. A plain
+    `systemctl restart` only papers over this (confirmed live: it doesn't
+    even do that reliably — this exact restart raced with uyuni-db
+    cycling too and left uyuni-server.service failed on a refused DB
+    connection, an unrelated ordering issue on top). Per the user's own
+    explicit instruction, this belongs in the setup process itself, not a
+    manual one-off fix.
+
+    `--ulimit nofile=unlimited:unlimited` (Docker's own magic string) was
+    the first attempt here — confirmed live it is NOT accepted by this
+    podman version (4.9.5): "ulimit option ... requires name=SOFT:HARD,
+    failed to be parsed: strconv.ParseInt: parsing 'unlimited': invalid
+    syntax" — podman's `--ulimit` needs a real numeric SOFT:HARD pair, no
+    magic string. Uses 1048576 (the real kernel ceiling on this host, from
+    /proc/sys/fs/nr_open — going any higher would need a sysctl change
+    too, outside a single container's own ulimit) for both values instead,
+    the practical "unlimited" a container's own ulimit can actually reach.
     """
     conf_dir = "/etc/systemd/system/{}.service.d".format(service_name)
     override = ('[Service]\nEnvironment="PODMAN_EXTRA_ARGS=--health-on-failure=none '
-                '--health-retries=10 --health-start-period=180s"\n')
+                '--health-retries=10 --health-start-period=180s '
+                '--ulimit nofile=1048576:1048576"\n')
     ssh_run(hostname, "mkdir -p {} && cat > {}/custom.conf <<'EOF'\n{}EOF".format(
         shlex.quote(conf_dir), shlex.quote(conf_dir), override), check=False)
     ssh_run(hostname, "systemctl daemon-reload", check=False)
+
+
+def _raise_in_container_service_fd_limits(hostname):
+    """
+    _relax_health_kill_policy()'s own --ulimit override only raises the
+    OUTER podman container's own file-descriptor limit — confirmed live
+    2026-09-22 this is NOT enough on its own: Tomcat's real java process
+    still reported the old 8192 limit (`/proc/<pid>/limits`) even with the
+    outer container ulimit confirmed at 1048576 (`podman exec ... ulimit
+    -n`), because Tomcat's own PACKAGE-SHIPPED systemd unit INSIDE the
+    container (/usr/lib/systemd/system/tomcat.service) bakes in its own
+    explicit LimitNOFILE=8192 — systemd always applies each unit's own
+    resource limits, regardless of whatever the parent process (the
+    container's own PID 1) inherited. salt-api.service has the identical
+    8192 cap for the same reason (real relevance here: salt-api handles
+    every registered client's own check-ins, and this lab's real workload
+    is 14 concurrently-registering nodes) — salt-master.service's own cap
+    (100000) is already generous enough to leave alone.
+
+    /etc/systemd/system/ inside the container is NOT a named/persistent
+    volume (only its multi-user.target.wants and sockets.target.wants
+    SUBdirectories are, per mgradm's own generated ExecStart -v list) — a
+    drop-in written here does NOT survive a container restart/recreation,
+    unlike the OUTER host-level drop-in _relax_health_kill_policy writes.
+    This must be re-applied every time the container comes up, which is
+    exactly why this is called from ensure_server_container_active() itself
+    (right after confirming healthy), not a one-off setup step.
+    """
+    override = "[Service]\nLimitNOFILE=1048576\n"
+    for unit in ("tomcat.service", "salt-api.service"):
+        conf_dir = "/etc/systemd/system/{}.d".format(unit)
+        ssh_run(hostname,
+                "podman exec -i uyuni-server sh -c {} <<'EOF'\n{}EOF".format(
+                    shlex.quote("mkdir -p {0} && cat > {0}/override.conf".format(conf_dir)), override),
+                check=False)
+    ssh_run(hostname, "podman exec uyuni-server systemctl daemon-reload", check=False)
+    for unit in ("tomcat.service", "salt-api.service"):
+        ssh_run(hostname, "podman exec uyuni-server systemctl restart {}".format(unit), check=False)
 
 
 def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_restarts=3):
@@ -289,6 +353,7 @@ def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_
             h = ssh_run(hostname, "podman inspect uyuni-server --format '{{.State.Health.Status}}'",
                         check=False, capture=True)
             if (h.stdout or "").strip() == "healthy":
+                _raise_in_container_service_fd_limits(hostname)
                 return
         time.sleep(poll_interval)
         elapsed += poll_interval

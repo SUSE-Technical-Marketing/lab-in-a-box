@@ -62,6 +62,12 @@ check("gives real retries/start-period headroom",
       "--health-retries=10" in out and "--health-start-period=180s" in out)
 check("PODMAN_EXTRA_ARGS is the exact env var mgradm's ExecStart line splices in",
       "PODMAN_EXTRA_ARGS=" in out)
+check("raises the container's open-file ulimit as high as the host's own kernel ceiling "
+      "allows (podman 4.9.5 rejects Docker's 'unlimited' magic string outright — confirmed "
+      "live) — real outage found live 2026-09-22: Tomcat's default 8192 nofile limit was "
+      "fully saturated under real concurrent load (14 nodes' worth of client_registration "
+      "at once), failing every further connection with 'Too many open files'",
+      "--ulimit nofile=1048576:1048576" in out)
 check("reloads systemd so the drop-in actually takes effect",
       "systemctl daemon-reload" in out)
 check("conf path itself is shell-quoted (defensive, even though it's a fixed literal)",
@@ -89,6 +95,40 @@ check("writes to uyuni-db's own custom.conf override point, creating the "
 check("uyuni-db's override uses the exact same relaxed policy as uyuni-server's",
       "--health-on-failure=none" in out_db and "--health-retries=10" in out_db
       and "--health-start-period=180s" in out_db)
+check("uyuni-db also gets the raised open-file ulimit (applied via the same shared "
+      "function/override point, even though only uyuni-server has been observed hitting "
+      "this live so far)",
+      "--ulimit nofile=1048576:1048576" in out_db)
+
+# ── _raise_in_container_service_fd_limits: the OUTER container ulimit fix
+# above is NOT enough on its own — confirmed live 2026-09-22 that Tomcat's
+# real java process still reported the old 8192 limit even with the outer
+# container ulimit confirmed at 1048576, because Tomcat's own
+# package-shipped systemd unit INSIDE the container bakes in its own
+# explicit LimitNOFILE=8192, which always wins over whatever the parent
+# process (the container's own PID 1) inherited.
+rec_incontainer = _Rec()
+mgradm_common.ssh_run = rec_incontainer
+mgradm_common._raise_in_container_service_fd_limits("vm1")
+out_incontainer = rec_incontainer.joined()
+check("writes a LimitNOFILE override drop-in for tomcat.service INSIDE the container "
+      "via podman exec -i (not the outer host-level systemd)",
+      "podman exec -i uyuni-server sh -c" in out_incontainer
+      and "/etc/systemd/system/tomcat.service.d" in out_incontainer
+      and "LimitNOFILE=1048576" in out_incontainer)
+check("also patches salt-api.service — real relevance here: salt-api handles every "
+      "registered client's own check-ins, and this lab's real workload is 14 "
+      "concurrently-registering nodes",
+      "/etc/systemd/system/salt-api.service.d" in out_incontainer)
+check("does NOT touch salt-master.service — its own cap (100000) is already generous "
+      "enough to leave alone",
+      "salt-master.service.d" not in out_incontainer)
+check("reloads systemd INSIDE the container so the drop-ins actually take effect",
+      "podman exec uyuni-server systemctl daemon-reload" in out_incontainer)
+check("restarts both patched services so the new limit actually applies to a running "
+      "process, not just future ones",
+      "podman exec uyuni-server systemctl restart tomcat.service" in out_incontainer
+      and "podman exec uyuni-server systemctl restart salt-api.service" in out_incontainer)
 
 # ── ensure_server_container_active calls the fix BEFORE polling, for BOTH --
 # ── uyuni-server AND uyuni-db ------------------------------------------------
@@ -109,6 +149,10 @@ check("ensure_server_container_active ALSO relaxes uyuni-db's own copy of the sa
       "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out2)
 check("the fix is applied before the is-active poll starts",
       out2.index("daemon-reload") < out2.index("systemctl is-active uyuni-server.service"))
+check("ensure_server_container_active ALSO raises the in-container service fd limits "
+      "once it actually confirms healthy — the outer ulimit fix alone doesn't reach "
+      "Tomcat's own package-shipped systemd unit",
+      "podman exec -i uyuni-server sh -c" in out2 and "LimitNOFILE=1048576" in out2)
 
 # ── run_install_with_pg_hba_guard also pre-empts the SAME crash-loop on the
 # very first boot, WHILE mgradm install is still running — confirmed live
