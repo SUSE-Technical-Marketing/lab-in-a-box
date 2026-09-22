@@ -86,7 +86,7 @@ check("_validate: default (kubernetes) mode does NOT require smlm_scc_regcode/pr
 
 
 # ── setup_smlm_podman(): SCC registration + package-install branching ──────
-def run_setup_smlm_podman(cfg, transactional):
+def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
     calls = []
     inputs = {}
 
@@ -98,6 +98,8 @@ def run_setup_smlm_podman(cfg, transactional):
             return FakeResult(returncode=0 if transactional else 1)
         if "mgr-sync list channels" in cmd:
             return FakeResult(returncode=0, stdout="some-channel\n")
+        if "podman container exists uyuni-server" in cmd:
+            return FakeResult(returncode=0 if already_initialized else 1)
         return FakeResult(returncode=0)
 
     ism.ssh_run = fake_ssh_run
@@ -159,6 +161,33 @@ check("setup_smlm_podman: install command uses the flag-only mgradm form (no FQD
       "mgradm install podman" in guard_calls[0][1]
       and "--admin-login admin" in guard_calls[0][1]
       and "--organization lab" in guard_calls[0][1])
+
+# Real bug found live 2026-09-21 (solar-system-lab.json, sol.mydemo.lab): a
+# prior run's `mgradm install` can die AFTER the real DB/org/admin bootstrap
+# already succeeded, while checking an entitlement-restricted OPTIONAL
+# service image (run_install_with_pg_hba_guard's own documented proxy-tftpd
+# crash) — confirmed live that uyuni-server/uyuni-db were already fully
+# healthy with a real, populated schema despite the outer mgradm install
+# having died. Blindly retrying `mgradm install` against that state doesn't
+# help (mgradm itself refuses, "Server is already initialized!"), so
+# setup_smlm_podman() must detect an existing uyuni-server container and
+# skip straight to the health-check + post-install steps instead of
+# re-attempting the install.
+calls_resume, guard_calls_resume, active_calls_resume, _, _ = run_setup_smlm_podman(
+    cfg, transactional=True, already_initialized=True)
+check("setup_smlm_podman: an already-initialized server (uyuni-server container exists) "
+      "never re-attempts mgradm install", guard_calls_resume == [])
+check("setup_smlm_podman: an already-initialized server skips the post-mgradm-install reboot "
+      "too (the plain ssh 'reboot' call right after run_install_with_pg_hba_guard — distinct "
+      "from the earlier transactional-update package-install reboot via reboot_vm(), which "
+      "still runs regardless since installing the mgradm tooling itself is untouched by this fix)",
+      "reboot" not in calls_resume)
+check("setup_smlm_podman: an already-initialized server still runs the health-check/recovery step",
+      active_calls_resume == ["sol.mydemo.lab"])
+check("setup_smlm_podman: an already-initialized server still registers SCC/containers modules "
+      "(idempotent, safe to repeat, and needed if THIS run is what's actually retrying after a "
+      "transient SCC failure rather than the mgradm crash)",
+      any(c == "SUSEConnect -r REGCODE123" for c in calls_resume))
 
 # Real bug found live 2026-09-13: an unquoted multi-word --organization
 # ("SUSE Test") got split by the remote shell into two tokens — mgradm then
@@ -234,6 +263,50 @@ check("setup_smlm_podman: a real (list-shaped) smlm_channels is space-joined int
 check("setup_smlm_podman: the malformed Python-list-repr form never appears",
       not any("['chan-a', 'chan-b']" in c for c in calls_chanlist))
 
+# Real bug found live 2026-09-21 (solar-system-lab.json, sol.mydemo.lab):
+# `mgr-sync add credentials` succeeding does NOT itself populate the local
+# product/channel catalog (a separate `mgr-sync refresh` step is needed) —
+# confirmed live that the old code's unbounded wait loop sat for over 2
+# hours with "No channels found." before a manual `mgr-sync refresh`
+# resolved it in under 5s.
+check("setup_smlm_podman: explicitly refreshes mgr-sync's catalog before waiting on the "
+      "channel list, rather than hoping the server's own background job already ran",
+      "mgrctl exec -- mgr-sync refresh" in calls_chanlist
+      and calls_chanlist.index("mgrctl exec -- mgr-sync refresh")
+      < calls_chanlist.index("mgrctl exec -- mgr-sync list channels 2>/dev/null"))
+
+# The wait loop itself now has a bounded retry count instead of `while
+# True` — a real, permanent SCC/entitlement problem (not just first-refresh
+# latency) must no longer be able to hang this addon forever.
+def _run_setup_smlm_podman_channels_never_sync(cfg):
+    def fake_ssh_run(hostname, cmd, check=True, capture=False, input_text=None):
+        if "command -v transactional-update" in cmd:
+            return FakeResult(returncode=0)
+        if "mgr-sync list channels" in cmd:
+            return FakeResult(returncode=0, stdout="No channels found.\n")
+        if "podman container exists uyuni-server" in cmd:
+            return FakeResult(returncode=1)
+        return FakeResult(returncode=0)
+
+    ism.ssh_run = fake_ssh_run
+    ism.reboot_vm = lambda virt_srv, hostname: None
+    ism.check_ssh_conn = lambda hostname: None
+    ism.time.sleep = lambda s: None
+    mgradm_common.run_install_with_pg_hba_guard = lambda hostname, cmd: None
+    mgradm_common.ensure_server_container_active = lambda hostname: None
+    ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
+
+
+died_timeout = False
+try:
+    _run_setup_smlm_podman_channels_never_sync(cfg_with_channel_list)
+except SystemExit:
+    died_timeout = True
+check("setup_smlm_podman: dies with a clear message instead of hanging forever when the "
+      "channel list is STILL empty after the refresh and a bounded number of retries — a "
+      "real permanent problem, not just first-refresh latency, must surface as an error",
+      died_timeout)
+
 # Real bug found live 2026-09-14: an activation key's own
 # *_activation_key_child_channels (e.g. the "managertools-*" channels that
 # actually provide venv-salt-minion) were only ever REFERENCED by
@@ -308,10 +381,35 @@ check("channel-sync-monitor script checks for an already-running reposync before
       and monitor_script_call.index("pgrep -f spacewalk-repo-sync")
       < monitor_script_call.index("softwarechannel_syncrepos"))
 check("channel-sync-monitor script triggers at most one channel per run (exits "
-      "immediately after the first trigger, inside the loop)",
+      "immediately after the first trigger and its own error check, inside the loop)",
       monitor_script_call is not None
       and monitor_script_call.count("softwarechannel_syncrepos \"$channel\"") == 1
-      and "exit 0" in monitor_script_call.split("softwarechannel_syncrepos \"$channel\"")[1][:40])
+      and "exit 0" in monitor_script_call.split("softwarechannel_syncrepos \"$channel\"")[1][:80])
+
+# Real bug found live 2026-09-22: spacecmd_() used to discard ALL of
+# spacecmd's own stderr (2>/dev/null) — both its routine INFO banner and
+# any real error (a stale/invalid cached session, a connection failure)
+# alike — which silently masked a stale-credentials failure for 6.5 hours
+# straight on a real deployment: every cycle in that window logged "no
+# software channels found on the server", indistinguishable from the
+# genuinely-empty case, while a real 12-node reposync backlog sat
+# completely untouched. Hardened to capture stderr and fail loudly instead.
+check("channel-sync-monitor script no longer blindly discards spacecmd's own stderr — "
+      "that's what let a real auth failure masquerade as 'no channels' for 6.5 hours live",
+      monitor_script_call is not None and "2>/dev/null" not in monitor_script_call.split("spacecmd_()")[1][:200])
+check("channel-sync-monitor script captures spacecmd's stderr to a real file for inspection",
+      monitor_script_call is not None and 'ERRFILE=$(mktemp)' in monitor_script_call
+      and '2>"$ERRFILE"' in monitor_script_call)
+check("channel-sync-monitor script cleans up its own temp error file on exit",
+      monitor_script_call is not None and "trap 'rm -f \"$ERRFILE\"' EXIT" in monitor_script_call)
+check("channel-sync-monitor script checks for a real spacecmd error after EVERY spacecmd_ call "
+      "that matters (the channel list AND the resync trigger), not just one of them",
+      monitor_script_call is not None
+      and monitor_script_call.count("check_spacecmd_error") >= 3)  # def + 2 call sites
+check("channel-sync-monitor script's error check logs loudly and exits non-zero on a real "
+      "failure, rather than silently continuing as if nothing happened",
+      monitor_script_call is not None
+      and "log \"spacecmd call failed:" in monitor_script_call and "exit 1" in monitor_script_call)
 
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []

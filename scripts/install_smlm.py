@@ -761,21 +761,44 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     # not a valid FQDN"). install_uyuni.py has this identical latent bug —
     # never touched here (still Uyuni-only, per the user's own instruction),
     # but its own uyuni_org just never happened to contain a space.
-    install_cmd = (
-        "mgradm install podman "
-        "--admin-login {} "
-        "--admin-password {} "
-        "--email {} "
-        "--ssl-password {} "
-        "--organization {}".format(
-            shlex.quote(admin), shlex.quote(password), shlex.quote(email),
-            shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
-    run_install_with_pg_hba_guard(hostname, install_cmd)
+    # A prior run's `mgradm install` can die AFTER the real bootstrap (DB
+    # schema/org/admin — the part that matters) already completed, while
+    # checking an entitlement-restricted OPTIONAL service image (see
+    # run_install_with_pg_hba_guard's own docstring on the confirmed-live
+    # proxy-tftpd crash). Confirmed live again 2026-09-21
+    # (solar-system-lab.json, sol.mydemo.lab): the uyuni-server/uyuni-db
+    # containers were fully healthy with a real, populated schema (479
+    # tables, 1 web_contact row, 1 org) even though the outer `mgradm
+    # install` had died and this function's own die() had already fired on
+    # a prior run. Simply re-running `mgradm install` against that state
+    # doesn't help — mgradm itself refuses ("Server is already
+    # initialized! Uninstall before attempting new installation or use
+    # upgrade command"), and there is no supported resume path short of a
+    # full uninstall+reinstall (see run_install_with_pg_hba_guard's own
+    # docstring) — needlessly destructive for infrastructure that's
+    # actually fine. Detect this up front and skip straight to the
+    # health-check + post-install steps below instead.
+    already_initialized = ssh_run(hostname, "podman container exists uyuni-server", check=False).returncode == 0
+    if already_initialized:
+        print("- uyuni-server container already exists — skipping mgradm install, resuming "
+              "from the post-install steps (a prior run's mgradm install likely died AFTER "
+              "the real bootstrap completed; see this line's own comment)")
+    else:
+        install_cmd = (
+            "mgradm install podman "
+            "--admin-login {} "
+            "--admin-password {} "
+            "--email {} "
+            "--ssl-password {} "
+            "--organization {}".format(
+                shlex.quote(admin), shlex.quote(password), shlex.quote(email),
+                shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
+        run_install_with_pg_hba_guard(hostname, install_cmd)
 
-    time.sleep(60)
-    ssh_run(hostname, "reboot", check=False)
-    time.sleep(5)
-    check_ssh_conn(hostname)
+        time.sleep(60)
+        ssh_run(hostname, "reboot", check=False)
+        time.sleep(5)
+        check_ssh_conn(hostname)
     ensure_server_container_active(hostname)
 
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
@@ -857,7 +880,24 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
                 check=False)
 
     if channels:
+        # Real bug found live 2026-09-21 (solar-system-lab.json,
+        # sol.mydemo.lab): `mgr-sync add credentials` succeeding does NOT
+        # itself populate the local product/channel catalog — that's a
+        # separate step (`mgr-sync refresh`, which talks to the real SCC
+        # API), and the wait loop below used to have no timeout at all, so
+        # without an explicit refresh it can wait forever unless the
+        # server's own scheduled background job (taskomatic's
+        # MgrSyncRefresh) happens to fire on its own first. Confirmed live:
+        # credentials were added successfully, but `mgr-sync list channels`
+        # still returned "No channels found." over 2 hours later — a
+        # manual `mgr-sync refresh` (took under 5s) is what actually
+        # populated it.
+        print("- Refreshing mgr-sync's product/channel catalog from SCC")
+        ssh_run(hostname, "mgrctl exec -- mgr-sync refresh", check=False)
+
         count = 0
+        max_retries = 60  # 10 min — the refresh above should make this near-instant; this
+                           # bound exists only as a safety net, not the primary fix.
         print("- Waiting for channel list to sync")
         while True:
             time.sleep(10)
@@ -867,6 +907,11 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
                           check=False, capture=True).stdout or ""
             if any("no channels found." not in line.lower() for line in out.splitlines()):
                 break
+            if count >= max_retries:
+                die("channel list on '{}' is still empty after mgr-sync refresh + {} retries "
+                    "({} min) — check 'mgrctl exec -- mgr-sync refresh' and 'mgrctl exec -- "
+                    "mgr-sync list channels' there directly".format(
+                        hostname, max_retries, max_retries * 10 // 60))
         time.sleep(300)
         channel_args = " ".join(shlex.quote(c) for c in channels)
         ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
@@ -952,13 +997,39 @@ LOG_DIR=/var/log/rhn/reposync
 LOGFILE=/var/log/smlm-channel-sync-monitor.log
 ADMIN=__ADMIN__
 PASSWORD=__PASSWORD__
+ERRFILE=$(mktemp)
+trap 'rm -f "$ERRFILE"' EXIT
 
 log() {
     echo "$(date -Is) $*" >> "$LOGFILE"
 }
 
+# Real bug found live 2026-09-22: spacecmd_() used to redirect spacecmd's
+# own stderr straight to /dev/null, discarding both its routine INFO
+# banner AND any real error (an invalid/stale cached session, a connection
+# failure, ...) the exact same way. That silently masked a
+# stale-credentials failure for 6.5 hours straight on a real deployment
+# (solar-system-lab.json) -- every cycle in that window logged "no
+# software channels found on the server", indistinguishable from the
+# genuinely-empty case, while the real reposync backlog for 12 waiting
+# client registrations sat completely untouched the whole time. stderr is
+# now captured and inspected via check_spacecmd_error() instead of
+# discarded: anything that looks like a real error/warning gets logged
+# loudly and this run exits non-zero (a oneshot service's failure is
+# visible via `systemctl status`/`journalctl -u smlm-channel-sync-monitor`
+# — the timer still fires again next cycle as normal, this doesn't retry
+# in a tight loop), rather than being silently swallowed as "nothing to
+# do". Routine INFO lines (e.g. "INFO: Connected to .../rpc/api as admin")
+# don't match the error-ish keywords below, so the normal case stays quiet.
 spacecmd_() {
-    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>/dev/null
+    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>"$ERRFILE"
+}
+
+check_spacecmd_error() {
+    if [ -s "$ERRFILE" ] && grep -qiE 'error|invalid|traceback|denied|refused|fail' "$ERRFILE"; then
+        log "spacecmd call failed: $(tr '\n' ' ' < "$ERRFILE")"
+        exit 1
+    fi
 }
 
 if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
@@ -967,6 +1038,7 @@ if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
 fi
 
 CHANNELS=$(spacecmd_ softwarechannel_list)
+check_spacecmd_error
 if [ -z "$CHANNELS" ]; then
     log "no software channels found on the server -- nothing to check"
     exit 0
@@ -992,6 +1064,7 @@ for channel in $CHANNELS; do
     if [ -n "$reason" ]; then
         log "channel '$channel': $reason -- triggering resync"
         spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
+        check_spacecmd_error
         exit 0
     fi
 done
