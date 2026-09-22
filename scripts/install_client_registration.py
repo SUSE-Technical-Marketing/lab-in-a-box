@@ -307,7 +307,10 @@ def register_client(vm_name, cfg, json_file=None):
         _launch_background_retry(json_file, vm_name)
         print("  Channel(s) not yet fully synced ({}) — launched a background retry that will "
               "keep trying until registration succeeds; continuing with the rest of the "
-              "deployment".format(", ".join(sorted(pending))))
+              "deployment. NOTE: real channel data syncs from SCC in the background, one "
+              "channel at a time — this can legitimately take SEVERAL HOURS depending on how "
+              "much is queued ahead of this one, not a failure or a hang.".format(
+                  ", ".join(sorted(pending))))
         return
 
     _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activation_key)

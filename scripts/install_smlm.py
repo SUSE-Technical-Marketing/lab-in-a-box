@@ -916,6 +916,14 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         channel_args = " ".join(shlex.quote(c) for c in channels)
         ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
         ensure_channel_sync_monitor(hostname, admin, password)
+        print("  NOTE: channels have been ADDED but not necessarily fully SYNCED yet — real "
+              "package content is now downloading from SCC in the background, one channel at "
+              "a time (see the channel-sync monitor above). Depending on how many channels and "
+              "how large they are, this can legitimately take SEVERAL HOURS to finish. Clients "
+              "registering against a channel that isn't fully synced yet won't fail — "
+              "install_client_registration.py detects this and retries automatically in the "
+              "background until it's ready — but don't expect every system to show up "
+              "registered right away.")
 
     sync_channels = (cfg.get("smlm_sync_channels") or "").split()
     config_channels = cfg.get("smlm_config_channels") or []
