@@ -152,7 +152,7 @@ _RETRY_LOG_DIR = "/var/log/lab-in-a-box"
 _RETRY_WORKER_FLAG = "--retry-worker"
 
 
-def _wait_channels(cfg):
+def _wait_channels(cfg, hostname=None, exec_prefix=None, activation_key=None):
     """
     The sorted list of channel labels this registration actually depends
     on: the explicit client_registration_sync_channels list, plus the
@@ -160,12 +160,38 @@ def _wait_channels(cfg):
     ensure_activation_key()'s own cfg fields) — those are what the client
     will actually consume, whether or not they were separately named in
     sync_channels too.
+
+    Real bug found live 2026-09-22 (solar-system-lab.json): most real labs
+    create their activation keys via install_smlm.py's own
+    smlm_activation_keys list, not this addon's own
+    client_registration_activation_key_base_channel/_child_channels
+    fields — so for an ALREADY-EXISTING key (the overwhelmingly common
+    case), those fields are simply never populated in a per-node
+    client_registration override, and this function used to silently
+    return an empty channel list. That short-circuited register_client()'s
+    own pending-channels check to "nothing to wait for", sending
+    registration straight to _register_now() even while the key's real
+    channels were still mid-reposync. Confirmed live: this is exactly why
+    a client got the classic salt-minion instead of venv-salt-minion (its
+    real providing channel's own bootstrap marker file 404s until synced),
+    and the hardened salt-master then rejected it outright ("protocol
+    version 2, minimum required 3"). If hostname/exec_prefix/
+    activation_key are given and the local fields are empty, look up the
+    key's REAL channels server-side via describe_activation_key() instead
+    of trusting only this addon's own (likely-unpopulated) config.
     """
     wait_channels = set((cfg.get("client_registration_sync_channels") or "").split())
     base_channel = cfg.get("client_registration_activation_key_base_channel")
+    child_channels = (cfg.get("client_registration_activation_key_child_channels") or "").split()
+    if not base_channel and not child_channels and hostname and activation_key:
+        if sc.activation_key_exists(hostname, exec_prefix, activation_key):
+            real = sc.describe_activation_key(hostname, exec_prefix, activation_key, "client_registration")
+            base_channel = real.get("client_registration_activation_key_base_channel") or base_channel
+            child_channels = (real.get("client_registration_activation_key_child_channels") or "").split() \
+                or child_channels
     if base_channel:
         wait_channels.add(base_channel)
-    wait_channels.update((cfg.get("client_registration_activation_key_child_channels") or "").split())
+    wait_channels.update(child_channels)
     return sorted(wait_channels)
 
 
@@ -230,7 +256,7 @@ def _retry_until_registered(vm_name, cfg):
     server_fqdn = cfg.get("client_registration_server")
     activation_key = cfg.get("client_registration_activation_key")
     server_node, exec_prefix, admin_user, admin_pass = _server_access(cfg)
-    wait_channels = _wait_channels(cfg)
+    wait_channels = _wait_channels(cfg, server_node, exec_prefix, activation_key)
     retry_delay = int(cfg.get("client_registration_background_retry_delay") or 60)
 
     attempt = 0
@@ -273,7 +299,7 @@ def register_client(vm_name, cfg, json_file=None):
     # don't block the rest of the deployment waiting for a sync that could
     # take a long time — hand off to a detached background retry (see
     # _launch_background_retry()) and return immediately.
-    wait_channels = _wait_channels(cfg)
+    wait_channels = _wait_channels(cfg, server_node, exec_prefix, activation_key)
     pending = sc.pending_channels(server_node, exec_prefix, wait_channels) if wait_channels else set()
     if pending:
         if not json_file:

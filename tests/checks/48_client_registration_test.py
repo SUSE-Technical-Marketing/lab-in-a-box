@@ -150,9 +150,11 @@ check("install_client_registration main(): _vm_name env scopes to one node, over
 # worker (no artificial timeout, it only stops once registration actually
 # succeeds) and return immediately so the rest of the deployment moves on.
 class _FakeSc:
-    def __init__(self, pending=None):
+    def __init__(self, pending=None, key_exists=False, real_channels=None):
         self.calls = []
         self._pending = pending or set()
+        self._key_exists = key_exists
+        self._real_channels = real_channels or {}
 
     def ensure_spacecmd_config(self, *a, **kw):
         self.calls.append(("ensure_spacecmd_config", a, kw))
@@ -162,6 +164,14 @@ class _FakeSc:
 
     def ensure_activation_key(self, *a, **kw):
         self.calls.append(("ensure_activation_key", a, kw))
+
+    def activation_key_exists(self, hostname, exec_prefix, key_name):
+        self.calls.append(("activation_key_exists", key_name))
+        return self._key_exists
+
+    def describe_activation_key(self, hostname, exec_prefix, key_name, prefix):
+        self.calls.append(("describe_activation_key", key_name))
+        return dict(self._real_channels)
 
     def pending_channels(self, hostname, exec_prefix, channels):
         self.calls.append(("pending_channels", channels))
@@ -213,19 +223,64 @@ check("register_client(): channels still pending -> does NOT register synchronou
       "(that's the whole point — don't block)",
       "ensure_client_registered" not in names2)
 
-# -- no channels configured at all -> nothing to wait on, registers synchronously --
+# -- no local channel fields AND the key doesn't exist yet (e.g. about to be
+# created by ensure_activation_key right above) -> nothing to look up, registers synchronously --
 launch_calls.clear()
-fake_sc3 = _FakeSc()
+fake_sc3 = _FakeSc(key_exists=False)
 icr.sc = fake_sc3
 _real_register_client("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-key",
 }, json_file="lab.json")
-check("register_client(): no sync_channels/activation-key-channels configured at all -> "
-      "nothing to wait on, registers synchronously without even calling pending_channels()",
+check("register_client(): no sync_channels/activation-key-channels configured, key doesn't "
+      "exist yet -> nothing to wait on, registers synchronously without even calling "
+      "pending_channels()",
       not any(c[0] == "pending_channels" for c in fake_sc3.calls)
       and any(c[0] == "ensure_client_registered" for c in fake_sc3.calls)
       and launch_calls == [])
+
+# -- REAL BUG found live 2026-09-22 (solar-system-lab.json): the activation key
+# was created by install_smlm.py's own smlm_activation_keys list, not this
+# addon's own client_registration_activation_key_base_channel/_child_channels
+# fields — so a per-node client_registration override that only names the key
+# (the overwhelmingly common real shape) had NO local channel fields at all.
+# _wait_channels() used to return an empty list in that case, short-circuiting
+# straight to synchronous registration even while the key's real channels
+# were still mid-reposync — confirmed live this is exactly why a client got
+# the classic salt-minion instead of venv-salt-minion (its real providing
+# channel's own bootstrap marker 404s until synced), and the hardened
+# salt-master then rejected it outright ("protocol version 2, minimum
+# required 3"). Fix: when the key already exists and no local fields are
+# set, look up its REAL channels server-side via describe_activation_key().
+launch_calls.clear()
+fake_sc4 = _FakeSc(
+    key_exists=True,
+    real_channels={
+        "client_registration_activation_key_base_channel": "sle-product-sles15-sp7-pool-x86_64",
+        "client_registration_activation_key_child_channels": "managertools-sle15-pool-x86_64-sp7",
+    },
+    pending={"managertools-sle15-pool-x86_64-sp7"},
+)
+icr.sc = fake_sc4
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-sles15sp7",
+}, json_file="lab.json")
+names4 = [c[0] for c in fake_sc4.calls]
+check("register_client(): key already exists, no local channel fields set -> checks whether "
+      "it exists before assuming there's nothing to wait on",
+      any(c[0] == "activation_key_exists" for c in fake_sc4.calls))
+check("register_client(): looks up the key's REAL channels server-side via "
+      "describe_activation_key() instead of trusting the (empty) local config",
+      any(c[0] == "describe_activation_key" for c in fake_sc4.calls))
+pending_call4 = next(c for c in fake_sc4.calls if c[0] == "pending_channels")
+check("register_client(): the server-side base AND child channels both reach the "
+      "pending_channels() check",
+      set(pending_call4[1]) == {"sle-product-sles15-sp7-pool-x86_64", "managertools-sle15-pool-x86_64-sp7"})
+check("register_client(): a still-pending real channel correctly defers to a background "
+      "retry instead of registering straight into a protocol-version rejection",
+      launch_calls == [("lab.json", "mercury.mydemo.lab")]
+      and "ensure_client_registered" not in names4)
 
 # -- register_client() refuses to launch a background retry without a json_file --
 fake_sc4 = _FakeSc(pending={"still-syncing"})
