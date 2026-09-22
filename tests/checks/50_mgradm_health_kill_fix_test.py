@@ -130,11 +130,81 @@ check("restarts both patched services so the new limit actually applies to a run
       "podman exec uyuni-server systemctl restart tomcat.service" in out_incontainer
       and "podman exec uyuni-server systemctl restart salt-api.service" in out_incontainer)
 
+# ── _clean_stale_netavark_dnat_rules: real bug found live 2026-09-22 —────────
+# netavark doesn't reliably remove a container's own DNAT port-forwarding
+# rules when it's removed, so after several restarts the nat table held
+# BOTH a stale rule set (pointing at a previous, now-dead container IP)
+# and the correct one — iptables takes the FIRST match, and the stale one
+# (added earlier) won every time, silently refusing every external
+# connection to the real hostname while every container-internal
+# automation call (which never traverses this NAT path) kept working,
+# masking the problem entirely until an operator tried the web UI
+# directly. `podman network reload` does NOT fix this (confirmed live —
+# it only adds another correct rule alongside the stale one).
+_REAL_NAT_RULESET = "\n".join([
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 80 -j DNAT --to-destination 10.89.0.6:80",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 443 -j DNAT --to-destination 10.89.0.6:443",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 4505:4506 -j DNAT "
+    "--to-destination 10.89.0.6:4505-4506/4505",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 5556:5557 -j DNAT "
+    "--to-destination 10.89.0.6:5556-5557/5556",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9100 -j DNAT --to-destination 10.89.0.6:9100",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9187 -j DNAT --to-destination 10.89.0.6:9187",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9800 -j DNAT --to-destination 10.89.0.6:9800",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 80 -j DNAT --to-destination 10.89.0.7:80",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 443 -j DNAT --to-destination 10.89.0.7:443",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 4505:4506 -j DNAT "
+    "--to-destination 10.89.0.7:4505-4506/4505",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 5556:5557 -j DNAT "
+    "--to-destination 10.89.0.7:5556-5557/5556",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9100 -j DNAT --to-destination 10.89.0.7:9100",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9187 -j DNAT --to-destination 10.89.0.7:9187",
+    "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 9800 -j DNAT --to-destination 10.89.0.7:9800",
+])
+rec_nat = _Rec(stdout_by_cmd={
+    "NetworkSettings.Networks": "10.89.0.7",
+    "iptables -t nat -S": _REAL_NAT_RULESET,
+})
+mgradm_common.ssh_run = rec_nat
+mgradm_common._clean_stale_netavark_dnat_rules("vm1")
+delete_calls = [c for c in rec_nat.cmds if c.startswith("iptables -t nat -D ")]
+check("removes exactly the 7 stale rules pointing at the dead container IP (10.89.0.6), "
+      "one per published port",
+      len(delete_calls) == 7 and all("10.89.0.6" in c for c in delete_calls))
+check("never touches the correct, current rules (10.89.0.7)",
+      not any("10.89.0.7" in c for c in delete_calls))
+check("the delete command is a real, directly-runnable iptables -D matching the exact "
+      "stale rule spec (not just the -A rule re-quoted some other way)",
+      "iptables -t nat -D NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 80 -j DNAT "
+      "--to-destination 10.89.0.6:80" in delete_calls)
+
+# A container with no orphaned rules (the normal case) is a real no-op.
+rec_nat_clean = _Rec(stdout_by_cmd={
+    "NetworkSettings.Networks": "10.89.0.7",
+    "iptables -t nat -S": "\n".join(l for l in _REAL_NAT_RULESET.splitlines() if "10.89.0.7" in l),
+})
+mgradm_common.ssh_run = rec_nat_clean
+mgradm_common._clean_stale_netavark_dnat_rules("vm1")
+check("no-op when every DNAT rule already points at the current container's real IP "
+      "(the normal case — this runs unconditionally on every confirmed-healthy check)",
+      not any(c.startswith("iptables -t nat -D ") for c in rec_nat_clean.cmds))
+
+# A container that isn't running (no IP to compare against) is also a safe no-op.
+rec_nat_norun = _Rec(stdout_by_cmd={"iptables -t nat -S": _REAL_NAT_RULESET})
+mgradm_common.ssh_run = rec_nat_norun
+mgradm_common._clean_stale_netavark_dnat_rules("vm1")
+check("no-op (never even lists iptables rules) when the container has no real IP to "
+      "compare against, rather than guessing",
+      not any(c.startswith("iptables -t nat -D ") for c in rec_nat_norun.cmds)
+      and not any(c.startswith("iptables -t nat -S") for c in rec_nat_norun.cmds))
+
+
 # ── ensure_server_container_active calls the fix BEFORE polling, for BOTH --
 # ── uyuni-server AND uyuni-db ------------------------------------------------
 rec2 = _Rec(stdout_by_cmd={
     "systemctl is-active uyuni-server.service": "active",
     "State.Health.Status": "healthy",
+    "NetworkSettings.Networks": "10.89.0.7",
 })
 mgradm_common.ssh_run = rec2
 mgradm_common.time.sleep = lambda *a, **kw: None
@@ -153,6 +223,11 @@ check("ensure_server_container_active ALSO raises the in-container service fd li
       "once it actually confirms healthy — the outer ulimit fix alone doesn't reach "
       "Tomcat's own package-shipped systemd unit",
       "podman exec -i uyuni-server sh -c" in out2 and "LimitNOFILE=1048576" in out2)
+check("ensure_server_container_active ALSO checks for stale netavark DNAT rules once "
+      "confirmed healthy — the real bug that silently broke external access to the "
+      "web UI for hours while every internal automation call kept working fine",
+      "podman inspect uyuni-server --format" in out2 and "NetworkSettings.Networks" in out2
+      and "iptables -t nat -S" in out2)
 
 # ── run_install_with_pg_hba_guard also pre-empts the SAME crash-loop on the
 # very first boot, WHILE mgradm install is still running — confirmed live
