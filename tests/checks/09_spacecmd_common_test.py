@@ -2163,6 +2163,130 @@ except SystemExit:
     died = True
 check("ensure_client_registered: dies if the key never appears as pending", died)
 
+# -- legacy-TLS-client recovery (added 2026-09-23) ---------------------------
+# Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
+# luna.mydemo.lab, CentOS 7): curl links Mozilla NSS 3.15.4, which cannot
+# negotiate TLS with this server's modern TLS-1.2-only policy at all — the
+# pipeline still exits 0 (curl fails, /bin/bash gets empty stdin), so the
+# ONLY visible symptom is the salt key never going pending. Confirmed live
+# this is fixable entirely client-side: every Python/wget on such a client
+# links the system OpenSSL, never NSS.
+_REAL_CHANNEL_PACKAGES = "\n".join([
+    "dmidecode-3.2-5.el7_9.1.x86_64",
+    "openssl-1.0.2k-19.el7:1.x86_64",
+    "openssl-libs-1.0.2k-19.el7:1.x86_64",
+    "wget-1.14-18.el7_6.1.x86_64",
+])
+
+fake = FakeSSH(responses=[("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES))])
+sc.ssh_run = fake
+check("_channel_package_nvr: finds the exact NVR-EA line for a simple (no-epoch) package",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "wget")
+      == "wget-1.14-18.el7_6.1.x86_64")
+check("_channel_package_nvr: finds the exact NVR-EA line for a package with an epoch",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "openssl")
+      == "openssl-1.0.2k-19.el7:1.x86_64")
+check("_channel_package_nvr: does not confuse 'openssl' with 'openssl-libs' (prefix collision)",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "openssl-libs")
+      == "openssl-libs-1.0.2k-19.el7:1.x86_64")
+check("_channel_package_nvr: returns None for a package not in the channel",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "nginx") is None)
+
+_REAL_RPM_PATH = ("/var/spacewalk/packages/NULL/55c/openssl/1:1.0.2k-19.el7/x86_64/"
+                   "55c478a259b0a27ccb485dce91e190c0040df26b800a1f7a74557a47bef106d4/"
+                   "openssl-1.0.2k-19.el7.x86_64.rpm")
+
+
+def _stage_responder(hostname, cmd, **kwargs):
+    if "softwarechannel_listallpackages" in cmd:
+        return FakeResult(stdout=_REAL_CHANNEL_PACKAGES)
+    if "find /var/spacewalk/packages" in cmd:
+        # epoch must already be stripped from the search filename
+        check("_stage_channel_package_on_client: searches by filename with the epoch stripped",
+              "openssl-1.0.2k-19.el7.x86_64.rpm" in cmd and ":1." not in cmd)
+        return FakeResult(stdout=_REAL_RPM_PATH)
+    if "base64 " in cmd and "base64 -d" not in cmd:
+        check("_stage_channel_package_on_client: base64-encodes the real located file on the server side",
+              _REAL_RPM_PATH in cmd)
+        return FakeResult(stdout="ZmFrZS1ycG0tY29udGVudA==")  # "fake-rpm-content"
+    if "base64 -d" in cmd:
+        check("_stage_channel_package_on_client: writes to the client under the given dest_dir",
+              "/tmp/.lab-legacy-tls/openssl-1.0.2k-19.el7.x86_64.rpm" in cmd)
+        check("_stage_channel_package_on_client: the base64 payload is passed through unmodified",
+              kwargs.get("input_text") == "ZmFrZS1ycG0tY29udGVudA==")
+        return FakeResult(returncode=0)
+    return FakeResult()
+
+
+sc.ssh_run = _stage_responder
+staged_path = sc._stage_channel_package_on_client(
+    "srv1", "mgrctl exec --", "centos7-x86_64", "openssl", "client1.mydemo.lab", "/tmp/.lab-legacy-tls")
+check("_stage_channel_package_on_client: returns the staged client-side path on success",
+      staged_path == "/tmp/.lab-legacy-tls/openssl-1.0.2k-19.el7.x86_64.rpm")
+
+fake = FakeSSH(responses=[("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES))])
+sc.ssh_run = fake
+check("_stage_channel_package_on_client: returns None for a package not in the channel at all",
+      sc._stage_channel_package_on_client(
+          "srv1", "mgrctl exec --", "centos7-x86_64", "nginx", "client1.mydemo.lab", "/tmp/x") is None)
+
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES)),
+    ("find /var/spacewalk/packages", FakeResult(stdout="")),  # not found on disk
+])
+sc.ssh_run = fake
+check("_stage_channel_package_on_client: returns None when the package can't be located on disk",
+      sc._stage_channel_package_on_client(
+          "srv1", "mgrctl exec --", "centos7-x86_64", "wget", "client1.mydemo.lab", "/tmp/x") is None)
+
+# ensure_client_registered end-to-end: curl-only client never goes pending,
+# but the legacy-TLS recovery (wget-based bootstrap) succeeds instead —
+# confirms it's actually wired into the real registration flow, not just a
+# standalone function nobody calls.
+_wget_attempts = {"n": 0}
+
+
+def _legacy_recovery_responder(hostname, cmd, **kwargs):
+    if "saltkey.acceptedList" in cmd:
+        return FakeResult(stdout="[]")
+    if "saltkey.pendingList" in cmd:
+        # only goes pending AFTER the legacy wget-based bootstrap has run
+        return FakeResult(stdout="['client1.mydemo.lab']" if _wget_attempts["n"] > 0 else "[]")
+    if "saltkey.accept" in cmd:
+        return FakeResult(returncode=0)
+    if "curl -Sks" in cmd or cmd.startswith("_url="):
+        # the ORIGINAL curl-based bootstrap_cmd: exits 0 but never actually
+        # runs anything real (the exact real symptom — NSS TLS failure, curl
+        # fails, /bin/bash gets empty stdin, no error surfaces)
+        return FakeResult(returncode=0, stdout="", stderr="")
+    if "command -v wget" in cmd:
+        return FakeResult(returncode=0)  # wget already present, skip staging
+    if cmd.startswith("_tmp=$(mktemp)") and "wget -qO" in cmd:
+        _wget_attempts["n"] += 1
+        return FakeResult(returncode=0, stdout="-bootstrap complete-\n", stderr="")
+    return FakeResult()
+
+
+sc.ssh_run = _legacy_recovery_responder
+_wget_attempts["n"] = 0
+sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                             retry_limit=2, retry_interval=0, base_channel="centos7-x86_64")
+check("ensure_client_registered: falls back to the legacy-TLS wget recovery when the key never "
+      "goes pending via curl, and succeeds instead of dying",
+      _wget_attempts["n"] == 1)
+
+# Without base_channel, the same never-pending curl client just dies as
+# before — the recovery path is opt-in, never attempted blindly.
+sc.ssh_run = _never_pending
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                                 retry_limit=3, retry_interval=0)
+except SystemExit:
+    died = True
+check("ensure_client_registered: with no base_channel given, still dies as before (no fallback attempted)",
+      died)
+
 
 # -- describe_activation_key / describe_system_group / describe_access_groups /
 #    export_config -- reading a live server back into lab-in-a-box JSON --------

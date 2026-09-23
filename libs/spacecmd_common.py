@@ -3268,8 +3268,159 @@ def saltkey_accept(hostname, exec_prefix, minion_id):
         die("could not accept salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
 
 
+def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
+    """
+    Exact NVR-EA string (e.g. "openssl-1.0.2k-19.el7:1.x86_64") for
+    `pkg_name` in `channel`, from spacecmd's native
+    softwarechannel_listallpackages (one NVR-EA per line, no header).
+    Matches the leading package name only (before the first '-' that starts
+    a version number) — good enough for the specific known names this is
+    used for (wget/openssl/openssl-libs), not a general NVR parser. Returns
+    None if not found in this channel.
+    """
+    r = _spacecmd(hostname, exec_prefix, "softwarechannel_listallpackages {}".format(shlex.quote(channel)))
+    prefix = pkg_name + "-"
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix) and line[len(prefix):len(prefix) + 1].isdigit():
+            return line
+    return None
+
+
+def _stage_channel_package_on_client(hostname, exec_prefix, channel, pkg_name, client_hostname, dest_dir):
+    """
+    Finds `pkg_name`'s real RPM in the server's own content-addressed
+    package store (/var/spacewalk/packages/...) and copies it onto
+    client_hostname via base64 over two separate SSH connections — never
+    HTTP(S), so this works even when the CLIENT's own TLS stack can't reach
+    the server at all (see ensure_client_registered()'s own docstring on
+    the real incident this exists for). The server side is reached via
+    exec_prefix like everywhere else in this module (podman/mgrctl or
+    kubectl — works for either SMLM deployment mode); the client side is a
+    plain ssh_run, same as the rest of client bootstrapping.
+
+    Returns the path of the staged .rpm on the CLIENT, or None if the
+    package isn't in `channel`, or its file couldn't be located/copied.
+    NOT live-tested for the kubectl/Kubernetes deployment mode (only the
+    podman/mgrctl deployment mode was available to verify against).
+    """
+    nvr = _channel_package_nvr(hostname, exec_prefix, channel, pkg_name)
+    if not nvr:
+        return None
+    # NVR-EA has an optional ":<epoch>" between release and arch (e.g.
+    # "openssl-1.0.2k-19.el7:1.x86_64") that the real .rpm FILENAME never
+    # includes — confirmed live 2026-09-23 against the actual on-disk path.
+    filename = re.sub(r":\d+\.", ".", nvr) + ".rpm"
+    r = _run(hostname, exec_prefix, "find /var/spacewalk/packages -iname {}".format(shlex.quote(filename)),
+             check=False, capture=True)
+    paths = [p for p in (r.stdout or "").splitlines() if p.strip()]
+    if not paths:
+        return None
+    r2 = _run(hostname, exec_prefix, "base64 {}".format(shlex.quote(paths[0])), check=False, capture=True)
+    if r2.returncode != 0 or not (r2.stdout or "").strip():
+        return None
+    dest = "{}/{}".format(dest_dir, filename)
+    r3 = ssh_run(client_hostname, "mkdir -p {} && base64 -d > {}".format(
+        shlex.quote(dest_dir), shlex.quote(dest)), input_text=r2.stdout, check=False)
+    if r3.returncode != 0:
+        return None
+    print("  Staged '{}' from channel '{}' onto '{}' (server TLS unreachable from this "
+          "client — copied via SSH instead, see ensure_client_registered()'s own docstring)".format(
+              filename, channel, client_hostname))
+    return dest
+
+
+def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fqdn, script_name,
+                                env, base_channel):
+    """
+    Recovery path for a client whose curl can't negotiate TLS with this
+    server at all (see ensure_client_registered()'s own docstring — real
+    incident, confirmed live 2026-09-23, CentOS 7's ancient NSS-linked curl
+    against this server's modern TLS-1.2-only policy). Entirely client-side
+    — no server/SMLM change:
+
+    1. Ensure `wget` is present on the client (staged from `base_channel`
+       via _stage_channel_package_on_client if missing) — confirmed live
+       that GNU Wget on this kind of box links the system OpenSSL, never
+       NSS, and negotiates the exact same endpoint fine. bootstrap.sh
+       itself already prefers wget over curl when both exist (confirmed by
+       reading its own fetched source), so once present, its OWN internal
+       fetches (repo checks, file downloads) start working too — not just
+       this function's one initial script fetch.
+    2. Run bootstrap via wget instead of curl.
+    3. If package installation still fails (yum's own downloader — pycurl,
+       confirmed live to link the SAME broken NSS libcurl regardless of
+       wget being present, so wget alone does NOT fix yum) AND the failure
+       is specifically an unresolved OpenSSL dependency (confirmed live:
+       venv-salt-minion's own RPM needs OPENSSL_1.0.2 symbols an ancient
+       pre-installed openssl-libs, e.g. 1.0.1e on a stock CentOS 7 image,
+       doesn't provide) — stage openssl + openssl-libs from base_channel
+       and install them locally via `rpm -Uvh --force` (upgrading both
+       together in one transaction, since installing openssl-libs alone
+       conflicts with the still-installed older openssl package needing
+       it at its old exact version), then retry the bootstrap once more.
+       yum's own downloader is NOT fixed by this — it works around it by
+       making sure whatever yum would have installed is already present,
+       so bootstrap.sh's own "is X installed?" check skips straight past
+       the broken yum step.
+
+    Live-verified end to end 2026-09-23 against a real CentOS 7 node
+    (luna.mydemo.lab / solar-system-lab.json): this exact sequence took it
+    from "curl can't even fetch the script" to a fully registered salt
+    minion, with zero changes to the server. Bounded to ONE openssl-repair
+    attempt — if that's not the actual blocker on some other distro, this
+    gives up and reports the real bootstrap.sh output rather than looping.
+    """
+    have_wget = ssh_run(client_hostname, "command -v wget", check=False).returncode == 0
+    if not have_wget:
+        if not base_channel or not _stage_channel_package_on_client(
+                hostname, exec_prefix, base_channel, "wget", client_hostname, "/tmp/.lab-legacy-tls"):
+            return False
+        r = ssh_run(client_hostname, "rpm -Uvh --force /tmp/.lab-legacy-tls/wget-*.rpm", check=False)
+        if r.returncode != 0:
+            return False
+
+    bootstrap_url = "https://{}/pub/bootstrap/{}".format(server_fqdn, script_name)
+    # Fetch-to-file-then-run rather than a `<(...)` process substitution —
+    # that's a bashism, not guaranteed on every client's login shell; a
+    # plain mktemp+run, same idiom as the curl-based bootstrap_cmd above,
+    # works on any POSIX sh.
+    wget_cmd = (
+        "_tmp=$(mktemp)\n"
+        "wget -qO \"$_tmp\" --no-check-certificate {url}\n"
+        "{env} /bin/bash \"$_tmp\"\n"
+        "_rc=$?\n"
+        "rm -f \"$_tmp\"\n"
+        "exit $_rc"
+    ).format(url=shlex.quote(bootstrap_url), env=env)
+    r = ssh_run(client_hostname, wget_cmd, check=False, capture=True)
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0 and "bootstrap complete" in out.lower():
+        return True
+    if "openssl" not in out.lower() or "failed to install" not in out.lower():
+        return r.returncode == 0
+
+    print("  '{}': bootstrap needs a newer OpenSSL than this client has — staging one from "
+          "'{}' (see ensure_client_registered()'s own docstring)".format(client_hostname, base_channel))
+    staged = []
+    for pkg in ("openssl-libs", "openssl"):
+        path = _stage_channel_package_on_client(
+            hostname, exec_prefix, base_channel, pkg, client_hostname, "/tmp/.lab-legacy-tls")
+        if path:
+            staged.append(path)
+    if not staged:
+        return False
+    r2 = ssh_run(client_hostname, "rpm -Uvh --force /tmp/.lab-legacy-tls/*.rpm", check=False)
+    if r2.returncode != 0:
+        return False
+
+    r3 = ssh_run(client_hostname, wget_cmd, check=False, capture=True)
+    out3 = (r3.stdout or "") + (r3.stderr or "")
+    return r3.returncode == 0 and "bootstrap complete" in out3.lower()
+
+
 def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn, activation_key,
-                              reactivation_key=None, retry_limit=30, retry_interval=10):
+                              reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None):
     """
     Register client_hostname as a Salt client of the Uyuni/SMLM server
     reached via (hostname, exec_prefix), using an activation key the caller
@@ -3292,6 +3443,14 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     named after the activation key (not the shared default "bootstrap.sh")
     so multiple keys don't clobber each other's script on repeat use —
     mgr-bootstrap itself only supports one key per generated script.
+
+    base_channel (optional): the activation key's own base software
+    channel label — passed through to _try_wget_legacy_bootstrap() as a
+    place to stage packages from (wget, openssl/openssl-libs) if the
+    client's own curl can't reach this server at all. See that function's
+    own docstring for the real, confirmed-live incident (CentOS 7) this
+    exists for. Omit it and that whole recovery path is simply skipped —
+    the original curl-only behavior, unchanged.
     """
     if saltkey_accepted(hostname, exec_prefix, client_hostname):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
@@ -3315,26 +3474,93 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     env = "ACTIVATION_KEYS={}".format(shlex.quote(activation_key))
     if reactivation_key:
         env += " REACTIVATION_KEY={}".format(shlex.quote(reactivation_key))
-    bootstrap_cmd = "{} curl -Sks https://{}/pub/bootstrap/{} | /bin/bash".format(
-        env, server_fqdn, script_name)
-    r = ssh_run(client_hostname, bootstrap_cmd, check=False)
+    # Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
+    # luna.mydemo.lab, CentOS 7): a plain `curl -Sks <url> | /bin/bash` can
+    # fail on an OLD client with NO server-side change able to fix it —
+    # CentOS 7's stock curl 7.29.0 links Mozilla NSS 3.15.4 (~2014), which
+    # cannot negotiate TLS with this server's modern TLS-1.2-only, ECDHE
+    # cipher policy at all ("SSL_ERROR_NO_CYPHER_OVERLAP", confirmed via
+    # `curl -v`). Because the pipeline still exits 0 (curl fails, /bin/bash
+    # just receives empty stdin and does nothing), this used to silently
+    # skip straight to the 300s "waiting for salt key" poll below and die
+    # with a misleading "never appeared as pending" — no indication the
+    # real problem was TLS, not connectivity.
+    #
+    # Confirmed live on that same box that this is fixable WITHOUT touching
+    # the server or its TLS policy at all: the box's own OpenSSL 1.0.1e
+    # negotiates the exact same https://<server>/... endpoint fine (`openssl
+    # s_client -tls1_2` succeeds) — curl's NSS backend is the only thing
+    # that can't. Every Python interpreter's ssl module always links the
+    # system OpenSSL, never NSS, so falling back to a Python-based fetch
+    # when curl fails works on any client old enough to hit this, with no
+    # new package install required (CentOS 7 ships python2 by default,
+    # confirmed live: `urllib2.urlopen()` fetches the real script fine, no
+    # explicit unverified-context call needed since Python 2.7.5's urllib2
+    # doesn't verify HTTPS certs at all — matching curl's own -k here).
+    # Tried python3 first (in case a future/other client is python3-only
+    # and needs the explicit unverified context 3.x's urllib requires).
+    bootstrap_url = "https://{}/pub/bootstrap/{}".format(server_fqdn, script_name)
+    bootstrap_cmd = (
+        "_url={url}\n"
+        "_tmp=$(mktemp)\n"
+        "if ! curl -Sks \"$_url\" -o \"$_tmp\" 2>/tmp/.lab-bootstrap-curl-err; then\n"
+        "  python3 -c \"import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); "
+        "open(sys.argv[1],'wb').write(urllib.request.urlopen(sys.argv[2], context=ctx).read())\" "
+        "\"$_tmp\" \"$_url\" 2>/dev/null || \\\n"
+        "  python2 -c \"import urllib2,sys; open(sys.argv[1],'wb').write(urllib2.urlopen(sys.argv[2]).read())\" "
+        "\"$_tmp\" \"$_url\" 2>/dev/null || {{\n"
+        "    echo 'bootstrap: curl failed and no working python3/python2 HTTPS fallback found "
+        "(see /tmp/.lab-bootstrap-curl-err for curl'\"'\"'s own error)' >&2\n"
+        "    cat /tmp/.lab-bootstrap-curl-err >&2\n"
+        "    exit 1\n"
+        "  }}\n"
+        "fi\n"
+        "{env} /bin/bash \"$_tmp\"\n"
+        "_rc=$?\n"
+        "rm -f \"$_tmp\" /tmp/.lab-bootstrap-curl-err\n"
+        "exit $_rc"
+    ).format(url=shlex.quote(bootstrap_url), env=env)
+    r = ssh_run(client_hostname, bootstrap_cmd, check=False, capture=True)
+    bootstrap_out = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0:
         die("bootstrap script failed on '{}' (rc={})".format(client_hostname, r.returncode))
 
+    def _wait_for_pending_key():
+        for _ in range(retry_limit):
+            if client_hostname in saltkey_pending(hostname, exec_prefix):
+                return True
+            if saltkey_accepted(hostname, exec_prefix, client_hostname):
+                return None  # already accepted by something else while polling
+            time.sleep(retry_interval)
+        return False
+
     print("  Waiting for '{}''s salt key to appear …".format(client_hostname))
-    for _ in range(retry_limit):
-        if client_hostname in saltkey_pending(hostname, exec_prefix):
-            break
-        if saltkey_accepted(hostname, exec_prefix, client_hostname):
-            # Some other run/process (or a server-side autosign policy) may
-            # have already accepted it while we were polling.
-            print("  '{}' is already accepted".format(client_hostname))
-            return
-        time.sleep(retry_interval)
-    else:
-        die("'{}''s salt key never appeared as pending after bootstrap ({}s) — "
-            "check connectivity to {}:4505/4506 and the bootstrap script's own output".format(
-                client_hostname, retry_limit * retry_interval, server_fqdn))
+    appeared = _wait_for_pending_key()
+    if appeared is None:
+        print("  '{}' is already accepted".format(client_hostname))
+        return
+    if not appeared:
+        # See _try_wget_legacy_bootstrap()'s own docstring for the real,
+        # confirmed-live incident this recovers from: a curl/NSS TLS
+        # failure exits the pipeline as if nothing went wrong (empty stdin
+        # into /bin/bash), so the ONLY visible symptom is this same
+        # timeout — nothing about the bootstrap_cmd run above tells us in
+        # advance whether it's worth attempting. Cheap and safe to just try
+        # it: a no-op within a couple seconds for a client that doesn't
+        # need it (curl already worked fine, or there's no base_channel to
+        # stage anything from).
+        if base_channel and _try_wget_legacy_bootstrap(
+                hostname, exec_prefix, client_hostname, server_fqdn, script_name, env, base_channel):
+            appeared = _wait_for_pending_key()
+            if appeared is None:
+                print("  '{}' is already accepted".format(client_hostname))
+                return
+        if not appeared:
+            die("'{}''s salt key never appeared as pending after bootstrap ({}s), including "
+                "after the legacy-TLS-client recovery attempt — check connectivity to {}:4505/4506 "
+                "and the bootstrap script's own output: {}".format(
+                    client_hostname, retry_limit * retry_interval, server_fqdn,
+                    bootstrap_out[-500:] if bootstrap_out else "(no output captured)"))
 
     saltkey_accept(hostname, exec_prefix, client_hostname)
     print("  Accepted salt key for '{}'".format(client_hostname))

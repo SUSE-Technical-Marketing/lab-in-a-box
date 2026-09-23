@@ -199,11 +199,22 @@ def _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activatio
     """The actual, unconditional registration call — no channel-readiness check of its
     own. Shared by register_client()'s fast synchronous path and the background retry
     worker's own loop below."""
+    # Same resolution order as _wait_channels() above: prefer this addon's own
+    # local override field, else look the key's real base channel up server-side.
+    # Passed through so ensure_client_registered() has somewhere to stage
+    # packages from if this client's own curl can't reach the server at all
+    # (see that function's own docstring) — omitted (None) is always safe, it
+    # just skips that recovery path.
+    base_channel = cfg.get("client_registration_activation_key_base_channel")
+    if not base_channel and sc.activation_key_exists(server_node, exec_prefix, activation_key):
+        real = sc.describe_activation_key(server_node, exec_prefix, activation_key, "client_registration")
+        base_channel = real.get("client_registration_activation_key_base_channel")
     sc.ensure_client_registered(
         server_node, exec_prefix, vm_name, server_fqdn, activation_key,
         reactivation_key=cfg.get("client_registration_reactivation_key"),
         retry_limit=int(cfg.get("client_registration_retry_limit") or 30),
         retry_interval=int(cfg.get("client_registration_retry_interval") or 10),
+        base_channel=base_channel,
     )
 
 
