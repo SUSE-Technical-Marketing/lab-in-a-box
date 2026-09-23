@@ -397,6 +397,61 @@ check("channel-sync-monitor script triggers at most one channel per run (exits "
 check("channel-sync-monitor script no longer blindly discards spacecmd's own stderr — "
       "that's what let a real auth failure masquerade as 'no channels' for 6.5 hours live",
       monitor_script_call is not None and "2>/dev/null" not in monitor_script_call.split("spacecmd_()")[1][:200])
+
+# ensure_bootstrap_repo_monitor: deployed alongside the channel-sync monitor —
+# real bug investigated live 2026-09-23, mgr-create-bootstrap-repo --auto
+# never retries a distribution it already attempted and failed on (confirmed
+# by running --auto twice in a row against a real server), so a distribution
+# that raced the Tools/managertools channel sync once would stay permanently
+# broken with nothing to ever revisit it.
+import subprocess  # noqa: E402
+
+bootstrap_script_call = next(
+    (c for c in calls_chanlist if c.startswith("cat > /usr/local/sbin/smlm-bootstrap-repo-monitor.sh")), None)
+check("setup_smlm_podman: deploys the bootstrap-repo-monitor script when channels are configured",
+      bootstrap_script_call is not None)
+check("setup_smlm_podman: deploys the systemd service unit for the bootstrap-repo monitor",
+      any(c.startswith("cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.service") for c in calls_chanlist))
+check("setup_smlm_podman: deploys the systemd timer unit for the bootstrap-repo monitor, on a "
+      "recurring (not one-shot) schedule",
+      any(c.startswith("cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.timer") and "OnUnitActiveSec="
+          in c for c in calls_chanlist))
+check("setup_smlm_podman: enables and starts the bootstrap-repo-monitor timer (not just installs it inert)",
+      any("systemctl enable --now smlm-bootstrap-repo-monitor.timer" in c for c in calls_chanlist))
+
+# The embedded script is real bash living inside a Python string literal —
+# nothing else in this test suite parses it, so a real syntax error (like the
+# one actually found live 2026-09-23: an apostrophe inside a ${var:-default}
+# expansion breaks bash's parser even inside an outer pair of double quotes,
+# a genuine bash quirk, not something `bash -n` on a smaller snippet would
+# have obviously predicted) would otherwise ship silently. bash must be
+# available in this test's own container for this assertion to mean anything.
+_bash_check = subprocess.run(["bash", "-n", "-c", ism._BOOTSTRAP_REPO_MONITOR_SCRIPT],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+check("_BOOTSTRAP_REPO_MONITOR_SCRIPT: valid bash syntax (bash -n) — a real apostrophe-inside-"
+      "${{var:-default}} bug broke this live 2026-09-23: {}".format(_bash_check.stderr.strip()),
+      _bash_check.returncode == 0)
+
+check("bootstrap-repo-monitor script explicitly builds/retries a distribution via --create "
+      "(the only way to force a real retry once --auto would have given up on it)",
+      bootstrap_script_call is not None and "mcbr --create \"$retry_label\"" in bootstrap_script_call)
+check("bootstrap-repo-monitor script deliberately does NOT invoke --auto — it targets labels "
+      "directly via --list (discovery) + --create (build/retry) instead, since --auto's own "
+      "'changed products' tracking is exactly what causes it to forget a failed distribution "
+      "(the script's own comments discuss --auto to explain why it's avoided, so this checks "
+      "for the real invocation, not the bare substring)",
+      bootstrap_script_call is not None and "mcbr --auto" not in bootstrap_script_call
+      and "mcbr --list" in bootstrap_script_call)
+check("bootstrap-repo-monitor script persists pending/failing distributions in a state dir "
+      "that survives across timer runs (PENDING_DIR), not just in-memory for one run",
+      bootstrap_script_call is not None and "PENDING_DIR=" in bootstrap_script_call)
+check("bootstrap-repo-monitor script tracks successfully-built distributions separately "
+      "(DONE_DIR) so a known-good one is never redundantly rebuilt on a later cycle",
+      bootstrap_script_call is not None and "DONE_DIR=" in bootstrap_script_call)
+check("bootstrap-repo-monitor script retries at most one pending distribution per run — same "
+      "conservative, at-most-one-trigger caution as the channel-sync monitor",
+      bootstrap_script_call is not None
+      and bootstrap_script_call.count("mcbr --create \"$retry_label\"") == 1)
 check("channel-sync-monitor script captures spacecmd's stderr to a real file for inspection",
       monitor_script_call is not None and 'ERRFILE=$(mktemp)' in monitor_script_call
       and '2>"$ERRFILE"' in monitor_script_call)

@@ -989,6 +989,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         channel_args = " ".join(shlex.quote(c) for c in channels)
         ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
         ensure_channel_sync_monitor(hostname, admin, password)
+        ensure_bootstrap_repo_monitor(hostname)
         print("  NOTE: channels have been ADDED but not necessarily fully SYNCED yet — real "
               "package content is now downloading from SCC in the background, one channel at "
               "a time (see the channel-sync monitor above). Depending on how many channels and "
@@ -1272,6 +1273,164 @@ def ensure_channel_sync_monitor(hostname, admin, password):
     ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.timer <<'EOF'\n{}EOF".format(
         _CHANNEL_SYNC_MONITOR_TIMER), check=False)
     ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-channel-sync-monitor.timer",
+            check=False)
+
+
+_BOOTSTRAP_REPO_MONITOR_SCRIPT = """#!/bin/bash
+# Installed by lab-in-a-box's install_smlm.py (ensure_bootstrap_repo_monitor) —
+# retries `mgr-create-bootstrap-repo` for any distribution whose bootstrap repo
+# failed to build (real, confirmed-live 2026-09-23 root cause: it needs
+# venv-salt-minion already present in the locally-synced Tools/managertools
+# channel content, which can still be mid-sync for a fresh server — see
+# install_client_registration.py's own multi-hour channel-sync warning for
+# the same underlying timing race). Runs periodically via
+# smlm-bootstrap-repo-monitor.timer (see the matching .service unit next to
+# this file).
+#
+# Deliberately does NOT use mgr-create-bootstrap-repo's own --auto mode.
+# Real, confirmed-live 2026-09-23 gap in --auto: once it has ATTEMPTED a
+# distribution (even if that attempt failed with "ERROR: package
+# 'venv-salt-minion' not found"), a later --auto run reports "Nothing to do"
+# for it and never retries on its own — verified by running --auto twice in
+# a row on a real server: the second run silently skipped a distribution
+# that still had no working bootstrap repo. --auto's only genuine advantage
+# over targeting labels directly is discovering brand-new
+# distributions/products on its own — but `--list` already does exactly
+# that, cheaply (a metadata-only listing, not a real build), so this script
+# uses `--list` each cycle for discovery and `--create <label>` for every
+# actual build/retry, and never touches --auto's own opaque "changed
+# products" tracking at all — the same tracking responsible for the retry
+# gap in the first place.
+#
+# One explicit build/retry per cycle (not all pending at once): mirrors
+# smlm-channel-sync-monitor's own "at most one trigger per run" caution
+# (that one exists because spacewalk-repo-sync refuses to run more than one
+# instance system-wide — this project has not independently confirmed
+# mgr-create-bootstrap-repo shares that exact constraint, so staying
+# conservative and serial here costs nothing: a label that's still failing
+# because its channel hasn't finished syncing yet will still be there next
+# cycle, and one that starts succeeding gets moved to DONE_DIR immediately,
+# so the queue naturally converges without ever needing more than one
+# attempt in flight).
+set -uo pipefail
+
+LOGFILE=/var/log/smlm-bootstrap-repo-monitor.log
+STATE_DIR=/var/lib/smlm-bootstrap-repo-monitor
+PENDING_DIR=$STATE_DIR/pending
+DONE_DIR=$STATE_DIR/done
+mkdir -p "$PENDING_DIR" "$DONE_DIR"
+
+log() {
+    echo "$(date -Is) $*" >> "$LOGFILE"
+}
+
+mcbr() {
+    podman exec uyuni-server mgr-create-bootstrap-repo "$@"
+}
+
+# Discovery: any real distribution label this server currently knows about
+# that isn't already DONE (built successfully by a previous cycle) or
+# already PENDING (queued from a previous cycle, still being retried) is a
+# newly-seen one — queue it. Covers both the very first run (nothing is
+# DONE or PENDING yet, so every label gets queued) and a distribution/
+# product that only appeared later (e.g. a lab JSON adding a new
+# activation key and re-running install_smlm.py), with no need for --auto's
+# own separate "changed products" bookkeeping.
+while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    if [ ! -e "$DONE_DIR/$label" ] && [ ! -e "$PENDING_DIR/$label" ]; then
+        touch "$PENDING_DIR/$label"
+        log "distribution '$label': newly seen -- queued"
+    fi
+done < <(mcbr --list 2>/dev/null | sed -E 's/^[0-9]+\\.\\s*//')
+
+# Explicit build/retry, one pending distribution per cycle. Picked by OLDEST
+# marker mtime (ls -tr), not alphabetically — real live behavior confirmed
+# 2026-09-23: every distribution failed on the exact same underlying cause
+# (venv-salt-minion not yet synced), so an alphabetical pick would retry the
+# SAME still-broken label every single cycle forever and never even attempt
+# the other 14. Touching the marker on every failed retry pushes it to the
+# back of the queue, so this naturally round-robins across every pending
+# distribution over successive cycles instead of starving on whichever one
+# happens to sort first.
+retry_label=$(ls -tr "$PENDING_DIR" 2>/dev/null | head -n1)
+if [ -n "$retry_label" ]; then
+    RETRY_OUT=$(mcbr --create "$retry_label" 2>&1)
+    if [ $? -eq 0 ] && ! echo "$RETRY_OUT" | grep -q '^ERROR:'; then
+        rm -f "$PENDING_DIR/$retry_label"
+        touch "$DONE_DIR/$retry_label"
+        log "distribution '$retry_label': bootstrap repo created successfully"
+    else
+        err_line=$(echo "$RETRY_OUT" | grep '^ERROR:' | head -n1)
+        log "distribution '$retry_label': still failing -- ${err_line:-see the mgr-create-bootstrap-repo log for details}"
+        touch "$PENDING_DIR/$retry_label"
+    fi
+fi
+"""
+
+_BOOTSTRAP_REPO_MONITOR_SERVICE = """[Unit]
+Description=Check SMLM bootstrap repositories for build failures and retry
+After=uyuni-server.service
+Wants=uyuni-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smlm-bootstrap-repo-monitor.sh
+"""
+
+_BOOTSTRAP_REPO_MONITOR_TIMER = """[Unit]
+Description=Periodically retry failed SMLM bootstrap repository builds
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def ensure_bootstrap_repo_monitor(hostname):
+    """
+    Deploys a HOST-level (not container-internal — same reasoning as
+    ensure_channel_sync_monitor(), the uyuni-server container is `--rm` and
+    loses anything installed inside it on every restart) systemd
+    service+timer that keeps retrying `mgr-create-bootstrap-repo` for any
+    distribution whose bootstrap repo build is still failing.
+
+    Real bug investigated live 2026-09-23 (solar-system-lab.json,
+    sol.mydemo.lab): /var/log/rhn/mgr-create-bootstrap-repo/
+    mgr-create-bootstrap-repo.log showed repeated "ERROR: package
+    'venv-salt-minion' not found" for every distribution attempted so far
+    (RHEL10, SL-Micro 6.1, SLE-16.0, centos-7, ubuntu-24.04, amazonlinux-2)
+    — confirmed by directly re-running `mgr-create-bootstrap-repo --auto` on
+    the live server. Root cause: this tool needs venv-salt-minion already
+    present in the locally-synced Tools/managertools channel content, which
+    can still be mid-sync for a fresh server (the exact same multi-hour,
+    one-channel-at-a-time SCC sync already documented elsewhere in this
+    project — see install_client_registration.py's own warning). Confirmed
+    live that NO distribution anywhere on this server had a working
+    bootstrap repo yet (zero venv-salt-minion files under
+    /srv/www/htdocs/pub/repositories/ server-wide) — a pure timing race,
+    not a config mistake, but ALSO confirmed live that mgr-create-bootstrap-
+    repo's own --auto mode never retries a distribution it already
+    attempted and failed on (running --auto twice in a row: the second run
+    reported "Nothing to do" for a distribution that still had no working
+    repo) — so without this monitor, a distribution that raced this once
+    would stay permanently broken even after its channel finishes syncing,
+    with nothing to ever revisit it. See _BOOTSTRAP_REPO_MONITOR_SCRIPT's
+    own comment for the retry design.
+    """
+    print("- Installing the bootstrap-repository failure monitor (checks every 15 min)")
+    ssh_run(hostname, "cat > /usr/local/sbin/smlm-bootstrap-repo-monitor.sh <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_SCRIPT), check=False)
+    ssh_run(hostname, "chmod 755 /usr/local/sbin/smlm-bootstrap-repo-monitor.sh", check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.service <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_SERVICE), check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.timer <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_TIMER), check=False)
+    ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-bootstrap-repo-monitor.timer",
             check=False)
 
 
