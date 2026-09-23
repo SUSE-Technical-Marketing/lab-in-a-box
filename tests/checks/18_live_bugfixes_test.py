@@ -137,6 +137,48 @@ remote_calls = [kw for h, c, kw in fake.calls if h == "1.2.3.4"]
 check("DNSService.add_to_dns: every remote-server call passes check=False",
       len(remote_calls) >= 3 and all(kw.get("check") is False for kw in remote_calls))
 
+# ── Bug: a stale PTR record for a reused IP survives add_to_dns forever ────
+# Real bug found live 2026-09-23 (solar-system-lab.json): _dns_add_line()'s
+# own exact-line dedup only skips re-adding the IDENTICAL record — it never
+# removes an EXISTING PTR record for the same IP that points at a DIFFERENT
+# (older) hostname. Confirmed live: an IP a previous, since-destroyed VM
+# ("node1a.mydemo.lab") once held was reassigned to a new node
+# ("venus.mydemo.lab") — add_to_dns() left BOTH PTR lines in the reverse
+# zone file, and the new VM's own reverse-DNS lookup of its own IP could
+# come back with the stale, wrong name (which is exactly what happened,
+# compounded by a separate virt-customize bug leaving no static hostname
+# set at all — see prepare_virt_customize's own test below).
+services.ssh_run = lambda *a, **kw: FakeResult()
+ptr_svc = services.DNSService()
+ptr_svc.restart_named = lambda: None
+services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
+
+ptr_svc.add_to_dns("node1a.mydemo.lab", "192.168.88.142", "mydemo.lab", "88.168.192")
+ptr_svc.add_to_dns("venus.mydemo.lab", "192.168.88.142", "mydemo.lab", "88.168.192")
+
+rev_file = services.NAMED_ZONE_DIR / "88.168.192.db"
+rev_lines = [l for l in rev_file.read_text().splitlines() if l.strip()]
+check("DNSService.add_to_dns: reusing an IP replaces the OLD PTR record, not "
+      "just adds a second one alongside it",
+      not any("node1a.mydemo.lab" in l for l in rev_lines))
+check("DNSService.add_to_dns: the NEW PTR record for the reused IP is present",
+      any("venus.mydemo.lab" in l for l in rev_lines))
+check("DNSService.add_to_dns: exactly one PTR record exists for the IP, not two",
+      len(rev_lines) == 1)
+
+# A different octet must be completely unaffected by this — the removal is
+# keyed on the octet as a whole token, not a substring (same node1-vs-node10
+# precision _dns_add_line's own docstring documents).
+services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
+ptr_svc.add_to_dns("node1.mydemo.lab", "192.168.88.1", "mydemo.lab", "88.168.192")
+ptr_svc.add_to_dns("node10.mydemo.lab", "192.168.88.10", "mydemo.lab", "88.168.192")
+rev_file2 = services.NAMED_ZONE_DIR / "88.168.192.db"
+rev_lines2 = [l for l in rev_file2.read_text().splitlines() if l.strip()]
+check("DNSService.add_to_dns: removing a stale PTR for octet '1' never touches "
+      "octet '10' (no substring false-positive)",
+      any("node1.mydemo.lab" in l for l in rev_lines2)
+      and any("node10.mydemo.lab" in l for l in rev_lines2))
+
 
 # ── Bug 2: --qemu-commandline must be one argv element, not two ─────────────
 # (found live: virt-install rejected the two-element ["--qemu-commandline",

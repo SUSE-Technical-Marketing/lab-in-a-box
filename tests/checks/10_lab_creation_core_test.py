@@ -1125,6 +1125,48 @@ except SystemExit:
 check("ensure_iso_install_tree: a real mount failure dies with a clear error naming the ISO/host", died)
 
 
+# ── prepare_virt_customize: /etc/hostname written directly ──────────────────
+# Real bug found live 2026-09-23 (solar-system-lab.json, venus.mydemo.lab,
+# SLES 16): libguestfs's own --hostname action writes the legacy SUSE
+# /etc/HOSTNAME (uppercase) on this image, not the modern systemd
+# /etc/hostname (lowercase) SLES 16 actually reads — confirmed live:
+# /etc/HOSTNAME had the correct value, /etc/hostname was a 0-byte file
+# dated to the base image's own build time, completely untouched. systemd
+# then reported "Static hostname: (unset)" and fell back to a wrong
+# transient hostname derived via reverse DNS (a separate, also-real DNS bug
+# — see 18_live_bugfixes_test.py's own DNSService.add_to_dns PTR test).
+# Fixed by writing /etc/hostname directly via --run-command, unconditionally
+# alongside --hostname (not instead of it), so it works regardless of which
+# per-distro assumption libguestfs's own --hostname gets wrong.
+fake = FakeRun()
+lc.subprocess.run = fake
+with tempfile.TemporaryDirectory() as _tmp:
+    id_rsa = Path(_tmp) / "id_rsa.pub"
+    id_rsa.write_text("")  # prepare_virt_customize doesn't read this itself; just avoid IOError elsewhere
+    lc.prepare_virt_customize(
+        "hv1", "/var/lib/libvirt/images/venus.qcow2", "venus.mydemo.lab",
+        "192.168.88.142", "24", "192.168.88.1", "192.168.88.73", "mydemo.lab",
+        "aa:bb:cc:dd:ee:ff", "plain", "secret123", pubkey="ssh-rsa AAAA test@host",
+    )
+check("prepare_virt_customize: exactly one subprocess.run call (the piped hypervisor script)",
+      len(fake.calls) == 1)
+_vc_cmd, _vc_kwargs = fake.calls[0]
+_vc_script = _vc_kwargs.get("input") or ""
+if isinstance(_vc_script, bytes):
+    _vc_script = _vc_script.decode()
+check("prepare_virt_customize: the shipped hypervisor script is valid Python "
+      "(a real syntax bug here was caught this way live 2026-09-23)",
+      __import__("ast").parse(_vc_script) is not None if _vc_script else False)
+check("prepare_virt_customize: writes /etc/hostname directly via --run-command, not relying "
+      "solely on --hostname (which libguestfs gets wrong for this image)",
+      "echo {}.format(vmname)" in _vc_script.replace("\"", "").replace("'", "")
+      or "> /etc/hostname\".format(vmname)" in _vc_script)
+check("prepare_virt_customize: still passes --hostname too (belt and suspenders, not a "
+      "replacement — some distros DO need the legacy file)",
+      '"--hostname",vmname' in _vc_script.replace(" ", "")
+      or '"--hostname", vmname' in _vc_script)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

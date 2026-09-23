@@ -158,6 +158,42 @@ class DNSService(AuxService):
         with zone_file.open("a") as f:
             f.write(record + "\n")
 
+    def _dns_remove_ptr_for_octet(self, zone_file, last_octet):
+        """
+        Removes any EXISTING PTR line for `last_octet` regardless of which
+        hostname it currently points to.
+
+        Real bug found live 2026-09-23 (solar-system-lab.json): add_to_dns's
+        own _dns_add_line() only dedups an EXACT line match, so reusing an IP
+        a previous (destroyed, but incompletely cleaned-up) VM once held left
+        its OLD PTR record sitting right alongside the new one — two PTR
+        records for the same IP, BIND happily serves both, and the new VM's
+        own reverse-DNS lookup of its own IP can come back with the WRONG
+        (older) hostname. Confirmed live: this is exactly why
+        venus.mydemo.lab (reusing an IP a since-destroyed "node1a" VM once
+        used) picked up "node1a.mydemo.lab" as its own transient hostname on
+        boot instead of its real one — compounded by a separate, also-real
+        virt-customize bug (see prepare_virt_customize's own note) that left
+        venus with no STATIC hostname set at all, so systemd fell back to
+        deriving one from reverse DNS.
+
+        Matches on the octet as the line's own first whitespace-delimited
+        token (not a substring search) — same node1-vs-node10 precision
+        _dns_add_line's own docstring already documents, so removing PTR
+        '14' never accidentally removes PTR '142' too.
+        """
+        zone_file = Path(zone_file)
+        if not zone_file.exists():
+            return
+        lines = [l for l in zone_file.read_text().splitlines() if l.split()[:1] != [last_octet]]
+        zone_file.write_text("\n".join(lines) + "\n")
+
+    def _remote_dns_remove_ptr_for_octet(self, server, zone_file, last_octet):
+        """Remote-server counterpart to _dns_remove_ptr_for_octet — same
+        octet-as-first-token precision, via sed anchored at line start so it
+        can't match '142' while removing '14'."""
+        self._remote(server, "sed -i '/^{}[[:space:]]/d' {}".format(last_octet, zone_file), check=False)
+
     def restart_named(self, remote_servers=None):
         """Restart the local BIND named service and optionally on remote servers."""
         for server in (remote_servers or []):
@@ -177,10 +213,16 @@ class DNSService(AuxService):
 
         with _dns_lock:
             for server in (remote_dns_servers or []):
+                self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
                 self._remote_dns_add(server, lan_file, a_record)
                 self._remote_dns_add(server, rev_file, ptr_record)
                 self._remote(server, "systemctl restart named", check=False)
 
+            # Drop any stale PTR record for this IP FIRST — see
+            # _dns_remove_ptr_for_octet's own docstring for the real
+            # incident (a reused IP's old hostname winning a client's own
+            # reverse-DNS lookup) this prevents. One canonical PTR per IP.
+            self._dns_remove_ptr_for_octet(rev_file, last_octet)
             self._dns_add_line(lan_file, a_record)
             self._dns_add_line(rev_file, ptr_record)
             self.restart_named()
