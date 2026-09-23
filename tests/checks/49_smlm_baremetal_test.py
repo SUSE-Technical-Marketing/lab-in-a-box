@@ -117,7 +117,11 @@ def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
                  "ensure_activation_key", "ensure_appstreams", "ensure_activation_key_packages",
                  "ensure_activation_keys", "ensure_access_groups", "ensure_ansible_paths",
                  "ensure_content_projects", "ensure_system_groups", "ensure_custom_info_keys",
-                 "ensure_system_tags", "ensure_environments", "ensure_orgs"):
+                 "ensure_system_tags", "ensure_environments", "ensure_orgs",
+                 "ensure_monitoring", "ensure_distributions", "ensure_image_stores",
+                 "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
+                 "ensure_ansible_control_node", "ensure_grafana_formula",
+                 "ensure_virtual_host_managers"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
@@ -488,6 +492,30 @@ podman_definition = {
     },
     "nodes": {"sol.mydemo.lab": {"addons": ["smlm"]}},
 }
+
+# Real bug found live 2026-09-23: VHM credential resolution used to run
+# UNPROTECTED, before `rps`/run_provisioning_step even existed — a missing
+# smlm_vhm_aws_account credential file died() there and silently skipped
+# EVERY step after it (config channels, activation keys, orgs, ...), the
+# exact cascading-failure class run_provisioning_step exists to prevent.
+# Reproduced live: a real `install_smlm` rerun against sol.mydemo.lab died
+# right after the channel-sync-monitor install with no further output, and
+# the config channel it should have created never appeared. MUST run before
+# ism.setup_smlm_podman gets permanently stubbed out below (for the main()
+# tests) — this needs the REAL function.
+cfg_vhm_bad_creds = dict(cfg)
+cfg_vhm_bad_creds["smlm_vhm_aws_account"] = "does-not-exist"
+cfg_vhm_bad_creds["smlm_virtual_host_managers"] = [
+    {"label": "test-vhm", "region": "eu-central-1", "zone": "eu-central-1a"}]
+cfg_vhm_bad_creds["smlm_config_channels"] = [{"label": "test-channel"}]
+_, _, _, sc_calls_vhm, _ = run_setup_smlm_podman(cfg_vhm_bad_creds, transactional=True)
+check("setup_smlm_podman: a missing VHM credential file does NOT prevent config channels (or any "
+      "other later step) from still running",
+      any(n == "ensure_config_channels" for n, a, k in sc_calls_vhm))
+check("setup_smlm_podman: a missing VHM credential file does NOT prevent organizations (the LAST "
+      "step in the sequence) from still running",
+      any(n == "ensure_orgs" for n, a, k in sc_calls_vhm))
+
 
 ism.ac.handle_common_args = lambda *a, **k: None
 ism.primary.load_definition = lambda path: podman_definition

@@ -679,6 +679,28 @@ def _validate(v):
 # split (both exist as parallel, officially documented install guides for
 # the SAME mgradm/podman tool, just sourced from different repos/registries).
 
+def _resolve_and_fill_vhm_credentials(cfg, virtual_host_managers):
+    """
+    Resolves the shared smlm_vhm_aws_account credential (see that JSON
+    field's own doc comment for why this needs a real, long-lived AWS key
+    rather than this project's usual SSO/STS cloud_account mechanism) and
+    fills it into every "aws"-type entry in virtual_host_managers that
+    doesn't already carry its own explicit access_key_id/secret_access_key.
+    Split out from setup_smlm_podman() itself so it can be run through
+    run_provisioning_step() like every other step — see that call site's
+    own comment for the real cascading-failure bug this fixes.
+    """
+    vhm_creds = ac.resolve_credential(
+        cfg, "vhm_aws",
+        {"vhm_aws_access_key_id": "smlm_vhm_aws_access_key_id",
+         "vhm_aws_secret_access_key": "smlm_vhm_aws_secret_access_key"},
+        account_key="smlm_vhm_aws_account")
+    for vhm in virtual_host_managers:
+        if (vhm.get("type") or "aws") == "aws":
+            vhm.setdefault("access_key_id", vhm_creds["vhm_aws_access_key_id"])
+            vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
+
+
 def setup_smlm_podman(hostname, virt_srv, cfg):
     """
     Install SUSE Multi-Linux Manager the traditional way: mgradm/podman
@@ -1022,20 +1044,18 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        if virtual_host_managers:
-            # See this JSON section's own smlm_vhm_aws_account doc comment
-            # above for why this needs a real, long-lived AWS key rather than
-            # this project's usual SSO/STS cloud_account mechanism.
-            vhm_creds = ac.resolve_credential(
-                cfg, "vhm_aws",
-                {"vhm_aws_access_key_id": "smlm_vhm_aws_access_key_id",
-                 "vhm_aws_secret_access_key": "smlm_vhm_aws_secret_access_key"},
-                account_key="smlm_vhm_aws_account")
-            for vhm in virtual_host_managers:
-                if (vhm.get("type") or "aws") == "aws":
-                    vhm.setdefault("access_key_id", vhm_creds["vhm_aws_access_key_id"])
-                    vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
         rps = sc.run_provisioning_step
+        if virtual_host_managers:
+            # Real bug found live 2026-09-23: this credential resolution used
+            # to run unprotected, BEFORE `rps` even existed — a missing/
+            # misnamed smlm_vhm_aws_account credential file died() here and
+            # silently skipped every single step after it (config channels,
+            # activation keys, orgs, everything), the exact same cascading-
+            # failure class run_provisioning_step exists to prevent. Routed
+            # through rps() like every other step now, so a VHM credential
+            # problem only skips VHM provisioning, not the whole rest of the
+            # server's configuration.
+            rps("vhm credentials", _resolve_and_fill_vhm_credentials, cfg, virtual_host_managers)
         rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
         rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "smlm")
         # System groups BEFORE any activation key: ensure_activation_key()/
