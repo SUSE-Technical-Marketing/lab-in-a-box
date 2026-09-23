@@ -2954,6 +2954,117 @@ def _system_id(hostname, exec_prefix, target_system):
     return matches[0]["id"]
 
 
+# ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────
+# No spacecmd-native subcommand exists (confirmed live 2026-09-23, same
+# "no vhm_*/virtualhostmanager_* command" probing technique used elsewhere in
+# this module for access.*/ansible.*) — every call here goes through the raw
+# 'api' passthrough, against the real virtualhostmanager.* namespace
+# (ground-truthed directly against Uyuni's own Java source,
+# java/core/.../frontend/xmlrpc/virtualhostmanager/VirtualHostManagerHandler.java):
+# create(sessionKey, label, moduleName, Map<String,String> parameters) -> int.
+#
+# moduleName for AWS/EC2 is the real gatherer module's own name, "AmazonEC2"
+# — confirmed from TWO independent sources: (1) the actual Python worker
+# module shipped in uyuni-project/virtual-host-gatherer is
+# gatherer/modules/AmazonEC2.py, class AmazonEC2, with
+# DEFAULT_PARAMETERS = {"access_key_id", "secret_access_key", "region",
+# "zone"} (those 4 are the real dict keys `parameters` must carry — quoted
+# directly from that source); (2) Uyuni's own WebUI
+# (web/html/src/manager/systems/virtualhostmanager/virtualhostmanager.tsx)
+# keys its "Amazon EC2" label off the literal id "amazonec2" — the module
+# name it POSTs is `this.props.type.toLowerCase()`, i.e. "AmazonEC2"
+# lowercased, confirming "AmazonEC2" (not "aws"/"Ec2"/anything else) is the
+# real moduleName the server expects. Only AWS/EC2 is implemented here — no
+# other module's own real parameter keys have been ground-truthed.
+
+def virtual_host_manager_exists(hostname, exec_prefix, label):
+    """
+    Whether `label` appears in virtualhostmanager.listVirtualHostManagers'
+    raw output. Same substring-match heuristic used throughout this module
+    wherever the raw print format of a struct/list wasn't independently
+    confirmed from docs (VirtualHostManagerSerializer's exact JSON shape
+    wasn't ground-truthed) — every real VHM this project creates gets a
+    label unlikely to collide with an unrelated substring. NOT live-tested
+    (no server available in this project's dev/CI environment).
+    """
+    r = _api_call(hostname, exec_prefix, "virtualhostmanager.listVirtualHostManagers", [])
+    return r.returncode == 0 and label in (r.stdout or "")
+
+
+def ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm):
+    """
+    Idempotently creates one Amazon EC2 Virtual Host Manager from one entry
+    of <prefix>_virtual_host_managers: {label, access_key_id,
+    secret_access_key, region, zone}. See this module's own section
+    docstring above for where these 4 real parameter names and the real
+    "AmazonEC2" moduleName come from. access_key_id/secret_access_key are
+    real, long-lived AWS credentials — a temporary SSO/STS session (the kind
+    this project's own AWSBackend cloud-account mechanism normally uses for
+    VM provisioning, see libs/backends.py) would expire and silently break
+    the gatherer's own periodic polling, so this deliberately does NOT
+    reuse that same resolve_cloud_account() path; see
+    ensure_virtual_host_managers()'s own docstring for how credentials
+    actually get here. die()s on a real API failure — VirtualHostManager.create
+    itself refuses a duplicate label, so an existing VHM is detected and
+    skipped BEFORE that call is even made, same idiom as every other
+    ensure_*_exists() check in this module. NOT live-tested (no server
+    available in this project's dev/CI environment; no real long-lived AWS
+    key was available to test against, see the JSON doc comment on
+    smlm_virtual_host_managers).
+    """
+    label = vhm.get("label")
+    if not label:
+        die("virtual_host_managers: an entry is missing required 'label'")
+    if virtual_host_manager_exists(hostname, exec_prefix, label):
+        print("  Virtual Host Manager '{}' already exists — leaving it alone".format(label))
+        return
+    access_key_id = vhm.get("access_key_id")
+    secret_access_key = vhm.get("secret_access_key")
+    region = vhm.get("region")
+    zone = vhm.get("zone")
+    if not (access_key_id and secret_access_key and region and zone):
+        die("virtual host manager '{}': access_key_id, secret_access_key, region and zone are "
+            "all required to create it".format(label))
+    params = {
+        "access_key_id": access_key_id,
+        "secret_access_key": secret_access_key,
+        "region": region,
+        "zone": zone,
+    }
+    r = _api_call(hostname, exec_prefix, "virtualhostmanager.create", [label, "AmazonEC2", params])
+    if r.returncode != 0:
+        die("could not create Virtual Host Manager '{}': {}".format(
+            label, (r.stderr or r.stdout or "").strip()))
+    print("  Created Amazon EC2 Virtual Host Manager '{}' (region: {}, zone: {})".format(
+        label, region, zone))
+
+
+def ensure_virtual_host_managers(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_virtual_host_managers: a list of {label, type,
+    access_key_id, secret_access_key, region, zone} dicts. `type` is
+    currently required to be "aws" (the only module this function knows how
+    to provision — see ensure_virtual_host_manager_aws()'s own docstring for
+    why long-lived static credentials, not this project's usual
+    resolve_cloud_account() SSO/STS mechanism, are what this needs).
+    No-op if the field is unset or empty.
+
+    Credential resolution mirrors the rest of this project's own
+    resolve_credential() convention (libs/addon_common.py) at the CALLER's
+    level, not here — install_smlm.py resolves
+    smlm_vhm_aws_access_key/smlm_vhm_aws_secret_key (directly, or via a
+    named/auto-discovered 'aws' kind credentials file) BEFORE calling this,
+    and fills them into each entry's access_key_id/secret_access_key here.
+    This function itself only ever sees already-resolved plaintext values.
+    """
+    for vhm in cfg.get("{}_virtual_host_managers".format(prefix)) or []:
+        vhm_type = vhm.get("type") or "aws"
+        if vhm_type != "aws":
+            die("virtual host manager '{}': type '{}' is not supported — only 'aws' is "
+                "currently implemented".format(vhm.get("label"), vhm_type))
+        ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm)
+
+
 def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrates <prefix>_grafana_formulas: applies SMLM/Uyuni's own

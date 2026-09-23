@@ -131,6 +131,10 @@ SERVICE_CREDENTIAL_FIELDS = {
     "ds389": [
         ("ds389_dm_password", False, True),
     ],
+    "vhm_aws": [
+        ("vhm_aws_access_key_id", True, False),
+        ("vhm_aws_secret_access_key", True, True),
+    ],
 }
 
 # --encrypt-existing's own heuristic for "this plaintext value looks like a

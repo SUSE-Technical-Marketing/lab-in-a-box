@@ -2654,6 +2654,54 @@ check("run_provisioning_step: only slept for the 2 failed attempts, not a 3rd ti
 
 sc.time.sleep = _real_sleep
 
+# -- Virtual Host Managers (added 2026-09-23) --------------------------------
+fake = FakeSSH(responses=[
+    ("virtualhostmanager.listVirtualHostManagers", FakeResult(returncode=0, stdout="[]")),
+    ("virtualhostmanager.create", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+vhm = {"label": "aws-vhm", "access_key_id": "AKIAEXAMPLE", "secret_access_key": "s3cr3t",
+       "region": "eu-central-1", "zone": "eu-central-1a"}
+sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", vhm)
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_virtual_host_manager_aws: checks for an existing VHM by label first",
+      any("virtualhostmanager.listVirtualHostManagers" in c for c in cmds))
+check("ensure_virtual_host_manager_aws: creates via the real moduleName 'AmazonEC2'",
+      any("virtualhostmanager.create" in c and '"aws-vhm", "AmazonEC2"' in c for c in cmds))
+check("ensure_virtual_host_manager_aws: sends the real 4 gatherer param keys",
+      any("access_key_id" in c and "secret_access_key" in c and '"region": "eu-central-1"' in c
+          and '"zone": "eu-central-1a"' in c for c in cmds))
+
+fake = FakeSSH(responses=[
+    ("virtualhostmanager.listVirtualHostManagers",
+     FakeResult(returncode=0, stdout='[{"label": "aws-vhm"}]')),
+])
+sc.ssh_run = fake
+sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", vhm)
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_virtual_host_manager_aws: an already-existing VHM is left alone, not re-created",
+      not any("virtualhostmanager.create" in c for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_virtual_host_managers("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_virtual_host_managers: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_virtual_host_managers(
+        "host1", "mgrctl exec --", {"smlm_virtual_host_managers": [{"label": "x", "type": "vmware"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_virtual_host_managers: an unsupported type dies with a clear message", died)
+
+died = False
+try:
+    sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", {"label": "incomplete"})
+except SystemExit:
+    died = True
+check("ensure_virtual_host_manager_aws: missing credentials/region/zone dies", died)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

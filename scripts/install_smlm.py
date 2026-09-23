@@ -43,6 +43,26 @@
 #                           multi-linux-manager/5.2's own server-deployment
 #                           guide.
 #
+# OPTIONAL when smlm_deployment is "podman" — Confidential Computing attestation container.
+# Ground-truthed 2026-09-23 directly against `mgradm install podman --help` on a real SMLM 5.2
+# server (a "Confidential Computing Flags" section, distinct from the also-real but unrelated
+# "Hub XML-RPC API"/"Saline"/"TFTPD" flag groups next to it):
+#   smlm_coco_replicas    : How many replicas of the confidential computing attestation
+#                           container to start — passed straight to `mgradm install`'s own
+#                           `--coco-replicas`. Unset (the default) omits the flag entirely, same
+#                           as mgradm's own default of not starting it.
+#   smlm_coco_image       : Image for the attestation container (mgradm's own default:
+#                           "suse/multi-linux-manager/5.2/x86_64/server-attestation")
+#   smlm_coco_tag         : Tag override for that image
+# NOTE (same real, confirmed-live risk documented on run_install_with_pg_hba_guard(), which
+# already handles it): mgradm's own tftpd-image entitlement check has been observed to silently
+# crash `mgradm install` AFTER the real DB/org/admin bootstrap already succeeded, purely because
+# this SCC account isn't entitled to an unrelated optional image. The attestation image may or
+# may not carry a similar entitlement requirement on your subscription — if `mgradm install`
+# appears to die right after enabling smlm_coco_replicas, check
+# run_install_with_pg_hba_guard()'s own completion-marker/resume handling before assuming the
+# whole install failed.
+#
 # OPTIONAL – credential store
 #   smlm_scc_account      : name of an encrypted credential_kind "scc" file under
 #                           /etc/lab_creation/credentials/ (see README's Credentials
@@ -199,6 +219,18 @@
 #                             (each via 'mgr-sync add channel <label>' if not already present in
 #                             'spacecmd softwarechannel_list') before the activation key is created
 #
+#   smlm_beta_channels        : List of BETA-flagged channel labels to add alongside
+#                             smlm_channels — confirmed live 2026-09-23 (sol.mydemo.lab) that
+#                             `mgr-sync add channels` needs no special flag or interactive EULA
+#                             confirmation for a channel/product whose own listing shows "(BETA)"
+#                             (e.g. "sle-product-sles-16.1-x86_64", from `mgr-sync list channels`
+#                             showing "SLE-Product-SLES-16.1 for x86_64 ... (BETA)") — it's added
+#                             exactly like any other channel. This field exists only to make that
+#                             opt-in explicit and self-documenting in the lab JSON (which channels
+#                             are deliberately pre-release) rather than mixing beta labels silently
+#                             into smlm_channels; functionally the two lists are merged and treated
+#                             identically. e.g. ["sle-product-sles-16.1-x86_64"]
+#
 # OPTIONAL – config channels (created/updated before the activation key above, so
 # smlm_activation_key_config_channels can reference them). List of objects:
 #   smlm_config_channels      : [{
@@ -214,6 +246,29 @@
 #                             associate the channel with any already-registered system directly
 #                             (that's client-side, out of scope here); use
 #                             smlm_activation_key_config_channels for newly-registered clients.
+#
+# OPTIONAL – Virtual Host Managers (Systems -> Virtual Host Managers in the Web UI). Only the
+# "aws" type is currently implemented — see libs/spacecmd_common.py's own section docstring for
+# the real, ground-truthed virtualhostmanager.create API call and its "AmazonEC2" module name.
+#   smlm_virtual_host_managers : [{"label": "...", "type": "aws" (default, only supported value),
+#                                  "region": "eu-central-1", "zone": "eu-central-1a",
+#                                  "access_key_id": "...", "secret_access_key": "..."}, ...]
+#                             access_key_id/secret_access_key are usually left OUT of each entry
+#                             and resolved instead from a real, long-lived AWS credential — see
+#                             smlm_vhm_aws_account below. A per-entry access_key_id/
+#                             secret_access_key, if present, overrides the resolved credential for
+#                             that one VHM only. Deliberately does NOT reuse this project's usual
+#                             cloud_account/resolve_cloud_account() mechanism (libs/backends.py):
+#                             that's built around SSO/STS sessions for provisioning VMs, which
+#                             expire — a Virtual Host Manager's own gatherer polls AWS
+#                             periodically forever, so it needs a real, non-expiring IAM access
+#                             key instead.
+#   smlm_vhm_aws_account      : Name of a 'vhm_aws' credentials file under
+#                             /etc/lab_creation/credentials/ (see setup_credentials.py) carrying
+#                             vhm_aws_access_key_id/vhm_aws_secret_access_key. Omit to
+#                             auto-discover the one 'vhm_aws' file if exactly one exists (same
+#                             resolve_credential() convention as smlm_scc_account elsewhere in
+#                             this file).
 #
 # OPTIONAL – organizations (created after the above; each org gets its own admin session
 # for its own scoped provisioning). List of objects:
@@ -793,6 +848,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             "--organization {}".format(
                 shlex.quote(admin), shlex.quote(password), shlex.quote(email),
                 shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
+        # Confidential Computing attestation container — see this JSON section's
+        # own smlm_coco_replicas doc comment above for the real, ground-truthed
+        # `mgradm install podman --help` flags this maps to.
+        if cfg.get("smlm_coco_replicas") is not None:
+            install_cmd += " --coco-replicas {}".format(shlex.quote(str(cfg["smlm_coco_replicas"])))
+        if cfg.get("smlm_coco_image"):
+            install_cmd += " --coco-image {}".format(shlex.quote(cfg["smlm_coco_image"]))
+        if cfg.get("smlm_coco_tag"):
+            install_cmd += " --coco-tag {}".format(shlex.quote(cfg["smlm_coco_tag"]))
         run_install_with_pg_hba_guard(hostname, install_cmd)
 
         time.sleep(60)
@@ -816,6 +880,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     channels = cfg.get("smlm_channels") or []
     if isinstance(channels, str):
         channels = channels.split()
+
+    # smlm_beta_channels: a separately-named, explicitly-opt-in list of
+    # BETA-flagged channels — confirmed live 2026-09-23 they need no special
+    # handling from `mgr-sync add channels`, so this is just merged straight
+    # into the same channel list (see this field's own JSON-doc comment
+    # above for the real confirmation).
+    for c in cfg.get("smlm_beta_channels") or []:
+        if c not in channels:
+            channels.append(c)
 
     # Real bug found live 2026-09-14: an activation key's own
     # *_activation_key_child_channels (e.g. the "managertools-*" channels
@@ -940,13 +1013,27 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
     image_stores = cfg.get("smlm_image_stores") or []
     image_profiles = cfg.get("smlm_image_profiles") or []
+    virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
             or distributions or kickstart_profiles or image_stores or image_profiles
-            or cfg.get("smlm_monitoring_enabled")):
+            or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+        if virtual_host_managers:
+            # See this JSON section's own smlm_vhm_aws_account doc comment
+            # above for why this needs a real, long-lived AWS key rather than
+            # this project's usual SSO/STS cloud_account mechanism.
+            vhm_creds = ac.resolve_credential(
+                cfg, "vhm_aws",
+                {"vhm_aws_access_key_id": "smlm_vhm_aws_access_key_id",
+                 "vhm_aws_secret_access_key": "smlm_vhm_aws_secret_access_key"},
+                account_key="smlm_vhm_aws_account")
+            for vhm in virtual_host_managers:
+                if (vhm.get("type") or "aws") == "aws":
+                    vhm.setdefault("access_key_id", vhm_creds["vhm_aws_access_key_id"])
+                    vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
         rps = sc.run_provisioning_step
         rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
         rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "smlm")
@@ -1008,6 +1095,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "smlm")
         rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "smlm")
         rps("grafana formula", sc.ensure_grafana_formula, hostname, exec_prefix, cfg, "smlm")
+        rps("virtual host managers", sc.ensure_virtual_host_managers, hostname, exec_prefix, cfg, "smlm")
         # Organizations run last and its own per-org steps (activation keys,
         # system groups, users) mirror the same top-level dependencies above
         # — same modest retry window.
