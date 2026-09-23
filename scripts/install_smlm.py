@@ -1364,6 +1364,33 @@ while IFS= read -r label; do
     fi
 done < <(mcbr --list 2>/dev/null | sed -E 's/^[0-9]+\\.\\s*//')
 
+# --list itself hides a whole real class of distribution: real, confirmed-
+# live 2026-09-23 (phobos.mydemo.lab, RHEL 9) — a product mgr-create-
+# bootstrap-repo's own data considers "not connected to CDN" is silently
+# excluded from --list's own enumeration EVEN ONCE its real channel content
+# (confirmed live: managertools-el9-pool-x86_64, 8 packages, including a
+# real venv-salt-minion, fully synced from the genuine updates.suse.com
+# mirror) is completely ready — --list never mentions it again, so the
+# discovery loop above never queues it, no matter how long this timer runs.
+# Confirmed live that --create <label> works FINE for one of these anyway
+# (just prints a "not connected to CDN" WARNING, not an error, and builds
+# the repo correctly) — the exclusion is purely a --list/--auto DISCOVERY
+# quirk, not a real block. --auto --dryrun (never plain --auto — see this
+# script's own header comment for why --auto itself is never used to
+# actually build/retry anything) still enumerates these "not connected"
+# products in its own dry-run output, without touching disk, so it's used
+# here PURELY to catch their names and queue them the same way as any
+# --list-discovered label — the real build always still goes through
+# --create below, same as everything else.
+while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    if [ ! -e "$DONE_DIR/$label" ] && [ ! -e "$PENDING_DIR/$label" ]; then
+        touch "$PENDING_DIR/$label"
+        log "distribution '$label': not connected to CDN per --list, but its own channel "
+        log "distribution '$label': content may already be ready -- queued for an explicit --create attempt"
+    fi
+done < <(mcbr --auto --dryrun 2>&1 | sed -nE 's/^(WARNING: )?([A-Za-z0-9_.-]+) not connected to CDN\\.?.*/\\2/p')
+
 # Explicit build/retry, one pending distribution per cycle. Picked by OLDEST
 # marker mtime (ls -tr), not alphabetically — real live behavior confirmed
 # 2026-09-23: every distribution failed on the exact same underlying cause
@@ -1441,6 +1468,18 @@ def ensure_bootstrap_repo_monitor(hostname):
     would stay permanently broken even after its channel finishes syncing,
     with nothing to ever revisit it. See _BOOTSTRAP_REPO_MONITOR_SCRIPT's
     own comment for the retry design.
+
+    Also handles a second, real gap found live the same day
+    (phobos.mydemo.lab, RHEL 9): `--list` (this script's own discovery
+    mechanism) silently EXCLUDES any product mgr-create-bootstrap-repo
+    considers "not connected to CDN" — confirmed live it stays excluded
+    forever, even once that product's own channel content (managertools-
+    el9-pool-x86_64: 8 real packages, including venv-salt-minion, fully
+    synced from the genuine updates.suse.com mirror) is completely ready.
+    Confirmed `--create RHEL9-x86_64` works fine anyway when named
+    directly — the exclusion is purely a discovery-side quirk, not a real
+    block. See the script's own comment for the `--auto --dryrun`-based
+    discovery step this adds to catch these.
     """
     print("- Installing the bootstrap-repository failure monitor (checks every 15 min)")
     ssh_run(hostname, "cat > /usr/local/sbin/smlm-bootstrap-repo-monitor.sh <<'EOF'\n{}EOF".format(

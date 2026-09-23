@@ -10,6 +10,7 @@
 # mgradm_common's run_install_with_pg_hba_guard/ensure_server_container_active,
 # which are mocked here rather than exercised for real. Run from
 # 49_smlm_baremetal.sh, in its own container — see tests/run_tests.sh.
+import re
 import sys
 import types
 from pathlib import Path
@@ -439,12 +440,13 @@ check("_BOOTSTRAP_REPO_MONITOR_SCRIPT: valid bash syntax (bash -n) — a real ap
 check("bootstrap-repo-monitor script explicitly builds/retries a distribution via --create "
       "(the only way to force a real retry once --auto would have given up on it)",
       bootstrap_script_call is not None and "mcbr --create \"$retry_label\"" in bootstrap_script_call)
-check("bootstrap-repo-monitor script deliberately does NOT invoke --auto — it targets labels "
-      "directly via --list (discovery) + --create (build/retry) instead, since --auto's own "
-      "'changed products' tracking is exactly what causes it to forget a failed distribution "
-      "(the script's own comments discuss --auto to explain why it's avoided, so this checks "
-      "for the real invocation, not the bare substring)",
-      bootstrap_script_call is not None and "mcbr --auto" not in bootstrap_script_call
+check("bootstrap-repo-monitor script deliberately never invokes PLAIN --auto (mutating) — it "
+      "targets labels directly via --list (discovery) + --create (build/retry) instead, since "
+      "--auto's own 'changed products' tracking is exactly what causes it to forget a failed "
+      "distribution. --auto --dryrun IS used, but only for discovering 'not connected to CDN' "
+      "products --list hides forever (see the dedicated tests below) — never for a real build.",
+      bootstrap_script_call is not None
+      and re.search(r"mcbr --auto(?! --dryrun)", bootstrap_script_call) is None
       and "mcbr --list" in bootstrap_script_call)
 check("bootstrap-repo-monitor script persists pending/failing distributions in a state dir "
       "that survives across timer runs (PENDING_DIR), not just in-memory for one run",
@@ -456,6 +458,40 @@ check("bootstrap-repo-monitor script retries at most one pending distribution pe
       "conservative, at-most-one-trigger caution as the channel-sync monitor",
       bootstrap_script_call is not None
       and bootstrap_script_call.count("mcbr --create \"$retry_label\"") == 1)
+
+# Real bug found live 2026-09-23 (phobos.mydemo.lab, RHEL 9): --list silently
+# excludes any product mgr-create-bootstrap-repo considers "not connected to
+# CDN" — forever, even once its own channel content is fully ready — so the
+# --list-only discovery loop above never queues it. `--create` works fine
+# for one of these when named directly (confirmed live). --auto --dryrun
+# still mentions these products; the script parses ONLY that one message
+# pattern from it, never treating --auto's own build verdicts as authoritative.
+check("bootstrap-repo-monitor script ALSO discovers 'not connected to CDN' distributions "
+      "via --auto --dryrun, since --list hides them forever even once ready",
+      bootstrap_script_call is not None and "mcbr --auto --dryrun" in bootstrap_script_call)
+check("bootstrap-repo-monitor script's --auto --dryrun call is real dry-run (never mutates "
+      "anything) — discovery only, the real build still goes through --create",
+      bootstrap_script_call is not None
+      and bootstrap_script_call.count("mcbr --auto --dryrun") == 1
+      and "mcbr --auto\n" not in bootstrap_script_call)
+
+import subprocess as _subprocess  # noqa: E402
+
+_NOT_CONNECTED_SAMPLES = (
+    "RHEL9-x86_64 not connected to CDN. Skipping",
+    "WARNING: RHEL9-x86_64 not connected to CDN.",
+)
+for _sample in _NOT_CONNECTED_SAMPLES:
+    _m = re.search(r"sed -nE '(s/.*not connected to CDN.*?)'", bootstrap_script_call) if bootstrap_script_call else None
+    check("bootstrap-repo-monitor script: the 'not connected to CDN' sed pattern is present "
+          "in the script (couldn't locate it to test against a real sample: {!r})".format(_sample),
+          _m is not None)
+    if _m:
+        _r = _subprocess.run(["sed", "-nE", _m.group(1)], input=_sample,
+                              stdout=_subprocess.PIPE, stderr=_subprocess.PIPE, universal_newlines=True)
+        check("bootstrap-repo-monitor script's 'not connected to CDN' pattern extracts the real "
+              "label from: {!r}".format(_sample),
+              _r.stdout.strip() == "RHEL9-x86_64")
 check("channel-sync-monitor script captures spacecmd's stderr to a real file for inspection",
       monitor_script_call is not None and 'ERRFILE=$(mktemp)' in monitor_script_call
       and '2>"$ERRFILE"' in monitor_script_call)
