@@ -422,25 +422,39 @@ def setup_uyuni(hostname, virt_srv, cfg):
             or system_groups or custom_info_keys or system_tags or environments):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
-        sc.ensure_config_channels(hostname, exec_prefix, cfg, "uyuni")
+        rps = sc.run_provisioning_step
+        rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
+        rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "uyuni")
         # System groups BEFORE any activation key — see install_smlm.py's
         # identical comment on the same reorder for why (activationkey_
         # addgroups dies if the named group doesn't exist yet server-side).
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_key(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_appstreams(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_users(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_access_groups(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_ansible_control_node(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_content_projects(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_system_tags(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_environments(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_orgs(hostname, exec_prefix, cfg, "uyuni", admin, password)
+        rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "uyuni")
+        # activation key(s) depend on the system groups step just above —
+        # see install_smlm.py's identical comment on this same retry window.
+        rps("activation key", sc.ensure_activation_key, hostname, exec_prefix, cfg, "uyuni",
+            retries=3, retry_delay=15)
+        rps("appstreams", sc.ensure_appstreams, hostname, exec_prefix, cfg, "uyuni")
+        rps("activation key packages", sc.ensure_activation_key_packages, hostname, exec_prefix, cfg, "uyuni")
+        rps("activation keys", sc.ensure_activation_keys, hostname, exec_prefix, cfg, "uyuni",
+            retries=3, retry_delay=15)
+        rps("users", sc.ensure_users, hostname, exec_prefix, cfg, "uyuni")
+        rps("access groups", sc.ensure_access_groups, hostname, exec_prefix, cfg, "uyuni")
+        # Each step below is independent of the ones before it — see
+        # spacecmd_common.run_provisioning_step()'s own docstring for the
+        # real incident (charon's Ansible control node registration racing
+        # ensure_orgs()) this wrapping fixes. ansible_control_node/
+        # ansible_paths get the most generous retry window — see
+        # install_smlm.py's identical comment for why.
+        rps("ansible control node", sc.ensure_ansible_control_node, hostname, exec_prefix, cfg, "uyuni",
+            retries=10, retry_delay=60)
+        rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "uyuni",
+            retries=10, retry_delay=60)
+        rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "uyuni")
+        rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "uyuni")
+        rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "uyuni")
+        rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "uyuni")
+        rps("organizations", sc.ensure_orgs, hostname, exec_prefix, cfg, "uyuni", admin, password,
+            retries=3, retry_delay=15)
 
 
 def run_ansible_playbooks(hostname, cfg):

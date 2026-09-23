@@ -375,7 +375,86 @@ import shlex
 import time
 from datetime import datetime, timezone
 
-from lab_creation import ssh_run, die, warn
+from lab_creation import ssh_run, die, warn, error
+
+
+def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
+    """
+    Runs one independent config-provisioning step from install_smlm.py's/
+    install_uyuni.py's own setup_*() orchestration block (each a call to one
+    of this module's ensure_* functions) and reports+continues on failure
+    instead of letting it silently abort every OTHER, unrelated step queued
+    after it in that same block.
+
+    Real bug found live 2026-09-23 (solar-system-lab.json, sol.mydemo.lab):
+    every step in that block ran as a bare, unguarded call, so a single
+    die() (an uncaught SystemExit — see die()'s own docstring) anywhere
+    unwound all the way out of the whole orchestration function, abandoning
+    every step listed after it in source order. Confirmed live:
+    ensure_ansible_control_node()'s own _system_id() lookup died with "no
+    system named 'charon.mydemo.lab' found on the server" — a real,
+    expected race, since client_registration's own background retry
+    workers (see install_client_registration.py) finish independently of
+    when this orchestration step runs, and simply hadn't gotten to charon
+    yet. That one die(), for a feature (Ansible control node) with nothing
+    to do with organizations or users, silently took out every step after
+    it too — including ensure_orgs(), which is what actually creates the
+    lab's "edge" organization and its 28 users. The run reported no error
+    at all for the missing org/users; the only visible error pointed at an
+    entirely different feature, several steps earlier.
+
+    die() elsewhere still means exactly what it always has — this only
+    catches it at this one orchestration boundary, converting it to
+    lab_creation.error() (report but continue, the project's own existing
+    idiom for "this one thing failed, keep going") so one step's failure
+    can never again silently swallow unrelated steps queued after it.
+    Downstream ordering dependencies (e.g. distributions before kickstart
+    profiles, system groups before activation keys) are unaffected — steps
+    still run in the same order, so a step that itself depends on an
+    earlier one that failed will fail too, but with its OWN clear error
+    naming what it needed, not silence.
+
+    retries/retry_delay (added 2026-09-23): some steps depend on state a
+    DIFFERENT, independently-progressing part of this project's automation
+    is still working on — e.g. ensure_ansible_control_node()/
+    ensure_ansible_paths() need their target system to already be a
+    registered client, but install_client_registration.py's own background
+    retry workers register clients on their own schedule, completely
+    decoupled from when this orchestration runs (the exact real incident
+    documented above). A single immediate failure there is often just a
+    race, not a real problem. When the caller knows a step has a real
+    cross-dependency like this, it passes retries > 1: this function
+    retries up to `retries` times, sleeping `retry_delay` seconds between
+    attempts, before finally giving up and reporting via error(). Default
+    is retries=1 (no retry) — most steps here have no such cross-dependency,
+    and a real config mistake (a typo'd channel name, a missing required
+    field) should still be reported immediately rather than delayed.
+
+    This is bounded and synchronous by design, not an infinite background
+    watcher like ensure_channel_sync_monitor(): a dependency that takes
+    much longer than retries*retry_delay to resolve (e.g. a client that is
+    still hours away from finishing its own channel sync, per
+    install_client_registration.py's own multi-hour warning) still needs a
+    later config run to pick it up. That's still strictly better than the
+    previous behavior (never picked up at all, ever, without the bug above
+    even being visible) — see run_provisioning_step's error() message for
+    what a still-failing step after retries looks like.
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            func(*args, **kwargs)
+            return
+        except SystemExit as e:
+            last_err = e
+            if attempt < retries:
+                warn("config step '{}' failed (attempt {}/{}) — its dependency may still be "
+                     "catching up elsewhere in the automation; retrying in {}s".format(
+                         label, attempt, retries, retry_delay))
+                time.sleep(retry_delay)
+    error("config step '{}' failed after {} attempt{} — see the ERROR(s) above; continuing "
+          "with the rest of the configuration".format(
+              label, retries, "" if retries == 1 else "s"))
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):

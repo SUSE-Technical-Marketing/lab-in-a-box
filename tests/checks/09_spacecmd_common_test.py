@@ -2590,6 +2590,70 @@ check("ensure_ansible_control_node: a real API failure dies with a clear message
       "ignored", died)
 
 
+# -- run_provisioning_step (added 2026-09-23) -------------------------------
+# Real bug: install_smlm.py's/install_uyuni.py's orchestration blocks used to
+# call each ensure_* step bare, so one die() (SystemExit) silently aborted
+# every step queued after it — confirmed live 2026-09-23,
+# ensure_ansible_control_node()'s "no system named 'charon.mydemo.lab' found
+# on the server" wiped out ensure_orgs() (the lab's "edge" org + 28 users)
+# several steps later. These tests avoid real time.sleep() by monkeypatching
+# sc.time.sleep.
+_real_sleep = sc.time.sleep
+_sleep_calls = []
+sc.time.sleep = lambda s: _sleep_calls.append(s)
+
+calls = []
+
+
+def _ok(*a, **kw):
+    calls.append(("ok", a, kw))
+
+
+def _always_dies(*a, **kw):
+    calls.append(("die", a, kw))
+    lab_creation.die("simulated failure")
+
+
+calls.clear()
+sc.run_provisioning_step("succeeds", _ok, "host1", x=1)
+check("run_provisioning_step: a successful step is called exactly once", len(calls) == 1)
+
+calls.clear()
+_sleep_calls.clear()
+sc.run_provisioning_step("no retry by default", _always_dies, "host1")
+check("run_provisioning_step: default retries=1 means the step is attempted exactly once",
+      len(calls) == 1)
+check("run_provisioning_step: default retries=1 never sleeps", _sleep_calls == [])
+
+calls.clear()
+_sleep_calls.clear()
+sc.run_provisioning_step("retries then still fails", _always_dies, "host1", retries=3, retry_delay=15)
+check("run_provisioning_step: retries=3 attempts the step exactly 3 times",
+      len(calls) == 3)
+check("run_provisioning_step: sleeps retry_delay between attempts, not after the last one",
+      _sleep_calls == [15, 15])
+
+_flaky_state = {"n": 0}
+
+
+def _flaky(*a, **kw):
+    _flaky_state["n"] += 1
+    calls.append(("flaky", _flaky_state["n"]))
+    if _flaky_state["n"] < 3:
+        lab_creation.die("still not ready")
+
+
+calls.clear()
+_sleep_calls.clear()
+_flaky_state["n"] = 0
+sc.run_provisioning_step("succeeds on a later attempt", _flaky, "host1", retries=5, retry_delay=20)
+check("run_provisioning_step: a step that fails twice then succeeds stops retrying once it succeeds",
+      len(calls) == 3)
+check("run_provisioning_step: only slept for the 2 failed attempts, not a 3rd time after success",
+      _sleep_calls == [20, 20])
+
+sc.time.sleep = _real_sleep
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

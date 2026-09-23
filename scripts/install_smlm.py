@@ -947,37 +947,72 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
-        sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        rps = sc.run_provisioning_step
+        rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
+        rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "smlm")
         # System groups BEFORE any activation key: ensure_activation_key()/
         # ensure_activation_keys() link a key to <prefix>_activation_key_groups
         # via activationkey_addgroups, which dies if the named group doesn't
         # exist yet server-side — confirmed live 2026-09-15 ("Unable to locate
         # or access server group: 'prod'") the first time a lab actually
         # combined smlm_system_groups with smlm_activation_key_groups.
-        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        rps("monitoring", sc.ensure_monitoring, hostname, exec_prefix, cfg, "smlm")
+        rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "smlm")
+        rps("distributions", sc.ensure_distributions, hostname, exec_prefix, cfg, "smlm")
+        rps("image stores", sc.ensure_image_stores, hostname, exec_prefix, cfg, "smlm")
+        rps("image profiles", sc.ensure_image_profiles, hostname, exec_prefix, cfg, "smlm")
+        # activation key(s) depend on the system groups step just above (see
+        # the comment on that reorder) — a couple of short retries smooth
+        # over ordinary server-side propagation lag right after a group was
+        # just created, without masking a real config mistake for long.
+        rps("activation key", sc.ensure_activation_key, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
+        rps("appstreams", sc.ensure_appstreams, hostname, exec_prefix, cfg, "smlm")
+        rps("activation key packages", sc.ensure_activation_key_packages, hostname, exec_prefix, cfg, "smlm")
+        rps("activation keys", sc.ensure_activation_keys, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
         # Kickstart profiles AFTER activation keys: a profile can link to one
         # via kickstart_addactivationkeys, which needs the key to already exist
         # — same ordering reasoning as system groups vs activation keys above.
-        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_ansible_control_node(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_grafana_formula(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
+        # (ensure_kickstart_profile() already self-skips cleanly when its own
+        # distribution isn't populated yet — see that function's own
+        # docstring — so retrying here is only for the activation-key link,
+        # not for the known kickstart-tree gap.)
+        rps("kickstart profiles", sc.ensure_kickstart_profiles, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
+        rps("users", sc.ensure_users, hostname, exec_prefix, cfg, "smlm")
+        rps("access groups", sc.ensure_access_groups, hostname, exec_prefix, cfg, "smlm")
+        # Each step below is independent of the ones before it — wrapped via
+        # run_provisioning_step() so that, e.g., the Ansible control node not
+        # having registered as a client YET (a real, expected race against
+        # install_client_registration.py's own background retry workers,
+        # confirmed live 2026-09-23) can never again silently skip orgs/users
+        # or any other unrelated step queued after it. See that function's
+        # own docstring for the real incident this fixes.
+        #
+        # ansible_control_node/ansible_paths get the most generous retry
+        # window of anything in this block: they're the one real, CONFIRMED
+        # cross-dependency on a system that registers on its own, completely
+        # decoupled schedule (install_client_registration.py's background
+        # retry workers) — 10 attempts 60s apart gives a client that's just
+        # about to finish registering a real chance, without blocking this
+        # whole run indefinitely for one that's genuinely still hours away
+        # (that case still needs a later config run — see
+        # run_provisioning_step()'s own docstring for why that's fine).
+        rps("ansible control node", sc.ensure_ansible_control_node, hostname, exec_prefix, cfg, "smlm",
+            retries=10, retry_delay=60)
+        rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "smlm",
+            retries=10, retry_delay=60)
+        rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "smlm")
+        rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "smlm")
+        rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "smlm")
+        rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "smlm")
+        rps("grafana formula", sc.ensure_grafana_formula, hostname, exec_prefix, cfg, "smlm")
+        # Organizations run last and its own per-org steps (activation keys,
+        # system groups, users) mirror the same top-level dependencies above
+        # — same modest retry window.
+        rps("organizations", sc.ensure_orgs, hostname, exec_prefix, cfg, "smlm", admin, password,
+            retries=3, retry_delay=15)
 
 
 _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
