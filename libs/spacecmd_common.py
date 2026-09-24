@@ -372,6 +372,7 @@ import hashlib
 import json
 import re
 import shlex
+import socket
 import time
 from datetime import datetime, timezone
 
@@ -3419,6 +3420,33 @@ def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fq
     return r3.returncode == 0 and "bootstrap complete" in out3.lower()
 
 
+def _ensure_client_can_resolve_server(client_hostname, server_fqdn):
+    """
+    Pushes a static /etc/hosts entry for server_fqdn onto client_hostname —
+    see ensure_client_registered()'s own docstring for the real, confirmed-
+    live incident (saturn.mydemo.lab/neptune.mydemo.lab, both AWS EC2, on
+    a completely different network/DNS than this lab) this exists for.
+
+    Resolves server_fqdn via THIS function's own (Python-level, local)
+    socket.gethostbyname — this always runs on the automation node, which
+    has working DNS for this lab regardless of what the CLIENT can reach —
+    then idempotently appends "<ip> <fqdn>" to the client's /etc/hosts if
+    not already present. A no-op (silently) if server_fqdn can't be
+    resolved locally either — nothing this function can do about that, and
+    the real bootstrap attempt right after this will fail with its own
+    clear error instead.
+    """
+    try:
+        server_ip = socket.gethostbyname(server_fqdn)
+    except socket.gaierror:
+        return
+    hosts_line = "{} {}".format(server_ip, server_fqdn)
+    ssh_run(client_hostname,
+            "grep -qF {line} /etc/hosts || echo {line} >> /etc/hosts".format(
+                line=shlex.quote(hosts_line)),
+            check=False)
+
+
 def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn, activation_key,
                               reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None):
     """
@@ -3451,10 +3479,29 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     own docstring for the real, confirmed-live incident (CentOS 7) this
     exists for. Omit it and that whole recovery path is simply skipped —
     the original curl-only behavior, unchanged.
+
+    Real bug found live 2026-09-24 (solar-system-lab.json, saturn.mydemo.lab
+    / neptune.mydemo.lab, both AWS EC2): a client on a completely different
+    network (AWS's own VPC DNS, or systemd-resolved's stub resolver) simply
+    cannot resolve server_fqdn at all — confirmed live neither client's own
+    /etc/resolv.conf points anywhere near this lab's BIND server, and
+    `getent hosts` for it came back empty on both. Confirmed live this is
+    PURELY a DNS gap, not a connectivity or firewall one: both clients
+    reached the server's real public IP directly over HTTPS (curl got a
+    real 200) the instant its IP was used instead of its name. Fixed by
+    resolving server_fqdn locally (this function always runs on the
+    automation node, which DOES have working DNS for this lab) and pushing
+    a static /etc/hosts entry onto the client BEFORE any bootstrap attempt
+    — this fixes every later step that needs to reach the server by name
+    (the initial script fetch, bootstrap.sh's own internal checks, and the
+    eventual real salt-minion connection), on ANY client whose own DNS
+    can't reach this lab, not just AWS ones specifically.
     """
     if saltkey_accepted(hostname, exec_prefix, client_hostname):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
         return
+
+    _ensure_client_can_resolve_server(client_hostname, server_fqdn)
 
     # Resolve to Uyuni's real, org-id-prefixed key name (see
     # resolve_activation_key_name's docstring) — both mgr-bootstrap and the

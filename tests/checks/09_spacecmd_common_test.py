@@ -2069,10 +2069,47 @@ except SystemExit:
 check("saltkey_accept: dies on failure", died)
 
 
+# -- _ensure_client_can_resolve_server (added 2026-09-24) -------------------
+# Real bug found live 2026-09-24: saturn.mydemo.lab/neptune.mydemo.lab (both
+# AWS EC2, on a completely different network/DNS than this lab) simply
+# cannot resolve the SMLM server's hostname at all — confirmed live neither
+# client's own DNS config points anywhere near this lab's BIND server, yet
+# both reached the server's real public IP directly over HTTPS fine the
+# instant its IP was used instead of its name — a pure DNS gap, not
+# connectivity. Fixed by resolving the server's hostname LOCALLY (on the
+# automation node, which has working DNS for this lab) and pushing a static
+# /etc/hosts entry onto the client.
+_real_gethostbyname = sc.socket.gethostbyname
+sc.socket.gethostbyname = lambda fqdn: "3.71.46.122" if fqdn == "sol.mydemo.lab" else (_ for _ in ()).throw(
+    sc.socket.gaierror("simulated: not found"))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._ensure_client_can_resolve_server("saturn.mydemo.lab", "sol.mydemo.lab")
+check("_ensure_client_can_resolve_server: runs against the CLIENT host, not the server",
+      len(fake.calls) == 1 and fake.calls[0][0] == "saturn.mydemo.lab")
+check("_ensure_client_can_resolve_server: pushes the real resolved IP paired with the FQDN",
+      "3.71.46.122 sol.mydemo.lab" in fake.calls[0][1])
+check("_ensure_client_can_resolve_server: idempotent — checks /etc/hosts first, doesn't just append blindly",
+      fake.calls[0][1].startswith("grep -qF") and "/etc/hosts" in fake.calls[0][1])
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._ensure_client_can_resolve_server("saturn.mydemo.lab", "unresolvable.mydemo.lab")
+check("_ensure_client_can_resolve_server: silently no-ops when the automation node itself can't "
+      "resolve the server either (nothing more it can do — the real bootstrap attempt right "
+      "after reports its own clear error instead)",
+      len(fake.calls) == 0)
+
+sc.socket.gethostbyname = _real_gethostbyname
+
+
 # -- ensure_client_registered -------------------------------------------------
 sc.time.sleep = lambda s: None  # never actually wait in tests
 
-# Already accepted: pure no-op, no bootstrap curl issued.
+# Already accepted: pure no-op, no bootstrap curl issued — confirms
+# _ensure_client_can_resolve_server() isn't even attempted for a client
+# that's already done, matching the existing early-return.
 fake = FakeSSH(responses=[("saltkey.acceptedList", FakeResult(stdout="['client1.mydemo.lab']"))])
 sc.ssh_run = fake
 sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
