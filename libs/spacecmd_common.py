@@ -1975,6 +1975,64 @@ def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
               "highstate apply to install ansible".format(system, sid))
 
 
+def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_image_build_hosts: a list of {system} dicts.
+    Enables the real "Container Build Host" add-on entitlement on each
+    (system.addEntitlements, label "container_build_host" — ground-truthed
+    2026-09-24 directly against Uyuni's own Java source,
+    EntitlementManager.CONTAINER_BUILD_HOST_ENTITLED — a genuinely
+    DIFFERENT real entitlement from "osimage_build_host", which is the
+    older Kiwi-based OS-image build path, not this one), then schedules a
+    highstate apply (system.scheduleApplyHighstate) so the real container
+    build tooling actually gets installed there — confirmed live via
+    documentation.suse.com/multi-linux-manager's own "Image Building and
+    Management" guide, whose real documented procedure is literally
+    "enable Container Build Host, then Apply Highstate" (the exact same
+    two-step shape as ensure_ansible_control_node(), which this mirrors).
+
+    This is the missing piece smlm_image_imports' own JSON doc has flagged
+    since it was added: an image import's build_host_id needs a system
+    that ALREADY has this entitlement — this function is what actually
+    grants it, so a lab that also sets this field can go from "image
+    import fails, entitlement missing" to a working build host in one
+    additional list entry, with no manual Web UI/system_addentitlement
+    step required.
+
+    Idempotent, safe to call on every run — same reasoning as
+    ensure_ansible_control_node(): addEntitlements' own real API
+    description says an already-held entitlement is "quietly ignored",
+    and re-applying a highstate is itself idempotent salt-side. No-op if
+    the field is unset or empty. Does NOT itself verify the target
+    system's software channels include the required Containers module
+    (confirmed live real prerequisite, per the docs) — that's expected to
+    already be satisfied by the system's own activation key/channel setup
+    elsewhere in this same JSON (matching every other add-on entitlement
+    function in this module, none of which validate channel prerequisites
+    either).
+    """
+    entries = cfg.get("{}_image_build_hosts".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_image_build_hosts: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "system.addEntitlements", [sid, ["container_build_host"]])
+        if r.returncode != 0:
+            die("could not enable the Container Build Host entitlement on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+        if r.returncode != 0:
+            die("could not schedule a highstate apply on '{}' to install container build tooling: {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and scheduled a "
+              "highstate apply to install container build tooling".format(system, sid))
+
+
 def ansible_path_exists(hostname, exec_prefix, control_node_id, path):
     """
     Whether `path` already appears in ansible.listAnsiblePaths(control_node_id)'s

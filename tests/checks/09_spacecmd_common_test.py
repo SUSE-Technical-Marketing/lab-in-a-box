@@ -2825,6 +2825,50 @@ check("ensure_ansible_control_node: a real API failure dies with a clear message
       "ignored", died)
 
 
+# -- ensure_container_build_hosts (added 2026-09-24) ------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "mercury.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}
+sc.ensure_container_build_hosts("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_container_build_hosts: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_container_build_hosts: enables the real 'container_build_host' entitlement label",
+      any("system.addEntitlements" in c and '[42, ["container_build_host"]]' in c for c in cmds))
+check("ensure_container_build_hosts: schedules a highstate apply so build tooling actually "
+      "gets installed",
+      any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_container_build_hosts("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_container_build_hosts: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_container_build_hosts("host1", "mgrctl exec --", {"smlm_image_build_hosts": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_container_build_hosts: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("system.addEntitlements", FakeResult(returncode=1, stderr="not a salt-entitled system")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_container_build_hosts(
+        "host1", "mgrctl exec --", {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_container_build_hosts: a real API failure dies with a clear message, not silently "
+      "ignored", died)
+
+
 # -- run_provisioning_step (added 2026-09-23) -------------------------------
 # Real bug: install_smlm.py's/install_uyuni.py's orchestration blocks used to
 # call each ensure_* step bare, so one die() (SystemExit) silently aborted

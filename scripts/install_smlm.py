@@ -426,6 +426,16 @@
 #                             Run with:  install_smlm.py <lab.json> --import-images
 #                             (never runs automatically — scheduling an import is not idempotent,
 #                             same reasoning as --run-ansible-playbooks/--run-clm-actions).
+#   smlm_image_build_hosts     : [{"system": "already-registered-hostname.mydemo.lab"}, ...]
+#                             Enables the real Uyuni "container_build_host" entitlement on each
+#                             named, already-registered system, then schedules an Apply Highstate —
+#                             the same two-step shape as smlm_ansible_control_nodes. Ground-truthed
+#                             against EntitlementManager.java's CONTAINER_BUILD_HOST_ENTITLED
+#                             constant and the official Container Build Host doc (entitlement +
+#                             highstate). Runs BEFORE image imports so a build_host_id referenced
+#                             above (see smlm_image_imports) is actually usable. Does not itself
+#                             ensure the Containers module is assigned to that system's channels —
+#                             that prerequisite is a separate, real manual/channel-config step.
 #
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
@@ -1051,12 +1061,13 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     snippets = cfg.get("smlm_snippets") or []
     image_stores = cfg.get("smlm_image_stores") or []
     image_profiles = cfg.get("smlm_image_profiles") or []
+    image_build_hosts = cfg.get("smlm_image_build_hosts") or []
     virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
             or distributions or kickstart_profiles or snippets or image_stores or image_profiles
-            or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
+            or image_build_hosts or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         rps = sc.run_provisioning_step
@@ -1088,6 +1099,10 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         rps("distributions", sc.ensure_distributions, hostname, exec_prefix, cfg, "smlm")
         rps("image stores", sc.ensure_image_stores, hostname, exec_prefix, cfg, "smlm")
         rps("image profiles", sc.ensure_image_profiles, hostname, exec_prefix, cfg, "smlm")
+        # BEFORE any --import-images run: an import's own build_host_id needs a
+        # system that already holds this entitlement — see this JSON section's
+        # own smlm_image_build_hosts doc comment above.
+        rps("image build hosts", sc.ensure_container_build_hosts, hostname, exec_prefix, cfg, "smlm")
         # activation key(s) depend on the system groups step just above (see
         # the comment on that reorder) — a couple of short retries smooth
         # over ordinary server-side propagation lag right after a group was

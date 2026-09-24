@@ -122,7 +122,8 @@ def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
                  "ensure_monitoring", "ensure_distributions", "ensure_image_stores",
                  "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
                  "ensure_ansible_control_node", "ensure_grafana_formula",
-                 "ensure_virtual_host_managers", "ensure_snippets"):
+                 "ensure_virtual_host_managers", "ensure_snippets",
+                 "ensure_container_build_hosts"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
@@ -566,6 +567,23 @@ check("setup_smlm_podman: calls ensure_snippets when smlm_snippets is set",
 check("setup_smlm_podman: ensure_snippets runs BEFORE ensure_distributions",
       "ensure_distributions" in snippet_names
       and snippet_names.index("ensure_snippets") < snippet_names.index("ensure_distributions"))
+
+
+# smlm_image_build_hosts: wired in, and runs BEFORE image imports would be
+# scheduled — a build_host_id used by --import-images needs the entitlement
+# already enabled.
+cfg_build_hosts = dict(cfg)
+cfg_build_hosts["smlm_image_build_hosts"] = [{"system": "mercury.mydemo.lab"}]
+cfg_build_hosts["smlm_image_profiles"] = [{"label": "p1", "type": "dockerfile", "store": "s1",
+                                            "path": "https://example.com/x.git#main:x",
+                                            "activation_key": "1-x"}]
+_, _, _, sc_calls_bh, _ = run_setup_smlm_podman(cfg_build_hosts, transactional=True)
+bh_names = [n for n, a, k in sc_calls_bh]
+check("setup_smlm_podman: calls ensure_container_build_hosts when smlm_image_build_hosts is set",
+      "ensure_container_build_hosts" in bh_names)
+check("setup_smlm_podman: ensure_container_build_hosts runs AFTER ensure_image_profiles",
+      "ensure_image_profiles" in bh_names
+      and bh_names.index("ensure_image_profiles") < bh_names.index("ensure_container_build_hosts"))
 
 
 ism.ac.handle_common_args = lambda *a, **k: None
