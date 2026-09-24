@@ -2560,6 +2560,80 @@ check("ensure_kickstart_profile: existing profile + already-set variable/key -> 
       not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
               for c in cmds))
 
+# -- snippet_file_path / ensure_snippet / ensure_snippets (added 2026-09-24) --
+# Real, live-grounded 2026-09-24: spacecmd's native snippet_create is
+# interactive ("Is this ok [y/N]:", confirmed live — no -y/--yes flag,
+# "ERROR: unrecognized arguments: -y") and re-running it against an EXISTING
+# name cleanly overwrites (no separate update command — confirmed absent).
+# Idempotency is checked against the snippet's own real file content, whose
+# path (varies by org id) comes from snippet_details' own "File:" line.
+_REAL_SNIPPET_DETAILS = (
+    "Name:   test-example\n"
+    "Macro:  $SNIPPET('spacewalk/1/test-example')\n"
+    "File:   /var/lib/cobbler/snippets/spacewalk/1/test-example\n"
+)
+
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=0, stdout=_REAL_SNIPPET_DETAILS))])
+sc.ssh_run = fake
+check("snippet_file_path: parses the real absolute path off the 'File:' line",
+      sc.snippet_file_path("host1", "mgrctl exec --", "test-example")
+      == "/var/lib/cobbler/snippets/spacewalk/1/test-example")
+
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=1, stdout="",
+                                                           stderr="WARNING: nosuch is not a valid snippet"))])
+sc.ssh_run = fake
+check("snippet_file_path: returns None for a snippet that doesn't exist",
+      sc.snippet_file_path("host1", "mgrctl exec --", "nosuch") is None)
+
+# Already up to date: real content matches -> no create/confirm round trip.
+fake = FakeSSH(responses=[
+    ("snippet_details", FakeResult(returncode=0, stdout=_REAL_SNIPPET_DETAILS)),
+    ("cat /var/lib/cobbler/snippets/spacewalk/1/test-example",
+     FakeResult(returncode=0, stdout="echo hi\n")),
+])
+sc.ssh_run = fake
+sc.ensure_snippet("host1", "mgrctl exec --", "test-example", "echo hi\n")
+check("ensure_snippet: already-matching content is a no-op (no snippet_create call)",
+      not any("snippet_create" in c[1] for c in fake.calls))
+
+# Doesn't exist yet -> stages content, creates, confirms with 'y', cleans up.
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=1, stdout="", stderr="not a valid snippet"))])
+sc.ssh_run = fake
+sc.ensure_snippet("host1", "mgrctl exec --", "new-snippet", "echo new\n")
+cmds_and_kwargs = [(c[1], c[2]) for c in fake.calls]
+stage_call = next((c for c, kw in cmds_and_kwargs if "cat >" in c), None)
+create_call = next(((c, kw) for c, kw in cmds_and_kwargs if "snippet_create -n new-snippet -f" in c), None)
+check("ensure_snippet: stages the real content to a remote temp file first",
+      stage_call is not None)
+check("ensure_snippet: creates via spacecmd's own stored session (NEVER -u/-p in argv — a real "
+      "security regression caught here: this project's own ensure_spacecmd_config exists "
+      "specifically to keep credentials out of argv/`ps` output)",
+      create_call is not None and " -u " not in create_call[0] and " -p " not in create_call[0])
+check("ensure_snippet: confirms the interactive 'Is this ok' prompt with a real 'y' on stdin",
+      create_call is not None and create_call[1].get("input_text") == "y\n")
+check("ensure_snippet: cleans up its own remote staging file afterward",
+      any("rm -f /tmp/.lab-snippet-" in c for c, kw in cmds_and_kwargs))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_snippets("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_snippets: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_snippets("host1", "mgrctl exec --", {"smlm_snippets": [{"content": "x"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_snippets: an entry missing 'name' dies", died)
+
+died = False
+try:
+    sc.ensure_snippets("host1", "mgrctl exec --", {"smlm_snippets": [{"name": "x"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_snippets: an entry missing 'content' dies", died)
+
+
 # -- image stores / profiles / import ------------------------------------------
 fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(returncode=0, stdout="[]"))])
 sc.ssh_run = fake

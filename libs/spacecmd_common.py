@@ -1200,6 +1200,87 @@ def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
         ensure_kickstart_profile(hostname, exec_prefix, ks)
 
 
+def snippet_file_path(hostname, exec_prefix, name):
+    """
+    Real absolute path Uyuni stores a Kickstart Snippet's content at —
+    parsed from spacecmd's own snippet_details "File:" line. Confirmed
+    live this varies by org id (e.g.
+    /var/lib/cobbler/snippets/spacewalk/1/<name> for the default org) so it
+    cannot be hardcoded/guessed. Returns None if the snippet doesn't exist
+    (snippet_details prints "WARNING: <name> is not a valid snippet" and
+    exits non-zero, confirmed live).
+    """
+    r = _spacecmd(hostname, exec_prefix, "snippet_details {}".format(shlex.quote(name)))
+    if r.returncode != 0:
+        return None
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("File:"):
+            return line[len("File:"):].strip()
+    return None
+
+
+def ensure_snippet(hostname, exec_prefix, name, content):
+    """
+    Idempotently creates/updates a real Uyuni "Kickstart Snippet" — a
+    reusable, named text fragment a kickstart/AutoYaST profile includes via
+    the real $SNIPPET('spacewalk/<org>/<name>') macro (confirmed live:
+    exactly what snippet_details' own "Macro:" line shows once created).
+
+    spacecmd's native snippet_create is interactive (prints the file
+    content back and asks "Is this ok [y/N]:", confirmed live — no -y/
+    --yes flag exists, "ERROR: unrecognized arguments: -y"). Content is
+    staged to a remote temp file first (its own -f flag reads a local file
+    path, not inline text) via _stage_remote_file, same idiom as
+    ensure_config_file, with "y\\n" fed on stdin to confirm. Confirmed live
+    that re-running snippet_create against an EXISTING name cleanly
+    overwrites its content (no error, no separate "update" command needed
+    — spacecmd has none; confirmed absent via the same "no help" probing
+    used elsewhere in this module for scap_schedulexccdfscan et al.).
+
+    Idempotency: reads the snippet's own real file content (via
+    snippet_file_path) and skips the create+confirm round trip entirely
+    when it already matches `content`.
+    """
+    existing_path = snippet_file_path(hostname, exec_prefix, name)
+    if existing_path:
+        current = _run(hostname, exec_prefix, "cat {}".format(shlex.quote(existing_path)),
+                        check=False, capture=True)
+        if current.returncode == 0 and (current.stdout or "") == content:
+            print("  Snippet '{}' already up to date — leaving it alone".format(name))
+            return
+
+    remote_tmp = "/tmp/.lab-snippet-{}".format(hashlib.sha1(name.encode()).hexdigest()[:12])
+    if not _stage_remote_file(hostname, exec_prefix, remote_tmp, content):
+        die("could not stage snippet content for '{}'".format(name))
+
+    r = _run(hostname, exec_prefix,
+              "spacecmd -- snippet_create -n {} -f {}".format(
+                  shlex.quote(name), shlex.quote(remote_tmp)),
+              input_text="y\n", check=False, capture=True)
+    _run(hostname, exec_prefix, "rm -f {}".format(shlex.quote(remote_tmp)), check=False)
+    if r.returncode != 0:
+        die("could not create snippet '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
+    print("  {} snippet '{}'".format("Updated" if existing_path else "Created", name))
+
+
+def ensure_snippets(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_snippets: a list of {name, content} dicts. See
+    ensure_snippet()'s own docstring. No-op if the field is unset or
+    empty. Runs BEFORE distributions/kickstart profiles — a profile's own
+    %pre/%post scripts or partitioning can reference a snippet via its real
+    $SNIPPET(...) macro, so it should already exist by the time a profile
+    referencing it gets created."""
+    for entry in cfg.get("{}_snippets".format(prefix)) or []:
+        name = entry.get("name")
+        if not name:
+            die("{}_snippets: an entry is missing required 'name'".format(prefix))
+        content = entry.get("content")
+        if content is None:
+            die("snippet '{}': missing required 'content'".format(name))
+        ensure_snippet(hostname, exec_prefix, name, content)
+
+
 # ── Image management (Images -> Stores/Profiles/Build/Import) ──────────────
 # Confirmed live 2026-09-16 against a real SMLM 5.2 server: spacecmd has NO
 # native subcommand for any of this (confirmed by the exact same "Could not

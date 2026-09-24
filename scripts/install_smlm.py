@@ -322,6 +322,20 @@
 #                             way instead — list their username in that group's own "users" field
 #                             below, which runs in the correct order.
 #
+# OPTIONAL – Kickstart Snippets: reusable, named text fragments a kickstart/AutoYaST profile
+# includes via the real $SNIPPET('spacewalk/<org>/<name>') macro (confirmed live — exactly what
+# spacecmd's own snippet_details prints once created). Uyuni's own terminology calls the WHOLE
+# autoinstall mechanism "Kickstart" regardless of OS family — the same commands (and this same
+# field) work for a genuine RHEL/CentOS-family kickstart %post script or a SUSE AutoYaST profile's
+# own scripting alike; only the parent distribution's install_type differs (see smlm_distributions
+# below). Runs BEFORE smlm_distributions/smlm_kickstart_profiles — a profile referencing a snippet
+# by name needs it to already exist:
+#   smlm_snippets              : [{"name": "...", "content": "..."}, ...]
+#                             Idempotent (skips re-creating an already-matching snippet — see
+#                             libs/spacecmd_common.py's own ensure_snippet()). Re-running with
+#                             different content cleanly overwrites it (confirmed live — spacecmd
+#                             has no separate "update" command, snippet_create itself does both).
+#
 # OPTIONAL – autoinstall trees ("Kickstart Distributions") and Kickstart/AutoYaST profiles.
 # Distributions run automatically on every install (idempotent), BEFORE smlm_activation_key* so a
 # kickstart profile below can reference one; profiles run AFTER activation keys, so
@@ -1034,13 +1048,14 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     environments = cfg.get("smlm_environments") or []
     distributions = cfg.get("smlm_distributions") or []
     kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    snippets = cfg.get("smlm_snippets") or []
     image_stores = cfg.get("smlm_image_stores") or []
     image_profiles = cfg.get("smlm_image_profiles") or []
     virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles or image_stores or image_profiles
+            or distributions or kickstart_profiles or snippets or image_stores or image_profiles
             or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
@@ -1066,6 +1081,10 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # combined smlm_system_groups with smlm_activation_key_groups.
         rps("monitoring", sc.ensure_monitoring, hostname, exec_prefix, cfg, "smlm")
         rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "smlm")
+        # Snippets BEFORE distributions/kickstart profiles: a profile's own
+        # %pre/%post/partitioning can reference one by name via its real
+        # $SNIPPET(...) macro, so it should already exist first.
+        rps("snippets", sc.ensure_snippets, hostname, exec_prefix, cfg, "smlm")
         rps("distributions", sc.ensure_distributions, hostname, exec_prefix, cfg, "smlm")
         rps("image stores", sc.ensure_image_stores, hostname, exec_prefix, cfg, "smlm")
         rps("image profiles", sc.ensure_image_profiles, hostname, exec_prefix, cfg, "smlm")

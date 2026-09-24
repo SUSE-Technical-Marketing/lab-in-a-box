@@ -122,7 +122,7 @@ def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
                  "ensure_monitoring", "ensure_distributions", "ensure_image_stores",
                  "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
                  "ensure_ansible_control_node", "ensure_grafana_formula",
-                 "ensure_virtual_host_managers"):
+                 "ensure_virtual_host_managers", "ensure_snippets"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
@@ -551,6 +551,21 @@ check("setup_smlm_podman: a missing VHM credential file does NOT prevent config 
 check("setup_smlm_podman: a missing VHM credential file does NOT prevent organizations (the LAST "
       "step in the sequence) from still running",
       any(n == "ensure_orgs" for n, a, k in sc_calls_vhm))
+
+# smlm_snippets: wired in, and runs BEFORE distributions/kickstart profiles —
+# a profile's own %pre/%post/partitioning can reference a snippet by name,
+# so it needs to already exist first.
+cfg_snippets = dict(cfg)
+cfg_snippets["smlm_snippets"] = [{"name": "example-snippet", "content": "echo hi\n"}]
+cfg_snippets["smlm_distributions"] = [{"name": "d1", "path": "/tmp/x", "base_channel": "c1",
+                                        "install_type": "rhel_9"}]
+_, _, _, sc_calls_snip, _ = run_setup_smlm_podman(cfg_snippets, transactional=True)
+snippet_names = [n for n, a, k in sc_calls_snip]
+check("setup_smlm_podman: calls ensure_snippets when smlm_snippets is set",
+      "ensure_snippets" in snippet_names)
+check("setup_smlm_podman: ensure_snippets runs BEFORE ensure_distributions",
+      "ensure_distributions" in snippet_names
+      and snippet_names.index("ensure_snippets") < snippet_names.index("ensure_distributions"))
 
 
 ism.ac.handle_common_args = lambda *a, **k: None
