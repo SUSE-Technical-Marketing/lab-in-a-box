@@ -61,10 +61,11 @@ chmod 0600 /etc/lab_creation.defaults
 cp templates/lab_creation.cfg.example /etc/lab_creation.cfg.example
 chmod 0600 /etc/lab_creation.cfg.example
 
-# Shared core libs: libs/ holds both the active Python modules (multi-
-# KVM-host selection, pluggable VM backends, spacecmd_common.py, etc.) and
-# the bash helpers install_ds389 (the one addon that never got a python
-# port) still needs — one directory, one loop.
+# Shared core libs: libs/ holds the active Python modules (multi-KVM-host
+# selection, pluggable VM backends, spacecmd_common.py, etc.) — one
+# directory, one loop. Used to also carry the bash helpers install_ds389
+# needed before it was ported to Python (2026-09-21); those were removed
+# once nothing live sourced them any more (see legacy_bash/README.md).
 for i in libs/*
 do
     [[ -d "${i}" ]] && continue
@@ -78,8 +79,9 @@ cp -r  templates/addons/* ${_templ_addons_loc}/
 # install_smlm/install_uyuni (their shared spacecmd_common.py is fully
 # mocked-SSH tested — tests/checks/09_spacecmd_common_test.py — but still
 # has no live SMLM/Uyuni server validation; see MIGRATION_TODO.md "Open
-# Risk #1" before trusting this in production) and install_ds389 (still
-# plain bash — broken in bash too, never ported, no .py suffix to strip).
+# Risk #1" before trusting this in production). install_ds389 is now a
+# real Python addon too (2026-09-21) — the bash original that used to live
+# here, with no .py suffix to strip, is archived under legacy_bash/.
 # .py suffix stripped when present so each lands under the exact name
 # setup_lab.py's addon dispatch and the webui's discovery already look up
 # (both are name/exec-based, not shebang- or extension-aware).
@@ -116,6 +118,14 @@ done
 # Old bash orchestration binaries are fully superseded by the ones installed
 # above — remove them so nothing can ever dispatch to a stale copy.
 rm -f /usr/local/bin/setup_lab.sh /usr/local/bin/setup_vm.sh /usr/local/bin/destroy_vm.sh /usr/local/bin/destroy_lab.sh
+
+# The libs/* loop above only copies what's currently in source — it never
+# prunes a file that used to be there. lab_creation.bash/k8s_functions.bash/
+# primary_functions.bash were removed from libs/ once install_ds389 (their
+# last consumer) was ported to Python (2026-09-21); explicitly remove any
+# already-deployed copies too, so a VM last deployed before this change
+# doesn't keep carrying dead weight forever.
+rm -f /usr/local/lib/lab_creation/lab_creation.bash /usr/local/lib/lab_creation/k8s_functions.bash /usr/local/lib/lab_creation/primary_functions.bash
 
 
 for i in templates/salt/*

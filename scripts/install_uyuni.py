@@ -133,16 +133,31 @@
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
-# content; the control node must already be a registered system with the "Ansible Control Node"
-# add-on entitlement enabled, with playbook/inventory files already on its filesystem, managed
-# out-of-band e.g. via git). Path registration runs automatically on every install (idempotent);
-# playbook execution is a SEPARATE, explicit trigger — see "--run-ansible-playbooks" below —
-# since scheduling a run is not idempotent (each call creates a brand-new run):
-#   uyuni_ansible_paths       : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
+# content; playbook/inventory files must already be on the control node's own filesystem — this
+# project's own install_ansible_control_node.py addon puts real example content there, or manage
+# it out-of-band e.g. via git). Entitlement enabling and path registration both run automatically
+# on every install (idempotent); playbook execution is a SEPARATE, explicit trigger — see
+# "--run-ansible-playbooks" below — since scheduling a run is not idempotent (each call creates a
+# brand-new run):
+#   uyuni_ansible_control_nodes : [{"system": "ansible-ctrl.mydemo.lab"}, ...]
+#                             Enables the real "Ansible Control Node" add-on entitlement on each
+#                             already-registered system (system.addEntitlements) and schedules a
+#                             highstate apply to install the ansible package — the same two steps
+#                             the real Web UI workflow documents (see libs/spacecmd_common.py's
+#                             ensure_ansible_control_node() for exactly what this does and does
+#                             not cover). A system must be registered (e.g. via client_registration)
+#                             BEFORE this can find it.
+#   uyuni_ansible_paths       : [{"system": "ansible-ctrl.mydemo.lab", "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
-#                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
-#                             'spacecmd system_list' or the Web UI) — no name-based resolution is
-#                             provided here.
+#                             Names the control node either way: "system" (a hostname, resolved
+#                             automatically — the same mechanism uyuni_ansible_control_nodes
+#                             already uses) or "control_node_id" (the raw NUMERIC Uyuni system ID,
+#                             findable via 'spacecmd system_list' or the Web UI, if you already have
+#                             it). "path" is a DIRECTORY for type "playbook" (this project's own
+#                             install_ansible_control_node.py addon puts example playbooks under
+#                             /srv/ansible/playbooks by default), or the exact inventory FILE/script
+#                             path for type "inventory" (e.g. /srv/ansible/inventory/uyuni_dynamic_
+#                             inventory.py — that same addon's own default).
 #   uyuni_ansible_playbooks   : [{"control_node_id": 1000010001,
 #                                  "playbook_path": "/srv/ansible/playbooks/site.yml",
 #                                  "inventory_path": "/srv/ansible/inventory/hosts",
@@ -202,6 +217,10 @@
 #   install_uyuni.py <lab.json> --cve-audit CVE-YYYY-NNNNN
 # prints every system's patch status for that CVE (AFFECTED_PATCH_INAPPLICABLE/
 # AFFECTED_PATCH_APPLICABLE/NOT_AFFECTED/PATCHED).
+#   install_uyuni.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN
+# same, for container/OS images instead of systems (audit.listImagesByPatchStatus — the ENTIRE
+# real 'audit' namespace is these two methods; ground-truthed 2026-09-18 directly against the
+# real API docs, confirming no separate "Beta" audit surface exists beyond this).
 #
 # OPTIONAL – dev/QA/prod environment topology. A THIN COMPOSITION layer over the primitives
 # above plus system groups/tags — Uyuni itself has no native "environment" or "release" object
@@ -403,24 +422,39 @@ def setup_uyuni(hostname, virt_srv, cfg):
             or system_groups or custom_info_keys or system_tags or environments):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
-        sc.ensure_config_channels(hostname, exec_prefix, cfg, "uyuni")
+        rps = sc.run_provisioning_step
+        rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
+        rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "uyuni")
         # System groups BEFORE any activation key — see install_smlm.py's
         # identical comment on the same reorder for why (activationkey_
         # addgroups dies if the named group doesn't exist yet server-side).
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_key(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_appstreams(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_users(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_access_groups(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_content_projects(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_system_tags(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_environments(hostname, exec_prefix, cfg, "uyuni")
-        sc.ensure_orgs(hostname, exec_prefix, cfg, "uyuni", admin, password)
+        rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "uyuni")
+        # activation key(s) depend on the system groups step just above —
+        # see install_smlm.py's identical comment on this same retry window.
+        rps("activation key", sc.ensure_activation_key, hostname, exec_prefix, cfg, "uyuni",
+            retries=3, retry_delay=15)
+        rps("appstreams", sc.ensure_appstreams, hostname, exec_prefix, cfg, "uyuni")
+        rps("activation key packages", sc.ensure_activation_key_packages, hostname, exec_prefix, cfg, "uyuni")
+        rps("activation keys", sc.ensure_activation_keys, hostname, exec_prefix, cfg, "uyuni",
+            retries=3, retry_delay=15)
+        rps("users", sc.ensure_users, hostname, exec_prefix, cfg, "uyuni")
+        rps("access groups", sc.ensure_access_groups, hostname, exec_prefix, cfg, "uyuni")
+        # Each step below is independent of the ones before it — see
+        # spacecmd_common.run_provisioning_step()'s own docstring for the
+        # real incident (charon's Ansible control node registration racing
+        # ensure_orgs()) this wrapping fixes. ansible_control_node/
+        # ansible_paths get the most generous retry window — see
+        # install_smlm.py's identical comment for why.
+        rps("ansible control node", sc.ensure_ansible_control_node, hostname, exec_prefix, cfg, "uyuni",
+            retries=10, retry_delay=60)
+        rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "uyuni",
+            retries=10, retry_delay=60)
+        rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "uyuni")
+        rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "uyuni")
+        rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "uyuni")
+        rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "uyuni")
+        rps("organizations", sc.ensure_orgs, hostname, exec_prefix, cfg, "uyuni", admin, password,
+            retries=3, retry_delay=15)
 
 
 def run_ansible_playbooks(hostname, cfg):
@@ -583,6 +617,17 @@ def cve_audit(hostname, cfg, cve_id):
     print(sc.list_systems_by_patch_status(hostname, exec_prefix, cve_id))
 
 
+def cve_audit_images(hostname, cfg, cve_id):
+    """Prints audit.listImagesByPatchStatus's raw result for `cve_id` — the
+    container/OS-image counterpart of cve_audit() above, same real 'audit'
+    namespace, see libs/spacecmd_common.py's list_images_by_patch_status()."""
+    exec_prefix = "mgrctl exec --"
+    admin = cfg.get("uyuni_admin") or "admin"
+    password = cfg.get("uyuni_password") or "Uyuni12345"
+    sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
+    print(sc.list_images_by_patch_status(hostname, exec_prefix, cve_id))
+
+
 def run_recurring_schedules(hostname, cfg):
     """
     Runs every uyuni_environments entry's recurring_schedule (see the JSON
@@ -649,6 +694,13 @@ def main():
     if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit":
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
             cve_audit(vm_name, cfg, sys.argv[3])
+        return
+
+    # audit.listImagesByPatchStatus's own CLI entry point — same shape as
+    # --cve-audit above, for container/OS images instead of systems.
+    if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit-images":
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
+            cve_audit_images(vm_name, cfg, sys.argv[3])
         return
 
     # Create uyuni_environments' recurring_schedule entries instead of

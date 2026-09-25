@@ -316,6 +316,72 @@ def find_cloud_account_for_cloudtype(cloudtype, config=None):
     return (matches[0] if len(matches) == 1 else None), matches
 
 
+def list_service_credentials(config=None):
+    """
+    Like list_cloud_accounts(), but for non-cloud external-service credentials
+    (SCC, SUSE Application Collection, …) — added 2026-09-18 per explicit user
+    request that /etc/lab_creation/credentials/ cover more than just cloud
+    providers, while plaintext-in-lab-JSON remains fully valid either way.
+
+    Every parseable file across credentials_dirs(config), as (name,
+    credential_kind) pairs, reading a top-level 'credential_kind' (or
+    'kind') field — deliberately a DIFFERENT marker key from cloud_account's
+    own 'cloudtype', so the two concepts share the same directory/file
+    format/encryption mechanism without ever colliding: a file is either a
+    cloud account (has cloudtype) or a service credential (has
+    credential_kind), never both. Same "skip anything unparseable or
+    marker-less" contract as list_cloud_accounts() — inventorying what's
+    usable, not validating every file in the directory.
+    """
+    creds = []
+    seen = set()
+    for d in credentials_dirs(config):
+        dirp = Path(d)
+        if not dirp.is_dir():
+            continue
+        for ext in _CLOUD_ACCOUNT_EXTS:
+            for p in sorted(dirp.glob("*" + ext)):
+                name = p.name[:-len(ext)]
+                if name in seen:
+                    continue
+                try:
+                    text = p.read_text()
+                    if ext == ".json":
+                        data = json.loads(text)
+                    elif ext in (".yaml", ".yml"):
+                        import yaml
+                        data = yaml.safe_load(text)
+                    else:
+                        data = _parse_shell_vars(text)
+                except Exception:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                kind = ""
+                for k in data:
+                    if k.lower() in ("credential_kind", "kind"):
+                        kind = str(data[k] or "").strip()
+                        break
+                if kind:
+                    creds.append((name, kind))
+                    seen.add(name)
+    return creds
+
+
+def find_service_credential_for_kind(kind, config=None):
+    """
+    Auto-discovery for addon_common.resolve_credential(): when no explicit
+    "<kind>_account" is set, look for a credentials file with this
+    credential_kind instead of silently falling back to plaintext lab-JSON
+    fields. Same (name_or_None, all_matching_names) contract as
+    find_cloud_account_for_cloudtype() — exactly one match is used
+    automatically, none falls back to plaintext, more than one is
+    genuinely ambiguous and the caller should die() rather than guess.
+    """
+    matches = sorted(name for name, k in list_service_credentials(config) if k == kind)
+    return (matches[0] if len(matches) == 1 else None), matches
+
+
 def _decrypt_value(envelope, cache_key, label, passphrase_prompt, max_attempts=3):
     """
     Decrypt one crypto_store envelope dict, trying a cached passphrase for
@@ -453,6 +519,93 @@ def load_cloud_account(name, config=None):
     effective_backend_name(), where a bad account reference (including a
     wrong passphrase after retries) is fatal."""
     data, error = try_load_cloud_account(name, config=config)
+    if error:
+        _die(error)
+    return data
+
+
+def try_load_service_credential(name, config=None, passphrase_prompt=None):
+    """
+    Non-dying load of a named external-service credential file (SCC,
+    Application Collection, …) — the credential_kind-marked counterpart of
+    try_load_cloud_account() above; see that function's own docstring for
+    the two encrypted shapes this also recognises (whole-file vs
+    field-level), the CREDENTIALS_PATH lookup, and the unencrypted:true
+    opt-out — all identical here, just keyed off 'credential_kind'/'kind'
+    instead of 'cloudtype'/'cloud_type'. Returns (data, error) where data,
+    when present, is a flat dict with the kind normalised under the key
+    "CREDENTIAL_KIND" and every other field exactly as the file (or its
+    decrypted payload) defines it — no further translation: a kind's own
+    canonical field names (e.g. "scc_user"/"scc_password" for kind "scc")
+    are whatever the caller's field_map (see addon_common.resolve_credential())
+    expects them to be.
+    """
+    p = cloud_account_path(name, config)
+    if p is None:
+        return None, ("credential '{}' not found — looked for <name>.{{{}}} in: {}".format(
+            name, ",".join(e.lstrip(".") for e in _CLOUD_ACCOUNT_EXTS),
+            ", ".join(credentials_dirs(config))))
+
+    text = p.read_text()
+    try:
+        if p.suffix.lower() == ".json":
+            data = json.loads(text)
+        elif p.suffix.lower() in (".yaml", ".yml"):
+            import yaml
+            data = yaml.safe_load(text)
+        else:
+            data = _parse_shell_vars(text)
+    except ImportError:
+        return None, "credential '{}' ({}) needs PyYAML to parse — pip install pyyaml".format(name, p)
+    except Exception as e:
+        return None, "credential '{}' ({}) failed to parse as {}: {}".format(
+            name, p, p.suffix.lstrip(".") or "config", e)
+
+    if not isinstance(data, dict):
+        return None, "credential '{}' ({}) must be a mapping of key: value".format(name, p)
+
+    kind = ""
+    for k in list(data.keys()):
+        if k.lower() in ("credential_kind", "kind"):
+            kind = str(data.pop(k) or "").strip()
+    if not kind:
+        return None, "credential '{}' ({}) has no 'credential_kind' — set it to scc, appcollection, …".format(
+            name, p)
+
+    data.pop("unencrypted", None)
+
+    if data.get("encrypted") is True:
+        plaintext, err = _decrypt_value(data, str(p), "credential '{}'".format(name), passphrase_prompt)
+        if err:
+            return None, err
+        import yaml
+        try:
+            inner = yaml.safe_load(plaintext.decode("utf-8")) or {}
+        except yaml.YAMLError as e:
+            return None, "credential '{}' ({}) decrypted, but the plaintext isn't valid YAML: {}".format(
+                name, p, e)
+        if not isinstance(inner, dict):
+            return None, "credential '{}' ({}) decrypted payload must be a mapping".format(name, p)
+        data = inner
+    else:
+        for key in list(data.keys()):
+            val = data[key]
+            if isinstance(val, dict) and val.get("encrypted") is True:
+                plaintext, err = _decrypt_value(
+                    val, "{}::{}".format(p, key), "{} ({})".format(key, name), passphrase_prompt)
+                if err:
+                    return None, err
+                data[key] = plaintext.decode("utf-8")
+
+    data["CREDENTIAL_KIND"] = kind
+    return data, None
+
+
+def load_service_credential(name, config=None):
+    """Dying wrapper over try_load_service_credential() — used by
+    addon_common.resolve_credential(), where a bad account reference
+    (including a wrong passphrase after retries) is fatal."""
+    data, error = try_load_service_credential(name, config=config)
     if error:
         _die(error)
     return data

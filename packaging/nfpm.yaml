@@ -1,0 +1,72 @@
+# nfpm (nfpm.goreleaser.com) package definition — builds a .rpm and a .deb
+# from this ONE file, rather than hand-maintaining a separate RPM .spec and
+# a full debian/ directory that could drift apart from each other. See
+# .github/workflows/package.yml for how/when this actually runs (built on
+# every "v*" tag push, packages attached to the resulting GitHub Release).
+#
+# This package installs the lab-in-a-box AUTOMATION NODE toolkit — the
+# scripts/libs/templates/webui/mcp that install_automation_node_scripts.sh
+# already knows how to deploy. It does NOT reimplement that deployment
+# logic here: contents ships the whole repo tree (see the workflow's
+# staging step for the small set of dev-only dirs excluded) under
+# /usr/share/lab-in-a-box, and postinstall.sh just cd's there and runs the
+# real install_automation_node_scripts.sh — the exact same, already-tested
+# code path a manual `git clone` + run gets. Works as both a fresh install
+# and an upgrade (that script already backs up and is designed to be
+# re-run — see README.md's "Update an existing install").
+#
+# Target OS coverage (per the two package formats this produces):
+#   rpm -> openSUSE Leap/Tumbleweed, SLE(S)/SLE Micro, Fedora, RHEL/Rocky/AlmaLinux
+#   deb -> Debian, Ubuntu
+#
+# Dependencies are deliberately minimal and limited to packages whose NAME
+# is consistent across every distro in a given format's family (jq, rsync)
+# or that only need one rpm-vs-deb override (bind/bind9,
+# openssh-clients/openssh-client). python3.11 is NOT a hard dependency
+# here on purpose: its exact package name/availability varies too much
+# across these distros (e.g. not in Ubuntu 22.04's default repos at all)
+# for a single cross-distro Requires/Depends line to be safe — a wrong
+# hard dependency makes the WHOLE package uninstallable on that distro,
+# which is worse than the clear, existing runtime check
+# install_automation_node_scripts.sh already does (prints an error and
+# exits cleanly if python3.11 is missing). helm/kubectl/virt-install are
+# left undeclared for the same reason (no consistent distro-native package
+# across this list) — postinstall.sh prints a note about them instead of
+# silently failing the whole package install.
+name: lab-in-a-box
+arch: amd64
+platform: linux
+version: ${VERSION}
+maintainer: Raul Mahiques
+description: |
+  Terraform-style, phase-based automation toolkit for spinning up and
+  tearing down nested lab environments on KVM/QEMU hypervisors: VM
+  provisioning, DNS, RKE2/K3s, and addons (Rancher, Uyuni/SMLM, Harvester,
+  monitoring, and more). This package installs the automation-node
+  toolkit and, via its postinstall step, deploys it exactly the way
+  install_automation_node_scripts.sh always has.
+homepage: https://github.com/rmahique/lab-in-a-box
+license: GPL-3.0-or-later
+
+contents:
+  - src: stage
+    dst: /usr/share/lab-in-a-box
+    type: tree
+
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  postremove: ./packaging/postremove.sh
+
+overrides:
+  rpm:
+    depends:
+      - jq
+      - rsync
+      - bind
+      - openssh-clients
+  deb:
+    depends:
+      - jq
+      - rsync
+      - bind9
+      - openssh-client

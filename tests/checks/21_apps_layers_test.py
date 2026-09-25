@@ -54,7 +54,8 @@ with tempfile.NamedTemporaryFile(mode="w", suffix="", delete=False) as f:
 
 plugin = apps.load_plugin_from_path(bash_fixture, name="install_ds389")
 check("load_plugin_from_path falls back gracefully for a bash-shaped file "
-      "(regression guard for install_ds389, the one addon with no PLUGIN dict)",
+      "(regression guard for the shape install_ds389 used to have, before it was ported "
+      "to a real PLUGIN dict 2026-09-21 — a synthetic fixture here, not the real file)",
       plugin.get("name") == "install_ds389" and plugin.get("layers") == [layers.LAYER_KUBERNETES])
 
 
@@ -88,10 +89,13 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
 # (qwen, mistral, codellama, starcoder2, agones, suse_observability, games, mailman,
 # mediagoblin, colt, wikimusic), then the single bundled "games" addon was replaced with one
 # addon per self-hosted game (-1 games, +3: supertux_classic, skynet_simulator, open_saber),
-# then +1 more (home_assistant), then +2 more (prometheus, grafana — both 2026-09-16).
+# then +1 more (home_assistant), then +2 more (prometheus, grafana — both 2026-09-16), then +1
+# more (ansible_control_node, 2026-09-18), then +1 more (hermes, 2026-09-21), then +1 more
+# (ds389 — finally ported to Python with a real PLUGIN dict; previously deliberately
+# skipped/left as a broken bash script, 2026-09-21).
 scripts_dir = _REPO / "scripts"
 addon_files = sorted(glob.glob(str(scripts_dir / "install_*.py")))
-check("found the expected 66 python addon scripts to check", len(addon_files) == 66)
+check("found the expected 69 python addon scripts to check", len(addon_files) == 69)
 missing_layers = []
 for path in addon_files:
     plugin = apps.load_plugin_from_path(path)

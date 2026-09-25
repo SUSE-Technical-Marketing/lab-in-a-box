@@ -18,6 +18,7 @@
 # library rather than defining them itself.
 # Author/s: Raul Mahiques
 # License: GPLv3
+import re
 import shlex
 import sys
 import time
@@ -226,13 +227,152 @@ def _relax_health_kill_policy(hostname, service_name="uyuni-server"):
     kill reaches genuine "healthy" reliably ~2-3 minutes after start.
     custom.conf is a static file — survives both `mgradm upgrade` (which
     only rewrites generated.conf) and a plain reboot, for either service.
+
+    Also raises the container's own open-file ulimit as high as this host
+    allows, same override point — a real, previously-unresolved outage
+    recurred live 2026-09-22 (solar-system-lab.json, sol.mydemo.lab):
+    Tomcat's default 8192 nofile limit inside the uyuni-server container
+    was fully saturated (8188 open) under real concurrent load
+    (client_registration running against 14 nodes at once), and every
+    further connection failed with "Too many open files" —
+    `catalina.out`'s own repeated "Socket accept failed" traces. A plain
+    `systemctl restart` only papers over this (confirmed live: it doesn't
+    even do that reliably — this exact restart raced with uyuni-db
+    cycling too and left uyuni-server.service failed on a refused DB
+    connection, an unrelated ordering issue on top). Per the user's own
+    explicit instruction, this belongs in the setup process itself, not a
+    manual one-off fix.
+
+    `--ulimit nofile=unlimited:unlimited` (Docker's own magic string) was
+    the first attempt here — confirmed live it is NOT accepted by this
+    podman version (4.9.5): "ulimit option ... requires name=SOFT:HARD,
+    failed to be parsed: strconv.ParseInt: parsing 'unlimited': invalid
+    syntax" — podman's `--ulimit` needs a real numeric SOFT:HARD pair, no
+    magic string. Uses 1048576 (the real kernel ceiling on this host, from
+    /proc/sys/fs/nr_open — going any higher would need a sysctl change
+    too, outside a single container's own ulimit) for both values instead,
+    the practical "unlimited" a container's own ulimit can actually reach.
     """
     conf_dir = "/etc/systemd/system/{}.service.d".format(service_name)
     override = ('[Service]\nEnvironment="PODMAN_EXTRA_ARGS=--health-on-failure=none '
-                '--health-retries=10 --health-start-period=180s"\n')
+                '--health-retries=10 --health-start-period=180s '
+                '--ulimit nofile=1048576:1048576"\n')
     ssh_run(hostname, "mkdir -p {} && cat > {}/custom.conf <<'EOF'\n{}EOF".format(
         shlex.quote(conf_dir), shlex.quote(conf_dir), override), check=False)
     ssh_run(hostname, "systemctl daemon-reload", check=False)
+
+
+def _raise_in_container_service_fd_limits(hostname):
+    """
+    _relax_health_kill_policy()'s own --ulimit override only raises the
+    OUTER podman container's own file-descriptor limit — confirmed live
+    2026-09-22 this is NOT enough on its own: Tomcat's real java process
+    still reported the old 8192 limit (`/proc/<pid>/limits`) even with the
+    outer container ulimit confirmed at 1048576 (`podman exec ... ulimit
+    -n`), because Tomcat's own PACKAGE-SHIPPED systemd unit INSIDE the
+    container (/usr/lib/systemd/system/tomcat.service) bakes in its own
+    explicit LimitNOFILE=8192 — systemd always applies each unit's own
+    resource limits, regardless of whatever the parent process (the
+    container's own PID 1) inherited. salt-api.service has the identical
+    8192 cap for the same reason (real relevance here: salt-api handles
+    every registered client's own check-ins, and this lab's real workload
+    is 14 concurrently-registering nodes) — salt-master.service's own cap
+    (100000) is already generous enough to leave alone.
+
+    /etc/systemd/system/ inside the container is NOT a named/persistent
+    volume (only its multi-user.target.wants and sockets.target.wants
+    SUBdirectories are, per mgradm's own generated ExecStart -v list) — a
+    drop-in written here does NOT survive a container restart/recreation,
+    unlike the OUTER host-level drop-in _relax_health_kill_policy writes.
+    This must be re-applied every time the container comes up, which is
+    exactly why this is called from ensure_server_container_active() itself
+    (right after confirming healthy), not a one-off setup step.
+    """
+    override = "[Service]\nLimitNOFILE=1048576\n"
+    for unit in ("tomcat.service", "salt-api.service"):
+        conf_dir = "/etc/systemd/system/{}.d".format(unit)
+        ssh_run(hostname,
+                "podman exec -i uyuni-server sh -c {} <<'EOF'\n{}EOF".format(
+                    shlex.quote("mkdir -p {0} && cat > {0}/override.conf".format(conf_dir)), override),
+                check=False)
+    ssh_run(hostname, "podman exec uyuni-server systemctl daemon-reload", check=False)
+    for unit in ("tomcat.service", "salt-api.service"):
+        ssh_run(hostname, "podman exec uyuni-server systemctl restart {}".format(unit), check=False)
+
+
+# mgradm's own fixed --publish list for uyuni-server (identical for a Uyuni
+# or an SMLM install — confirmed live from the real generated ExecStart:
+# -p 80:80 -p 443:443 -p 4505:4505 -p 4506:4506 -p 5556:5557 -p 9800:9800
+# -p 9187:9187 -p 9100:9100). netavark merges adjacent single-port
+# publishes into one range rule (4505+4506 -> "4505:4506", 5556+5557
+# already a range), so these are the exact --dport tokens that actually
+# appear in the host's iptables nat table, not the raw port list.
+_UYUNI_SERVER_DPORTS = frozenset(("80", "443", "4505:4506", "5556:5557", "9100", "9187", "9800"))
+
+_IPTABLES_DPORT_RE = re.compile(r"--dport (\S+)")
+
+
+def _clean_stale_netavark_dnat_rules(hostname, container="uyuni-server"):
+    """
+    Real bug found live 2026-09-22 (solar-system-lab.json, sol.mydemo.lab):
+    netavark does not reliably remove a container's own DNAT port-forwarding
+    rules from the host's iptables nat table when that container is
+    removed — including the ExecStartPre `podman rm --ignore --force`
+    mgradm's own systemd unit runs before every restart. Confirmed live:
+    after several restarts of uyuni-server.service (this project's own
+    retry loop below, plus manual troubleshooting that day), the nat
+    table held TWO sets of DNAT rules for the SAME published ports — one
+    for the CURRENT container's real IP, and one STALE set left over from
+    a PREVIOUS instance's now-nonexistent IP. iptables takes the FIRST
+    match in a chain, and the stale rule (added earlier, from the older
+    instance) sat ahead of the correct one — every external connection to
+    the real hostname got silently DNAT'd to a dead IP and refused
+    instantly (a fast, clean "connection refused", not a timeout — the
+    packet really was reaching the host, just being routed nowhere).
+    Every container-internal automation call in this project
+    (`podman exec`/`mgrctl exec`, which never traverses this NAT path at
+    all) kept working fine throughout, masking the problem completely
+    from this project's own automation until an operator tried to reach
+    the web UI directly from outside.
+
+    `podman network reload <container>` does NOT fix this — confirmed
+    live it only re-adds a correct rule alongside the stale one, never
+    removing it, since network reload only knows about the CURRENTLY-
+    TRACKED container, not whatever already-gone one the orphaned rule
+    still belongs to.
+
+    Fix: read the container's own real current IP, then remove any DNAT
+    rule for one of its own known published ports (_UYUNI_SERVER_DPORTS)
+    whose target ISN'T that IP. Safe because this fixed SMLM/Uyuni port
+    set is never used by anything else on this host. Idempotent/
+    safe-to-call-always: a no-op if every DNAT rule already points at the
+    right IP (the normal case), so this is called unconditionally
+    whenever this project's own code confirms the container healthy,
+    turning what was a silent, host-external-only failure mode into
+    something that self-heals on every deploy/retry instead of
+    accumulating.
+    """
+    r = ssh_run(hostname,
+                "podman inspect {} --format '{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}'"
+                .format(shlex.quote(container)),
+                check=False, capture=True)
+    real_ip = (r.stdout or "").strip()
+    if not real_ip:
+        return
+
+    r2 = ssh_run(hostname, "iptables -t nat -S", check=False, capture=True)
+    for line in (r2.stdout or "").splitlines():
+        if not line.startswith("-A ") or " DNAT " not in line or "--to-destination" not in line:
+            continue
+        if real_ip in line:
+            continue
+        m = _IPTABLES_DPORT_RE.search(line)
+        if not m or m.group(1) not in _UYUNI_SERVER_DPORTS:
+            continue
+        delete_cmd = "iptables -t nat -D " + line[len("-A "):]
+        ssh_run(hostname, delete_cmd, check=False)
+        print("  Removed a stale netavark DNAT rule left over from a previous container "
+              "instance: {}".format(delete_cmd))
 
 
 def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_restarts=3):
@@ -289,6 +429,8 @@ def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_
             h = ssh_run(hostname, "podman inspect uyuni-server --format '{{.State.Health.Status}}'",
                         check=False, capture=True)
             if (h.stdout or "").strip() == "healthy":
+                _clean_stale_netavark_dnat_rules(hostname)
+                _raise_in_container_service_fd_limits(hostname)
                 return
         time.sleep(poll_interval)
         elapsed += poll_interval

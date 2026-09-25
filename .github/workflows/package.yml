@@ -1,0 +1,67 @@
+name: Package
+
+# Builds a .rpm and a .deb from ONE nfpm config (packaging/nfpm.yaml) and
+# attaches them to a GitHub Release, on every version tag push (e.g.
+# "v1.2.0"). See packaging/nfpm.yaml's own header comment for exactly
+# which distros each format covers and why python3.11/helm/kubectl/
+# virt-install are deliberately NOT hard package dependencies.
+#
+# Tags are expected to be clean semver ("vX.Y.Z") — a tag with a suffix
+# like "-rc1" would break the RPM Version field (RPM doesn't allow hyphens
+# there); not handled here on purpose, matching the project's stated
+# release scheme.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # to create the GitHub Release and upload assets
+
+jobs:
+  build-packages:
+    name: Build RPM + DEB packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute package version from the tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Stage package contents (tracked files only, dev/CI-only dirs excluded)
+        # git archive, not a plain copy/rsync of the working tree: guards
+        # against ever shipping .gitignore'd cruft (__pycache__, local test
+        # artifacts, etc.) that could exist in a real checkout, not just
+        # the dirs excluded below.
+        run: |
+          set -euo pipefail
+          mkdir -p stage
+          git archive HEAD | tar -x -C stage
+          rm -rf stage/.github stage/.githooks stage/tests
+          # nfpm's own --target needs the dir to already exist (confirmed
+          # live: "Open dist/: is a directory" otherwise).
+          mkdir -p dist
+
+      - name: Build RPM package
+        run: |
+          docker run --rm -e VERSION="${{ steps.version.outputs.version }}" \
+            -v "$PWD:/work" -w /work goreleaser/nfpm package \
+            --config packaging/nfpm.yaml --target dist/ --packager rpm
+
+      - name: Build DEB package
+        run: |
+          docker run --rm -e VERSION="${{ steps.version.outputs.version }}" \
+            -v "$PWD:/work" -w /work goreleaser/nfpm package \
+            --config packaging/nfpm.yaml --target dist/ --packager deb
+
+      - name: List built packages
+        run: ls -la dist/
+
+      - name: Upload packages to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

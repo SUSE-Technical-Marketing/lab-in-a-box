@@ -3,7 +3,15 @@ templates/lab_creation.cfg
 __pycache__/
 *.pyc
 
+# packaging/nfpm.yaml build output — .github/workflows/package.yml's own
+# staging dir and nfpm's --target dir, never meant to be committed
+/stage/
+/dist/
+
 # Claude-internal working files — never committed, see local CLAUDE.md
 CLAUDE.md
 claude_thinking
 memory/
+
+# Condensed record of completed work, split out from TODO — local only
+CHANGELOG
