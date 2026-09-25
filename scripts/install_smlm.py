@@ -436,6 +436,25 @@
 #                             above (see smlm_image_imports) is actually usable. Does not itself
 #                             ensure the Containers module is assigned to that system's channels —
 #                             that prerequisite is a separate, real manual/channel-config step.
+#   smlm_mcp_server             : {
+#                                 "version": "latest",              # image tag, optional
+#                                 "port": 8090,                     # optional, 127.0.0.1-only
+#                                 "user": "...", "password": "...", # optional, default to
+#                                                                    #   smlm_admin_user/_pass
+#                                 "write_tools_enabled": false,     # optional, default false
+#                                 "ssl_verify": false                # optional, default false
+#                               }
+#                             Deploys the real, third-party Uyuni MCP Server
+#                             (github.com/uyuni-project/mcp-server-uyuni) as a standalone podman
+#                             container alongside the uyuni-server container, so an MCP-compliant
+#                             AI client can inspect/manage this Uyuni instance. Only supported when
+#                             smlm_deployment is "podman" (needs direct host+podman access) — a
+#                             "kubernetes" deployment is warned about and skipped, not guessed at.
+#                             Published on 127.0.0.1 only, never the network directly — this
+#                             server runs unauthenticated (no OAuth configured) and can hold real
+#                             write credentials, so reaching it off-host is left to an explicit SSH
+#                             tunnel/port-forward the operator sets up. See ensure_mcp_server()'s
+#                             own docstring in spacecmd_common.py for the full ground-truthing.
 #
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
@@ -1063,11 +1082,14 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     image_profiles = cfg.get("smlm_image_profiles") or []
     image_build_hosts = cfg.get("smlm_image_build_hosts") or []
     virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
+    mcp_server_set = cfg.get("smlm_mcp_server") is not None  # {} is a valid "enable with
+                                                              # defaults" value, not "unset"
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
             or distributions or kickstart_profiles or snippets or image_stores or image_profiles
-            or image_build_hosts or virtual_host_managers or cfg.get("smlm_monitoring_enabled")):
+            or image_build_hosts or virtual_host_managers or mcp_server_set
+            or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
         rps = sc.run_provisioning_step
@@ -1151,6 +1173,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "smlm")
         rps("grafana formula", sc.ensure_grafana_formula, hostname, exec_prefix, cfg, "smlm")
         rps("virtual host managers", sc.ensure_virtual_host_managers, hostname, exec_prefix, cfg, "smlm")
+        rps("mcp server", sc.ensure_mcp_server, hostname, exec_prefix, cfg, "smlm")
         # Organizations run last and its own per-org steps (activation keys,
         # system groups, users) mirror the same top-level dependencies above
         # — same modest retry window.

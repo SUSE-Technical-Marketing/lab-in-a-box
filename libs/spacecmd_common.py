@@ -2033,6 +2033,159 @@ def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
               "highstate apply to install container build tooling".format(system, sid))
 
 
+def ensure_mcp_server(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_mcp_server: a single dict deploying the real,
+    third-party Uyuni MCP (Model Context Protocol) Server
+    (github.com/uyuni-project/mcp-server-uyuni) against this SMLM/Uyuni
+    instance — lets an MCP-compliant AI client (Claude Desktop, Gemini
+    CLI, etc.) inspect/manage it via natural language. Ground-truthed
+    2026-09-24 directly against that project's own README — every env var
+    name/default below is verbatim from it, not guessed.
+
+    Deployed as its own standalone podman container, SIBLING to (not
+    inside) the uyuni-server container: it talks to Uyuni over the normal
+    external HTTPS API, the same way any other API client would, so it
+    needs no access to exec_prefix's target at all — exec_prefix is
+    accepted only for call-shape consistency with every other rps()-driven
+    ensure_* step, unused otherwise.
+
+    Runs with `--network=host`, NOT podman's default bridge network.
+    Confirmed live (2026-09-24, sol.mydemo.lab): a bridge-networked sibling
+    container inherits this project's own real /etc/hosts self-reference
+    (podman copies the host's /etc/hosts into new containers by default) —
+    "127.0.0.1 sol.mydemo.lab" resolves, inside that container's OWN
+    network namespace, to the container itself, not the host, so
+    UYUNI_SERVER=https://sol.mydemo.lab failed with "All connection
+    attempts failed" even though the exact same hostname/URL works fine
+    from the host itself. This is the identical class of container-network
+    -isolation gotcha this project's own mcp/mcp_server.py was already
+    de-containerized for (see that module's own docstring) — --network=host
+    makes this container's networking behave exactly like any other
+    process on the host, sidestepping the whole problem rather than
+    working around one hostname at a time. Because of this, UYUNI_MCP_HOST
+    is bound to 127.0.0.1 directly (real host loopback now, not a
+    container's own) instead of using a podman -p port mapping — the two
+    are mutually exclusive with host networking, but achieve the identical
+    "not reachable off-host by default" effect.
+
+    Only supports <prefix>_deployment == "podman" for now — the only mode
+    this module can SSH straight to a host with a container engine already
+    on it for. A "kubernetes"-deployed SMLM would need a real Deployment/
+    Service manifest instead, not yet implemented; this warns and no-ops
+    rather than guessing at one.
+
+    Deliberately bound to 127.0.0.1 only, not 0.0.0.0 — this server holds
+    real Uyuni admin/write credentials (UYUNI_MCP_WRITE_TOOLS_ENABLED can
+    enable state-changing calls) and, per its own README's security
+    section, runs unauthenticated in HTTP mode (no UYUNI_AUTH_SERVER/OAuth
+    configured here). Reaching it from off-host is left to an explicit SSH
+    tunnel/port-forward the operator sets up, same trust model as e.g.
+    Kubernetes' own `kubectl port-forward`, rather than this module opening
+    it to the whole network by default.
+
+    Config keys under <prefix>_mcp_server (all optional except the dict's
+    own presence, which is what enables this):
+      "version"              : image tag, e.g. "v0.2.1" — default "latest"
+      "port"                  : 127.0.0.1 port to listen on (host-networked,
+                                so this IS the real listening port, no
+                                separate internal/external split) — default
+                                8090
+      "user" / "password"    : Uyuni credentials the MCP server uses for
+                                its own API calls — default to
+                                <prefix>_admin_user/<prefix>_admin_pass
+                                (the same account ensure_spacecmd_config
+                                already uses). The real README's own
+                                "Principle of Least Privilege" section
+                                recommends a dedicated low-privilege
+                                account instead — this module does not
+                                create one itself.
+      "write_tools_enabled"  : bool, default False — maps directly to
+                                UYUNI_MCP_WRITE_TOOLS_ENABLED; real
+                                upstream default is also False
+                                (read-only: inspect/list tools only, no
+                                schedule/add/remove actions).
+      "ssl_verify"            : bool, default False — this server's own
+                                embedded cert is self-signed (matches every
+                                other curl -k/unverified-context call
+                                already in this module), so verification
+                                defaults off here too (UYUNI_MCP_SSL_VERIFY).
+
+    Idempotent: (re)writes the env file and (re)creates the container on
+    every call — matches this project's own "helm upgrade --install"/
+    PXEService.enable() convention of always converging to the current
+    config rather than a stale "already exists — leave alone" no-op, since
+    a changed password/version/port here should actually take effect.
+    Credentials are written to a root-only (0600) env file on the remote
+    host and passed to podman via --env-file, never -e/argv — the latter
+    would leak into `podman inspect`/`ps` output.
+    """
+    field = "{}_mcp_server".format(prefix)
+    if cfg.get(field) is None:
+        # NOT `if not cfg.get(field): return` — {} is a legitimate,
+        # explicit "enable with every default" value and must not be
+        # treated the same as the field being absent entirely.
+        return
+    entry = cfg[field]
+
+    deployment = cfg.get("{}_deployment".format(prefix)) or "kubernetes"
+    if deployment != "podman":
+        warn("{0}_mcp_server is set but {0}_deployment is '{1}' — the Uyuni MCP Server addon "
+             "only supports a podman-deployed target for now (it needs direct SSH+podman access "
+             "to a host with the server on it); skipping".format(prefix, deployment))
+        return
+
+    version = entry.get("version") or "latest"
+    port = entry.get("port") or 8090
+    user = entry.get("user") or cfg.get("{}_admin_user".format(prefix)) or "admin"
+    password = entry.get("password") or cfg.get("{}_admin_pass".format(prefix)) or "Smlm12345"
+    write_tools = bool(entry.get("write_tools_enabled"))
+    ssl_verify = bool(entry.get("ssl_verify"))
+
+    env_content = "\n".join([
+        "UYUNI_SERVER=https://{}".format(hostname),
+        "UYUNI_USER={}".format(user),
+        "UYUNI_PASS={}".format(password),
+        "UYUNI_MCP_SSL_VERIFY={}".format("true" if ssl_verify else "false"),
+        "UYUNI_MCP_WRITE_TOOLS_ENABLED={}".format("true" if write_tools else "false"),
+        "UYUNI_MCP_TRANSPORT=http",
+        "UYUNI_MCP_HOST=127.0.0.1",
+        "UYUNI_MCP_PORT={}".format(port),
+        "UYUNI_MCP_PUBLIC_URL=http://127.0.0.1:{}".format(port),
+    ]) + "\n"
+
+    env_path = "/etc/mcp-server-uyuni/uyuni-config.env"
+    r = ssh_run(hostname,
+                "mkdir -p /etc/mcp-server-uyuni && cat > {ep} && chmod 600 {ep}".format(
+                    ep=shlex.quote(env_path)),
+                input_text=env_content, check=False)
+    if r.returncode != 0:
+        die("could not write the MCP server's env file on '{}': {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+
+    image = "ghcr.io/uyuni-project/mcp-server-uyuni:{}".format(version)
+    r = ssh_run(hostname,
+                "podman rm -f mcp-server-uyuni >/dev/null 2>&1; "
+                "podman run -d --name mcp-server-uyuni --restart=always --network=host "
+                "--env-file {env_path} {image}".format(
+                    env_path=shlex.quote(env_path), image=shlex.quote(image)),
+                check=False, capture=True)
+    if r.returncode != 0:
+        die("could not start the mcp-server-uyuni container on '{}': {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+
+    r = ssh_run(hostname,
+                "podman ps --filter name=mcp-server-uyuni --filter status=running -q",
+                check=False, capture=True)
+    if not (r.stdout or "").strip():
+        die("mcp-server-uyuni container on '{}' exited immediately after starting — "
+            "check 'podman logs mcp-server-uyuni' on that host".format(hostname))
+
+    print("  Deployed the Uyuni MCP Server ({}) on '{}', listening on 127.0.0.1:{} only "
+          "(write tools {}) — reach it via an SSH tunnel".format(
+              image, hostname, port, "ENABLED" if write_tools else "disabled, read-only"))
+
+
 def ansible_path_exists(hostname, exec_prefix, control_node_id, path):
     """
     Whether `path` already appears in ansible.listAnsiblePaths(control_node_id)'s

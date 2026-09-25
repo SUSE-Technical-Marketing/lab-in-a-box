@@ -2869,6 +2869,129 @@ check("ensure_container_build_hosts: a real API failure dies with a clear messag
       "ignored", died)
 
 
+# -- ensure_mcp_server (added 2026-09-24) ------------------------------------
+# Real, third-party github.com/uyuni-project/mcp-server-uyuni, deployed as a
+# sibling podman container on the SMLM host itself. Unlike every other
+# ensure_* here, this one calls ssh_run() DIRECTLY (not via _run/exec_prefix)
+# since podman must run on the host, not inside the uyuni-server container.
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="abc123\n")),
+])
+sc.ssh_run = fake
+cfg = {"smlm_mcp_server": {}, "smlm_deployment": "podman",
+       "smlm_admin_user": "admin", "smlm_admin_pass": "1234"}
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", cfg, "smlm")
+cmds = [c[1] for c in fake.calls]
+env_write_cmd, env_kwargs = next((c[1], c[2]) for c in fake.calls if "cat >" in c[1])
+check("ensure_mcp_server: writes the env file to a root-only path",
+      "/etc/mcp-server-uyuni/uyuni-config.env" in env_write_cmd and "chmod 600" in env_write_cmd)
+check("ensure_mcp_server: env file content has UYUNI_SERVER pointed at the real hostname, "
+      "not localhost", "UYUNI_SERVER=https://sol.mydemo.lab" in env_kwargs.get("input_text", ""))
+check("ensure_mcp_server: defaults UYUNI_USER/UYUNI_PASS to smlm_admin_user/smlm_admin_pass",
+      "UYUNI_USER=admin" in env_kwargs["input_text"] and "UYUNI_PASS=1234" in env_kwargs["input_text"])
+check("ensure_mcp_server: write tools default to false (read-only)",
+      "UYUNI_MCP_WRITE_TOOLS_ENABLED=false" in env_kwargs["input_text"])
+check("ensure_mcp_server: ssl verification defaults to false (self-signed cert)",
+      "UYUNI_MCP_SSL_VERIFY=false" in env_kwargs["input_text"])
+check("ensure_mcp_server: env file binds to real host loopback only, default port 8090, "
+      "never 0.0.0.0 (host-networked, so this bind IS the real listening address)",
+      "UYUNI_MCP_HOST=127.0.0.1" in env_kwargs["input_text"]
+      and "UYUNI_MCP_PORT=8090" in env_kwargs["input_text"]
+      and "0.0.0.0" not in env_kwargs["input_text"])
+run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
+check("ensure_mcp_server: podman run uses --network=host (sibling-container DNS/hosts "
+      "isolation confirmed live to break UYUNI_SERVER resolution otherwise), no -p mapping",
+      "--network=host" in run_cmd and " -p " not in run_cmd)
+check("ensure_mcp_server: uses --env-file, never -e (credentials must not leak into 'podman "
+      "inspect'/'ps')", "--env-file" in run_cmd and " -e " not in run_cmd)
+check("ensure_mcp_server: removes any stale container before recreating it (idempotent "
+      "converge, not a stale 'already exists' no-op)",
+      any("podman rm -f mcp-server-uyuni" in c for c in cmds))
+check("ensure_mcp_server: verifies the container is actually running afterwards",
+      any("podman ps --filter name=mcp-server-uyuni --filter status=running" in c for c in cmds))
+
+# No-op when the field is unset.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", {}, "smlm")
+check("ensure_mcp_server: no-op when smlm_mcp_server is unset", len(fake.calls) == 0)
+
+# Skips (warns, doesn't die) when smlm_deployment isn't "podman" — this
+# module can't reach a kubernetes-deployed SMLM's host directly for podman.
+fake = FakeSSH()
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_mcp_server("sol.mydemo.lab", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+                      {"smlm_mcp_server": {}, "smlm_deployment": "kubernetes"}, "smlm")
+check("ensure_mcp_server: skips cleanly (no ssh_run calls) for a non-podman deployment",
+      len(fake.calls) == 0)
+check("ensure_mcp_server: warns rather than silently doing nothing",
+      len(warned) == 1 and "kubernetes" in warned[0])
+
+# A custom port/version/user/password/write_tools_enabled/ssl_verify all
+# take effect.
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="abc123\n")),
+])
+sc.ssh_run = fake
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", {
+    "smlm_deployment": "podman",
+    "smlm_admin_user": "admin", "smlm_admin_pass": "1234",
+    "smlm_mcp_server": {
+        "version": "v0.2.1", "port": 9999, "user": "mcp-agent", "password": "s3cr3t",
+        "write_tools_enabled": True, "ssl_verify": True,
+    },
+}, "smlm")
+env_kwargs = next(c[2] for c in fake.calls if "cat >" in c[1])
+run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
+check("ensure_mcp_server: custom user/password override the smlm_admin_user/_pass defaults",
+      "UYUNI_USER=mcp-agent" in env_kwargs["input_text"] and "UYUNI_PASS=s3cr3t" in env_kwargs["input_text"]
+      and "admin" not in env_kwargs["input_text"].split("UYUNI_USER=")[1].split("\n")[0])
+check("ensure_mcp_server: write_tools_enabled/ssl_verify true take effect",
+      "UYUNI_MCP_WRITE_TOOLS_ENABLED=true" in env_kwargs["input_text"]
+      and "UYUNI_MCP_SSL_VERIFY=true" in env_kwargs["input_text"])
+check("ensure_mcp_server: custom port/version take effect",
+      "mcp-server-uyuni:v0.2.1" in run_cmd)
+check("ensure_mcp_server: custom port takes effect in the env file (host-networked port)",
+      "UYUNI_MCP_PORT=9999" in env_kwargs["input_text"])
+
+# Dies with a clear message if the env file write fails.
+fake = FakeSSH(responses=[("cat >", FakeResult(returncode=1, stderr="No space left on device"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies with a clear message if the env file can't be written", died)
+
+# Dies with a clear message if 'podman run' itself fails.
+fake = FakeSSH(responses=[("podman run", FakeResult(returncode=1, stderr="no such image"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies with a clear message if 'podman run' fails", died)
+
+# Dies if the container isn't actually running afterwards (crash-looped).
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies if the container exited immediately after starting", died)
+
+
 # -- run_provisioning_step (added 2026-09-23) -------------------------------
 # Real bug: install_smlm.py's/install_uyuni.py's orchestration blocks used to
 # call each ensure_* step bare, so one die() (SystemExit) silently aborted

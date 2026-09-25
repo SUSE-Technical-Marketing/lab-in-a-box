@@ -123,7 +123,7 @@ def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
                  "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
                  "ensure_ansible_control_node", "ensure_grafana_formula",
                  "ensure_virtual_host_managers", "ensure_snippets",
-                 "ensure_container_build_hosts"):
+                 "ensure_container_build_hosts", "ensure_mcp_server"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
@@ -584,6 +584,15 @@ check("setup_smlm_podman: calls ensure_container_build_hosts when smlm_image_bui
 check("setup_smlm_podman: ensure_container_build_hosts runs AFTER ensure_image_profiles",
       "ensure_image_profiles" in bh_names
       and bh_names.index("ensure_image_profiles") < bh_names.index("ensure_container_build_hosts"))
+
+
+# smlm_mcp_server: wired in.
+cfg_mcp = dict(cfg)
+cfg_mcp["smlm_mcp_server"] = {"port": 8090}
+_, _, _, sc_calls_mcp, _ = run_setup_smlm_podman(cfg_mcp, transactional=True)
+mcp_names = [n for n, a, k in sc_calls_mcp]
+check("setup_smlm_podman: calls ensure_mcp_server when smlm_mcp_server is set",
+      "ensure_mcp_server" in mcp_names)
 
 
 ism.ac.handle_common_args = lambda *a, **k: None
