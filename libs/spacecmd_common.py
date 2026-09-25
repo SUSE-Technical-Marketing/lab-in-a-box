@@ -150,10 +150,17 @@ inline below:
     is a pre-existing REGISTERED system with the "Ansible Control Node"
     add-on entitlement already enabled; playbook/inventory files already
     live on its filesystem, managed out-of-band (e.g. git) — this module
-    has no way to enable that entitlement itself (no matching method was
-    found in the ansible.* or system.* namespaces during research), so it's
-    a documented prerequisite, not something ensure_ansible_paths can set
-    up for you. createAnsiblePath/schedulePlaybook both need the control
+    has no way to enable that entitlement itself" — CORRECTED 2026-09-18: that
+    claim was itself unconfirmed prior research that never independently verified
+    system.addEntitlements against the real entitlement label. Ground-truthed this
+    time directly against Uyuni's own Java source (java/core/.../domain/entitlement/
+    AnsibleControlNodeEntitlement.java + EntitlementManager.ANSIBLE_CONTROL_NODE_ENTITLED
+    = "ansible_control_node"), not guessed — see ensure_ansible_control_node() below,
+    which enables it via exactly that. Playbook/inventory FILE CONTENT still lives on
+    the control node's own filesystem, managed out-of-band (e.g. git) — enabling the
+    entitlement only makes the server recognise the system as a valid control node
+    target for the functions below, it does not and cannot create file content there.
+    createAnsiblePath/schedulePlaybook both need the control
     node's NUMERIC Uyuni system ID (not a hostname) — no name-to-ID
     resolution is provided here; stacking another unverified guess on top
     of an already-multi-step feature wasn't worth it, so the JSON just
@@ -365,10 +372,90 @@ import hashlib
 import json
 import re
 import shlex
+import socket
 import time
 from datetime import datetime, timezone
 
-from lab_creation import ssh_run, die, warn
+from lab_creation import ssh_run, die, warn, error
+
+
+def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
+    """
+    Runs one independent config-provisioning step from install_smlm.py's/
+    install_uyuni.py's own setup_*() orchestration block (each a call to one
+    of this module's ensure_* functions) and reports+continues on failure
+    instead of letting it silently abort every OTHER, unrelated step queued
+    after it in that same block.
+
+    Real bug found live 2026-09-23 (solar-system-lab.json, sol.mydemo.lab):
+    every step in that block ran as a bare, unguarded call, so a single
+    die() (an uncaught SystemExit — see die()'s own docstring) anywhere
+    unwound all the way out of the whole orchestration function, abandoning
+    every step listed after it in source order. Confirmed live:
+    ensure_ansible_control_node()'s own _system_id() lookup died with "no
+    system named 'charon.mydemo.lab' found on the server" — a real,
+    expected race, since client_registration's own background retry
+    workers (see install_client_registration.py) finish independently of
+    when this orchestration step runs, and simply hadn't gotten to charon
+    yet. That one die(), for a feature (Ansible control node) with nothing
+    to do with organizations or users, silently took out every step after
+    it too — including ensure_orgs(), which is what actually creates the
+    lab's "edge" organization and its 28 users. The run reported no error
+    at all for the missing org/users; the only visible error pointed at an
+    entirely different feature, several steps earlier.
+
+    die() elsewhere still means exactly what it always has — this only
+    catches it at this one orchestration boundary, converting it to
+    lab_creation.error() (report but continue, the project's own existing
+    idiom for "this one thing failed, keep going") so one step's failure
+    can never again silently swallow unrelated steps queued after it.
+    Downstream ordering dependencies (e.g. distributions before kickstart
+    profiles, system groups before activation keys) are unaffected — steps
+    still run in the same order, so a step that itself depends on an
+    earlier one that failed will fail too, but with its OWN clear error
+    naming what it needed, not silence.
+
+    retries/retry_delay (added 2026-09-23): some steps depend on state a
+    DIFFERENT, independently-progressing part of this project's automation
+    is still working on — e.g. ensure_ansible_control_node()/
+    ensure_ansible_paths() need their target system to already be a
+    registered client, but install_client_registration.py's own background
+    retry workers register clients on their own schedule, completely
+    decoupled from when this orchestration runs (the exact real incident
+    documented above). A single immediate failure there is often just a
+    race, not a real problem. When the caller knows a step has a real
+    cross-dependency like this, it passes retries > 1: this function
+    retries up to `retries` times, sleeping `retry_delay` seconds between
+    attempts, before finally giving up and reporting via error(). Default
+    is retries=1 (no retry) — most steps here have no such cross-dependency,
+    and a real config mistake (a typo'd channel name, a missing required
+    field) should still be reported immediately rather than delayed.
+
+    This is bounded and synchronous by design, not an infinite background
+    watcher like ensure_channel_sync_monitor(): a dependency that takes
+    much longer than retries*retry_delay to resolve (e.g. a client that is
+    still hours away from finishing its own channel sync, per
+    install_client_registration.py's own multi-hour warning) still needs a
+    later config run to pick it up. That's still strictly better than the
+    previous behavior (never picked up at all, ever, without the bug above
+    even being visible) — see run_provisioning_step's error() message for
+    what a still-failing step after retries looks like.
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            func(*args, **kwargs)
+            return
+        except SystemExit as e:
+            last_err = e
+            if attempt < retries:
+                warn("config step '{}' failed (attempt {}/{}) — its dependency may still be "
+                     "catching up elsewhere in the automation; retrying in {}s".format(
+                         label, attempt, retries, retry_delay))
+                time.sleep(retry_delay)
+    error("config step '{}' failed after {} attempt{} — see the ERROR(s) above; continuing "
+          "with the rest of the configuration".format(
+              label, retries, "" if retries == 1 else "s"))
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
@@ -718,6 +805,80 @@ def ensure_channels_synced(hostname, exec_prefix, channels):
             die("could not sync channel '{}'".format(ch))
 
 
+def pending_channels(hostname, exec_prefix, channels):
+    """
+    A single, non-blocking check: returns the SUBSET of `channels` that are
+    NOT YET fully synced (empty set = every one of them is genuinely
+    ready). Reuses the exact readiness signal already ground-truthed in
+    install_smlm.py's own ensure_channel_sync_monitor() (its systemd-timer
+    script): a channel is ready when its own reposync log
+    (/var/log/rhn/reposync/<label>.log, inside the server container) ends
+    with "Sync completed." — the same detection that monitor already uses
+    to decide whether a channel needs a re-triggered sync. Uses the SAME
+    exec_prefix convention as the rest of this module (mgrctl exec /
+    kubectl exec), so this works against both podman- and Kubernetes-
+    deployed servers without needing a separate `podman exec uyuni-server`
+    path.
+
+    Factored out of wait_for_channels_synced() 2026-09-21 so a caller can
+    make a one-shot readiness decision (e.g. "is it safe to register
+    synchronously, or should this hand off to a background retry instead")
+    without committing to a blocking poll loop.
+    """
+    pending = set()
+    for ch in channels:
+        log_path = "/var/log/rhn/reposync/{}.log".format(ch)
+        r = _run(hostname, exec_prefix,
+                 "test -f {p} && tail -n 3 {p}".format(p=shlex.quote(log_path)), check=False)
+        if r.returncode == 0 and "Sync completed." in (r.stdout or ""):
+            continue
+        pending.add(ch)
+    return pending
+
+
+def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll_interval=30):
+    """
+    Blocks until every channel label in `channels` shows a genuinely
+    COMPLETED reposync (see pending_channels()) — not merely "exists",
+    which is all ensure_channels_synced() checks before returning (it only
+    triggers a sync if missing, it never waits for one already in flight
+    to finish).
+
+    Added 2026-09-21 per explicit user requirement: registration scripts
+    must wait for channels (and the activation key referencing them) to be
+    genuinely available before registering a client against them — a
+    client bootstrapped against an activation key whose channels are still
+    mid-sync can end up with an incomplete/broken subscription. This
+    project's own TODO documents an extensive, real history of exactly
+    this class of channel-sync race (REAL BUGS #10/#12/#13).
+
+    `timeout=None` waits forever, no deadline — used by a background retry
+    worker (see install_client_registration.py's own use of this) that is
+    deliberately never meant to give up. Any other value dies, listing
+    whichever channels are still not ready, once that many seconds have
+    elapsed without all of them completing. No-op if `channels` is empty.
+    """
+    if not channels:
+        return
+    remaining = set(channels)
+    deadline = None if timeout is None else time.time() + timeout
+    announced = False
+    while True:
+        remaining = pending_channels(hostname, exec_prefix, remaining)
+        if not remaining:
+            break
+        if deadline is not None and time.time() >= deadline:
+            die("timed out after {}s waiting for channel(s) to finish syncing: {}".format(
+                timeout, ", ".join(sorted(remaining))))
+        if not announced:
+            print("  Waiting for channel(s) to finish syncing before continuing: {} …".format(
+                ", ".join(sorted(remaining))))
+            announced = True
+        time.sleep(poll_interval)
+    if announced:
+        print("  All required channels are now fully synced")
+
+
 def _stage_remote_file(hostname, exec_prefix, remote_path, content):
     """Writes `content` to `remote_path` (inside exec_prefix's target) via
     stdin — avoids ever embedding file content as a shell-quoted argv
@@ -1037,6 +1198,87 @@ def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
     own docstring."""
     for ks in cfg.get("{}_kickstart_profiles".format(prefix)) or []:
         ensure_kickstart_profile(hostname, exec_prefix, ks)
+
+
+def snippet_file_path(hostname, exec_prefix, name):
+    """
+    Real absolute path Uyuni stores a Kickstart Snippet's content at —
+    parsed from spacecmd's own snippet_details "File:" line. Confirmed
+    live this varies by org id (e.g.
+    /var/lib/cobbler/snippets/spacewalk/1/<name> for the default org) so it
+    cannot be hardcoded/guessed. Returns None if the snippet doesn't exist
+    (snippet_details prints "WARNING: <name> is not a valid snippet" and
+    exits non-zero, confirmed live).
+    """
+    r = _spacecmd(hostname, exec_prefix, "snippet_details {}".format(shlex.quote(name)))
+    if r.returncode != 0:
+        return None
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("File:"):
+            return line[len("File:"):].strip()
+    return None
+
+
+def ensure_snippet(hostname, exec_prefix, name, content):
+    """
+    Idempotently creates/updates a real Uyuni "Kickstart Snippet" — a
+    reusable, named text fragment a kickstart/AutoYaST profile includes via
+    the real $SNIPPET('spacewalk/<org>/<name>') macro (confirmed live:
+    exactly what snippet_details' own "Macro:" line shows once created).
+
+    spacecmd's native snippet_create is interactive (prints the file
+    content back and asks "Is this ok [y/N]:", confirmed live — no -y/
+    --yes flag exists, "ERROR: unrecognized arguments: -y"). Content is
+    staged to a remote temp file first (its own -f flag reads a local file
+    path, not inline text) via _stage_remote_file, same idiom as
+    ensure_config_file, with "y\\n" fed on stdin to confirm. Confirmed live
+    that re-running snippet_create against an EXISTING name cleanly
+    overwrites its content (no error, no separate "update" command needed
+    — spacecmd has none; confirmed absent via the same "no help" probing
+    used elsewhere in this module for scap_schedulexccdfscan et al.).
+
+    Idempotency: reads the snippet's own real file content (via
+    snippet_file_path) and skips the create+confirm round trip entirely
+    when it already matches `content`.
+    """
+    existing_path = snippet_file_path(hostname, exec_prefix, name)
+    if existing_path:
+        current = _run(hostname, exec_prefix, "cat {}".format(shlex.quote(existing_path)),
+                        check=False, capture=True)
+        if current.returncode == 0 and (current.stdout or "") == content:
+            print("  Snippet '{}' already up to date — leaving it alone".format(name))
+            return
+
+    remote_tmp = "/tmp/.lab-snippet-{}".format(hashlib.sha1(name.encode()).hexdigest()[:12])
+    if not _stage_remote_file(hostname, exec_prefix, remote_tmp, content):
+        die("could not stage snippet content for '{}'".format(name))
+
+    r = _run(hostname, exec_prefix,
+              "spacecmd -- snippet_create -n {} -f {}".format(
+                  shlex.quote(name), shlex.quote(remote_tmp)),
+              input_text="y\n", check=False, capture=True)
+    _run(hostname, exec_prefix, "rm -f {}".format(shlex.quote(remote_tmp)), check=False)
+    if r.returncode != 0:
+        die("could not create snippet '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
+    print("  {} snippet '{}'".format("Updated" if existing_path else "Created", name))
+
+
+def ensure_snippets(hostname, exec_prefix, cfg, prefix):
+    """Orchestrates <prefix>_snippets: a list of {name, content} dicts. See
+    ensure_snippet()'s own docstring. No-op if the field is unset or
+    empty. Runs BEFORE distributions/kickstart profiles — a profile's own
+    %pre/%post scripts or partitioning can reference a snippet via its real
+    $SNIPPET(...) macro, so it should already exist by the time a profile
+    referencing it gets created."""
+    for entry in cfg.get("{}_snippets".format(prefix)) or []:
+        name = entry.get("name")
+        if not name:
+            die("{}_snippets: an entry is missing required 'name'".format(prefix))
+        content = entry.get("content")
+        if content is None:
+            die("snippet '{}': missing required 'content'".format(name))
+        ensure_snippet(hostname, exec_prefix, name, content)
 
 
 # ── Image management (Images -> Stores/Profiles/Build/Import) ──────────────
@@ -1679,6 +1921,271 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
             ensure_user_role(hostname, exec_prefix, username, label)
 
 
+def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_ansible_control_nodes: a list of {system} dicts.
+    Enables the real "Ansible Control Node" add-on entitlement on each
+    (system.addEntitlements, label "ansible_control_node" — ground-truthed
+    2026-09-18 directly against Uyuni's own Java source, see module
+    docstring's own correction above), then schedules a highstate apply
+    (system.scheduleApplyHighstate) so the real 'ansible' package actually
+    gets installed there — the documented real workflow is literally "check
+    the box, then Apply Highstate" (documentation.suse.com/multi-linux-
+    manager's own "Setup Ansible Control Node" guide), so this mirrors it
+    exactly rather than guessing that the entitlement alone is enough.
+
+    Idempotent, safe to call on every run (unlike schedule_ansible_playbook
+    below): addEntitlements' own real API description says an entitlement
+    the server already has is "quietly ignored", and re-applying a
+    highstate is itself idempotent salt-side — this is NOT scheduling a
+    one-shot custom action the way a playbook run is. No-op if the field is
+    unset or empty. Uses _system_id() to resolve the numeric sid these
+    calls need from a hostname, same as ensure_grafana_formula().
+
+    Only enables the entitlement + triggers the package install — it does
+    NOT create the playbook/inventory FILE CONTENT itself (see module
+    docstring: no method exists anywhere to push that), and does NOT set
+    up SSH keys from the control node to any managed target (the real
+    docs' own "Establishing Communication with Ansible Nodes" step) — both
+    genuinely need real file content, handled by this project's own
+    install_ansible_control_node.py addon instead, which SSHes directly to
+    the control node (a VM-provisioning concern, not a spacecmd/API one).
+    NOT live-tested (no server available in this project's dev/CI
+    environment).
+    """
+    entries = cfg.get("{}_ansible_control_nodes".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_ansible_control_nodes: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "system.addEntitlements", [sid, ["ansible_control_node"]])
+        if r.returncode != 0:
+            die("could not enable the Ansible Control Node entitlement on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+        if r.returncode != 0:
+            die("could not schedule a highstate apply on '{}' to install ansible: {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and scheduled a "
+              "highstate apply to install ansible".format(system, sid))
+
+
+def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_image_build_hosts: a list of {system} dicts.
+    Enables the real "Container Build Host" add-on entitlement on each
+    (system.addEntitlements, label "container_build_host" — ground-truthed
+    2026-09-24 directly against Uyuni's own Java source,
+    EntitlementManager.CONTAINER_BUILD_HOST_ENTITLED — a genuinely
+    DIFFERENT real entitlement from "osimage_build_host", which is the
+    older Kiwi-based OS-image build path, not this one), then schedules a
+    highstate apply (system.scheduleApplyHighstate) so the real container
+    build tooling actually gets installed there — confirmed live via
+    documentation.suse.com/multi-linux-manager's own "Image Building and
+    Management" guide, whose real documented procedure is literally
+    "enable Container Build Host, then Apply Highstate" (the exact same
+    two-step shape as ensure_ansible_control_node(), which this mirrors).
+
+    This is the missing piece smlm_image_imports' own JSON doc has flagged
+    since it was added: an image import's build_host_id needs a system
+    that ALREADY has this entitlement — this function is what actually
+    grants it, so a lab that also sets this field can go from "image
+    import fails, entitlement missing" to a working build host in one
+    additional list entry, with no manual Web UI/system_addentitlement
+    step required.
+
+    Idempotent, safe to call on every run — same reasoning as
+    ensure_ansible_control_node(): addEntitlements' own real API
+    description says an already-held entitlement is "quietly ignored",
+    and re-applying a highstate is itself idempotent salt-side. No-op if
+    the field is unset or empty. Does NOT itself verify the target
+    system's software channels include the required Containers module
+    (confirmed live real prerequisite, per the docs) — that's expected to
+    already be satisfied by the system's own activation key/channel setup
+    elsewhere in this same JSON (matching every other add-on entitlement
+    function in this module, none of which validate channel prerequisites
+    either).
+    """
+    entries = cfg.get("{}_image_build_hosts".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_image_build_hosts: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "system.addEntitlements", [sid, ["container_build_host"]])
+        if r.returncode != 0:
+            die("could not enable the Container Build Host entitlement on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+        if r.returncode != 0:
+            die("could not schedule a highstate apply on '{}' to install container build tooling: {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and scheduled a "
+              "highstate apply to install container build tooling".format(system, sid))
+
+
+def ensure_mcp_server(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_mcp_server: a single dict deploying the real,
+    third-party Uyuni MCP (Model Context Protocol) Server
+    (github.com/uyuni-project/mcp-server-uyuni) against this SMLM/Uyuni
+    instance — lets an MCP-compliant AI client (Claude Desktop, Gemini
+    CLI, etc.) inspect/manage it via natural language. Ground-truthed
+    2026-09-24 directly against that project's own README — every env var
+    name/default below is verbatim from it, not guessed.
+
+    Deployed as its own standalone podman container, SIBLING to (not
+    inside) the uyuni-server container: it talks to Uyuni over the normal
+    external HTTPS API, the same way any other API client would, so it
+    needs no access to exec_prefix's target at all — exec_prefix is
+    accepted only for call-shape consistency with every other rps()-driven
+    ensure_* step, unused otherwise.
+
+    Runs with `--network=host`, NOT podman's default bridge network.
+    Confirmed live (2026-09-24, sol.mydemo.lab): a bridge-networked sibling
+    container inherits this project's own real /etc/hosts self-reference
+    (podman copies the host's /etc/hosts into new containers by default) —
+    "127.0.0.1 sol.mydemo.lab" resolves, inside that container's OWN
+    network namespace, to the container itself, not the host, so
+    UYUNI_SERVER=https://sol.mydemo.lab failed with "All connection
+    attempts failed" even though the exact same hostname/URL works fine
+    from the host itself. This is the identical class of container-network
+    -isolation gotcha this project's own mcp/mcp_server.py was already
+    de-containerized for (see that module's own docstring) — --network=host
+    makes this container's networking behave exactly like any other
+    process on the host, sidestepping the whole problem rather than
+    working around one hostname at a time. Because of this, UYUNI_MCP_HOST
+    is bound to 127.0.0.1 directly (real host loopback now, not a
+    container's own) instead of using a podman -p port mapping — the two
+    are mutually exclusive with host networking, but achieve the identical
+    "not reachable off-host by default" effect.
+
+    Only supports <prefix>_deployment == "podman" for now — the only mode
+    this module can SSH straight to a host with a container engine already
+    on it for. A "kubernetes"-deployed SMLM would need a real Deployment/
+    Service manifest instead, not yet implemented; this warns and no-ops
+    rather than guessing at one.
+
+    Deliberately bound to 127.0.0.1 only, not 0.0.0.0 — this server holds
+    real Uyuni admin/write credentials (UYUNI_MCP_WRITE_TOOLS_ENABLED can
+    enable state-changing calls) and, per its own README's security
+    section, runs unauthenticated in HTTP mode (no UYUNI_AUTH_SERVER/OAuth
+    configured here). Reaching it from off-host is left to an explicit SSH
+    tunnel/port-forward the operator sets up, same trust model as e.g.
+    Kubernetes' own `kubectl port-forward`, rather than this module opening
+    it to the whole network by default.
+
+    Config keys under <prefix>_mcp_server (all optional except the dict's
+    own presence, which is what enables this):
+      "version"              : image tag, e.g. "v0.2.1" — default "latest"
+      "port"                  : 127.0.0.1 port to listen on (host-networked,
+                                so this IS the real listening port, no
+                                separate internal/external split) — default
+                                8090
+      "user" / "password"    : Uyuni credentials the MCP server uses for
+                                its own API calls — default to
+                                <prefix>_admin_user/<prefix>_admin_pass
+                                (the same account ensure_spacecmd_config
+                                already uses). The real README's own
+                                "Principle of Least Privilege" section
+                                recommends a dedicated low-privilege
+                                account instead — this module does not
+                                create one itself.
+      "write_tools_enabled"  : bool, default False — maps directly to
+                                UYUNI_MCP_WRITE_TOOLS_ENABLED; real
+                                upstream default is also False
+                                (read-only: inspect/list tools only, no
+                                schedule/add/remove actions).
+      "ssl_verify"            : bool, default False — this server's own
+                                embedded cert is self-signed (matches every
+                                other curl -k/unverified-context call
+                                already in this module), so verification
+                                defaults off here too (UYUNI_MCP_SSL_VERIFY).
+
+    Idempotent: (re)writes the env file and (re)creates the container on
+    every call — matches this project's own "helm upgrade --install"/
+    PXEService.enable() convention of always converging to the current
+    config rather than a stale "already exists — leave alone" no-op, since
+    a changed password/version/port here should actually take effect.
+    Credentials are written to a root-only (0600) env file on the remote
+    host and passed to podman via --env-file, never -e/argv — the latter
+    would leak into `podman inspect`/`ps` output.
+    """
+    field = "{}_mcp_server".format(prefix)
+    if cfg.get(field) is None:
+        # NOT `if not cfg.get(field): return` — {} is a legitimate,
+        # explicit "enable with every default" value and must not be
+        # treated the same as the field being absent entirely.
+        return
+    entry = cfg[field]
+
+    deployment = cfg.get("{}_deployment".format(prefix)) or "kubernetes"
+    if deployment != "podman":
+        warn("{0}_mcp_server is set but {0}_deployment is '{1}' — the Uyuni MCP Server addon "
+             "only supports a podman-deployed target for now (it needs direct SSH+podman access "
+             "to a host with the server on it); skipping".format(prefix, deployment))
+        return
+
+    version = entry.get("version") or "latest"
+    port = entry.get("port") or 8090
+    user = entry.get("user") or cfg.get("{}_admin_user".format(prefix)) or "admin"
+    password = entry.get("password") or cfg.get("{}_admin_pass".format(prefix)) or "Smlm12345"
+    write_tools = bool(entry.get("write_tools_enabled"))
+    ssl_verify = bool(entry.get("ssl_verify"))
+
+    env_content = "\n".join([
+        "UYUNI_SERVER=https://{}".format(hostname),
+        "UYUNI_USER={}".format(user),
+        "UYUNI_PASS={}".format(password),
+        "UYUNI_MCP_SSL_VERIFY={}".format("true" if ssl_verify else "false"),
+        "UYUNI_MCP_WRITE_TOOLS_ENABLED={}".format("true" if write_tools else "false"),
+        "UYUNI_MCP_TRANSPORT=http",
+        "UYUNI_MCP_HOST=127.0.0.1",
+        "UYUNI_MCP_PORT={}".format(port),
+        "UYUNI_MCP_PUBLIC_URL=http://127.0.0.1:{}".format(port),
+    ]) + "\n"
+
+    env_path = "/etc/mcp-server-uyuni/uyuni-config.env"
+    r = ssh_run(hostname,
+                "mkdir -p /etc/mcp-server-uyuni && cat > {ep} && chmod 600 {ep}".format(
+                    ep=shlex.quote(env_path)),
+                input_text=env_content, check=False)
+    if r.returncode != 0:
+        die("could not write the MCP server's env file on '{}': {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+
+    image = "ghcr.io/uyuni-project/mcp-server-uyuni:{}".format(version)
+    r = ssh_run(hostname,
+                "podman rm -f mcp-server-uyuni >/dev/null 2>&1; "
+                "podman run -d --name mcp-server-uyuni --restart=always --network=host "
+                "--env-file {env_path} {image}".format(
+                    env_path=shlex.quote(env_path), image=shlex.quote(image)),
+                check=False, capture=True)
+    if r.returncode != 0:
+        die("could not start the mcp-server-uyuni container on '{}': {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+
+    r = ssh_run(hostname,
+                "podman ps --filter name=mcp-server-uyuni --filter status=running -q",
+                check=False, capture=True)
+    if not (r.stdout or "").strip():
+        die("mcp-server-uyuni container on '{}' exited immediately after starting — "
+            "check 'podman logs mcp-server-uyuni' on that host".format(hostname))
+
+    print("  Deployed the Uyuni MCP Server ({}) on '{}', listening on 127.0.0.1:{} only "
+          "(write tools {}) — reach it via an SSH tunnel".format(
+              image, hostname, port, "ENABLED" if write_tools else "disabled, read-only"))
+
+
 def ansible_path_exists(hostname, exec_prefix, control_node_id, path):
     """
     Whether `path` already appears in ansible.listAnsiblePaths(control_node_id)'s
@@ -1714,23 +2221,118 @@ def ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
     print("  Registered ansible {} path '{}' on control node {}".format(path_type, path, control_node_id))
 
 
+def remove_ansible_path(hostname, exec_prefix, path_id):
+    """
+    Removes a single Ansible path by its numeric id —
+    ansible.removeAnsiblePath(sessionKey, pathId) -> int (1 on success),
+    ground-truthed 2026-09-18 directly against AnsibleHandler.java
+    (java/core/src/main/java/com/redhat/rhn/frontend/xmlrpc/ansible/
+    AnsibleHandler.java — "@return 1 on success", throws
+    EntityNotExistsFaultException if pathId doesn't exist/isn't
+    accessible). CORRECTS this module's own earlier (2026-08-27) research
+    note claiming the confirmed ansible.* method set was only
+    discoverPlaybooks/fetchPlaybookContents/introspectInventory (read-only)
+    plus createAnsiblePath/schedulePlaybook — that survey was itself
+    incomplete: it missed lookupAnsiblePathById, updateAnsiblePath, AND
+    this one, none of which needed guessing, all three sitting in the
+    exact same handler file already fetched for the original research.
+    """
+    r = _api_call(hostname, exec_prefix, "ansible.removeAnsiblePath", [path_id])
+    if r.returncode != 0:
+        die("could not remove ansible path id {}: {}".format(path_id, (r.stderr or r.stdout or "").strip()))
+
+
+# SMLM/Uyuni's own real, confirmed-live behavior (2026-09-18): enabling the
+# "Ansible Control Node" entitlement on a system auto-creates exactly these
+# two AnsiblePath entries, pointing at locations that exist on NO control
+# node this project ever provisions (install_ansible_control_node.py always
+# uses /srv/ansible/... — see that script's own JSON schema doc). Left in
+# place, they're a real, reported trap: SMLM's own "Ansible > Schedule
+# Playbook" flow can pick one of these broken defaults instead of a real,
+# working path registered by ensure_ansible_paths() below, and fail with a
+# confusing "error processing the inventory" message that has nothing to do
+# with the actual inventory script.
+_STALE_DEFAULT_ANSIBLE_PATHS = {("/etc/ansible/hosts", "inventory"), ("/etc/ansible/playbooks", "playbook")}
+
+
+def remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id):
+    """
+    Removes SMLM/Uyuni's own auto-created default Ansible paths (see
+    _STALE_DEFAULT_ANSIBLE_PATHS) from `control_node_id` if present.
+    Idempotent — a no-op if neither default is currently registered (e.g.
+    a second run, or a server version that doesn't auto-create them).
+
+    ansible.listAnsiblePaths' raw output was ASSUMED to need
+    substring-matching rather than real parsing when ansible_path_exists()
+    was first written (2026-08-27) — reconfirmed live 2026-09-18 that it
+    is, in fact, valid JSON (`spacecmd api`'s own passthrough prints it
+    that way for this method), so this function parses it properly rather
+    than repeating that older, more defensive assumption.
+    """
+    r = _api_call(hostname, exec_prefix, "ansible.listAnsiblePaths", [control_node_id])
+    if r.returncode != 0:
+        die("could not list ansible paths on control node {}: {}".format(
+            control_node_id, (r.stderr or r.stdout or "").strip()))
+    try:
+        existing = json.loads(r.stdout or "[]")
+    except ValueError:
+        return
+    for entry in existing:
+        key = (entry.get("path"), entry.get("type"))
+        if key in _STALE_DEFAULT_ANSIBLE_PATHS:
+            remove_ansible_path(hostname, exec_prefix, entry.get("id"))
+            print("  Removed stale default ansible {} path '{}' (id {}) on control node {} — "
+                  "SMLM's own auto-created default, unused by this lab".format(
+                      entry.get("type"), entry.get("path"), entry.get("id"), control_node_id))
+
+
 def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_ansible_paths: a list of {control_node_id, type,
-    path} dicts. Idempotent, safe to call on every run — unlike
+    Orchestrates <prefix>_ansible_paths: a list of {control_node_id | system,
+    type, path} dicts. Idempotent, safe to call on every run — unlike
     schedule_ansible_playbook below, which is NOT (see module docstring for
     why the two are treated differently). No-op if the field is unset or
-    empty. NOT live-tested.
+    empty.
+
+    Each entry names its control node EITHER way: 'control_node_id' (the
+    raw numeric Uyuni system ID, the original — and still supported —
+    shape), or 'system' (a hostname, resolved via _system_id() — added
+    2026-09-18, same helper ensure_ansible_control_node()/
+    ensure_grafana_formula() already use live-verified). 'system' is the
+    friendlier option: a numeric id is fragile in a static lab-JSON file
+    (it's only known after the system is actually registered, and isn't
+    guaranteed stable across a re-registration) — the original "no
+    name-to-ID resolution is provided here" limitation this function's own
+    history notes was written before _system_id() existed to solve exactly
+    this. Live-verified 2026-09-18: registered charon.mydemo.lab's own
+    example playbook directory + dynamic inventory script this way against
+    the real sol.mydemo.lab server.
+
+    ALSO removes SMLM/Uyuni's own stale auto-created default paths (see
+    remove_stale_default_ansible_paths()) on every control node this
+    touches — added 2026-09-18 after a real, user-reported failure: SMLM's
+    own "Schedule Playbook" flow picked one of those broken defaults
+    instead of the real path registered here, and failed confusingly.
     """
     paths = cfg.get("{}_ansible_paths".format(prefix)) or []
+    touched_control_nodes = set()
     for p in paths:
         control_node_id = p.get("control_node_id")
+        system = p.get("system")
         path = p.get("path")
         path_type = p.get("type")
-        if control_node_id is None or not path or not path_type:
+        if control_node_id is None and not system:
             die("{}_ansible_paths: an entry is missing required "
-                "'control_node_id'/'type'/'path'".format(prefix))
+                "'control_node_id' or 'system'".format(prefix))
+        if not path or not path_type:
+            die("{}_ansible_paths: an entry is missing required 'type'/'path'".format(prefix))
+        if control_node_id is None:
+            control_node_id = _system_id(hostname, exec_prefix, system)
         ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
+        touched_control_nodes.add(control_node_id)
+
+    for control_node_id in touched_control_nodes:
+        remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id)
 
 
 def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_path, inventory_path,
@@ -2237,6 +2839,44 @@ def list_systems_by_patch_status(hostname, exec_prefix, cve_id, patch_status_lab
     return r.stdout or ""
 
 
+def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labels=None):
+    """
+    Returns the raw text of audit.listImagesByPatchStatus(cveId[,
+    statusLabels]) — the CVE-audit-adjacent counterpart of
+    list_systems_by_patch_status() above, for container/OS IMAGES rather
+    than registered systems. Real, confirmed method (documentation.suse.com/
+    multi-linux-manager's own API reference, 'audit' namespace — ground-
+    truthed 2026-09-18 directly against the real API docs: the ENTIRE
+    'audit' namespace has exactly two methods, listSystemsByPatchStatus
+    and this one; earlier speculation elsewhere in this project's own
+    history about a separate Beta "policy-based" system.scap.* surface
+    (listPolicies/listScapContent/listTailoringFiles/
+    scheduleBetaXccdfScanCustom/scheduleBetaXccdfScanWithPolicy) was
+    checked against the real, current API index too and confirmed to NOT
+    EXIST at all — the real system.scap namespace has exactly the 5
+    methods this module's own scap_scan_*/ensure_scap_scan/run_scap_scans
+    functions already fully cover (deleteXccdfScan/getXccdfScanDetails/
+    getXccdfScanRuleResults/listXccdfScans/scheduleXccdfScan) — nothing
+    "Beta" was actually left unimplemented there; that earlier TODO note
+    was itself unconfirmed speculation, not a real deferred feature.
+
+    Same 'api' passthrough as its sibling (no spacecmd subcommand for
+    'audit' at all), same read-only/no-idempotency-concern shape, same
+    optional `patch_status_labels` filter (one or more of
+    {"AFFECTED_PATCH_INAPPLICABLE", "AFFECTED_PATCH_APPLICABLE",
+    "NOT_AFFECTED", "PATCHED"}). NOT live-tested (no server available in
+    this project's dev/CI environment with the 'cve-server-channels'
+    taskomatic job's own pre-generated data the real API depends on —
+    same caveat the official docs state for both methods in this
+    namespace).
+    """
+    args = [cve_id, list(patch_status_labels)] if patch_status_labels else [cve_id]
+    r = _api_call(hostname, exec_prefix, "audit.listImagesByPatchStatus", args)
+    if r.returncode != 0:
+        die("could not audit images for CVE '{}': {}".format(cve_id, (r.stderr or r.stdout or "").strip()))
+    return r.stdout or ""
+
+
 # ─── dev/QA/prod environment topology ────────────────────────────────────────
 # System groups, multi-key activation-key/group linkage, custom-info tags,
 # recurring patch schedules, and a thin composition layer over all of the
@@ -2577,6 +3217,245 @@ def ensure_recurring_schedule(hostname, exec_prefix, entity_type, entity_id, cro
         schedule_type, entity_type, entity_id, cron_expr))
 
 
+def _system_id(hostname, exec_prefix, target_system):
+    """
+    Resolves `target_system` (a hostname/minion id) to its real numeric
+    system id via system.getId — needed for formula.* below, which (unlike
+    every spacecmd-native call in this module) takes a numeric sid, not a
+    hostname string. Real, confirmed method (documentation.suse.com/
+    multi-linux-manager's own API reference, system.getId(sessionKey,
+    name) -> array of {id, name, last_checkin, ...} structs — one per
+    system whose name/hostname matches, since Uyuni doesn't enforce unique
+    hostnames). Dies on zero or more-than-one match — this project's own
+    FQDN convention (every node's hostname IS its minion id, see module
+    docstring) means more than one match is a genuine ambiguity, not
+    something to guess through.
+    """
+    r = _api_call(hostname, exec_prefix, "system.getId", [target_system])
+    if r.returncode != 0:
+        die("could not resolve system id for '{}': {}".format(
+            target_system, (r.stderr or r.stdout or "").strip()))
+    try:
+        matches = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("system.getId('{}') returned unparseable output: {}".format(target_system, r.stdout))
+    if not matches:
+        die("no system named '{}' found on the server".format(target_system))
+    if len(matches) > 1:
+        die("more than one system named '{}' found on the server — genuinely ambiguous".format(
+            target_system))
+    return matches[0]["id"]
+
+
+# ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────
+# No spacecmd-native subcommand exists (confirmed live 2026-09-23, same
+# "no vhm_*/virtualhostmanager_* command" probing technique used elsewhere in
+# this module for access.*/ansible.*) — every call here goes through the raw
+# 'api' passthrough, against the real virtualhostmanager.* namespace
+# (ground-truthed directly against Uyuni's own Java source,
+# java/core/.../frontend/xmlrpc/virtualhostmanager/VirtualHostManagerHandler.java):
+# create(sessionKey, label, moduleName, Map<String,String> parameters) -> int.
+#
+# moduleName for AWS/EC2 is the real gatherer module's own name, "AmazonEC2"
+# — confirmed from TWO independent sources: (1) the actual Python worker
+# module shipped in uyuni-project/virtual-host-gatherer is
+# gatherer/modules/AmazonEC2.py, class AmazonEC2, with
+# DEFAULT_PARAMETERS = {"access_key_id", "secret_access_key", "region",
+# "zone"} (those 4 are the real dict keys `parameters` must carry — quoted
+# directly from that source); (2) Uyuni's own WebUI
+# (web/html/src/manager/systems/virtualhostmanager/virtualhostmanager.tsx)
+# keys its "Amazon EC2" label off the literal id "amazonec2" — the module
+# name it POSTs is `this.props.type.toLowerCase()`, i.e. "AmazonEC2"
+# lowercased, confirming "AmazonEC2" (not "aws"/"Ec2"/anything else) is the
+# real moduleName the server expects. Only AWS/EC2 is implemented here — no
+# other module's own real parameter keys have been ground-truthed.
+
+def virtual_host_manager_exists(hostname, exec_prefix, label):
+    """
+    Whether `label` appears in virtualhostmanager.listVirtualHostManagers'
+    raw output. Same substring-match heuristic used throughout this module
+    wherever the raw print format of a struct/list wasn't independently
+    confirmed from docs (VirtualHostManagerSerializer's exact JSON shape
+    wasn't ground-truthed) — every real VHM this project creates gets a
+    label unlikely to collide with an unrelated substring. NOT live-tested
+    (no server available in this project's dev/CI environment).
+    """
+    r = _api_call(hostname, exec_prefix, "virtualhostmanager.listVirtualHostManagers", [])
+    return r.returncode == 0 and label in (r.stdout or "")
+
+
+def ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm):
+    """
+    Idempotently creates one Amazon EC2 Virtual Host Manager from one entry
+    of <prefix>_virtual_host_managers: {label, access_key_id,
+    secret_access_key, region, zone}. See this module's own section
+    docstring above for where these 4 real parameter names and the real
+    "AmazonEC2" moduleName come from. access_key_id/secret_access_key are
+    real, long-lived AWS credentials — a temporary SSO/STS session (the kind
+    this project's own AWSBackend cloud-account mechanism normally uses for
+    VM provisioning, see libs/backends.py) would expire and silently break
+    the gatherer's own periodic polling, so this deliberately does NOT
+    reuse that same resolve_cloud_account() path; see
+    ensure_virtual_host_managers()'s own docstring for how credentials
+    actually get here. die()s on a real API failure — VirtualHostManager.create
+    itself refuses a duplicate label, so an existing VHM is detected and
+    skipped BEFORE that call is even made, same idiom as every other
+    ensure_*_exists() check in this module. NOT live-tested (no server
+    available in this project's dev/CI environment; no real long-lived AWS
+    key was available to test against, see the JSON doc comment on
+    smlm_virtual_host_managers).
+    """
+    label = vhm.get("label")
+    if not label:
+        die("virtual_host_managers: an entry is missing required 'label'")
+    if virtual_host_manager_exists(hostname, exec_prefix, label):
+        print("  Virtual Host Manager '{}' already exists — leaving it alone".format(label))
+        return
+    access_key_id = vhm.get("access_key_id")
+    secret_access_key = vhm.get("secret_access_key")
+    region = vhm.get("region")
+    zone = vhm.get("zone")
+    if not (access_key_id and secret_access_key and region and zone):
+        die("virtual host manager '{}': access_key_id, secret_access_key, region and zone are "
+            "all required to create it".format(label))
+    params = {
+        "access_key_id": access_key_id,
+        "secret_access_key": secret_access_key,
+        "region": region,
+        "zone": zone,
+    }
+    r = _api_call(hostname, exec_prefix, "virtualhostmanager.create", [label, "AmazonEC2", params])
+    if r.returncode != 0:
+        die("could not create Virtual Host Manager '{}': {}".format(
+            label, (r.stderr or r.stdout or "").strip()))
+    print("  Created Amazon EC2 Virtual Host Manager '{}' (region: {}, zone: {})".format(
+        label, region, zone))
+
+
+def ensure_virtual_host_managers(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_virtual_host_managers: a list of {label, type,
+    access_key_id, secret_access_key, region, zone} dicts. `type` is
+    currently required to be "aws" (the only module this function knows how
+    to provision — see ensure_virtual_host_manager_aws()'s own docstring for
+    why long-lived static credentials, not this project's usual
+    resolve_cloud_account() SSO/STS mechanism, are what this needs).
+    No-op if the field is unset or empty.
+
+    Credential resolution mirrors the rest of this project's own
+    resolve_credential() convention (libs/addon_common.py) at the CALLER's
+    level, not here — install_smlm.py resolves
+    smlm_vhm_aws_access_key/smlm_vhm_aws_secret_key (directly, or via a
+    named/auto-discovered 'aws' kind credentials file) BEFORE calling this,
+    and fills them into each entry's access_key_id/secret_access_key here.
+    This function itself only ever sees already-resolved plaintext values.
+    """
+    for vhm in cfg.get("{}_virtual_host_managers".format(prefix)) or []:
+        vhm_type = vhm.get("type") or "aws"
+        if vhm_type != "aws":
+            die("virtual host manager '{}': type '{}' is not supported — only 'aws' is "
+                "currently implemented".format(vhm.get("label"), vhm_type))
+        ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm)
+
+
+def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_grafana_formulas: applies SMLM/Uyuni's own
+    built-in "grafana" Salt formula (SUSE's own bundled monitoring-
+    dashboard formula — see github.com/SUSE/salt-formulas/tree/master/
+    grafana-formula, ground-truthed directly against its real
+    metadata/form.yml and .spec file, 2026-09-18, NOT guessed) to a
+    target system. Distinct from this project's own standalone
+    install_prometheus.py/install_grafana.py addons (podman containers,
+    no Salt/formula involved at all) — this is SMLM's own turnkey
+    mechanism: the formula installs and configures Grafana itself on the
+    target system, wires up a Prometheus datasource, and (if reportdb is
+    enabled) auto-provisions a read-only reportdb Postgres user plus the
+    formula's own ready-made dashboards, no separate dashboard-building
+    work needed.
+
+    No native spacecmd subcommand exists for the formula.* namespace at
+    all (confirmed absent from spacecmd's own command list) — goes
+    through the generic 'api' passthrough, same as ansible.*/access.*/
+    contentmanagement.* elsewhere in this module. Two real API calls per
+    entry: formula.setFormulasOfServer (assigns/enables the formula) then
+    formula.setSystemFormulaData (configures it) — both confirmed real,
+    exact signatures via documentation.suse.com/multi-linux-manager's own
+    API reference (system.html/formula.html), not spacecmd docs (which
+    don't cover this namespace). Idempotent: re-running with the same
+    config re-applies the same formula/data, which the real API already
+    treats as a plain overwrite (no create-vs-update distinction to get
+    wrong here, unlike e.g. activation-key AppStreams).
+
+    Each <prefix>_grafana_formulas entry:
+      {system, admin_user, admin_pass, prometheus: [{key, url, user,
+       password}, ...], reportdb, is_hub, dashboards: {uyuni,
+       uyuni_clients, postgresql, apache}}
+    Only "system" is required — every other field mirrors a real
+    grafana-formula pillar key with that formula's own real default
+    (admin_user/admin_pass: "admin"; prometheus: a single entry pointing
+    at http://localhost:9090 if omitted; reportdb/is_hub: False;
+    dashboards.*: True for uyuni/uyuni_clients/postgresql/apache — the
+    formula's own real defaults, confirmed via its form.yml, not this
+    project's own guess). The formula's own Kubernetes/SAP dashboard
+    toggles (default False, niche) are deliberately not exposed here to
+    keep this field surface reasonable — they stay at the formula's own
+    off-by-default value; extend this function if a lab genuinely needs
+    them.
+
+    Prerequisite the real docs state explicitly and this function does
+    NOT check for (no listFormulas-vs-required-package distinction was
+    researched): Grafana is not available on SMLM Proxy, and the target
+    system needs a monitoring add-on subscription plus Prometheus already
+    installed — a real API error from the server itself is what surfaces
+    if either isn't true, not a pre-flight guess here.
+
+    Ground-truthed via direct research (not live-tested against a real
+    server — none available with a monitoring-entitled client in this
+    project's dev/CI environment).
+    """
+    entries = cfg.get("{}_grafana_formulas".format(prefix)) or []
+    for entry in entries:
+        system = entry.get("system")
+        if not system:
+            die("{}_grafana_formulas: an entry is missing required 'system'".format(prefix))
+
+        sid = _system_id(hostname, exec_prefix, system)
+
+        r = _api_call(hostname, exec_prefix, "formula.setFormulasOfServer", [sid, ["grafana"]])
+        if r.returncode != 0:
+            die("could not enable the 'grafana' formula on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+
+        prometheus = entry.get("prometheus") or [{"key": "Prometheus", "url": "http://localhost:9090"}]
+        dashboards = entry.get("dashboards") or {}
+        content = {
+            "grafana": {
+                "enabled": True,
+                "admin_user": entry.get("admin_user") or "admin",
+                "admin_pass": entry.get("admin_pass") or "admin",
+                "datasources": {
+                    "prometheus": prometheus,
+                    "reportdb": {
+                        "enabled": bool(entry.get("reportdb")),
+                        "is_hub": bool(entry.get("is_hub")),
+                    },
+                },
+                "dashboards": {
+                    "add_uyuni_dashboard": dashboards.get("uyuni", True),
+                    "add_uyuni_clients_dashboard": dashboards.get("uyuni_clients", True),
+                    "add_postgresql_dasboard": dashboards.get("postgresql", True),
+                    "add_apache_dashboard": dashboards.get("apache", True),
+                },
+            },
+        }
+        r = _api_call(hostname, exec_prefix, "formula.setSystemFormulaData", [sid, "grafana", content])
+        if r.returncode != 0:
+            die("could not configure the 'grafana' formula on '{}': {}".format(
+                system, (r.stderr or r.stdout or "").strip()))
+        print("  Applied the 'grafana' formula to '{}'".format(system))
+
+
 def ensure_environments(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrates <prefix>_environments — a THIN COMPOSITION layer, not a
@@ -2682,8 +3561,186 @@ def saltkey_accept(hostname, exec_prefix, minion_id):
         die("could not accept salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
 
 
+def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
+    """
+    Exact NVR-EA string (e.g. "openssl-1.0.2k-19.el7:1.x86_64") for
+    `pkg_name` in `channel`, from spacecmd's native
+    softwarechannel_listallpackages (one NVR-EA per line, no header).
+    Matches the leading package name only (before the first '-' that starts
+    a version number) — good enough for the specific known names this is
+    used for (wget/openssl/openssl-libs), not a general NVR parser. Returns
+    None if not found in this channel.
+    """
+    r = _spacecmd(hostname, exec_prefix, "softwarechannel_listallpackages {}".format(shlex.quote(channel)))
+    prefix = pkg_name + "-"
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix) and line[len(prefix):len(prefix) + 1].isdigit():
+            return line
+    return None
+
+
+def _stage_channel_package_on_client(hostname, exec_prefix, channel, pkg_name, client_hostname, dest_dir):
+    """
+    Finds `pkg_name`'s real RPM in the server's own content-addressed
+    package store (/var/spacewalk/packages/...) and copies it onto
+    client_hostname via base64 over two separate SSH connections — never
+    HTTP(S), so this works even when the CLIENT's own TLS stack can't reach
+    the server at all (see ensure_client_registered()'s own docstring on
+    the real incident this exists for). The server side is reached via
+    exec_prefix like everywhere else in this module (podman/mgrctl or
+    kubectl — works for either SMLM deployment mode); the client side is a
+    plain ssh_run, same as the rest of client bootstrapping.
+
+    Returns the path of the staged .rpm on the CLIENT, or None if the
+    package isn't in `channel`, or its file couldn't be located/copied.
+    NOT live-tested for the kubectl/Kubernetes deployment mode (only the
+    podman/mgrctl deployment mode was available to verify against).
+    """
+    nvr = _channel_package_nvr(hostname, exec_prefix, channel, pkg_name)
+    if not nvr:
+        return None
+    # NVR-EA has an optional ":<epoch>" between release and arch (e.g.
+    # "openssl-1.0.2k-19.el7:1.x86_64") that the real .rpm FILENAME never
+    # includes — confirmed live 2026-09-23 against the actual on-disk path.
+    filename = re.sub(r":\d+\.", ".", nvr) + ".rpm"
+    r = _run(hostname, exec_prefix, "find /var/spacewalk/packages -iname {}".format(shlex.quote(filename)),
+             check=False, capture=True)
+    paths = [p for p in (r.stdout or "").splitlines() if p.strip()]
+    if not paths:
+        return None
+    r2 = _run(hostname, exec_prefix, "base64 {}".format(shlex.quote(paths[0])), check=False, capture=True)
+    if r2.returncode != 0 or not (r2.stdout or "").strip():
+        return None
+    dest = "{}/{}".format(dest_dir, filename)
+    r3 = ssh_run(client_hostname, "mkdir -p {} && base64 -d > {}".format(
+        shlex.quote(dest_dir), shlex.quote(dest)), input_text=r2.stdout, check=False)
+    if r3.returncode != 0:
+        return None
+    print("  Staged '{}' from channel '{}' onto '{}' (server TLS unreachable from this "
+          "client — copied via SSH instead, see ensure_client_registered()'s own docstring)".format(
+              filename, channel, client_hostname))
+    return dest
+
+
+def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fqdn, script_name,
+                                env, base_channel):
+    """
+    Recovery path for a client whose curl can't negotiate TLS with this
+    server at all (see ensure_client_registered()'s own docstring — real
+    incident, confirmed live 2026-09-23, CentOS 7's ancient NSS-linked curl
+    against this server's modern TLS-1.2-only policy). Entirely client-side
+    — no server/SMLM change:
+
+    1. Ensure `wget` is present on the client (staged from `base_channel`
+       via _stage_channel_package_on_client if missing) — confirmed live
+       that GNU Wget on this kind of box links the system OpenSSL, never
+       NSS, and negotiates the exact same endpoint fine. bootstrap.sh
+       itself already prefers wget over curl when both exist (confirmed by
+       reading its own fetched source), so once present, its OWN internal
+       fetches (repo checks, file downloads) start working too — not just
+       this function's one initial script fetch.
+    2. Run bootstrap via wget instead of curl.
+    3. If package installation still fails (yum's own downloader — pycurl,
+       confirmed live to link the SAME broken NSS libcurl regardless of
+       wget being present, so wget alone does NOT fix yum) AND the failure
+       is specifically an unresolved OpenSSL dependency (confirmed live:
+       venv-salt-minion's own RPM needs OPENSSL_1.0.2 symbols an ancient
+       pre-installed openssl-libs, e.g. 1.0.1e on a stock CentOS 7 image,
+       doesn't provide) — stage openssl + openssl-libs from base_channel
+       and install them locally via `rpm -Uvh --force` (upgrading both
+       together in one transaction, since installing openssl-libs alone
+       conflicts with the still-installed older openssl package needing
+       it at its old exact version), then retry the bootstrap once more.
+       yum's own downloader is NOT fixed by this — it works around it by
+       making sure whatever yum would have installed is already present,
+       so bootstrap.sh's own "is X installed?" check skips straight past
+       the broken yum step.
+
+    Live-verified end to end 2026-09-23 against a real CentOS 7 node
+    (luna.mydemo.lab / solar-system-lab.json): this exact sequence took it
+    from "curl can't even fetch the script" to a fully registered salt
+    minion, with zero changes to the server. Bounded to ONE openssl-repair
+    attempt — if that's not the actual blocker on some other distro, this
+    gives up and reports the real bootstrap.sh output rather than looping.
+    """
+    have_wget = ssh_run(client_hostname, "command -v wget", check=False).returncode == 0
+    if not have_wget:
+        if not base_channel or not _stage_channel_package_on_client(
+                hostname, exec_prefix, base_channel, "wget", client_hostname, "/tmp/.lab-legacy-tls"):
+            return False
+        r = ssh_run(client_hostname, "rpm -Uvh --force /tmp/.lab-legacy-tls/wget-*.rpm", check=False)
+        if r.returncode != 0:
+            return False
+
+    bootstrap_url = "https://{}/pub/bootstrap/{}".format(server_fqdn, script_name)
+    # Fetch-to-file-then-run rather than a `<(...)` process substitution —
+    # that's a bashism, not guaranteed on every client's login shell; a
+    # plain mktemp+run, same idiom as the curl-based bootstrap_cmd above,
+    # works on any POSIX sh.
+    wget_cmd = (
+        "_tmp=$(mktemp)\n"
+        "wget -qO \"$_tmp\" --no-check-certificate {url}\n"
+        "{env} /bin/bash \"$_tmp\"\n"
+        "_rc=$?\n"
+        "rm -f \"$_tmp\"\n"
+        "exit $_rc"
+    ).format(url=shlex.quote(bootstrap_url), env=env)
+    r = ssh_run(client_hostname, wget_cmd, check=False, capture=True)
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0 and "bootstrap complete" in out.lower():
+        return True
+    if "openssl" not in out.lower() or "failed to install" not in out.lower():
+        return r.returncode == 0
+
+    print("  '{}': bootstrap needs a newer OpenSSL than this client has — staging one from "
+          "'{}' (see ensure_client_registered()'s own docstring)".format(client_hostname, base_channel))
+    staged = []
+    for pkg in ("openssl-libs", "openssl"):
+        path = _stage_channel_package_on_client(
+            hostname, exec_prefix, base_channel, pkg, client_hostname, "/tmp/.lab-legacy-tls")
+        if path:
+            staged.append(path)
+    if not staged:
+        return False
+    r2 = ssh_run(client_hostname, "rpm -Uvh --force /tmp/.lab-legacy-tls/*.rpm", check=False)
+    if r2.returncode != 0:
+        return False
+
+    r3 = ssh_run(client_hostname, wget_cmd, check=False, capture=True)
+    out3 = (r3.stdout or "") + (r3.stderr or "")
+    return r3.returncode == 0 and "bootstrap complete" in out3.lower()
+
+
+def _ensure_client_can_resolve_server(client_hostname, server_fqdn):
+    """
+    Pushes a static /etc/hosts entry for server_fqdn onto client_hostname —
+    see ensure_client_registered()'s own docstring for the real, confirmed-
+    live incident (saturn.mydemo.lab/neptune.mydemo.lab, both AWS EC2, on
+    a completely different network/DNS than this lab) this exists for.
+
+    Resolves server_fqdn via THIS function's own (Python-level, local)
+    socket.gethostbyname — this always runs on the automation node, which
+    has working DNS for this lab regardless of what the CLIENT can reach —
+    then idempotently appends "<ip> <fqdn>" to the client's /etc/hosts if
+    not already present. A no-op (silently) if server_fqdn can't be
+    resolved locally either — nothing this function can do about that, and
+    the real bootstrap attempt right after this will fail with its own
+    clear error instead.
+    """
+    try:
+        server_ip = socket.gethostbyname(server_fqdn)
+    except socket.gaierror:
+        return
+    hosts_line = "{} {}".format(server_ip, server_fqdn)
+    ssh_run(client_hostname,
+            "grep -qF {line} /etc/hosts || echo {line} >> /etc/hosts".format(
+                line=shlex.quote(hosts_line)),
+            check=False)
+
+
 def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn, activation_key,
-                              reactivation_key=None, retry_limit=30, retry_interval=10):
+                              reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None):
     """
     Register client_hostname as a Salt client of the Uyuni/SMLM server
     reached via (hostname, exec_prefix), using an activation key the caller
@@ -2706,10 +3763,37 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     named after the activation key (not the shared default "bootstrap.sh")
     so multiple keys don't clobber each other's script on repeat use —
     mgr-bootstrap itself only supports one key per generated script.
+
+    base_channel (optional): the activation key's own base software
+    channel label — passed through to _try_wget_legacy_bootstrap() as a
+    place to stage packages from (wget, openssl/openssl-libs) if the
+    client's own curl can't reach this server at all. See that function's
+    own docstring for the real, confirmed-live incident (CentOS 7) this
+    exists for. Omit it and that whole recovery path is simply skipped —
+    the original curl-only behavior, unchanged.
+
+    Real bug found live 2026-09-24 (solar-system-lab.json, saturn.mydemo.lab
+    / neptune.mydemo.lab, both AWS EC2): a client on a completely different
+    network (AWS's own VPC DNS, or systemd-resolved's stub resolver) simply
+    cannot resolve server_fqdn at all — confirmed live neither client's own
+    /etc/resolv.conf points anywhere near this lab's BIND server, and
+    `getent hosts` for it came back empty on both. Confirmed live this is
+    PURELY a DNS gap, not a connectivity or firewall one: both clients
+    reached the server's real public IP directly over HTTPS (curl got a
+    real 200) the instant its IP was used instead of its name. Fixed by
+    resolving server_fqdn locally (this function always runs on the
+    automation node, which DOES have working DNS for this lab) and pushing
+    a static /etc/hosts entry onto the client BEFORE any bootstrap attempt
+    — this fixes every later step that needs to reach the server by name
+    (the initial script fetch, bootstrap.sh's own internal checks, and the
+    eventual real salt-minion connection), on ANY client whose own DNS
+    can't reach this lab, not just AWS ones specifically.
     """
     if saltkey_accepted(hostname, exec_prefix, client_hostname):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
         return
+
+    _ensure_client_can_resolve_server(client_hostname, server_fqdn)
 
     # Resolve to Uyuni's real, org-id-prefixed key name (see
     # resolve_activation_key_name's docstring) — both mgr-bootstrap and the
@@ -2729,26 +3813,93 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     env = "ACTIVATION_KEYS={}".format(shlex.quote(activation_key))
     if reactivation_key:
         env += " REACTIVATION_KEY={}".format(shlex.quote(reactivation_key))
-    bootstrap_cmd = "{} curl -Sks https://{}/pub/bootstrap/{} | /bin/bash".format(
-        env, server_fqdn, script_name)
-    r = ssh_run(client_hostname, bootstrap_cmd, check=False)
+    # Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
+    # luna.mydemo.lab, CentOS 7): a plain `curl -Sks <url> | /bin/bash` can
+    # fail on an OLD client with NO server-side change able to fix it —
+    # CentOS 7's stock curl 7.29.0 links Mozilla NSS 3.15.4 (~2014), which
+    # cannot negotiate TLS with this server's modern TLS-1.2-only, ECDHE
+    # cipher policy at all ("SSL_ERROR_NO_CYPHER_OVERLAP", confirmed via
+    # `curl -v`). Because the pipeline still exits 0 (curl fails, /bin/bash
+    # just receives empty stdin and does nothing), this used to silently
+    # skip straight to the 300s "waiting for salt key" poll below and die
+    # with a misleading "never appeared as pending" — no indication the
+    # real problem was TLS, not connectivity.
+    #
+    # Confirmed live on that same box that this is fixable WITHOUT touching
+    # the server or its TLS policy at all: the box's own OpenSSL 1.0.1e
+    # negotiates the exact same https://<server>/... endpoint fine (`openssl
+    # s_client -tls1_2` succeeds) — curl's NSS backend is the only thing
+    # that can't. Every Python interpreter's ssl module always links the
+    # system OpenSSL, never NSS, so falling back to a Python-based fetch
+    # when curl fails works on any client old enough to hit this, with no
+    # new package install required (CentOS 7 ships python2 by default,
+    # confirmed live: `urllib2.urlopen()` fetches the real script fine, no
+    # explicit unverified-context call needed since Python 2.7.5's urllib2
+    # doesn't verify HTTPS certs at all — matching curl's own -k here).
+    # Tried python3 first (in case a future/other client is python3-only
+    # and needs the explicit unverified context 3.x's urllib requires).
+    bootstrap_url = "https://{}/pub/bootstrap/{}".format(server_fqdn, script_name)
+    bootstrap_cmd = (
+        "_url={url}\n"
+        "_tmp=$(mktemp)\n"
+        "if ! curl -Sks \"$_url\" -o \"$_tmp\" 2>/tmp/.lab-bootstrap-curl-err; then\n"
+        "  python3 -c \"import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); "
+        "open(sys.argv[1],'wb').write(urllib.request.urlopen(sys.argv[2], context=ctx).read())\" "
+        "\"$_tmp\" \"$_url\" 2>/dev/null || \\\n"
+        "  python2 -c \"import urllib2,sys; open(sys.argv[1],'wb').write(urllib2.urlopen(sys.argv[2]).read())\" "
+        "\"$_tmp\" \"$_url\" 2>/dev/null || {{\n"
+        "    echo 'bootstrap: curl failed and no working python3/python2 HTTPS fallback found "
+        "(see /tmp/.lab-bootstrap-curl-err for curl'\"'\"'s own error)' >&2\n"
+        "    cat /tmp/.lab-bootstrap-curl-err >&2\n"
+        "    exit 1\n"
+        "  }}\n"
+        "fi\n"
+        "{env} /bin/bash \"$_tmp\"\n"
+        "_rc=$?\n"
+        "rm -f \"$_tmp\" /tmp/.lab-bootstrap-curl-err\n"
+        "exit $_rc"
+    ).format(url=shlex.quote(bootstrap_url), env=env)
+    r = ssh_run(client_hostname, bootstrap_cmd, check=False, capture=True)
+    bootstrap_out = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0:
         die("bootstrap script failed on '{}' (rc={})".format(client_hostname, r.returncode))
 
+    def _wait_for_pending_key():
+        for _ in range(retry_limit):
+            if client_hostname in saltkey_pending(hostname, exec_prefix):
+                return True
+            if saltkey_accepted(hostname, exec_prefix, client_hostname):
+                return None  # already accepted by something else while polling
+            time.sleep(retry_interval)
+        return False
+
     print("  Waiting for '{}''s salt key to appear …".format(client_hostname))
-    for _ in range(retry_limit):
-        if client_hostname in saltkey_pending(hostname, exec_prefix):
-            break
-        if saltkey_accepted(hostname, exec_prefix, client_hostname):
-            # Some other run/process (or a server-side autosign policy) may
-            # have already accepted it while we were polling.
-            print("  '{}' is already accepted".format(client_hostname))
-            return
-        time.sleep(retry_interval)
-    else:
-        die("'{}''s salt key never appeared as pending after bootstrap ({}s) — "
-            "check connectivity to {}:4505/4506 and the bootstrap script's own output".format(
-                client_hostname, retry_limit * retry_interval, server_fqdn))
+    appeared = _wait_for_pending_key()
+    if appeared is None:
+        print("  '{}' is already accepted".format(client_hostname))
+        return
+    if not appeared:
+        # See _try_wget_legacy_bootstrap()'s own docstring for the real,
+        # confirmed-live incident this recovers from: a curl/NSS TLS
+        # failure exits the pipeline as if nothing went wrong (empty stdin
+        # into /bin/bash), so the ONLY visible symptom is this same
+        # timeout — nothing about the bootstrap_cmd run above tells us in
+        # advance whether it's worth attempting. Cheap and safe to just try
+        # it: a no-op within a couple seconds for a client that doesn't
+        # need it (curl already worked fine, or there's no base_channel to
+        # stage anything from).
+        if base_channel and _try_wget_legacy_bootstrap(
+                hostname, exec_prefix, client_hostname, server_fqdn, script_name, env, base_channel):
+            appeared = _wait_for_pending_key()
+            if appeared is None:
+                print("  '{}' is already accepted".format(client_hostname))
+                return
+        if not appeared:
+            die("'{}''s salt key never appeared as pending after bootstrap ({}s), including "
+                "after the legacy-TLS-client recovery attempt — check connectivity to {}:4505/4506 "
+                "and the bootstrap script's own output: {}".format(
+                    client_hostname, retry_limit * retry_interval, server_fqdn,
+                    bootstrap_out[-500:] if bootstrap_out else "(no output captured)"))
 
     saltkey_accept(hostname, exec_prefix, client_hostname)
     print("  Accepted salt key for '{}'".format(client_hostname))

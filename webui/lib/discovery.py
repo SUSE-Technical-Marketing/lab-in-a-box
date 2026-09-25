@@ -39,8 +39,8 @@ _REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
 def scripts_dir():
     """Directory holding every install_<addon> definition + lab_schema — a
     single deployed /usr/local/bin in production, scripts/ in a repo
-    checkout (install_ds389 and every python-ported addon live together in
-    the same directory)."""
+    checkout (every addon, including install_ds389.py, lives together in
+    the same directory since it was ported to Python 2026-09-21)."""
     d = os.environ.get("LABBUILDER_SCRIPTS_DIR")
     if d:
         return os.path.abspath(d)

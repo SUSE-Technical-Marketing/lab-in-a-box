@@ -109,5 +109,28 @@ mysource='automation.mydemo.lab'
 ## object per line.
 #MCP_AUDIT_LOG=/var/log/lab-mcp/audit.log
 
+## Cross-cloud WireGuard overlay (libs/overlay.py) — used only when a lab's
+## JSON sets common.overlay=true. SITE-TO-SITE: only each site's own
+## automation VM (the home site's "mysource" host, or a small dedicated
+## gateway VM for a non-hub cloud account) ever joins the overlay itself —
+## individual lab nodes just get a local route to other sites' real
+## subnets, via their own site's gateway. OVERLAY_HUB_ACCOUNT (required)
+## names the cloud account under CREDENTIALS_PATH whose own gateway VM
+## acts as the overlay hub — auto-created/reused there, named
+## "lab-overlay-gw-<backend>[-<account>]", the same reuse-across-runs
+## convention as the cloud DNS VM. The hub account's own firewall/
+## security-group port-opening (for inbound WireGuard) is automatic.
+#OVERLAY_HUB_ACCOUNT=
+
+## Overlay network CIDR — the hub always takes the first usable address
+## (10.99.0.1 for the default below). Every spoke gets one address from
+## this range, allocated sequentially and tracked on the hub itself.
+#OVERLAY_CIDR=10.99.0.0/16
+
+## UDP port the hub's WireGuard listens on — opened automatically on a
+## cloud-created hub's security group; open it yourself if OVERLAY_HUB_HOST
+## points at an existing host behind its own firewall.
+#OVERLAY_WG_PORT=51820
+
 
 

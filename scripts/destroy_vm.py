@@ -84,6 +84,12 @@ def destroy_vm(definition, config, defaults, vm_name):
     else:
         warn("- No myip known for \"{}\" — skipping DNS cleanup".format(vm_name))
 
+    # No cross-cloud WireGuard overlay cleanup needed here — individual lab
+    # nodes are never themselves WireGuard peers (see libs/overlay.py's
+    # module docstring, corrected 2026-09-18): only each site's shared,
+    # persistent gateway is, and destroying one ordinary node never touches
+    # that. The route this node had (if overlay was enabled) is irrelevant
+    # once the node itself is gone.
     backend.delete_vm(vm_name)
     print('#\t\tVM "{}" destroyed\n'.format(vm_name))
 

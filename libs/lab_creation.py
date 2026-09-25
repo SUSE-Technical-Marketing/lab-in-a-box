@@ -28,6 +28,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -43,9 +44,38 @@ _RESET  = "\033[0m"
 
 _level = 0  # current indentation depth (mirrors $_lvl in bash)
 
+# setup_lab.py's parallel VM-creation mode (2026-09-21) runs multiple nodes'
+# whole provisioning flow on separate threads, all calling into log() via
+# deeply-nested code (provision_vm, destroy_vm, DNS registration, ...) that
+# was never written to pass an explicit level= through — it all relies on
+# this ambient module-level _level. Under real concurrency, "_level += 1" /
+# "_level -= 1" (scattered across ~20 call sites in this file and the
+# scripts that drive it) is a non-atomic shared-state race: not just
+# cosmetic interleaving, the indentation depth itself can end up
+# permanently wrong for the rest of the run. Rather than rewrite every
+# nested call site to thread an explicit level through (invasive, easy to
+# miss one), a parallel worker sets a per-thread prefix instead — when set,
+# it REPLACES the shared-_level-based indentation entirely for log() calls
+# on that thread, sidestepping the race without touching any of those ~20
+# sites or any nested caller.
+_thread_local = threading.local()
+
+
+def set_log_prefix(prefix):
+    """Sets (or clears, with None) a per-thread log prefix — see the module-level
+    comment above _thread_local. Call at the start/end of a parallel worker's own
+    per-node body; every log() call made from that thread (including deep inside
+    provision_vm/destroy_vm/DNS registration) picks it up automatically."""
+    _thread_local.prefix = prefix
+
 
 def log(msg, level=None):
-    """Print an indented message. Uses the module-level _level if level is None."""
+    """Print an indented message. Uses the module-level _level if level is None
+    AND no per-thread prefix is set (see set_log_prefix())."""
+    prefix = getattr(_thread_local, "prefix", None)
+    if prefix is not None:
+        print("{}{}".format(prefix, msg))
+        return
     indent = "  " * (_level if level is None else level)
     print(indent + msg)
 
@@ -1886,6 +1916,22 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
 
     vc = ["virt-customize","-a",img,"--hostname",vmname,
           "--upload","{}:/tmp/.vc_rc".format(cred_f)]
+
+    # Real bug found live 2026-09-23 (solar-system-lab.json, venus.mydemo.lab,
+    # SLES 16): libguestfs's own --hostname action writes the LEGACY SUSE
+    # /etc/HOSTNAME (uppercase) on this image, not the modern systemd
+    # /etc/hostname (lowercase) SLES 16 actually reads — confirmed live:
+    # /etc/HOSTNAME had the correct value, /etc/hostname was a 0-byte file
+    # dated to the base image's own build time, completely untouched.
+    # systemd then reported "Static hostname: (unset)" and fell back to
+    # whatever transient hostname it could derive another way (reverse DNS,
+    # in this case landing on a stale record from a previous VM that once
+    # held the same IP — see services.py's own _dns_remove_ptr_for_octet for
+    # that half of the same incident). Writing /etc/hostname directly here,
+    # unconditionally alongside --hostname (not instead of it — some distros
+    # DO need the legacy file too), fixes this regardless of which per-distro
+    # assumption libguestfs's own --hostname implementation gets wrong.
+    vc += ["--run-command", "echo {} > /etc/hostname".format(vmname)]
 
     if pass_type == "plain":
         vc += ["--run-command",

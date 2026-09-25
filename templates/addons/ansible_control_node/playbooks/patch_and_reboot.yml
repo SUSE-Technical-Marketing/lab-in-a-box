@@ -1,0 +1,58 @@
+---
+# Example playbook 3/3 — apply OS updates, then reboot only the hosts that
+# actually need it. ansible.builtin.package_facts/generic "update all"
+# semantics differ per package manager, so this one DOES branch on
+# ansible_pkg_mgr explicitly (unlike ensure_packages.yml, where "install
+# this exact package" is manager-agnostic) — "update everything" isn't.
+#
+# reboot-if-needed is genuinely OS-specific too: SUSE/RHEL both drop a real
+# marker file when a reboot is required (needs-restarting -r / zypper
+# ps -s convention), Debian/Ubuntu use /var/run/reboot-required. Checked
+# directly rather than assumed, and every reboot is staggered
+# (serial: 1) so a fleet never goes down all at once.
+#
+# Usage:  ansible-playbook -i <inventory> patch_and_reboot.yml
+- name: Apply updates and reboot only where actually required
+  hosts: all
+  become: true
+  serial: 1
+  tasks:
+    - name: Update all packages (zypper)
+      community.general.zypper:
+        name: "*"
+        state: latest
+      when: ansible_pkg_mgr == 'zypper'
+
+    - name: Update all packages (dnf/yum)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_pkg_mgr in ['dnf', 'dnf5', 'yum']
+
+    - name: Update all packages (apt)
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+      when: ansible_pkg_mgr == 'apt'
+
+    - name: Check whether SUSE/RHEL want a reboot
+      ansible.builtin.command: zypper ps -s
+      register: zypper_ps
+      changed_when: false
+      failed_when: false
+      when: ansible_pkg_mgr in ['zypper', 'dnf', 'dnf5', 'yum']
+
+    - name: Check whether Debian/Ubuntu want a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: apt_reboot_flag
+      when: ansible_pkg_mgr == 'apt'
+
+    - name: Reboot if the host itself says it needs one
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+      when: >-
+        (ansible_pkg_mgr in ['zypper', 'dnf', 'dnf5', 'yum']
+         and zypper_ps.stdout is defined and zypper_ps.stdout | trim != '')
+        or (ansible_pkg_mgr == 'apt'
+            and apt_reboot_flag.stat is defined and apt_reboot_flag.stat.exists)

@@ -268,6 +268,100 @@ check("ensure_cloud_dns_vm: a named account -> lab-dns-<backend>-<account>",
       _dns_vm_name_for("sandbox") == "lab-dns-aws-sandbox")
 
 
+# ── primary.try_load_service_credential / list_service_credentials /
+# find_service_credential_for_kind — external-service credentials, added
+# 2026-09-18, the credential_kind-marked counterpart of cloud_account above ──
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "scc-mine", ".cfg",
+           "credential_kind=scc\nscc_user=joe@example.com\nscc_password=hunter2\n")
+    _write(d, "aws-sandbox2", ".cfg", "CLOUDTYPE=aws\nAWS_REGION=us-east-1\n")
+    cfg = {"CREDENTIALS_PATH": d}
+
+    data, err = primary.try_load_service_credential("scc-mine", config=cfg)
+    check("service credential: parses, no error", err is None and data is not None)
+    check("service credential: CREDENTIAL_KIND normalised from the file's credential_kind key",
+          data.get("CREDENTIAL_KIND") == "scc")
+    check("service credential: the kind's own canonical fields come through",
+          data.get("scc_user") == "joe@example.com" and data.get("scc_password") == "hunter2")
+    check("service credential: the raw credential_kind key is consumed, not left alongside "
+          "CREDENTIAL_KIND", "credential_kind" not in data)
+
+    creds = primary.list_service_credentials(config=cfg)
+    check("list_service_credentials: finds the scc file", ("scc-mine", "scc") in creds)
+    check("list_service_credentials: a cloud_account file (cloudtype, not credential_kind) is "
+          "never picked up as a service credential",
+          all(name != "aws-sandbox2" for name, _ in creds))
+
+    accounts = primary.list_cloud_accounts(config=cfg)
+    check("list_cloud_accounts: a service-credential file (credential_kind, not cloudtype) is "
+          "never picked up as a cloud account",
+          all(name != "scc-mine" for name, _ in accounts))
+
+    found, matches = primary.find_service_credential_for_kind("scc", config=cfg)
+    check("find_service_credential_for_kind: exactly one match -> returns its name",
+          found == "scc-mine" and matches == ["scc-mine"])
+    found2, matches2 = primary.find_service_credential_for_kind("appcollection", config=cfg)
+    check("find_service_credential_for_kind: no match -> (None, [])",
+          found2 is None and matches2 == [])
+
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "scc-one", ".cfg", "credential_kind=scc\nscc_user=a\nscc_password=b\n")
+    _write(d, "scc-two", ".cfg", "credential_kind=scc\nscc_user=c\nscc_password=d\n")
+    found3, matches3 = primary.find_service_credential_for_kind("scc", config={"CREDENTIALS_PATH": d})
+    check("find_service_credential_for_kind: two matches -> (None, both names) — ambiguous",
+          found3 is None and sorted(matches3) == ["scc-one", "scc-two"])
+
+
+# ── addon_common.resolve_credential / Validator.vreq_or_credential ──────────
+import addon_common as ac  # noqa: E402
+
+with tempfile.TemporaryDirectory() as d:
+    _write(d, "scc-mine", ".cfg",
+           "credential_kind=scc\nscc_user=joe@example.com\nscc_password=hunter2\n")
+    cfg_with_account = {"smlm_scc_account": "scc-mine"}
+    creds = ac.resolve_credential(
+        cfg_with_account, "scc",
+        {"scc_user": "smlm_scc_user", "scc_password": "smlm_scc_password"},
+        account_key="smlm_scc_account", config={"CREDENTIALS_PATH": d})
+    check("resolve_credential: an explicit account name resolves from the credential file",
+          creds == {"scc_user": "joe@example.com", "scc_password": "hunter2"})
+
+    cfg_auto = {}
+    creds_auto = ac.resolve_credential(
+        cfg_auto, "scc", {"scc_user": "smlm_scc_user", "scc_password": "smlm_scc_password"},
+        account_key="smlm_scc_account", config={"CREDENTIALS_PATH": d})
+    check("resolve_credential: no explicit account, exactly one match -> auto-discovered",
+          creds_auto == {"scc_user": "joe@example.com", "scc_password": "hunter2"})
+
+    cfg_plaintext = {"smlm_scc_user": "plain@example.com", "smlm_scc_password": "plainpw"}
+    creds_plain = ac.resolve_credential(
+        cfg_plaintext, "appcollection",
+        {"appcollection_user": "smlm_scc_user", "appcollection_password": "smlm_scc_password"},
+        config={"CREDENTIALS_PATH": d})
+    check("resolve_credential: no matching credential file -> falls back to plaintext cfg fields "
+          "unchanged", creds_plain == {"appcollection_user": "plain@example.com",
+                                        "appcollection_password": "plainpw"})
+
+    v = ac.Validator({"smlm": {}})
+    with mock.patch.object(primary, "find_service_credential_for_kind",
+                           return_value=("scc-mine", ["scc-mine"])):
+        v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+    check("vreq_or_credential: unset field, but exactly one matching credential file exists -> no error",
+          v.errors == [])
+
+    v2 = ac.Validator({"smlm": {"smlm_scc_account": "does-not-exist"}})
+    with mock.patch.object(primary, "find_service_credential_for_kind", return_value=(None, [])):
+        v2.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+    check("vreq_or_credential: an explicit (even unverified) account reference is trusted, no error",
+          v2.errors == [])
+
+    v3 = ac.Validator({"smlm": {}})
+    with mock.patch.object(primary, "find_service_credential_for_kind", return_value=(None, [])):
+        v3.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+    check("vreq_or_credential: unset field, no account, no matching credential file -> real error",
+          len(v3.errors) == 1 and "smlm_scc_account" in v3.errors[0])
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

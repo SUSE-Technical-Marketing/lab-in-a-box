@@ -10,6 +10,7 @@
 # mgradm_common's run_install_with_pg_hba_guard/ensure_server_container_active,
 # which are mocked here rather than exercised for real. Run from
 # 49_smlm_baremetal.sh, in its own container — see tests/run_tests.sh.
+import re
 import sys
 import types
 from pathlib import Path
@@ -86,7 +87,7 @@ check("_validate: default (kubernetes) mode does NOT require smlm_scc_regcode/pr
 
 
 # ── setup_smlm_podman(): SCC registration + package-install branching ──────
-def run_setup_smlm_podman(cfg, transactional):
+def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
     calls = []
     inputs = {}
 
@@ -98,6 +99,8 @@ def run_setup_smlm_podman(cfg, transactional):
             return FakeResult(returncode=0 if transactional else 1)
         if "mgr-sync list channels" in cmd:
             return FakeResult(returncode=0, stdout="some-channel\n")
+        if "podman container exists uyuni-server" in cmd:
+            return FakeResult(returncode=0 if already_initialized else 1)
         return FakeResult(returncode=0)
 
     ism.ssh_run = fake_ssh_run
@@ -115,7 +118,12 @@ def run_setup_smlm_podman(cfg, transactional):
                  "ensure_activation_key", "ensure_appstreams", "ensure_activation_key_packages",
                  "ensure_activation_keys", "ensure_access_groups", "ensure_ansible_paths",
                  "ensure_content_projects", "ensure_system_groups", "ensure_custom_info_keys",
-                 "ensure_system_tags", "ensure_environments", "ensure_orgs"):
+                 "ensure_system_tags", "ensure_environments", "ensure_orgs",
+                 "ensure_monitoring", "ensure_distributions", "ensure_image_stores",
+                 "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
+                 "ensure_ansible_control_node", "ensure_grafana_formula",
+                 "ensure_virtual_host_managers", "ensure_snippets",
+                 "ensure_container_build_hosts", "ensure_mcp_server"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
@@ -159,6 +167,33 @@ check("setup_smlm_podman: install command uses the flag-only mgradm form (no FQD
       "mgradm install podman" in guard_calls[0][1]
       and "--admin-login admin" in guard_calls[0][1]
       and "--organization lab" in guard_calls[0][1])
+
+# Real bug found live 2026-09-21 (solar-system-lab.json, sol.mydemo.lab): a
+# prior run's `mgradm install` can die AFTER the real DB/org/admin bootstrap
+# already succeeded, while checking an entitlement-restricted OPTIONAL
+# service image (run_install_with_pg_hba_guard's own documented proxy-tftpd
+# crash) — confirmed live that uyuni-server/uyuni-db were already fully
+# healthy with a real, populated schema despite the outer mgradm install
+# having died. Blindly retrying `mgradm install` against that state doesn't
+# help (mgradm itself refuses, "Server is already initialized!"), so
+# setup_smlm_podman() must detect an existing uyuni-server container and
+# skip straight to the health-check + post-install steps instead of
+# re-attempting the install.
+calls_resume, guard_calls_resume, active_calls_resume, _, _ = run_setup_smlm_podman(
+    cfg, transactional=True, already_initialized=True)
+check("setup_smlm_podman: an already-initialized server (uyuni-server container exists) "
+      "never re-attempts mgradm install", guard_calls_resume == [])
+check("setup_smlm_podman: an already-initialized server skips the post-mgradm-install reboot "
+      "too (the plain ssh 'reboot' call right after run_install_with_pg_hba_guard — distinct "
+      "from the earlier transactional-update package-install reboot via reboot_vm(), which "
+      "still runs regardless since installing the mgradm tooling itself is untouched by this fix)",
+      "reboot" not in calls_resume)
+check("setup_smlm_podman: an already-initialized server still runs the health-check/recovery step",
+      active_calls_resume == ["sol.mydemo.lab"])
+check("setup_smlm_podman: an already-initialized server still registers SCC/containers modules "
+      "(idempotent, safe to repeat, and needed if THIS run is what's actually retrying after a "
+      "transient SCC failure rather than the mgradm crash)",
+      any(c == "SUSEConnect -r REGCODE123" for c in calls_resume))
 
 # Real bug found live 2026-09-13: an unquoted multi-word --organization
 # ("SUSE Test") got split by the remote shell into two tokens — mgradm then
@@ -234,6 +269,50 @@ check("setup_smlm_podman: a real (list-shaped) smlm_channels is space-joined int
 check("setup_smlm_podman: the malformed Python-list-repr form never appears",
       not any("['chan-a', 'chan-b']" in c for c in calls_chanlist))
 
+# Real bug found live 2026-09-21 (solar-system-lab.json, sol.mydemo.lab):
+# `mgr-sync add credentials` succeeding does NOT itself populate the local
+# product/channel catalog (a separate `mgr-sync refresh` step is needed) —
+# confirmed live that the old code's unbounded wait loop sat for over 2
+# hours with "No channels found." before a manual `mgr-sync refresh`
+# resolved it in under 5s.
+check("setup_smlm_podman: explicitly refreshes mgr-sync's catalog before waiting on the "
+      "channel list, rather than hoping the server's own background job already ran",
+      "mgrctl exec -- mgr-sync refresh" in calls_chanlist
+      and calls_chanlist.index("mgrctl exec -- mgr-sync refresh")
+      < calls_chanlist.index("mgrctl exec -- mgr-sync list channels 2>/dev/null"))
+
+# The wait loop itself now has a bounded retry count instead of `while
+# True` — a real, permanent SCC/entitlement problem (not just first-refresh
+# latency) must no longer be able to hang this addon forever.
+def _run_setup_smlm_podman_channels_never_sync(cfg):
+    def fake_ssh_run(hostname, cmd, check=True, capture=False, input_text=None):
+        if "command -v transactional-update" in cmd:
+            return FakeResult(returncode=0)
+        if "mgr-sync list channels" in cmd:
+            return FakeResult(returncode=0, stdout="No channels found.\n")
+        if "podman container exists uyuni-server" in cmd:
+            return FakeResult(returncode=1)
+        return FakeResult(returncode=0)
+
+    ism.ssh_run = fake_ssh_run
+    ism.reboot_vm = lambda virt_srv, hostname: None
+    ism.check_ssh_conn = lambda hostname: None
+    ism.time.sleep = lambda s: None
+    mgradm_common.run_install_with_pg_hba_guard = lambda hostname, cmd: None
+    mgradm_common.ensure_server_container_active = lambda hostname: None
+    ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)
+
+
+died_timeout = False
+try:
+    _run_setup_smlm_podman_channels_never_sync(cfg_with_channel_list)
+except SystemExit:
+    died_timeout = True
+check("setup_smlm_podman: dies with a clear message instead of hanging forever when the "
+      "channel list is STILL empty after the refresh and a bounded number of retries — a "
+      "real permanent problem, not just first-refresh latency, must surface as an error",
+      died_timeout)
+
 # Real bug found live 2026-09-14: an activation key's own
 # *_activation_key_child_channels (e.g. the "managertools-*" channels that
 # actually provide venv-salt-minion) were only ever REFERENCED by
@@ -308,10 +387,125 @@ check("channel-sync-monitor script checks for an already-running reposync before
       and monitor_script_call.index("pgrep -f spacewalk-repo-sync")
       < monitor_script_call.index("softwarechannel_syncrepos"))
 check("channel-sync-monitor script triggers at most one channel per run (exits "
-      "immediately after the first trigger, inside the loop)",
+      "immediately after the first trigger and its own error check, inside the loop)",
       monitor_script_call is not None
       and monitor_script_call.count("softwarechannel_syncrepos \"$channel\"") == 1
-      and "exit 0" in monitor_script_call.split("softwarechannel_syncrepos \"$channel\"")[1][:40])
+      and "exit 0" in monitor_script_call.split("softwarechannel_syncrepos \"$channel\"")[1][:80])
+
+# Real bug found live 2026-09-22: spacecmd_() used to discard ALL of
+# spacecmd's own stderr (2>/dev/null) — both its routine INFO banner and
+# any real error (a stale/invalid cached session, a connection failure)
+# alike — which silently masked a stale-credentials failure for 6.5 hours
+# straight on a real deployment: every cycle in that window logged "no
+# software channels found on the server", indistinguishable from the
+# genuinely-empty case, while a real 12-node reposync backlog sat
+# completely untouched. Hardened to capture stderr and fail loudly instead.
+check("channel-sync-monitor script no longer blindly discards spacecmd's own stderr — "
+      "that's what let a real auth failure masquerade as 'no channels' for 6.5 hours live",
+      monitor_script_call is not None and "2>/dev/null" not in monitor_script_call.split("spacecmd_()")[1][:200])
+
+# ensure_bootstrap_repo_monitor: deployed alongside the channel-sync monitor —
+# real bug investigated live 2026-09-23, mgr-create-bootstrap-repo --auto
+# never retries a distribution it already attempted and failed on (confirmed
+# by running --auto twice in a row against a real server), so a distribution
+# that raced the Tools/managertools channel sync once would stay permanently
+# broken with nothing to ever revisit it.
+import subprocess  # noqa: E402
+
+bootstrap_script_call = next(
+    (c for c in calls_chanlist if c.startswith("cat > /usr/local/sbin/smlm-bootstrap-repo-monitor.sh")), None)
+check("setup_smlm_podman: deploys the bootstrap-repo-monitor script when channels are configured",
+      bootstrap_script_call is not None)
+check("setup_smlm_podman: deploys the systemd service unit for the bootstrap-repo monitor",
+      any(c.startswith("cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.service") for c in calls_chanlist))
+check("setup_smlm_podman: deploys the systemd timer unit for the bootstrap-repo monitor, on a "
+      "recurring (not one-shot) schedule",
+      any(c.startswith("cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.timer") and "OnUnitActiveSec="
+          in c for c in calls_chanlist))
+check("setup_smlm_podman: enables and starts the bootstrap-repo-monitor timer (not just installs it inert)",
+      any("systemctl enable --now smlm-bootstrap-repo-monitor.timer" in c for c in calls_chanlist))
+
+# The embedded script is real bash living inside a Python string literal —
+# nothing else in this test suite parses it, so a real syntax error (like the
+# one actually found live 2026-09-23: an apostrophe inside a ${var:-default}
+# expansion breaks bash's parser even inside an outer pair of double quotes,
+# a genuine bash quirk, not something `bash -n` on a smaller snippet would
+# have obviously predicted) would otherwise ship silently. bash must be
+# available in this test's own container for this assertion to mean anything.
+_bash_check = subprocess.run(["bash", "-n", "-c", ism._BOOTSTRAP_REPO_MONITOR_SCRIPT],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+check("_BOOTSTRAP_REPO_MONITOR_SCRIPT: valid bash syntax (bash -n) — a real apostrophe-inside-"
+      "${{var:-default}} bug broke this live 2026-09-23: {}".format(_bash_check.stderr.strip()),
+      _bash_check.returncode == 0)
+
+check("bootstrap-repo-monitor script explicitly builds/retries a distribution via --create "
+      "(the only way to force a real retry once --auto would have given up on it)",
+      bootstrap_script_call is not None and "mcbr --create \"$retry_label\"" in bootstrap_script_call)
+check("bootstrap-repo-monitor script deliberately never invokes PLAIN --auto (mutating) — it "
+      "targets labels directly via --list (discovery) + --create (build/retry) instead, since "
+      "--auto's own 'changed products' tracking is exactly what causes it to forget a failed "
+      "distribution. --auto --dryrun IS used, but only for discovering 'not connected to CDN' "
+      "products --list hides forever (see the dedicated tests below) — never for a real build.",
+      bootstrap_script_call is not None
+      and re.search(r"mcbr --auto(?! --dryrun)", bootstrap_script_call) is None
+      and "mcbr --list" in bootstrap_script_call)
+check("bootstrap-repo-monitor script persists pending/failing distributions in a state dir "
+      "that survives across timer runs (PENDING_DIR), not just in-memory for one run",
+      bootstrap_script_call is not None and "PENDING_DIR=" in bootstrap_script_call)
+check("bootstrap-repo-monitor script tracks successfully-built distributions separately "
+      "(DONE_DIR) so a known-good one is never redundantly rebuilt on a later cycle",
+      bootstrap_script_call is not None and "DONE_DIR=" in bootstrap_script_call)
+check("bootstrap-repo-monitor script retries at most one pending distribution per run — same "
+      "conservative, at-most-one-trigger caution as the channel-sync monitor",
+      bootstrap_script_call is not None
+      and bootstrap_script_call.count("mcbr --create \"$retry_label\"") == 1)
+
+# Real bug found live 2026-09-23 (phobos.mydemo.lab, RHEL 9): --list silently
+# excludes any product mgr-create-bootstrap-repo considers "not connected to
+# CDN" — forever, even once its own channel content is fully ready — so the
+# --list-only discovery loop above never queues it. `--create` works fine
+# for one of these when named directly (confirmed live). --auto --dryrun
+# still mentions these products; the script parses ONLY that one message
+# pattern from it, never treating --auto's own build verdicts as authoritative.
+check("bootstrap-repo-monitor script ALSO discovers 'not connected to CDN' distributions "
+      "via --auto --dryrun, since --list hides them forever even once ready",
+      bootstrap_script_call is not None and "mcbr --auto --dryrun" in bootstrap_script_call)
+check("bootstrap-repo-monitor script's --auto --dryrun call is real dry-run (never mutates "
+      "anything) — discovery only, the real build still goes through --create",
+      bootstrap_script_call is not None
+      and bootstrap_script_call.count("mcbr --auto --dryrun") == 1
+      and "mcbr --auto\n" not in bootstrap_script_call)
+
+import subprocess as _subprocess  # noqa: E402
+
+_NOT_CONNECTED_SAMPLES = (
+    "RHEL9-x86_64 not connected to CDN. Skipping",
+    "WARNING: RHEL9-x86_64 not connected to CDN.",
+)
+for _sample in _NOT_CONNECTED_SAMPLES:
+    _m = re.search(r"sed -nE '(s/.*not connected to CDN.*?)'", bootstrap_script_call) if bootstrap_script_call else None
+    check("bootstrap-repo-monitor script: the 'not connected to CDN' sed pattern is present "
+          "in the script (couldn't locate it to test against a real sample: {!r})".format(_sample),
+          _m is not None)
+    if _m:
+        _r = _subprocess.run(["sed", "-nE", _m.group(1)], input=_sample,
+                              stdout=_subprocess.PIPE, stderr=_subprocess.PIPE, universal_newlines=True)
+        check("bootstrap-repo-monitor script's 'not connected to CDN' pattern extracts the real "
+              "label from: {!r}".format(_sample),
+              _r.stdout.strip() == "RHEL9-x86_64")
+check("channel-sync-monitor script captures spacecmd's stderr to a real file for inspection",
+      monitor_script_call is not None and 'ERRFILE=$(mktemp)' in monitor_script_call
+      and '2>"$ERRFILE"' in monitor_script_call)
+check("channel-sync-monitor script cleans up its own temp error file on exit",
+      monitor_script_call is not None and "trap 'rm -f \"$ERRFILE\"' EXIT" in monitor_script_call)
+check("channel-sync-monitor script checks for a real spacecmd error after EVERY spacecmd_ call "
+      "that matters (the channel list AND the resync trigger), not just one of them",
+      monitor_script_call is not None
+      and monitor_script_call.count("check_spacecmd_error") >= 3)  # def + 2 call sites
+check("channel-sync-monitor script's error check logs loudly and exits non-zero on a real "
+      "failure, rather than silently continuing as if nothing happened",
+      monitor_script_call is not None
+      and "log \"spacecmd call failed:" in monitor_script_call and "exit 1" in monitor_script_call)
 
 cfg_keys_no_creds = {k: v for k, v in cfg_with_keys.items() if k not in ("smlm_scc_user", "smlm_scc_password")}
 died = []
@@ -335,6 +529,71 @@ podman_definition = {
     },
     "nodes": {"sol.mydemo.lab": {"addons": ["smlm"]}},
 }
+
+# Real bug found live 2026-09-23: VHM credential resolution used to run
+# UNPROTECTED, before `rps`/run_provisioning_step even existed — a missing
+# smlm_vhm_aws_account credential file died() there and silently skipped
+# EVERY step after it (config channels, activation keys, orgs, ...), the
+# exact cascading-failure class run_provisioning_step exists to prevent.
+# Reproduced live: a real `install_smlm` rerun against sol.mydemo.lab died
+# right after the channel-sync-monitor install with no further output, and
+# the config channel it should have created never appeared. MUST run before
+# ism.setup_smlm_podman gets permanently stubbed out below (for the main()
+# tests) — this needs the REAL function.
+cfg_vhm_bad_creds = dict(cfg)
+cfg_vhm_bad_creds["smlm_vhm_aws_account"] = "does-not-exist"
+cfg_vhm_bad_creds["smlm_virtual_host_managers"] = [
+    {"label": "test-vhm", "region": "eu-central-1", "zone": "eu-central-1a"}]
+cfg_vhm_bad_creds["smlm_config_channels"] = [{"label": "test-channel"}]
+_, _, _, sc_calls_vhm, _ = run_setup_smlm_podman(cfg_vhm_bad_creds, transactional=True)
+check("setup_smlm_podman: a missing VHM credential file does NOT prevent config channels (or any "
+      "other later step) from still running",
+      any(n == "ensure_config_channels" for n, a, k in sc_calls_vhm))
+check("setup_smlm_podman: a missing VHM credential file does NOT prevent organizations (the LAST "
+      "step in the sequence) from still running",
+      any(n == "ensure_orgs" for n, a, k in sc_calls_vhm))
+
+# smlm_snippets: wired in, and runs BEFORE distributions/kickstart profiles —
+# a profile's own %pre/%post/partitioning can reference a snippet by name,
+# so it needs to already exist first.
+cfg_snippets = dict(cfg)
+cfg_snippets["smlm_snippets"] = [{"name": "example-snippet", "content": "echo hi\n"}]
+cfg_snippets["smlm_distributions"] = [{"name": "d1", "path": "/tmp/x", "base_channel": "c1",
+                                        "install_type": "rhel_9"}]
+_, _, _, sc_calls_snip, _ = run_setup_smlm_podman(cfg_snippets, transactional=True)
+snippet_names = [n for n, a, k in sc_calls_snip]
+check("setup_smlm_podman: calls ensure_snippets when smlm_snippets is set",
+      "ensure_snippets" in snippet_names)
+check("setup_smlm_podman: ensure_snippets runs BEFORE ensure_distributions",
+      "ensure_distributions" in snippet_names
+      and snippet_names.index("ensure_snippets") < snippet_names.index("ensure_distributions"))
+
+
+# smlm_image_build_hosts: wired in, and runs BEFORE image imports would be
+# scheduled — a build_host_id used by --import-images needs the entitlement
+# already enabled.
+cfg_build_hosts = dict(cfg)
+cfg_build_hosts["smlm_image_build_hosts"] = [{"system": "mercury.mydemo.lab"}]
+cfg_build_hosts["smlm_image_profiles"] = [{"label": "p1", "type": "dockerfile", "store": "s1",
+                                            "path": "https://example.com/x.git#main:x",
+                                            "activation_key": "1-x"}]
+_, _, _, sc_calls_bh, _ = run_setup_smlm_podman(cfg_build_hosts, transactional=True)
+bh_names = [n for n, a, k in sc_calls_bh]
+check("setup_smlm_podman: calls ensure_container_build_hosts when smlm_image_build_hosts is set",
+      "ensure_container_build_hosts" in bh_names)
+check("setup_smlm_podman: ensure_container_build_hosts runs AFTER ensure_image_profiles",
+      "ensure_image_profiles" in bh_names
+      and bh_names.index("ensure_image_profiles") < bh_names.index("ensure_container_build_hosts"))
+
+
+# smlm_mcp_server: wired in.
+cfg_mcp = dict(cfg)
+cfg_mcp["smlm_mcp_server"] = {"port": 8090}
+_, _, _, sc_calls_mcp, _ = run_setup_smlm_podman(cfg_mcp, transactional=True)
+mcp_names = [n for n, a, k in sc_calls_mcp]
+check("setup_smlm_podman: calls ensure_mcp_server when smlm_mcp_server is set",
+      "ensure_mcp_server" in mcp_names)
+
 
 ism.ac.handle_common_args = lambda *a, **k: None
 ism.primary.load_definition = lambda path: podman_definition

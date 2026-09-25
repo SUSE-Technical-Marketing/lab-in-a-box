@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -274,6 +275,84 @@ fake = FakeSSH()
 sc.ssh_run = fake
 sc.ensure_channels_synced("host1", "mgrctl exec --", [])
 check("ensure_channels_synced: truly no-op on empty list", len(fake.calls) == 0)
+
+# -- wait_for_channels_synced: real completion detection + timeout ----------
+# Added 2026-09-21 per explicit user requirement: registration scripts must
+# wait for channels to be genuinely, fully synced (not just "exists"),
+# reusing the exact reposync-log "Sync completed." signal already
+# ground-truthed in install_smlm.py's own channel-sync monitor.
+sc.time.sleep = lambda s: None  # no real waiting in tests
+
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
+sc.ssh_run = fake
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-a", "ch-b"])
+check("wait_for_channels_synced: checks the real reposync log path for each channel",
+      any("/var/log/rhn/reposync/ch-a.log" in c[1] for c in fake.calls)
+      and any("/var/log/rhn/reposync/ch-b.log" in c[1] for c in fake.calls))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.wait_for_channels_synced("host1", "mgrctl exec --", [])
+check("wait_for_channels_synced: no-op on an empty channel list, no SSH calls at all", len(fake.calls) == 0)
+
+# A channel that never completes -> dies once the timeout deadline passes.
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=1, stdout=""))])
+sc.ssh_run = fake
+_now = [1000.0]
+sc.time.time = lambda: _now[0]
+
+
+def _fake_sleep_advance(seconds):
+    _now[0] += 3600  # jump well past any real deadline, no actual waiting
+
+
+sc.time.sleep = _fake_sleep_advance
+died = False
+try:
+    sc.wait_for_channels_synced("host1", "mgrctl exec --", ["stuck-channel"], timeout=60, poll_interval=5)
+except SystemExit:
+    died = True
+check("wait_for_channels_synced: dies with a clear message once the timeout is exceeded, "
+      "rather than hanging forever", died)
+sc.time.time = time.time
+sc.time.sleep = time.sleep
+
+# -- pending_channels: the one-shot, non-blocking check factored out above --
+fake = FakeSSH(responses=[
+    ("reposync/ready.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/not-ready.log", FakeResult(returncode=1, stdout="")),
+])
+sc.ssh_run = fake
+pending = sc.pending_channels("host1", "mgrctl exec --", ["ready", "not-ready"])
+check("pending_channels: returns only the channel(s) NOT yet showing a completed sync",
+      pending == {"not-ready"})
+
+fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
+sc.ssh_run = fake
+check("pending_channels: an empty result means every channel is genuinely ready",
+      sc.pending_channels("host1", "mgrctl exec --", ["a", "b"]) == set())
+
+check("pending_channels: an empty input list returns an empty result, no SSH calls needed",
+      sc.pending_channels("host1", "mgrctl exec --", []) == set())
+
+# wait_for_channels_synced(timeout=None) waits forever — verify it actually keeps polling
+# instead of dying immediately, then completes once the channel becomes ready.
+poll_count = [0]
+
+
+def _completes_on_third_poll(hostname, cmd, **kwargs):
+    poll_count[0] += 1
+    if poll_count[0] >= 3:
+        return FakeResult(returncode=0, stdout="...\nSync completed.\n")
+    return FakeResult(returncode=1, stdout="")
+
+
+sc.ssh_run = _completes_on_third_poll
+sc.time.sleep = lambda s: None
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["slow-channel"], timeout=None, poll_interval=1)
+check("wait_for_channels_synced: timeout=None polls indefinitely and returns once genuinely ready",
+      poll_count[0] >= 3)
+sc.time.sleep = time.sleep
 
 # -- ensure_appstreams: no-op when key or appstreams unset -------------------
 fake = FakeSSH()
@@ -902,7 +981,101 @@ try:
                              {"uyuni_ansible_paths": [{"type": "playbook", "path": "/x"}]}, "uyuni")
 except SystemExit:
     died = True
-check("ensure_ansible_paths: entry missing 'control_node_id' dies", died)
+check("ensure_ansible_paths: entry missing 'control_node_id'/'system' dies", died)
+
+died = False
+try:
+    sc.ensure_ansible_paths(
+        "host1", "mgrctl exec --",
+        {"uyuni_ansible_paths": [{"control_node_id": 123, "path": "/x"}]}, "uyuni")
+except SystemExit:
+    died = True
+check("ensure_ansible_paths: entry missing 'type' dies", died)
+
+# -- ensure_ansible_paths: 'system' name resolved via _system_id() (added 2026-09-18) --
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+cfg = {"smlm_ansible_paths": [
+    {"system": "charon.mydemo.lab", "type": "playbook", "path": "/srv/ansible/playbooks"},
+]}
+sc.ensure_ansible_paths("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_paths: a 'system' hostname is resolved to its numeric id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_ansible_paths: the resolved id is used for the real createAnsiblePath call",
+      any("ansible.createAnsiblePath" in c and '"server_id": 42' in c for c in cmds))
+
+# -- remove_ansible_path: real ansible.removeAnsiblePath call --------------
+fake = FakeSSH(responses=[("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1"))])
+sc.ssh_run = fake
+sc.remove_ansible_path("host1", "mgrctl exec --", 2)
+cmd = unwrap(fake.calls[0][1])
+check("remove_ansible_path: calls the real, confirmed ansible.removeAnsiblePath method with the "
+      "right path id",
+      "-A 2 ansible.removeAnsiblePath" in cmd)
+
+fake = FakeSSH(responses=[("ansible.removeAnsiblePath", FakeResult(returncode=1, stderr="not found"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.remove_ansible_path("host1", "mgrctl exec --", 999)
+except SystemExit:
+    died = True
+check("remove_ansible_path: dies with a clear message on a real API failure", died)
+
+# -- remove_stale_default_ansible_paths: only the 2 known SMLM-auto-created defaults --
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/etc/ansible/hosts", "id": 1, "type": "inventory", "server_id": 42},
+        {"path": "/srv/ansible/inventory/uyuni_dynamic_inventory.py", "id": 4, "type": "inventory", "server_id": 42},
+        {"path": "/etc/ansible/playbooks", "id": 2, "type": "playbook", "server_id": 42},
+        {"path": "/srv/ansible/playbooks", "id": 3, "type": "playbook", "server_id": 42},
+    ]))),
+    ("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+sc.remove_stale_default_ansible_paths("host1", "mgrctl exec --", 42)
+cmds = [unwrap(c[1]) for c in fake.calls]
+remove_calls = [c for c in cmds if "ansible.removeAnsiblePath" in c]
+check("remove_stale_default_ansible_paths: removes exactly the 2 stale defaults, no more",
+      len(remove_calls) == 2)
+check("remove_stale_default_ansible_paths: removes the stale '/etc/ansible/hosts' default (id 1)",
+      any("-A 1 ansible.removeAnsiblePath" in c for c in remove_calls))
+check("remove_stale_default_ansible_paths: removes the stale '/etc/ansible/playbooks' default (id 2)",
+      any("-A 2 ansible.removeAnsiblePath" in c for c in remove_calls))
+check("remove_stale_default_ansible_paths: does NOT remove the real, working paths (ids 3/4)",
+      not any("-A 3 ansible.removeAnsiblePath" in c or "-A 4 ansible.removeAnsiblePath" in c for c in cmds))
+
+# A control node with only the real paths already registered (a second run, or a server
+# that never auto-created the defaults) -> no removal calls at all.
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/srv/ansible/inventory/uyuni_dynamic_inventory.py", "id": 4, "type": "inventory", "server_id": 42},
+        {"path": "/srv/ansible/playbooks", "id": 3, "type": "playbook", "server_id": 42},
+    ]))),
+])
+sc.ssh_run = fake
+sc.remove_stale_default_ansible_paths("host1", "mgrctl exec --", 42)
+check("remove_stale_default_ansible_paths: idempotent no-op when neither stale default is present",
+      not any("ansible.removeAnsiblePath" in c[1] for c in fake.calls))
+
+# -- ensure_ansible_paths: also cleans up stale defaults on every control node it touches --
+fake = FakeSSH(responses=[
+    ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout=json.dumps([
+        {"path": "/etc/ansible/hosts", "id": 1, "type": "inventory", "server_id": 42},
+    ]))),
+    ("ansible.removeAnsiblePath", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+sc.ensure_ansible_paths("host1", "mgrctl exec --",
+                         {"smlm_ansible_paths": [{"control_node_id": 42, "type": "playbook", "path": "/srv/x"}]},
+                         "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_paths: automatically cleans up stale defaults on the control node it just touched",
+      any("ansible.listAnsiblePaths" in c for c in cmds) and any("ansible.removeAnsiblePath" in c for c in cmds))
 
 # -- schedule_ansible_playbook: overload selection by arg shape --------------
 fake = FakeSSH(responses=[("schedulePlaybook", FakeResult(returncode=0, stdout="42\n"))])
@@ -1378,6 +1551,32 @@ try:
 except SystemExit:
     died = True
 check("list_systems_by_patch_status: server-side failure dies", died)
+
+# -- list_images_by_patch_status (CVE-audit-adjacent, added 2026-09-18) ------
+fake = FakeSSH(responses=[("audit.listImagesByPatchStatus",
+                            FakeResult(returncode=0, stdout="[{'image_id': 1, 'patch_status': 'PATCHED'}]"))])
+sc.ssh_run = fake
+out = sc.list_images_by_patch_status("host1", "mgrctl exec --", "CVE-2024-1234")
+check("list_images_by_patch_status: returns raw output via the api passthrough", "PATCHED" in out)
+call_cmd = fake.calls[0][1]
+check("list_images_by_patch_status: JSON args carry just the CVE id when no status filter given",
+      '"CVE-2024-1234"' in unwrap(call_cmd) and "audit.listImagesByPatchStatus" in call_cmd)
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.list_images_by_patch_status("host1", "mgrctl exec --", "CVE-2024-1234",
+                                patch_status_labels=["PATCHED", "NOT_AFFECTED"])
+check("list_images_by_patch_status: passes patch_status_labels as a second JSON arg",
+      '["CVE-2024-1234", ["PATCHED", "NOT_AFFECTED"]]' in fake.calls[0][1])
+
+fake = FakeSSH(responses=[("audit.listImagesByPatchStatus", FakeResult(returncode=1, stderr="invalid CVE"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.list_images_by_patch_status("host1", "mgrctl exec --", "bogus")
+except SystemExit:
+    died = True
+check("list_images_by_patch_status: server-side failure dies", died)
 
 # -- activation_key_groups / ensure_activation_key_groups --------------------
 fake = FakeSSH(responses=[("activationkey_listgroups", FakeResult(returncode=0, stdout="dev-systems\nqa-systems\n"))])
@@ -1870,10 +2069,47 @@ except SystemExit:
 check("saltkey_accept: dies on failure", died)
 
 
+# -- _ensure_client_can_resolve_server (added 2026-09-24) -------------------
+# Real bug found live 2026-09-24: saturn.mydemo.lab/neptune.mydemo.lab (both
+# AWS EC2, on a completely different network/DNS than this lab) simply
+# cannot resolve the SMLM server's hostname at all — confirmed live neither
+# client's own DNS config points anywhere near this lab's BIND server, yet
+# both reached the server's real public IP directly over HTTPS fine the
+# instant its IP was used instead of its name — a pure DNS gap, not
+# connectivity. Fixed by resolving the server's hostname LOCALLY (on the
+# automation node, which has working DNS for this lab) and pushing a static
+# /etc/hosts entry onto the client.
+_real_gethostbyname = sc.socket.gethostbyname
+sc.socket.gethostbyname = lambda fqdn: "3.71.46.122" if fqdn == "sol.mydemo.lab" else (_ for _ in ()).throw(
+    sc.socket.gaierror("simulated: not found"))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._ensure_client_can_resolve_server("saturn.mydemo.lab", "sol.mydemo.lab")
+check("_ensure_client_can_resolve_server: runs against the CLIENT host, not the server",
+      len(fake.calls) == 1 and fake.calls[0][0] == "saturn.mydemo.lab")
+check("_ensure_client_can_resolve_server: pushes the real resolved IP paired with the FQDN",
+      "3.71.46.122 sol.mydemo.lab" in fake.calls[0][1])
+check("_ensure_client_can_resolve_server: idempotent — checks /etc/hosts first, doesn't just append blindly",
+      fake.calls[0][1].startswith("grep -qF") and "/etc/hosts" in fake.calls[0][1])
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._ensure_client_can_resolve_server("saturn.mydemo.lab", "unresolvable.mydemo.lab")
+check("_ensure_client_can_resolve_server: silently no-ops when the automation node itself can't "
+      "resolve the server either (nothing more it can do — the real bootstrap attempt right "
+      "after reports its own clear error instead)",
+      len(fake.calls) == 0)
+
+sc.socket.gethostbyname = _real_gethostbyname
+
+
 # -- ensure_client_registered -------------------------------------------------
 sc.time.sleep = lambda s: None  # never actually wait in tests
 
-# Already accepted: pure no-op, no bootstrap curl issued.
+# Already accepted: pure no-op, no bootstrap curl issued — confirms
+# _ensure_client_can_resolve_server() isn't even attempted for a client
+# that's already done, matching the existing early-return.
 fake = FakeSSH(responses=[("saltkey.acceptedList", FakeResult(stdout="['client1.mydemo.lab']"))])
 sc.ssh_run = fake
 sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
@@ -1963,6 +2199,130 @@ try:
 except SystemExit:
     died = True
 check("ensure_client_registered: dies if the key never appears as pending", died)
+
+# -- legacy-TLS-client recovery (added 2026-09-23) ---------------------------
+# Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
+# luna.mydemo.lab, CentOS 7): curl links Mozilla NSS 3.15.4, which cannot
+# negotiate TLS with this server's modern TLS-1.2-only policy at all — the
+# pipeline still exits 0 (curl fails, /bin/bash gets empty stdin), so the
+# ONLY visible symptom is the salt key never going pending. Confirmed live
+# this is fixable entirely client-side: every Python/wget on such a client
+# links the system OpenSSL, never NSS.
+_REAL_CHANNEL_PACKAGES = "\n".join([
+    "dmidecode-3.2-5.el7_9.1.x86_64",
+    "openssl-1.0.2k-19.el7:1.x86_64",
+    "openssl-libs-1.0.2k-19.el7:1.x86_64",
+    "wget-1.14-18.el7_6.1.x86_64",
+])
+
+fake = FakeSSH(responses=[("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES))])
+sc.ssh_run = fake
+check("_channel_package_nvr: finds the exact NVR-EA line for a simple (no-epoch) package",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "wget")
+      == "wget-1.14-18.el7_6.1.x86_64")
+check("_channel_package_nvr: finds the exact NVR-EA line for a package with an epoch",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "openssl")
+      == "openssl-1.0.2k-19.el7:1.x86_64")
+check("_channel_package_nvr: does not confuse 'openssl' with 'openssl-libs' (prefix collision)",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "openssl-libs")
+      == "openssl-libs-1.0.2k-19.el7:1.x86_64")
+check("_channel_package_nvr: returns None for a package not in the channel",
+      sc._channel_package_nvr("srv1", "mgrctl exec --", "centos7-x86_64", "nginx") is None)
+
+_REAL_RPM_PATH = ("/var/spacewalk/packages/NULL/55c/openssl/1:1.0.2k-19.el7/x86_64/"
+                   "55c478a259b0a27ccb485dce91e190c0040df26b800a1f7a74557a47bef106d4/"
+                   "openssl-1.0.2k-19.el7.x86_64.rpm")
+
+
+def _stage_responder(hostname, cmd, **kwargs):
+    if "softwarechannel_listallpackages" in cmd:
+        return FakeResult(stdout=_REAL_CHANNEL_PACKAGES)
+    if "find /var/spacewalk/packages" in cmd:
+        # epoch must already be stripped from the search filename
+        check("_stage_channel_package_on_client: searches by filename with the epoch stripped",
+              "openssl-1.0.2k-19.el7.x86_64.rpm" in cmd and ":1." not in cmd)
+        return FakeResult(stdout=_REAL_RPM_PATH)
+    if "base64 " in cmd and "base64 -d" not in cmd:
+        check("_stage_channel_package_on_client: base64-encodes the real located file on the server side",
+              _REAL_RPM_PATH in cmd)
+        return FakeResult(stdout="ZmFrZS1ycG0tY29udGVudA==")  # "fake-rpm-content"
+    if "base64 -d" in cmd:
+        check("_stage_channel_package_on_client: writes to the client under the given dest_dir",
+              "/tmp/.lab-legacy-tls/openssl-1.0.2k-19.el7.x86_64.rpm" in cmd)
+        check("_stage_channel_package_on_client: the base64 payload is passed through unmodified",
+              kwargs.get("input_text") == "ZmFrZS1ycG0tY29udGVudA==")
+        return FakeResult(returncode=0)
+    return FakeResult()
+
+
+sc.ssh_run = _stage_responder
+staged_path = sc._stage_channel_package_on_client(
+    "srv1", "mgrctl exec --", "centos7-x86_64", "openssl", "client1.mydemo.lab", "/tmp/.lab-legacy-tls")
+check("_stage_channel_package_on_client: returns the staged client-side path on success",
+      staged_path == "/tmp/.lab-legacy-tls/openssl-1.0.2k-19.el7.x86_64.rpm")
+
+fake = FakeSSH(responses=[("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES))])
+sc.ssh_run = fake
+check("_stage_channel_package_on_client: returns None for a package not in the channel at all",
+      sc._stage_channel_package_on_client(
+          "srv1", "mgrctl exec --", "centos7-x86_64", "nginx", "client1.mydemo.lab", "/tmp/x") is None)
+
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages", FakeResult(stdout=_REAL_CHANNEL_PACKAGES)),
+    ("find /var/spacewalk/packages", FakeResult(stdout="")),  # not found on disk
+])
+sc.ssh_run = fake
+check("_stage_channel_package_on_client: returns None when the package can't be located on disk",
+      sc._stage_channel_package_on_client(
+          "srv1", "mgrctl exec --", "centos7-x86_64", "wget", "client1.mydemo.lab", "/tmp/x") is None)
+
+# ensure_client_registered end-to-end: curl-only client never goes pending,
+# but the legacy-TLS recovery (wget-based bootstrap) succeeds instead —
+# confirms it's actually wired into the real registration flow, not just a
+# standalone function nobody calls.
+_wget_attempts = {"n": 0}
+
+
+def _legacy_recovery_responder(hostname, cmd, **kwargs):
+    if "saltkey.acceptedList" in cmd:
+        return FakeResult(stdout="[]")
+    if "saltkey.pendingList" in cmd:
+        # only goes pending AFTER the legacy wget-based bootstrap has run
+        return FakeResult(stdout="['client1.mydemo.lab']" if _wget_attempts["n"] > 0 else "[]")
+    if "saltkey.accept" in cmd:
+        return FakeResult(returncode=0)
+    if "curl -Sks" in cmd or cmd.startswith("_url="):
+        # the ORIGINAL curl-based bootstrap_cmd: exits 0 but never actually
+        # runs anything real (the exact real symptom — NSS TLS failure, curl
+        # fails, /bin/bash gets empty stdin, no error surfaces)
+        return FakeResult(returncode=0, stdout="", stderr="")
+    if "command -v wget" in cmd:
+        return FakeResult(returncode=0)  # wget already present, skip staging
+    if cmd.startswith("_tmp=$(mktemp)") and "wget -qO" in cmd:
+        _wget_attempts["n"] += 1
+        return FakeResult(returncode=0, stdout="-bootstrap complete-\n", stderr="")
+    return FakeResult()
+
+
+sc.ssh_run = _legacy_recovery_responder
+_wget_attempts["n"] = 0
+sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                             retry_limit=2, retry_interval=0, base_channel="centos7-x86_64")
+check("ensure_client_registered: falls back to the legacy-TLS wget recovery when the key never "
+      "goes pending via curl, and succeeds instead of dying",
+      _wget_attempts["n"] == 1)
+
+# Without base_channel, the same never-pending curl client just dies as
+# before — the recovery path is opt-in, never attempted blindly.
+sc.ssh_run = _never_pending
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                                 retry_limit=3, retry_interval=0)
+except SystemExit:
+    died = True
+check("ensure_client_registered: with no base_channel given, still dies as before (no fallback attempted)",
+      died)
 
 
 # -- describe_activation_key / describe_system_group / describe_access_groups /
@@ -2200,6 +2560,80 @@ check("ensure_kickstart_profile: existing profile + already-set variable/key -> 
       not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
               for c in cmds))
 
+# -- snippet_file_path / ensure_snippet / ensure_snippets (added 2026-09-24) --
+# Real, live-grounded 2026-09-24: spacecmd's native snippet_create is
+# interactive ("Is this ok [y/N]:", confirmed live — no -y/--yes flag,
+# "ERROR: unrecognized arguments: -y") and re-running it against an EXISTING
+# name cleanly overwrites (no separate update command — confirmed absent).
+# Idempotency is checked against the snippet's own real file content, whose
+# path (varies by org id) comes from snippet_details' own "File:" line.
+_REAL_SNIPPET_DETAILS = (
+    "Name:   test-example\n"
+    "Macro:  $SNIPPET('spacewalk/1/test-example')\n"
+    "File:   /var/lib/cobbler/snippets/spacewalk/1/test-example\n"
+)
+
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=0, stdout=_REAL_SNIPPET_DETAILS))])
+sc.ssh_run = fake
+check("snippet_file_path: parses the real absolute path off the 'File:' line",
+      sc.snippet_file_path("host1", "mgrctl exec --", "test-example")
+      == "/var/lib/cobbler/snippets/spacewalk/1/test-example")
+
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=1, stdout="",
+                                                           stderr="WARNING: nosuch is not a valid snippet"))])
+sc.ssh_run = fake
+check("snippet_file_path: returns None for a snippet that doesn't exist",
+      sc.snippet_file_path("host1", "mgrctl exec --", "nosuch") is None)
+
+# Already up to date: real content matches -> no create/confirm round trip.
+fake = FakeSSH(responses=[
+    ("snippet_details", FakeResult(returncode=0, stdout=_REAL_SNIPPET_DETAILS)),
+    ("cat /var/lib/cobbler/snippets/spacewalk/1/test-example",
+     FakeResult(returncode=0, stdout="echo hi\n")),
+])
+sc.ssh_run = fake
+sc.ensure_snippet("host1", "mgrctl exec --", "test-example", "echo hi\n")
+check("ensure_snippet: already-matching content is a no-op (no snippet_create call)",
+      not any("snippet_create" in c[1] for c in fake.calls))
+
+# Doesn't exist yet -> stages content, creates, confirms with 'y', cleans up.
+fake = FakeSSH(responses=[("snippet_details", FakeResult(returncode=1, stdout="", stderr="not a valid snippet"))])
+sc.ssh_run = fake
+sc.ensure_snippet("host1", "mgrctl exec --", "new-snippet", "echo new\n")
+cmds_and_kwargs = [(c[1], c[2]) for c in fake.calls]
+stage_call = next((c for c, kw in cmds_and_kwargs if "cat >" in c), None)
+create_call = next(((c, kw) for c, kw in cmds_and_kwargs if "snippet_create -n new-snippet -f" in c), None)
+check("ensure_snippet: stages the real content to a remote temp file first",
+      stage_call is not None)
+check("ensure_snippet: creates via spacecmd's own stored session (NEVER -u/-p in argv — a real "
+      "security regression caught here: this project's own ensure_spacecmd_config exists "
+      "specifically to keep credentials out of argv/`ps` output)",
+      create_call is not None and " -u " not in create_call[0] and " -p " not in create_call[0])
+check("ensure_snippet: confirms the interactive 'Is this ok' prompt with a real 'y' on stdin",
+      create_call is not None and create_call[1].get("input_text") == "y\n")
+check("ensure_snippet: cleans up its own remote staging file afterward",
+      any("rm -f /tmp/.lab-snippet-" in c for c, kw in cmds_and_kwargs))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_snippets("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_snippets: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_snippets("host1", "mgrctl exec --", {"smlm_snippets": [{"content": "x"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_snippets: an entry missing 'name' dies", died)
+
+died = False
+try:
+    sc.ensure_snippets("host1", "mgrctl exec --", {"smlm_snippets": [{"name": "x"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_snippets: an entry missing 'content' dies", died)
+
+
 # -- image stores / profiles / import ------------------------------------------
 fake = FakeSSH(responses=[("image.store.listImageStores", FakeResult(returncode=0, stdout="[]"))])
 sc.ssh_run = fake
@@ -2263,6 +2697,412 @@ sc.ssh_run = fake
 sc.ensure_monitoring("host1", "mgrctl exec --", {}, "smlm")
 check("ensure_monitoring: no-op when the flag is unset", len(fake.calls) == 0)
 
+# -- _system_id -----------------------------------------------------------
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}])))])
+sc.ssh_run = fake
+check("_system_id: resolves the numeric id from system.getId's real response shape",
+      sc._system_id("host1", "mgrctl exec --", "sol.mydemo.lab") == 1000010042)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "nosuch.lab")
+except SystemExit:
+    died = True
+check("_system_id: zero matches dies", died)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1}, {"id": 2}])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "ambiguous.lab")
+except SystemExit:
+    died = True
+check("_system_id: more than one match dies (genuinely ambiguous)", died)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=1, stderr="no such method"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc._system_id("host1", "mgrctl exec --", "sol.mydemo.lab")
+except SystemExit:
+    died = True
+check("_system_id: server-side failure dies", died)
+
+# -- ensure_grafana_formula -----------------------------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "sol.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_grafana_formulas": [{"system": "sol.mydemo.lab", "admin_pass": "GrafanaPw1",
+                                   "prometheus": [{"key": "Prometheus", "url": "http://sol.mydemo.lab:9090"}],
+                                   "reportdb": True, "is_hub": True}]}
+sc.ensure_grafana_formula("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_grafana_formula: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_grafana_formula: enables the real 'grafana' formula name via setFormulasOfServer",
+      any("formula.setFormulasOfServer" in c and '[42, ["grafana"]]' in c for c in cmds))
+check("ensure_grafana_formula: configures it via setSystemFormulaData with the real pillar shape",
+      any("formula.setSystemFormulaData" in c and '"admin_pass": "GrafanaPw1"' in c
+          and '"url": "http://sol.mydemo.lab:9090"' in c
+          and '"reportdb": {"enabled": true, "is_hub": true}' in c for c in cmds))
+check("ensure_grafana_formula: real dashboard pillar keys default true (incl. the formula's own "
+      "real 'add_postgresql_dasboard' typo, not a corrected spelling)",
+      any('"add_uyuni_dashboard": true' in c and '"add_uyuni_clients_dashboard": true' in c
+          and '"add_postgresql_dasboard": true' in c and '"add_apache_dashboard": true' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_grafana_formula("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_grafana_formula: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_grafana_formula("host1", "mgrctl exec --", {"smlm_grafana_formulas": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_grafana_formula: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("formula.setFormulasOfServer", FakeResult(returncode=1, stderr="no monitoring subscription")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_grafana_formula("host1", "mgrctl exec --",
+                               {"smlm_grafana_formulas": [{"system": "sol.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_grafana_formula: a real API failure (e.g. missing subscription) dies with a clear "
+      "message, not silently ignored", died)
+
+# -- ensure_ansible_control_node (added 2026-09-18) ------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}
+sc.ensure_ansible_control_node("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_ansible_control_node: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_ansible_control_node: enables the real 'ansible_control_node' entitlement label",
+      any("system.addEntitlements" in c and '[42, ["ansible_control_node"]]' in c for c in cmds))
+check("ensure_ansible_control_node: schedules a highstate apply so 'ansible' actually gets installed",
+      any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_ansible_control_node("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_ansible_control_node: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_ansible_control_node("host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_ansible_control_node: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("system.addEntitlements", FakeResult(returncode=1, stderr="not a salt-entitled system")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_ansible_control_node(
+        "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_ansible_control_node: a real API failure dies with a clear message, not silently "
+      "ignored", died)
+
+
+# -- ensure_container_build_hosts (added 2026-09-24) ------------------------
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "mercury.mydemo.lab"}]))),
+])
+sc.ssh_run = fake
+cfg = {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}
+sc.ensure_container_build_hosts("host1", "mgrctl exec --", cfg, "smlm")
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_container_build_hosts: resolves the target system's id first",
+      any("system.getId" in c for c in cmds))
+check("ensure_container_build_hosts: enables the real 'container_build_host' entitlement label",
+      any("system.addEntitlements" in c and '[42, ["container_build_host"]]' in c for c in cmds))
+check("ensure_container_build_hosts: schedules a highstate apply so build tooling actually "
+      "gets installed",
+      any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
+          for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_container_build_hosts("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_container_build_hosts: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_container_build_hosts("host1", "mgrctl exec --", {"smlm_image_build_hosts": [{}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_container_build_hosts: entry missing 'system' dies", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42}]))),
+    ("system.addEntitlements", FakeResult(returncode=1, stderr="not a salt-entitled system")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_container_build_hosts(
+        "host1", "mgrctl exec --", {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_container_build_hosts: a real API failure dies with a clear message, not silently "
+      "ignored", died)
+
+
+# -- ensure_mcp_server (added 2026-09-24) ------------------------------------
+# Real, third-party github.com/uyuni-project/mcp-server-uyuni, deployed as a
+# sibling podman container on the SMLM host itself. Unlike every other
+# ensure_* here, this one calls ssh_run() DIRECTLY (not via _run/exec_prefix)
+# since podman must run on the host, not inside the uyuni-server container.
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="abc123\n")),
+])
+sc.ssh_run = fake
+cfg = {"smlm_mcp_server": {}, "smlm_deployment": "podman",
+       "smlm_admin_user": "admin", "smlm_admin_pass": "1234"}
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", cfg, "smlm")
+cmds = [c[1] for c in fake.calls]
+env_write_cmd, env_kwargs = next((c[1], c[2]) for c in fake.calls if "cat >" in c[1])
+check("ensure_mcp_server: writes the env file to a root-only path",
+      "/etc/mcp-server-uyuni/uyuni-config.env" in env_write_cmd and "chmod 600" in env_write_cmd)
+check("ensure_mcp_server: env file content has UYUNI_SERVER pointed at the real hostname, "
+      "not localhost", "UYUNI_SERVER=https://sol.mydemo.lab" in env_kwargs.get("input_text", ""))
+check("ensure_mcp_server: defaults UYUNI_USER/UYUNI_PASS to smlm_admin_user/smlm_admin_pass",
+      "UYUNI_USER=admin" in env_kwargs["input_text"] and "UYUNI_PASS=1234" in env_kwargs["input_text"])
+check("ensure_mcp_server: write tools default to false (read-only)",
+      "UYUNI_MCP_WRITE_TOOLS_ENABLED=false" in env_kwargs["input_text"])
+check("ensure_mcp_server: ssl verification defaults to false (self-signed cert)",
+      "UYUNI_MCP_SSL_VERIFY=false" in env_kwargs["input_text"])
+check("ensure_mcp_server: env file binds to real host loopback only, default port 8090, "
+      "never 0.0.0.0 (host-networked, so this bind IS the real listening address)",
+      "UYUNI_MCP_HOST=127.0.0.1" in env_kwargs["input_text"]
+      and "UYUNI_MCP_PORT=8090" in env_kwargs["input_text"]
+      and "0.0.0.0" not in env_kwargs["input_text"])
+run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
+check("ensure_mcp_server: podman run uses --network=host (sibling-container DNS/hosts "
+      "isolation confirmed live to break UYUNI_SERVER resolution otherwise), no -p mapping",
+      "--network=host" in run_cmd and " -p " not in run_cmd)
+check("ensure_mcp_server: uses --env-file, never -e (credentials must not leak into 'podman "
+      "inspect'/'ps')", "--env-file" in run_cmd and " -e " not in run_cmd)
+check("ensure_mcp_server: removes any stale container before recreating it (idempotent "
+      "converge, not a stale 'already exists' no-op)",
+      any("podman rm -f mcp-server-uyuni" in c for c in cmds))
+check("ensure_mcp_server: verifies the container is actually running afterwards",
+      any("podman ps --filter name=mcp-server-uyuni --filter status=running" in c for c in cmds))
+
+# No-op when the field is unset.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", {}, "smlm")
+check("ensure_mcp_server: no-op when smlm_mcp_server is unset", len(fake.calls) == 0)
+
+# Skips (warns, doesn't die) when smlm_deployment isn't "podman" — this
+# module can't reach a kubernetes-deployed SMLM's host directly for podman.
+fake = FakeSSH()
+sc.ssh_run = fake
+warned = []
+sc.warn = lambda m: warned.append(m)
+sc.ensure_mcp_server("sol.mydemo.lab", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+                      {"smlm_mcp_server": {}, "smlm_deployment": "kubernetes"}, "smlm")
+check("ensure_mcp_server: skips cleanly (no ssh_run calls) for a non-podman deployment",
+      len(fake.calls) == 0)
+check("ensure_mcp_server: warns rather than silently doing nothing",
+      len(warned) == 1 and "kubernetes" in warned[0])
+
+# A custom port/version/user/password/write_tools_enabled/ssl_verify all
+# take effect.
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="abc123\n")),
+])
+sc.ssh_run = fake
+sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --", {
+    "smlm_deployment": "podman",
+    "smlm_admin_user": "admin", "smlm_admin_pass": "1234",
+    "smlm_mcp_server": {
+        "version": "v0.2.1", "port": 9999, "user": "mcp-agent", "password": "s3cr3t",
+        "write_tools_enabled": True, "ssl_verify": True,
+    },
+}, "smlm")
+env_kwargs = next(c[2] for c in fake.calls if "cat >" in c[1])
+run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
+check("ensure_mcp_server: custom user/password override the smlm_admin_user/_pass defaults",
+      "UYUNI_USER=mcp-agent" in env_kwargs["input_text"] and "UYUNI_PASS=s3cr3t" in env_kwargs["input_text"]
+      and "admin" not in env_kwargs["input_text"].split("UYUNI_USER=")[1].split("\n")[0])
+check("ensure_mcp_server: write_tools_enabled/ssl_verify true take effect",
+      "UYUNI_MCP_WRITE_TOOLS_ENABLED=true" in env_kwargs["input_text"]
+      and "UYUNI_MCP_SSL_VERIFY=true" in env_kwargs["input_text"])
+check("ensure_mcp_server: custom port/version take effect",
+      "mcp-server-uyuni:v0.2.1" in run_cmd)
+check("ensure_mcp_server: custom port takes effect in the env file (host-networked port)",
+      "UYUNI_MCP_PORT=9999" in env_kwargs["input_text"])
+
+# Dies with a clear message if the env file write fails.
+fake = FakeSSH(responses=[("cat >", FakeResult(returncode=1, stderr="No space left on device"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies with a clear message if the env file can't be written", died)
+
+# Dies with a clear message if 'podman run' itself fails.
+fake = FakeSSH(responses=[("podman run", FakeResult(returncode=1, stderr="no such image"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies with a clear message if 'podman run' fails", died)
+
+# Dies if the container isn't actually running afterwards (crash-looped).
+fake = FakeSSH(responses=[
+    ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_mcp_server("sol.mydemo.lab", "mgrctl exec --",
+                          {"smlm_mcp_server": {}, "smlm_deployment": "podman"}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_mcp_server: dies if the container exited immediately after starting", died)
+
+
+# -- run_provisioning_step (added 2026-09-23) -------------------------------
+# Real bug: install_smlm.py's/install_uyuni.py's orchestration blocks used to
+# call each ensure_* step bare, so one die() (SystemExit) silently aborted
+# every step queued after it — confirmed live 2026-09-23,
+# ensure_ansible_control_node()'s "no system named 'charon.mydemo.lab' found
+# on the server" wiped out ensure_orgs() (the lab's "edge" org + 28 users)
+# several steps later. These tests avoid real time.sleep() by monkeypatching
+# sc.time.sleep.
+_real_sleep = sc.time.sleep
+_sleep_calls = []
+sc.time.sleep = lambda s: _sleep_calls.append(s)
+
+calls = []
+
+
+def _ok(*a, **kw):
+    calls.append(("ok", a, kw))
+
+
+def _always_dies(*a, **kw):
+    calls.append(("die", a, kw))
+    lab_creation.die("simulated failure")
+
+
+calls.clear()
+sc.run_provisioning_step("succeeds", _ok, "host1", x=1)
+check("run_provisioning_step: a successful step is called exactly once", len(calls) == 1)
+
+calls.clear()
+_sleep_calls.clear()
+sc.run_provisioning_step("no retry by default", _always_dies, "host1")
+check("run_provisioning_step: default retries=1 means the step is attempted exactly once",
+      len(calls) == 1)
+check("run_provisioning_step: default retries=1 never sleeps", _sleep_calls == [])
+
+calls.clear()
+_sleep_calls.clear()
+sc.run_provisioning_step("retries then still fails", _always_dies, "host1", retries=3, retry_delay=15)
+check("run_provisioning_step: retries=3 attempts the step exactly 3 times",
+      len(calls) == 3)
+check("run_provisioning_step: sleeps retry_delay between attempts, not after the last one",
+      _sleep_calls == [15, 15])
+
+_flaky_state = {"n": 0}
+
+
+def _flaky(*a, **kw):
+    _flaky_state["n"] += 1
+    calls.append(("flaky", _flaky_state["n"]))
+    if _flaky_state["n"] < 3:
+        lab_creation.die("still not ready")
+
+
+calls.clear()
+_sleep_calls.clear()
+_flaky_state["n"] = 0
+sc.run_provisioning_step("succeeds on a later attempt", _flaky, "host1", retries=5, retry_delay=20)
+check("run_provisioning_step: a step that fails twice then succeeds stops retrying once it succeeds",
+      len(calls) == 3)
+check("run_provisioning_step: only slept for the 2 failed attempts, not a 3rd time after success",
+      _sleep_calls == [20, 20])
+
+sc.time.sleep = _real_sleep
+
+# -- Virtual Host Managers (added 2026-09-23) --------------------------------
+fake = FakeSSH(responses=[
+    ("virtualhostmanager.listVirtualHostManagers", FakeResult(returncode=0, stdout="[]")),
+    ("virtualhostmanager.create", FakeResult(returncode=0, stdout="1")),
+])
+sc.ssh_run = fake
+vhm = {"label": "aws-vhm", "access_key_id": "AKIAEXAMPLE", "secret_access_key": "s3cr3t",
+       "region": "eu-central-1", "zone": "eu-central-1a"}
+sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", vhm)
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_virtual_host_manager_aws: checks for an existing VHM by label first",
+      any("virtualhostmanager.listVirtualHostManagers" in c for c in cmds))
+check("ensure_virtual_host_manager_aws: creates via the real moduleName 'AmazonEC2'",
+      any("virtualhostmanager.create" in c and '"aws-vhm", "AmazonEC2"' in c for c in cmds))
+check("ensure_virtual_host_manager_aws: sends the real 4 gatherer param keys",
+      any("access_key_id" in c and "secret_access_key" in c and '"region": "eu-central-1"' in c
+          and '"zone": "eu-central-1a"' in c for c in cmds))
+
+fake = FakeSSH(responses=[
+    ("virtualhostmanager.listVirtualHostManagers",
+     FakeResult(returncode=0, stdout='[{"label": "aws-vhm"}]')),
+])
+sc.ssh_run = fake
+sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", vhm)
+cmds = [unwrap(c[1]) for c in fake.calls]
+check("ensure_virtual_host_manager_aws: an already-existing VHM is left alone, not re-created",
+      not any("virtualhostmanager.create" in c for c in cmds))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_virtual_host_managers("host1", "mgrctl exec --", {}, "smlm")
+check("ensure_virtual_host_managers: no-op when the field is unset", len(fake.calls) == 0)
+
+died = False
+try:
+    sc.ensure_virtual_host_managers(
+        "host1", "mgrctl exec --", {"smlm_virtual_host_managers": [{"label": "x", "type": "vmware"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_virtual_host_managers: an unsupported type dies with a clear message", died)
+
+died = False
+try:
+    sc.ensure_virtual_host_manager_aws("host1", "mgrctl exec --", {"label": "incomplete"})
+except SystemExit:
+    died = True
+check("ensure_virtual_host_manager_aws: missing credentials/region/zone dies", died)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

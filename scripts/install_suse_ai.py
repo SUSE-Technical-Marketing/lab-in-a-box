@@ -9,6 +9,13 @@
 #                               SUSE_email registration keys, but a SEPARATE Application Collection
 #                               entitlement token, not your SCC registration code itself)
 #   suse_ai_registry_password : [MANDATORY] SUSE Application Collection registry password/token
+#   suse_ai_registry_account : [OPTIONAL] name of an encrypted credential_kind "appcollection"
+#                               file under /etc/lab_creation/credentials/ (see README's
+#                               Credentials section) to read suse_ai_registry_user/
+#                               suse_ai_registry_password from instead of this section's own
+#                               plaintext fields — auto-discovered if exactly one
+#                               "appcollection" credential file exists and this is left unset.
+#                               The plaintext fields above remain fully valid either way.
 #   suse_ai_registry          : [OPTIONAL] OCI registry host (default: dp.apps.rancher.io)
 #   suse_ai_ns                : [OPTIONAL] namespace (default: suse-private-ai — SUSE's own documented
 #                               default, kept as-is rather than following this project's usual
@@ -92,8 +99,10 @@ _DEFAULT_COMPONENTS = ["ollama", "open-webui"]
 
 
 def _validate(v):
-    v.vreq("suse_ai", "suse_ai_registry_user")
-    v.vreq("suse_ai", "suse_ai_registry_password")
+    v.vreq_or_credential("suse_ai", "suse_ai_registry_user", "appcollection",
+                          account_field="suse_ai_registry_account")
+    v.vreq_or_credential("suse_ai", "suse_ai_registry_password", "appcollection",
+                          account_field="suse_ai_registry_account")
     v.vns("suse_ai")
 
 
@@ -141,8 +150,16 @@ def setup_suse_ai_component(hostname, registry, component, ns, version=None, ext
 
 def setup_suse_ai(hostname, clu_name, mydomain, cfg):
     """Install the configured SUSE AI components."""
-    registry_user = cfg.get("suse_ai_registry_user")
-    registry_password = cfg.get("suse_ai_registry_password")
+    # suse_ai_registry_user/suse_ai_registry_password may alternatively come from an
+    # encrypted "appcollection"-kind credential file (see README's Credentials
+    # section) — resolved here; falls straight through to the plaintext fields
+    # below, unchanged, whenever no matching credential file is used.
+    creds = ac.resolve_credential(cfg, "appcollection", {
+        "appcollection_user": "suse_ai_registry_user",
+        "appcollection_password": "suse_ai_registry_password",
+    }, account_key="suse_ai_registry_account")
+    registry_user = creds["appcollection_user"]
+    registry_password = creds["appcollection_password"]
     if not registry_user or not registry_password:
         print("ERROR: suse_ai_registry_user and suse_ai_registry_password are mandatory "
               "(SUSE Application Collection entitlement — see https://apps.rancher.io).", file=sys.stderr)

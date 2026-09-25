@@ -43,6 +43,38 @@
 #                           multi-linux-manager/5.2's own server-deployment
 #                           guide.
 #
+# OPTIONAL when smlm_deployment is "podman" — Confidential Computing attestation container.
+# Ground-truthed 2026-09-23 directly against `mgradm install podman --help` on a real SMLM 5.2
+# server (a "Confidential Computing Flags" section, distinct from the also-real but unrelated
+# "Hub XML-RPC API"/"Saline"/"TFTPD" flag groups next to it):
+#   smlm_coco_replicas    : How many replicas of the confidential computing attestation
+#                           container to start — passed straight to `mgradm install`'s own
+#                           `--coco-replicas`. Unset (the default) omits the flag entirely, same
+#                           as mgradm's own default of not starting it.
+#   smlm_coco_image       : Image for the attestation container (mgradm's own default:
+#                           "suse/multi-linux-manager/5.2/x86_64/server-attestation")
+#   smlm_coco_tag         : Tag override for that image
+# NOTE (same real, confirmed-live risk documented on run_install_with_pg_hba_guard(), which
+# already handles it): mgradm's own tftpd-image entitlement check has been observed to silently
+# crash `mgradm install` AFTER the real DB/org/admin bootstrap already succeeded, purely because
+# this SCC account isn't entitled to an unrelated optional image. The attestation image may or
+# may not carry a similar entitlement requirement on your subscription — if `mgradm install`
+# appears to die right after enabling smlm_coco_replicas, check
+# run_install_with_pg_hba_guard()'s own completion-marker/resume handling before assuming the
+# whole install failed.
+#
+# OPTIONAL – credential store
+#   smlm_scc_account      : name of an encrypted credential_kind "scc" file under
+#                           /etc/lab_creation/credentials/ (see README's Credentials
+#                           section, scripts/setup_credentials.py) to read
+#                           smlm_scc_user/smlm_scc_password/smlm_scc_regcode from
+#                           instead of this JSON section's own plaintext fields.
+#                           Auto-discovered if exactly one "scc" credential file
+#                           exists and this is left unset; the plaintext fields
+#                           above remain fully valid either way — set them
+#                           directly if you'd rather not use the credential store
+#                           at all.
+#
 # OPTIONAL but STRONGLY RECOMMENDED when smlm_deployment is "podman" —
 # MANDATORY in practice if smlm_channels or smlm_activation_keys are also set
 #   smlm_scc_user         : SAME field/meaning as the kubernetes-mode field
@@ -187,6 +219,18 @@
 #                             (each via 'mgr-sync add channel <label>' if not already present in
 #                             'spacecmd softwarechannel_list') before the activation key is created
 #
+#   smlm_beta_channels        : List of BETA-flagged channel labels to add alongside
+#                             smlm_channels — confirmed live 2026-09-23 (sol.mydemo.lab) that
+#                             `mgr-sync add channels` needs no special flag or interactive EULA
+#                             confirmation for a channel/product whose own listing shows "(BETA)"
+#                             (e.g. "sle-product-sles-16.1-x86_64", from `mgr-sync list channels`
+#                             showing "SLE-Product-SLES-16.1 for x86_64 ... (BETA)") — it's added
+#                             exactly like any other channel. This field exists only to make that
+#                             opt-in explicit and self-documenting in the lab JSON (which channels
+#                             are deliberately pre-release) rather than mixing beta labels silently
+#                             into smlm_channels; functionally the two lists are merged and treated
+#                             identically. e.g. ["sle-product-sles-16.1-x86_64"]
+#
 # OPTIONAL – config channels (created/updated before the activation key above, so
 # smlm_activation_key_config_channels can reference them). List of objects:
 #   smlm_config_channels      : [{
@@ -202,6 +246,29 @@
 #                             associate the channel with any already-registered system directly
 #                             (that's client-side, out of scope here); use
 #                             smlm_activation_key_config_channels for newly-registered clients.
+#
+# OPTIONAL – Virtual Host Managers (Systems -> Virtual Host Managers in the Web UI). Only the
+# "aws" type is currently implemented — see libs/spacecmd_common.py's own section docstring for
+# the real, ground-truthed virtualhostmanager.create API call and its "AmazonEC2" module name.
+#   smlm_virtual_host_managers : [{"label": "...", "type": "aws" (default, only supported value),
+#                                  "region": "eu-central-1", "zone": "eu-central-1a",
+#                                  "access_key_id": "...", "secret_access_key": "..."}, ...]
+#                             access_key_id/secret_access_key are usually left OUT of each entry
+#                             and resolved instead from a real, long-lived AWS credential — see
+#                             smlm_vhm_aws_account below. A per-entry access_key_id/
+#                             secret_access_key, if present, overrides the resolved credential for
+#                             that one VHM only. Deliberately does NOT reuse this project's usual
+#                             cloud_account/resolve_cloud_account() mechanism (libs/backends.py):
+#                             that's built around SSO/STS sessions for provisioning VMs, which
+#                             expire — a Virtual Host Manager's own gatherer polls AWS
+#                             periodically forever, so it needs a real, non-expiring IAM access
+#                             key instead.
+#   smlm_vhm_aws_account      : Name of a 'vhm_aws' credentials file under
+#                             /etc/lab_creation/credentials/ (see setup_credentials.py) carrying
+#                             vhm_aws_access_key_id/vhm_aws_secret_access_key. Omit to
+#                             auto-discover the one 'vhm_aws' file if exactly one exists (same
+#                             resolve_credential() convention as smlm_scc_account elsewhere in
+#                             this file).
 #
 # OPTIONAL – organizations (created after the above; each org gets its own admin session
 # for its own scoped provisioning). List of objects:
@@ -254,6 +321,20 @@
 #                             user_addrole would fail. Attach a user to a custom group the other
 #                             way instead — list their username in that group's own "users" field
 #                             below, which runs in the correct order.
+#
+# OPTIONAL – Kickstart Snippets: reusable, named text fragments a kickstart/AutoYaST profile
+# includes via the real $SNIPPET('spacewalk/<org>/<name>') macro (confirmed live — exactly what
+# spacecmd's own snippet_details prints once created). Uyuni's own terminology calls the WHOLE
+# autoinstall mechanism "Kickstart" regardless of OS family — the same commands (and this same
+# field) work for a genuine RHEL/CentOS-family kickstart %post script or a SUSE AutoYaST profile's
+# own scripting alike; only the parent distribution's install_type differs (see smlm_distributions
+# below). Runs BEFORE smlm_distributions/smlm_kickstart_profiles — a profile referencing a snippet
+# by name needs it to already exist:
+#   smlm_snippets              : [{"name": "...", "content": "..."}, ...]
+#                             Idempotent (skips re-creating an already-matching snippet — see
+#                             libs/spacecmd_common.py's own ensure_snippet()). Re-running with
+#                             different content cleanly overwrites it (confirmed live — spacecmd
+#                             has no separate "update" command, snippet_create itself does both).
 #
 # OPTIONAL – autoinstall trees ("Kickstart Distributions") and Kickstart/AutoYaST profiles.
 # Distributions run automatically on every install (idempotent), BEFORE smlm_activation_key* so a
@@ -345,6 +426,35 @@
 #                             Run with:  install_smlm.py <lab.json> --import-images
 #                             (never runs automatically — scheduling an import is not idempotent,
 #                             same reasoning as --run-ansible-playbooks/--run-clm-actions).
+#   smlm_image_build_hosts     : [{"system": "already-registered-hostname.mydemo.lab"}, ...]
+#                             Enables the real Uyuni "container_build_host" entitlement on each
+#                             named, already-registered system, then schedules an Apply Highstate —
+#                             the same two-step shape as smlm_ansible_control_nodes. Ground-truthed
+#                             against EntitlementManager.java's CONTAINER_BUILD_HOST_ENTITLED
+#                             constant and the official Container Build Host doc (entitlement +
+#                             highstate). Runs BEFORE image imports so a build_host_id referenced
+#                             above (see smlm_image_imports) is actually usable. Does not itself
+#                             ensure the Containers module is assigned to that system's channels —
+#                             that prerequisite is a separate, real manual/channel-config step.
+#   smlm_mcp_server             : {
+#                                 "version": "latest",              # image tag, optional
+#                                 "port": 8090,                     # optional, 127.0.0.1-only
+#                                 "user": "...", "password": "...", # optional, default to
+#                                                                    #   smlm_admin_user/_pass
+#                                 "write_tools_enabled": false,     # optional, default false
+#                                 "ssl_verify": false                # optional, default false
+#                               }
+#                             Deploys the real, third-party Uyuni MCP Server
+#                             (github.com/uyuni-project/mcp-server-uyuni) as a standalone podman
+#                             container alongside the uyuni-server container, so an MCP-compliant
+#                             AI client can inspect/manage this Uyuni instance. Only supported when
+#                             smlm_deployment is "podman" (needs direct host+podman access) — a
+#                             "kubernetes" deployment is warned about and skipped, not guessed at.
+#                             Published on 127.0.0.1 only, never the network directly — this
+#                             server runs unauthenticated (no OAuth configured) and can hold real
+#                             write credentials, so reaching it off-host is left to an explicit SSH
+#                             tunnel/port-forward the operator sets up. See ensure_mcp_server()'s
+#                             own docstring in spacecmd_common.py for the full ground-truthing.
 #
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
@@ -362,16 +472,35 @@
 #                             namespace at all) — see libs/spacecmd_common.py.
 #
 # OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
-# content; the control node must already be a registered system with the "Ansible Control Node"
-# add-on entitlement enabled, with playbook/inventory files already on its filesystem, managed
-# out-of-band e.g. via git). Path registration runs automatically on every install (idempotent);
-# playbook execution is a SEPARATE, explicit trigger — see "--run-ansible-playbooks" below —
-# since scheduling a run is not idempotent (each call creates a brand-new run):
-#   smlm_ansible_paths        : [{"control_node_id": 1000010001, "type": "playbook" | "inventory",
+# content; playbook/inventory files must already be on the control node's own filesystem — this
+# project's own install_ansible_control_node.py addon puts real example content there, or manage
+# it out-of-band e.g. via git). Entitlement enabling and path registration both run automatically
+# on every install (idempotent); playbook execution is a SEPARATE, explicit trigger — see
+# "--run-ansible-playbooks" below — since scheduling a run is not idempotent (each call creates a
+# brand-new run):
+#   smlm_ansible_control_nodes : [{"system": "ansible-ctrl.mydemo.lab"}, ...]
+#                             Enables the real "Ansible Control Node" add-on entitlement on each
+#                             already-registered system (system.addEntitlements) and schedules a
+#                             highstate apply to install the ansible package — the same two steps
+#                             the real Web UI workflow documents (see libs/spacecmd_common.py's
+#                             ensure_ansible_control_node() for exactly what this does and does
+#                             not cover). A system must be registered (e.g. via client_registration)
+#                             BEFORE this can find it. Runs automatically on every install; for
+#                             smlm_deployment "podman" specifically, also reachable directly
+#                             without a full re-install via:
+#                               install_smlm.py <lab.json> --enable-ansible-control-nodes
+#   smlm_ansible_paths        : [{"system": "ansible-ctrl.mydemo.lab", "type": "playbook" | "inventory",
 #                                  "path": "/srv/ansible/playbooks"}, ...]
-#                             control_node_id is the target's NUMERIC Uyuni system ID (findable via
-#                             'spacecmd system_list' or the Web UI) — no name-based resolution is
-#                             provided here.
+#                             Names the control node either way: "system" (a hostname, resolved
+#                             automatically — the same mechanism smlm_ansible_control_nodes/
+#                             smlm_grafana_formulas already use) or "control_node_id" (the raw
+#                             NUMERIC Uyuni system ID, findable via 'spacecmd system_list' or the
+#                             Web UI, if you already have it). "path" is a DIRECTORY for type
+#                             "playbook" (this project's own install_ansible_control_node.py addon
+#                             puts example playbooks under /srv/ansible/playbooks by default), or
+#                             the exact inventory FILE/script path for type "inventory" (e.g.
+#                             /srv/ansible/inventory/uyuni_dynamic_inventory.py — that same addon's
+#                             own default).
 #   smlm_ansible_playbooks    : [{"control_node_id": 1000010001,
 #                                  "playbook_path": "/srv/ansible/playbooks/site.yml",
 #                                  "inventory_path": "/srv/ansible/inventory/hosts",
@@ -431,6 +560,10 @@
 #   install_smlm.py <lab.json> --cve-audit CVE-YYYY-NNNNN
 # prints every system's patch status for that CVE (AFFECTED_PATCH_INAPPLICABLE/
 # AFFECTED_PATCH_APPLICABLE/NOT_AFFECTED/PATCHED).
+#   install_smlm.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN
+# same, for container/OS images instead of systems (audit.listImagesByPatchStatus — the ENTIRE
+# real 'audit' namespace is these two methods; ground-truthed 2026-09-18 directly against the
+# real API docs, confirming no separate "Beta" audit surface exists beyond this).
 #
 # OPTIONAL – dev/QA/prod environment topology. A THIN COMPOSITION layer over the primitives
 # above plus system groups/tags — Uyuni itself has no native "environment" or "release" object
@@ -467,6 +600,32 @@
 #                             directly if that resolution fails. Run schedules with:
 #                             install_smlm.py <lab.json> --run-recurring-schedules (never automatic
 #                             — recurring-action idempotency was never confirmed).
+#   smlm_grafana_formulas     : [{
+#                                 "system": "sol.mydemo.lab",        # required, a registered client
+#                                 "admin_user": "admin",             # optional (default: admin)
+#                                 "admin_pass": "...",               # optional (default: admin)
+#                                 "prometheus": [{"key": "Prometheus", "url": "http://host:9090",
+#                                                 "user": "...", "password": "..."}, ...],
+#                                 # optional — default: one entry, http://localhost:9090
+#                                 "reportdb": true,                  # optional (default: false)
+#                                 "is_hub": false,                   # optional (default: false) — this
+#                                 #  Report DB aggregates peripheral servers (Hub topology)
+#                                 "dashboards": {"uyuni": true, "uyuni_clients": true,
+#                                                "postgresql": true, "apache": true}  # all default true
+#                               }, ...]
+#                             Applies SMLM's own built-in "grafana" Salt formula (installs and
+#                             configures Grafana ON the target system, wires up a Prometheus
+#                             datasource, and — if reportdb is set — auto-provisions a read-only
+#                             reportdb Postgres user plus the formula's own ready-made dashboards).
+#                             Distinct from this project's own standalone install_prometheus.py/
+#                             install_grafana.py addons (podman containers, no Salt involved at
+#                             all) — this is SMLM's own turnkey mechanism, see
+#                             libs/spacecmd_common.py's ensure_grafana_formula() for the full detail
+#                             and where every field/default came from (ground-truthed directly
+#                             against github.com/SUSE/salt-formulas' real grafana-formula source,
+#                             not guessed). Prerequisites the real formula itself enforces, not
+#                             checked here: not available on SMLM Proxy, needs a monitoring add-on
+#                             subscription, and Prometheus already installed on the target system.
 #
 # READ-ONLY — export a live server's own current configuration back into JSON shaped like
 # this "smlm" section (channels, activation keys, system groups, the calling admin's own org's
@@ -539,14 +698,14 @@ def _validate(v):
         # also set, since mgr-sync has no other way to learn which channels
         # are entitled (see setup_smlm_podman()'s own die() for the runtime
         # version of this same check).
-        v.vreq("smlm", "smlm_scc_regcode")
+        v.vreq_or_credential("smlm", "smlm_scc_regcode", "scc", account_field="smlm_scc_account")
         if cfg.get("smlm_channels") or cfg.get("smlm_activation_keys"):
-            v.vreq("smlm", "smlm_scc_user")
-            v.vreq("smlm", "smlm_scc_password")
+            v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+            v.vreq_or_credential("smlm", "smlm_scc_password", "scc", account_field="smlm_scc_account")
     else:
         v.vreq("smlm", "smlm_fqdn")
-        v.vreq("smlm", "smlm_scc_user")
-        v.vreq("smlm", "smlm_scc_password")
+        v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
+        v.vreq_or_credential("smlm", "smlm_scc_password", "scc", account_field="smlm_scc_account")
     v.vns("smlm")
     v.vver("smlm")
     v.vbool("smlm", "smlm_super_privileged")
@@ -562,6 +721,28 @@ def _validate(v):
 # 5.2's own container-deployment/mlm/ vs container-deployment/uyuni/ page
 # split (both exist as parallel, officially documented install guides for
 # the SAME mgradm/podman tool, just sourced from different repos/registries).
+
+def _resolve_and_fill_vhm_credentials(cfg, virtual_host_managers):
+    """
+    Resolves the shared smlm_vhm_aws_account credential (see that JSON
+    field's own doc comment for why this needs a real, long-lived AWS key
+    rather than this project's usual SSO/STS cloud_account mechanism) and
+    fills it into every "aws"-type entry in virtual_host_managers that
+    doesn't already carry its own explicit access_key_id/secret_access_key.
+    Split out from setup_smlm_podman() itself so it can be run through
+    run_provisioning_step() like every other step — see that call site's
+    own comment for the real cascading-failure bug this fixes.
+    """
+    vhm_creds = ac.resolve_credential(
+        cfg, "vhm_aws",
+        {"vhm_aws_access_key_id": "smlm_vhm_aws_access_key_id",
+         "vhm_aws_secret_access_key": "smlm_vhm_aws_secret_access_key"},
+        account_key="smlm_vhm_aws_account")
+    for vhm in virtual_host_managers:
+        if (vhm.get("type") or "aws") == "aws":
+            vhm.setdefault("access_key_id", vhm_creds["vhm_aws_access_key_id"])
+            vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
+
 
 def setup_smlm_podman(hostname, virt_srv, cfg):
     """
@@ -700,21 +881,53 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     # not a valid FQDN"). install_uyuni.py has this identical latent bug —
     # never touched here (still Uyuni-only, per the user's own instruction),
     # but its own uyuni_org just never happened to contain a space.
-    install_cmd = (
-        "mgradm install podman "
-        "--admin-login {} "
-        "--admin-password {} "
-        "--email {} "
-        "--ssl-password {} "
-        "--organization {}".format(
-            shlex.quote(admin), shlex.quote(password), shlex.quote(email),
-            shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
-    run_install_with_pg_hba_guard(hostname, install_cmd)
+    # A prior run's `mgradm install` can die AFTER the real bootstrap (DB
+    # schema/org/admin — the part that matters) already completed, while
+    # checking an entitlement-restricted OPTIONAL service image (see
+    # run_install_with_pg_hba_guard's own docstring on the confirmed-live
+    # proxy-tftpd crash). Confirmed live again 2026-09-21
+    # (solar-system-lab.json, sol.mydemo.lab): the uyuni-server/uyuni-db
+    # containers were fully healthy with a real, populated schema (479
+    # tables, 1 web_contact row, 1 org) even though the outer `mgradm
+    # install` had died and this function's own die() had already fired on
+    # a prior run. Simply re-running `mgradm install` against that state
+    # doesn't help — mgradm itself refuses ("Server is already
+    # initialized! Uninstall before attempting new installation or use
+    # upgrade command"), and there is no supported resume path short of a
+    # full uninstall+reinstall (see run_install_with_pg_hba_guard's own
+    # docstring) — needlessly destructive for infrastructure that's
+    # actually fine. Detect this up front and skip straight to the
+    # health-check + post-install steps below instead.
+    already_initialized = ssh_run(hostname, "podman container exists uyuni-server", check=False).returncode == 0
+    if already_initialized:
+        print("- uyuni-server container already exists — skipping mgradm install, resuming "
+              "from the post-install steps (a prior run's mgradm install likely died AFTER "
+              "the real bootstrap completed; see this line's own comment)")
+    else:
+        install_cmd = (
+            "mgradm install podman "
+            "--admin-login {} "
+            "--admin-password {} "
+            "--email {} "
+            "--ssl-password {} "
+            "--organization {}".format(
+                shlex.quote(admin), shlex.quote(password), shlex.quote(email),
+                shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
+        # Confidential Computing attestation container — see this JSON section's
+        # own smlm_coco_replicas doc comment above for the real, ground-truthed
+        # `mgradm install podman --help` flags this maps to.
+        if cfg.get("smlm_coco_replicas") is not None:
+            install_cmd += " --coco-replicas {}".format(shlex.quote(str(cfg["smlm_coco_replicas"])))
+        if cfg.get("smlm_coco_image"):
+            install_cmd += " --coco-image {}".format(shlex.quote(cfg["smlm_coco_image"]))
+        if cfg.get("smlm_coco_tag"):
+            install_cmd += " --coco-tag {}".format(shlex.quote(cfg["smlm_coco_tag"]))
+        run_install_with_pg_hba_guard(hostname, install_cmd)
 
-    time.sleep(60)
-    ssh_run(hostname, "reboot", check=False)
-    time.sleep(5)
-    check_ssh_conn(hostname)
+        time.sleep(60)
+        ssh_run(hostname, "reboot", check=False)
+        time.sleep(5)
+        check_ssh_conn(hostname)
     ensure_server_container_active(hostname)
 
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
@@ -732,6 +945,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     channels = cfg.get("smlm_channels") or []
     if isinstance(channels, str):
         channels = channels.split()
+
+    # smlm_beta_channels: a separately-named, explicitly-opt-in list of
+    # BETA-flagged channels — confirmed live 2026-09-23 they need no special
+    # handling from `mgr-sync add channels`, so this is just merged straight
+    # into the same channel list (see this field's own JSON-doc comment
+    # above for the real confirmation).
+    for c in cfg.get("smlm_beta_channels") or []:
+        if c not in channels:
+            channels.append(c)
 
     # Real bug found live 2026-09-14: an activation key's own
     # *_activation_key_child_channels (e.g. the "managertools-*" channels
@@ -796,7 +1018,24 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
                 check=False)
 
     if channels:
+        # Real bug found live 2026-09-21 (solar-system-lab.json,
+        # sol.mydemo.lab): `mgr-sync add credentials` succeeding does NOT
+        # itself populate the local product/channel catalog — that's a
+        # separate step (`mgr-sync refresh`, which talks to the real SCC
+        # API), and the wait loop below used to have no timeout at all, so
+        # without an explicit refresh it can wait forever unless the
+        # server's own scheduled background job (taskomatic's
+        # MgrSyncRefresh) happens to fire on its own first. Confirmed live:
+        # credentials were added successfully, but `mgr-sync list channels`
+        # still returned "No channels found." over 2 hours later — a
+        # manual `mgr-sync refresh` (took under 5s) is what actually
+        # populated it.
+        print("- Refreshing mgr-sync's product/channel catalog from SCC")
+        ssh_run(hostname, "mgrctl exec -- mgr-sync refresh", check=False)
+
         count = 0
+        max_retries = 60  # 10 min — the refresh above should make this near-instant; this
+                           # bound exists only as a safety net, not the primary fix.
         print("- Waiting for channel list to sync")
         while True:
             time.sleep(10)
@@ -806,10 +1045,24 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
                           check=False, capture=True).stdout or ""
             if any("no channels found." not in line.lower() for line in out.splitlines()):
                 break
+            if count >= max_retries:
+                die("channel list on '{}' is still empty after mgr-sync refresh + {} retries "
+                    "({} min) — check 'mgrctl exec -- mgr-sync refresh' and 'mgrctl exec -- "
+                    "mgr-sync list channels' there directly".format(
+                        hostname, max_retries, max_retries * 10 // 60))
         time.sleep(300)
         channel_args = " ".join(shlex.quote(c) for c in channels)
         ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
         ensure_channel_sync_monitor(hostname, admin, password)
+        ensure_bootstrap_repo_monitor(hostname)
+        print("  NOTE: channels have been ADDED but not necessarily fully SYNCED yet — real "
+              "package content is now downloading from SCC in the background, one channel at "
+              "a time (see the channel-sync monitor above). Depending on how many channels and "
+              "how large they are, this can legitimately take SEVERAL HOURS to finish. Clients "
+              "registering against a channel that isn't fully synced yet won't fail — "
+              "install_client_registration.py detects this and retries automatically in the "
+              "background until it's ready — but don't expect every system to show up "
+              "registered right away.")
 
     sync_channels = (cfg.get("smlm_sync_channels") or "").split()
     config_channels = cfg.get("smlm_config_channels") or []
@@ -824,44 +1077,108 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     environments = cfg.get("smlm_environments") or []
     distributions = cfg.get("smlm_distributions") or []
     kickstart_profiles = cfg.get("smlm_kickstart_profiles") or []
+    snippets = cfg.get("smlm_snippets") or []
     image_stores = cfg.get("smlm_image_stores") or []
     image_profiles = cfg.get("smlm_image_profiles") or []
+    image_build_hosts = cfg.get("smlm_image_build_hosts") or []
+    virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
+    mcp_server_set = cfg.get("smlm_mcp_server") is not None  # {} is a valid "enable with
+                                                              # defaults" value, not "unset"
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
-            or distributions or kickstart_profiles or image_stores or image_profiles
+            or distributions or kickstart_profiles or snippets or image_stores or image_profiles
+            or image_build_hosts or virtual_host_managers or mcp_server_set
             or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        sc.ensure_channels_synced(hostname, exec_prefix, sync_channels)
-        sc.ensure_config_channels(hostname, exec_prefix, cfg, "smlm")
+        rps = sc.run_provisioning_step
+        if virtual_host_managers:
+            # Real bug found live 2026-09-23: this credential resolution used
+            # to run unprotected, BEFORE `rps` even existed — a missing/
+            # misnamed smlm_vhm_aws_account credential file died() here and
+            # silently skipped every single step after it (config channels,
+            # activation keys, orgs, everything), the exact same cascading-
+            # failure class run_provisioning_step exists to prevent. Routed
+            # through rps() like every other step now, so a VHM credential
+            # problem only skips VHM provisioning, not the whole rest of the
+            # server's configuration.
+            rps("vhm credentials", _resolve_and_fill_vhm_credentials, cfg, virtual_host_managers)
+        rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
+        rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "smlm")
         # System groups BEFORE any activation key: ensure_activation_key()/
         # ensure_activation_keys() link a key to <prefix>_activation_key_groups
         # via activationkey_addgroups, which dies if the named group doesn't
         # exist yet server-side — confirmed live 2026-09-15 ("Unable to locate
         # or access server group: 'prod'") the first time a lab actually
         # combined smlm_system_groups with smlm_activation_key_groups.
-        sc.ensure_monitoring(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_groups(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_distributions(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_image_stores(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_image_profiles(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_key(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_appstreams(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_key_packages(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_activation_keys(hostname, exec_prefix, cfg, "smlm")
+        rps("monitoring", sc.ensure_monitoring, hostname, exec_prefix, cfg, "smlm")
+        rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "smlm")
+        # Snippets BEFORE distributions/kickstart profiles: a profile's own
+        # %pre/%post/partitioning can reference one by name via its real
+        # $SNIPPET(...) macro, so it should already exist first.
+        rps("snippets", sc.ensure_snippets, hostname, exec_prefix, cfg, "smlm")
+        rps("distributions", sc.ensure_distributions, hostname, exec_prefix, cfg, "smlm")
+        rps("image stores", sc.ensure_image_stores, hostname, exec_prefix, cfg, "smlm")
+        rps("image profiles", sc.ensure_image_profiles, hostname, exec_prefix, cfg, "smlm")
+        # BEFORE any --import-images run: an import's own build_host_id needs a
+        # system that already holds this entitlement — see this JSON section's
+        # own smlm_image_build_hosts doc comment above.
+        rps("image build hosts", sc.ensure_container_build_hosts, hostname, exec_prefix, cfg, "smlm")
+        # activation key(s) depend on the system groups step just above (see
+        # the comment on that reorder) — a couple of short retries smooth
+        # over ordinary server-side propagation lag right after a group was
+        # just created, without masking a real config mistake for long.
+        rps("activation key", sc.ensure_activation_key, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
+        rps("appstreams", sc.ensure_appstreams, hostname, exec_prefix, cfg, "smlm")
+        rps("activation key packages", sc.ensure_activation_key_packages, hostname, exec_prefix, cfg, "smlm")
+        rps("activation keys", sc.ensure_activation_keys, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
         # Kickstart profiles AFTER activation keys: a profile can link to one
         # via kickstart_addactivationkeys, which needs the key to already exist
         # — same ordering reasoning as system groups vs activation keys above.
-        sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
-        sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin, password)
+        # (ensure_kickstart_profile() already self-skips cleanly when its own
+        # distribution isn't populated yet — see that function's own
+        # docstring — so retrying here is only for the activation-key link,
+        # not for the known kickstart-tree gap.)
+        rps("kickstart profiles", sc.ensure_kickstart_profiles, hostname, exec_prefix, cfg, "smlm",
+            retries=3, retry_delay=15)
+        rps("users", sc.ensure_users, hostname, exec_prefix, cfg, "smlm")
+        rps("access groups", sc.ensure_access_groups, hostname, exec_prefix, cfg, "smlm")
+        # Each step below is independent of the ones before it — wrapped via
+        # run_provisioning_step() so that, e.g., the Ansible control node not
+        # having registered as a client YET (a real, expected race against
+        # install_client_registration.py's own background retry workers,
+        # confirmed live 2026-09-23) can never again silently skip orgs/users
+        # or any other unrelated step queued after it. See that function's
+        # own docstring for the real incident this fixes.
+        #
+        # ansible_control_node/ansible_paths get the most generous retry
+        # window of anything in this block: they're the one real, CONFIRMED
+        # cross-dependency on a system that registers on its own, completely
+        # decoupled schedule (install_client_registration.py's background
+        # retry workers) — 10 attempts 60s apart gives a client that's just
+        # about to finish registering a real chance, without blocking this
+        # whole run indefinitely for one that's genuinely still hours away
+        # (that case still needs a later config run — see
+        # run_provisioning_step()'s own docstring for why that's fine).
+        rps("ansible control node", sc.ensure_ansible_control_node, hostname, exec_prefix, cfg, "smlm",
+            retries=10, retry_delay=60)
+        rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "smlm",
+            retries=10, retry_delay=60)
+        rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "smlm")
+        rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "smlm")
+        rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "smlm")
+        rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "smlm")
+        rps("grafana formula", sc.ensure_grafana_formula, hostname, exec_prefix, cfg, "smlm")
+        rps("virtual host managers", sc.ensure_virtual_host_managers, hostname, exec_prefix, cfg, "smlm")
+        rps("mcp server", sc.ensure_mcp_server, hostname, exec_prefix, cfg, "smlm")
+        # Organizations run last and its own per-org steps (activation keys,
+        # system groups, users) mirror the same top-level dependencies above
+        # — same modest retry window.
+        rps("organizations", sc.ensure_orgs, hostname, exec_prefix, cfg, "smlm", admin, password,
+            retries=3, retry_delay=15)
 
 
 _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
@@ -889,13 +1206,39 @@ LOG_DIR=/var/log/rhn/reposync
 LOGFILE=/var/log/smlm-channel-sync-monitor.log
 ADMIN=__ADMIN__
 PASSWORD=__PASSWORD__
+ERRFILE=$(mktemp)
+trap 'rm -f "$ERRFILE"' EXIT
 
 log() {
     echo "$(date -Is) $*" >> "$LOGFILE"
 }
 
+# Real bug found live 2026-09-22: spacecmd_() used to redirect spacecmd's
+# own stderr straight to /dev/null, discarding both its routine INFO
+# banner AND any real error (an invalid/stale cached session, a connection
+# failure, ...) the exact same way. That silently masked a
+# stale-credentials failure for 6.5 hours straight on a real deployment
+# (solar-system-lab.json) -- every cycle in that window logged "no
+# software channels found on the server", indistinguishable from the
+# genuinely-empty case, while the real reposync backlog for 12 waiting
+# client registrations sat completely untouched the whole time. stderr is
+# now captured and inspected via check_spacecmd_error() instead of
+# discarded: anything that looks like a real error/warning gets logged
+# loudly and this run exits non-zero (a oneshot service's failure is
+# visible via `systemctl status`/`journalctl -u smlm-channel-sync-monitor`
+# — the timer still fires again next cycle as normal, this doesn't retry
+# in a tight loop), rather than being silently swallowed as "nothing to
+# do". Routine INFO lines (e.g. "INFO: Connected to .../rpc/api as admin")
+# don't match the error-ish keywords below, so the normal case stays quiet.
 spacecmd_() {
-    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>/dev/null
+    podman exec uyuni-server spacecmd -u "$ADMIN" -p "$PASSWORD" -- "$@" 2>"$ERRFILE"
+}
+
+check_spacecmd_error() {
+    if [ -s "$ERRFILE" ] && grep -qiE 'error|invalid|traceback|denied|refused|fail' "$ERRFILE"; then
+        log "spacecmd call failed: $(tr '\n' ' ' < "$ERRFILE")"
+        exit 1
+    fi
 }
 
 if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
@@ -904,6 +1247,7 @@ if podman exec uyuni-server pgrep -f spacewalk-repo-sync >/dev/null 2>&1; then
 fi
 
 CHANNELS=$(spacecmd_ softwarechannel_list)
+check_spacecmd_error
 if [ -z "$CHANNELS" ]; then
     log "no software channels found on the server -- nothing to check"
     exit 0
@@ -929,6 +1273,7 @@ for channel in $CHANNELS; do
     if [ -n "$reason" ]; then
         log "channel '$channel': $reason -- triggering resync"
         spacecmd_ softwarechannel_syncrepos "$channel" >/dev/null
+        check_spacecmd_error
         exit 0
     fi
 done
@@ -1005,6 +1350,203 @@ def ensure_channel_sync_monitor(hostname, admin, password):
     ssh_run(hostname, "cat > /etc/systemd/system/smlm-channel-sync-monitor.timer <<'EOF'\n{}EOF".format(
         _CHANNEL_SYNC_MONITOR_TIMER), check=False)
     ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-channel-sync-monitor.timer",
+            check=False)
+
+
+_BOOTSTRAP_REPO_MONITOR_SCRIPT = """#!/bin/bash
+# Installed by lab-in-a-box's install_smlm.py (ensure_bootstrap_repo_monitor) —
+# retries `mgr-create-bootstrap-repo` for any distribution whose bootstrap repo
+# failed to build (real, confirmed-live 2026-09-23 root cause: it needs
+# venv-salt-minion already present in the locally-synced Tools/managertools
+# channel content, which can still be mid-sync for a fresh server — see
+# install_client_registration.py's own multi-hour channel-sync warning for
+# the same underlying timing race). Runs periodically via
+# smlm-bootstrap-repo-monitor.timer (see the matching .service unit next to
+# this file).
+#
+# Deliberately does NOT use mgr-create-bootstrap-repo's own --auto mode.
+# Real, confirmed-live 2026-09-23 gap in --auto: once it has ATTEMPTED a
+# distribution (even if that attempt failed with "ERROR: package
+# 'venv-salt-minion' not found"), a later --auto run reports "Nothing to do"
+# for it and never retries on its own — verified by running --auto twice in
+# a row on a real server: the second run silently skipped a distribution
+# that still had no working bootstrap repo. --auto's only genuine advantage
+# over targeting labels directly is discovering brand-new
+# distributions/products on its own — but `--list` already does exactly
+# that, cheaply (a metadata-only listing, not a real build), so this script
+# uses `--list` each cycle for discovery and `--create <label>` for every
+# actual build/retry, and never touches --auto's own opaque "changed
+# products" tracking at all — the same tracking responsible for the retry
+# gap in the first place.
+#
+# One explicit build/retry per cycle (not all pending at once): mirrors
+# smlm-channel-sync-monitor's own "at most one trigger per run" caution
+# (that one exists because spacewalk-repo-sync refuses to run more than one
+# instance system-wide — this project has not independently confirmed
+# mgr-create-bootstrap-repo shares that exact constraint, so staying
+# conservative and serial here costs nothing: a label that's still failing
+# because its channel hasn't finished syncing yet will still be there next
+# cycle, and one that starts succeeding gets moved to DONE_DIR immediately,
+# so the queue naturally converges without ever needing more than one
+# attempt in flight).
+set -uo pipefail
+
+LOGFILE=/var/log/smlm-bootstrap-repo-monitor.log
+STATE_DIR=/var/lib/smlm-bootstrap-repo-monitor
+PENDING_DIR=$STATE_DIR/pending
+DONE_DIR=$STATE_DIR/done
+mkdir -p "$PENDING_DIR" "$DONE_DIR"
+
+log() {
+    echo "$(date -Is) $*" >> "$LOGFILE"
+}
+
+mcbr() {
+    podman exec uyuni-server mgr-create-bootstrap-repo "$@"
+}
+
+# Discovery: any real distribution label this server currently knows about
+# that isn't already DONE (built successfully by a previous cycle) or
+# already PENDING (queued from a previous cycle, still being retried) is a
+# newly-seen one — queue it. Covers both the very first run (nothing is
+# DONE or PENDING yet, so every label gets queued) and a distribution/
+# product that only appeared later (e.g. a lab JSON adding a new
+# activation key and re-running install_smlm.py), with no need for --auto's
+# own separate "changed products" bookkeeping.
+while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    if [ ! -e "$DONE_DIR/$label" ] && [ ! -e "$PENDING_DIR/$label" ]; then
+        touch "$PENDING_DIR/$label"
+        log "distribution '$label': newly seen -- queued"
+    fi
+done < <(mcbr --list 2>/dev/null | sed -E 's/^[0-9]+\\.\\s*//')
+
+# --list itself hides a whole real class of distribution: real, confirmed-
+# live 2026-09-23 (phobos.mydemo.lab, RHEL 9) — a product mgr-create-
+# bootstrap-repo's own data considers "not connected to CDN" is silently
+# excluded from --list's own enumeration EVEN ONCE its real channel content
+# (confirmed live: managertools-el9-pool-x86_64, 8 packages, including a
+# real venv-salt-minion, fully synced from the genuine updates.suse.com
+# mirror) is completely ready — --list never mentions it again, so the
+# discovery loop above never queues it, no matter how long this timer runs.
+# Confirmed live that --create <label> works FINE for one of these anyway
+# (just prints a "not connected to CDN" WARNING, not an error, and builds
+# the repo correctly) — the exclusion is purely a --list/--auto DISCOVERY
+# quirk, not a real block. --auto --dryrun (never plain --auto — see this
+# script's own header comment for why --auto itself is never used to
+# actually build/retry anything) still enumerates these "not connected"
+# products in its own dry-run output, without touching disk, so it's used
+# here PURELY to catch their names and queue them the same way as any
+# --list-discovered label — the real build always still goes through
+# --create below, same as everything else.
+while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    if [ ! -e "$DONE_DIR/$label" ] && [ ! -e "$PENDING_DIR/$label" ]; then
+        touch "$PENDING_DIR/$label"
+        log "distribution '$label': not connected to CDN per --list, but its own channel "
+        log "distribution '$label': content may already be ready -- queued for an explicit --create attempt"
+    fi
+done < <(mcbr --auto --dryrun 2>&1 | sed -nE 's/^(WARNING: )?([A-Za-z0-9_.-]+) not connected to CDN\\.?.*/\\2/p')
+
+# Explicit build/retry, one pending distribution per cycle. Picked by OLDEST
+# marker mtime (ls -tr), not alphabetically — real live behavior confirmed
+# 2026-09-23: every distribution failed on the exact same underlying cause
+# (venv-salt-minion not yet synced), so an alphabetical pick would retry the
+# SAME still-broken label every single cycle forever and never even attempt
+# the other 14. Touching the marker on every failed retry pushes it to the
+# back of the queue, so this naturally round-robins across every pending
+# distribution over successive cycles instead of starving on whichever one
+# happens to sort first.
+retry_label=$(ls -tr "$PENDING_DIR" 2>/dev/null | head -n1)
+if [ -n "$retry_label" ]; then
+    RETRY_OUT=$(mcbr --create "$retry_label" 2>&1)
+    if [ $? -eq 0 ] && ! echo "$RETRY_OUT" | grep -q '^ERROR:'; then
+        rm -f "$PENDING_DIR/$retry_label"
+        touch "$DONE_DIR/$retry_label"
+        log "distribution '$retry_label': bootstrap repo created successfully"
+    else
+        err_line=$(echo "$RETRY_OUT" | grep '^ERROR:' | head -n1)
+        log "distribution '$retry_label': still failing -- ${err_line:-see the mgr-create-bootstrap-repo log for details}"
+        touch "$PENDING_DIR/$retry_label"
+    fi
+fi
+"""
+
+_BOOTSTRAP_REPO_MONITOR_SERVICE = """[Unit]
+Description=Check SMLM bootstrap repositories for build failures and retry
+After=uyuni-server.service
+Wants=uyuni-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smlm-bootstrap-repo-monitor.sh
+"""
+
+_BOOTSTRAP_REPO_MONITOR_TIMER = """[Unit]
+Description=Periodically retry failed SMLM bootstrap repository builds
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def ensure_bootstrap_repo_monitor(hostname):
+    """
+    Deploys a HOST-level (not container-internal — same reasoning as
+    ensure_channel_sync_monitor(), the uyuni-server container is `--rm` and
+    loses anything installed inside it on every restart) systemd
+    service+timer that keeps retrying `mgr-create-bootstrap-repo` for any
+    distribution whose bootstrap repo build is still failing.
+
+    Real bug investigated live 2026-09-23 (solar-system-lab.json,
+    sol.mydemo.lab): /var/log/rhn/mgr-create-bootstrap-repo/
+    mgr-create-bootstrap-repo.log showed repeated "ERROR: package
+    'venv-salt-minion' not found" for every distribution attempted so far
+    (RHEL10, SL-Micro 6.1, SLE-16.0, centos-7, ubuntu-24.04, amazonlinux-2)
+    — confirmed by directly re-running `mgr-create-bootstrap-repo --auto` on
+    the live server. Root cause: this tool needs venv-salt-minion already
+    present in the locally-synced Tools/managertools channel content, which
+    can still be mid-sync for a fresh server (the exact same multi-hour,
+    one-channel-at-a-time SCC sync already documented elsewhere in this
+    project — see install_client_registration.py's own warning). Confirmed
+    live that NO distribution anywhere on this server had a working
+    bootstrap repo yet (zero venv-salt-minion files under
+    /srv/www/htdocs/pub/repositories/ server-wide) — a pure timing race,
+    not a config mistake, but ALSO confirmed live that mgr-create-bootstrap-
+    repo's own --auto mode never retries a distribution it already
+    attempted and failed on (running --auto twice in a row: the second run
+    reported "Nothing to do" for a distribution that still had no working
+    repo) — so without this monitor, a distribution that raced this once
+    would stay permanently broken even after its channel finishes syncing,
+    with nothing to ever revisit it. See _BOOTSTRAP_REPO_MONITOR_SCRIPT's
+    own comment for the retry design.
+
+    Also handles a second, real gap found live the same day
+    (phobos.mydemo.lab, RHEL 9): `--list` (this script's own discovery
+    mechanism) silently EXCLUDES any product mgr-create-bootstrap-repo
+    considers "not connected to CDN" — confirmed live it stays excluded
+    forever, even once that product's own channel content (managertools-
+    el9-pool-x86_64: 8 real packages, including venv-salt-minion, fully
+    synced from the genuine updates.suse.com mirror) is completely ready.
+    Confirmed `--create RHEL9-x86_64` works fine anyway when named
+    directly — the exclusion is purely a discovery-side quirk, not a real
+    block. See the script's own comment for the `--auto --dryrun`-based
+    discovery step this adds to catch these.
+    """
+    print("- Installing the bootstrap-repository failure monitor (checks every 15 min)")
+    ssh_run(hostname, "cat > /usr/local/sbin/smlm-bootstrap-repo-monitor.sh <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_SCRIPT), check=False)
+    ssh_run(hostname, "chmod 755 /usr/local/sbin/smlm-bootstrap-repo-monitor.sh", check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.service <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_SERVICE), check=False)
+    ssh_run(hostname, "cat > /etc/systemd/system/smlm-bootstrap-repo-monitor.timer <<'EOF'\n{}EOF".format(
+        _BOOTSTRAP_REPO_MONITOR_TIMER), check=False)
+    ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now smlm-bootstrap-repo-monitor.timer",
             check=False)
 
 
@@ -1466,11 +2008,13 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_kickstart_profiles(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_users(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_access_groups(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_ansible_control_node(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_grafana_formula(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_orgs(hostname, exec_prefix, cfg, "smlm", admin_user, admin_pass)
 
 
@@ -1581,6 +2125,18 @@ def cve_audit(hostname, cfg, cve_id):
     print(sc.list_systems_by_patch_status(hostname, exec_prefix, cve_id))
 
 
+def cve_audit_images(hostname, cfg, cve_id):
+    """Prints audit.listImagesByPatchStatus's raw result for `cve_id` — the
+    container/OS-image counterpart of cve_audit() above, same real 'audit'
+    namespace, see libs/spacecmd_common.py's list_images_by_patch_status()."""
+    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
+    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    admin_user = cfg.get("smlm_admin_user") or "admin"
+    admin_pass = cfg.get("smlm_admin_pass") or "admin123"
+    sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
+    print(sc.list_images_by_patch_status(hostname, exec_prefix, cve_id))
+
+
 def run_recurring_schedules(hostname, cfg):
     """
     Runs every smlm_environments entry's recurring_schedule (see the JSON
@@ -1607,6 +2163,7 @@ def main():
              "       {0} <lab.json> --run-clm-actions   # build/promote smlm_content_lifecycle_actions\n"
              "       {0} <lab.json> --run-scap-scans   # schedule smlm_scap_scans\n"
              "       {0} <lab.json> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
+             "       {0} <lab.json> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
              "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules"
              ).format(Path(__file__).name)
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
@@ -1618,6 +2175,22 @@ def main():
     definition = primary.load_definition(json_file)
 
     cfg = definition.get("smlm", {}) or {}
+    # smlm_scc_user/smlm_scc_password/smlm_scc_regcode may alternatively come
+    # from an encrypted "scc"-kind credential file (see README's Credentials
+    # section) — resolved once, here, so every call site below (podman-mode
+    # install, Kubernetes-mode registry secret, the validation checks further
+    # down) sees the SAME already-resolved values with zero code change of
+    # its own. A fresh dict, not mutating the caller's own definition —
+    # falls straight through to today's plaintext values unchanged whenever
+    # no matching credential file is used.
+    scc_creds = ac.resolve_credential(cfg, "scc", {
+        "scc_user": "smlm_scc_user", "scc_password": "smlm_scc_password",
+        "scc_regcode": "smlm_scc_regcode",
+    }, account_key="smlm_scc_account")
+    cfg = dict(cfg)
+    cfg["smlm_scc_user"] = scc_creds["scc_user"]
+    cfg["smlm_scc_password"] = scc_creds["scc_password"]
+    cfg["smlm_scc_regcode"] = scc_creds["scc_regcode"]
 
     # "podman" deployment — traditional mgradm/podman install directly on a
     # dedicated host/VM, no Kubernetes cluster involved at all (see
@@ -1666,6 +2239,27 @@ def main():
             password = cfg.get("smlm_admin_pass") or "Smlm12345"
             sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
             sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        # Enable smlm_ansible_control_nodes' entitlement (+ highstate apply) AND
+        # register smlm_ansible_paths, without re-running the whole podman install —
+        # same reasoning as --import-images: a scoped, explicit trigger, not folded
+        # into the automatic flow's own already-idempotent calls, just faster to
+        # reach on an already-installed server than a full setup_smlm_podman()
+        # re-run. Mirrors the automatic flow's own ordering (entitlement first,
+        # since a path registration on a system that isn't yet a recognised control
+        # node was never confirmed to work).
+        if len(sys.argv) > 2 and sys.argv[2] == "--enable-ansible-control-nodes":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.ensure_ansible_control_node(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            sc.ensure_ansible_paths(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
@@ -1734,6 +2328,12 @@ def main():
     # third argument.
     if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit":
         cve_audit(vm_name, cfg, sys.argv[3])
+        return
+
+    # audit.listImagesByPatchStatus's own CLI entry point — same shape as
+    # --cve-audit above, for container/OS images instead of systems.
+    if len(sys.argv) > 3 and sys.argv[2] == "--cve-audit-images":
+        cve_audit_images(vm_name, cfg, sys.argv[3])
         return
 
     # Create smlm_environments' recurring_schedule entries instead of

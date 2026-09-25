@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -140,6 +141,20 @@ def _cloud_no_mac(mymac):
     contract; no cloud backend's create_vm() reads its own `network` parameter.
     """
     return mymac or "", None
+
+
+# Serializes MAC generation/conflict-resolution end to end — added 2026-09-21
+# for setup_lab.py's parallel VM-creation mode. Two real, concrete hazards
+# without it: (1) list_used_macs() (a live query) + _check_or_generate_mac()'s
+# own generate-a-new-random-one decision is a genuine TOCTOU window — two
+# threads racing it can both decide the SAME "unused" MAC is free; (2) a
+# real conflict (an explicit mymac already claimed by a different VM) hits
+# an interactive tty prompt (_read_conflict_confirmation) AND mutates+saves
+# the shared `definition` object in place — neither is safe with more than
+# one thread inside this function at once. Held for the WHOLE call, not just
+# the list_used_macs() read, since the decision and any resulting
+# definition mutation/save are part of the same critical section.
+_mac_lock = threading.Lock()
 
 
 def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model):
@@ -299,6 +314,70 @@ class VMBackend(object):
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
         raise NotImplementedError
 
+    def ensure_ports_open(self, open_ports):
+        """
+        Best-effort: opens `open_ports` (same shape as create_vm()'s own
+        open_ports kwarg — e.g. ["51820/udp"], default protocol tcp) for
+        this account's compute, independent of creating any particular VM.
+        Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — the overlay
+        hub can be an ALREADY-EXISTING host (OVERLAY_HUB_HOST), which never
+        goes through create_vm()'s own open_ports handling, so the caller
+        needs a standalone way to still get the port opened automatically
+        for a real cloud backend.
+
+        No-op by default (matches every backend's existing "absorbed by
+        **kwargs, ignored" stance on open_ports elsewhere) — only
+        AWSBackend overrides this today, delegating to its own
+        _ensure_security_group_access().
+        """
+        pass
+
+    def get_private_ip(self, vm_name):
+        """
+        Returns the real PRIVATE/internal IP of an existing instance named
+        vm_name, or None. Added 2026-09-18 for overlay.py's site-gateway
+        routing — another node in the SAME site/subnet routes through its
+        local gateway via this address, never the gateway's public IP
+        (irrelevant for same-subnet traffic, and may not even exist).
+
+        No-op (returns None) by default; only AWSBackend overrides this
+        today — matches every other cloud-only addition's "AWS got it
+        first" pattern elsewhere in this file.
+        """
+        return None
+
+    def get_subnet_cidr(self):
+        """
+        Returns this account's own configured subnet's real CIDR block
+        (e.g. "172.31.0.0/20"), or None if this backend has no such
+        concept or isn't configured with one. Added 2026-09-18 for
+        overlay.py — a site gateway advertises this to the hub as the real,
+        routable subnet other sites should reach it through, instead of a
+        synthetic overlay-only address.
+
+        No-op (returns None) by default; only AWSBackend overrides this
+        today.
+        """
+        return None
+
+    def disable_source_dest_check(self, vm_name):
+        """
+        Best-effort: disables this instance's "source/destination check"
+        (a cloud-provider-level packet filter that drops any packet not
+        addressed TO or FROM the instance's own IP — independent of, and
+        enforced BELOW, the guest's own net.ipv4.ip_forward=1) so it can
+        actually forward traffic for other nodes in its site. Added
+        2026-09-18 for overlay.py's site gateways — without this, a site
+        gateway's ip_forward=1 has no effect at all on a cloud backend that
+        enforces this check; packets are silently dropped before ever
+        reaching the guest kernel.
+
+        No-op by default; only AWSBackend overrides this today (EC2's own
+        SourceDestCheck attribute). No known equivalent implemented yet for
+        the other 7 cloud backends.
+        """
+        pass
+
 
 class LibvirtBackend(VMBackend):
     """
@@ -398,8 +477,9 @@ class LibvirtBackend(VMBackend):
         """Validate or generate the MAC for a VM — see _check_or_generate_mac()'s
         docstring (this backend's own list_used_macs() supplies the map of
         MACs already in use)."""
-        _, mac_by_domain = self.list_used_macs()
-        return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
+        with _mac_lock:
+            _, mac_by_domain = self.list_used_macs()
+            return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """
@@ -1261,8 +1341,9 @@ class HarvesterBackend(VMBackend):
         return names, mac_by_name
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
-        _, mac_by_name = self.list_used_macs()
-        return _check_or_generate_mac(mac_by_name, vm_name, mymac, definition, bridge, vm_net_model)
+        with _mac_lock:
+            _, mac_by_name = self.list_used_macs()
+            return _check_or_generate_mac(mac_by_name, vm_name, mymac, definition, bridge, vm_net_model)
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as LibvirtBackend's: True = keep, False = destroy and
@@ -2137,6 +2218,54 @@ class AWSBackend(VMBackend):
             log("- Opening {}/{} from {} on security group {}".format(to_port, proto, cidr, self.security_group_id))
             self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
                        "--protocol", proto, "--port", str(to_port), "--cidr", cidr)
+
+    def ensure_ports_open(self, open_ports):
+        """
+        VMBackend.ensure_ports_open() override — delegates straight to
+        _ensure_security_group_access(), which already adds whatever's
+        missing from `open_ports` (plus the unconditional SSH-from-this-
+        automation-node rule) to self.security_group_id. The only
+        difference from calling it via create_vm() is that this can run
+        against an account with NO specific VM being created at all (see
+        overlay.py's OVERLAY_HUB_ACCOUNT, used alongside an already-existing
+        OVERLAY_HUB_HOST).
+        """
+        self._ensure_security_group_access(open_ports)
+
+    def get_private_ip(self, vm_name):
+        """VMBackend.get_private_ip() override — EC2's own PrivateIpAddress field."""
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("PrivateIpAddress") or None
+
+    def get_subnet_cidr(self):
+        """VMBackend.get_subnet_cidr() override — describe-subnets on self.subnet_id's own
+        CidrBlock. None if no subnet is configured at all."""
+        if not self.subnet_id:
+            return None
+        result = self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id)
+        subnets = (result or {}).get("Subnets") or []
+        return subnets[0].get("CidrBlock") if subnets else None
+
+    def disable_source_dest_check(self, vm_name):
+        """
+        VMBackend.disable_source_dest_check() override — EC2's own
+        SourceDestCheck instance attribute. Best-effort: a vm_name that
+        doesn't currently resolve to a live instance is a silent no-op
+        (mirrors this project's other best-effort teardown/setup-adjacent
+        cloud calls), not a die() — this is a site gateway's own
+        maintenance step, not a hard provisioning dependency for the node
+        actually being created.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            return
+        instance_id = instance.get("InstanceId")
+        if not instance_id:
+            return
+        self._aws("ec2", "modify-instance-attribute", "--instance-id", instance_id,
+                   "--no-source-dest-check")
+        log("- Disabled source/dest check on '{}' ({}) — required for it to forward traffic "
+            "for other nodes in its site".format(vm_name, instance_id))
 
     def _ensure_internet_gateway(self):
         """
@@ -4128,3 +4257,36 @@ def get_backend(definition, config, vm_name, for_existing=False, vm_img_loc=None
                                 vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
     inst.account = account
     return inst
+
+
+def get_backend_for_account(account_name, config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
+    """
+    Resolves a backend purely from a named cloud account, independent of
+    any specific lab node — added 2026-09-18 for overlay.ensure_overlay_hub()
+    (the overlay hub lives in its OWN designated account, via
+    OVERLAY_HUB_ACCOUNT, which may differ from — or not even appear in —
+    any lab node's own backend/cloud_account).
+
+    Mirrors get_backend() minus the per-node backend/cloud_account
+    resolution. Safe because every backend_cls.resolve() classmethod only
+    ever reads from `config` (the account's own merged config) and uses
+    `vm_name` for error messages — never `definition` itself (confirmed by
+    inspection across all 8 cloud backends) — so a synthetic single-node
+    definition is fine here.
+    """
+    acct = primary.load_cloud_account(account_name, config=config)
+    cloudtype = acct.get("CLOUDTYPE", "")
+    if not cloudtype:
+        die("cloud account '{}' has no CLOUDTYPE set".format(account_name))
+    backend_cls = BACKENDS.get(cloudtype)
+    if backend_cls is None:
+        die("cloud account '{}' has unknown CLOUDTYPE '{}' — supported backends: {}".format(
+            account_name, cloudtype, ", ".join(sorted(BACKENDS))))
+
+    merged = dict(config)
+    merged.update(acct)
+    vm_name = "lab-overlay-hub"
+    inst = backend_cls.resolve({"nodes": {vm_name: {}}}, vm_name, merged, False,
+                                vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+    inst.account = account_name
+    return inst, cloudtype

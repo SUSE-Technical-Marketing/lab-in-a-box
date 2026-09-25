@@ -116,7 +116,7 @@ All user commands are run **on the automation VM**. It connects to the hyperviso
 
 ### Under the hood
 
-The command-line tools and every add-on are Python 3.11, living in `libs/` and `scripts/` and installed to `/usr/local/lib/lab_creation/` — organized around a small set of shared library modules (`lab_creation.py`, `backends.py`, `services.py`, `spacecmd_common.py`, …) rather than one another. VM creation is behind a pluggable `VMBackend` interface (`LibvirtBackend` today), so the same orchestration code can eventually target other virtualization backends (KubeVirt, Harvester) without touching add-ons. One legacy add-on (`install_ds389`) is still plain bash — it predates the Python port and was already broken in bash, so it wasn't worth porting. The bash-era implementation these replaced lives on, archived, under `legacy_bash/`.
+The command-line tools and every add-on are Python 3.11, living in `libs/` and `scripts/` and installed to `/usr/local/lib/lab_creation/` — organized around a small set of shared library modules (`lab_creation.py`, `backends.py`, `services.py`, `spacecmd_common.py`, …) rather than one another. VM creation is behind a pluggable `VMBackend` interface (`LibvirtBackend` today), so the same orchestration code can eventually target other virtualization backends (KubeVirt, Harvester) without touching add-ons. The bash-era implementations these replaced live on, archived, under `legacy_bash/` — including the original `install_ds389`, the last addon to get a Python port (2026-09-21).
 
 <p align="right"><a href="#top">↑ back to top</a></p>
 
@@ -188,6 +188,31 @@ Then, for each node in the lab JSON, either:
 - **let it auto-select** — omit `kvm_host`; the node lands on whichever configured host currently has enough free CPU/RAM/disk for it (probed live over SSH).
 
 Nodes that don't specify `kvm_host` and boxes with only one configured host behave exactly as before this feature existed — nothing changes for a single-hypervisor lab.
+
+### Cross-cloud WireGuard overlay
+
+A cloud lab node generally cannot reach another cloud account's private network, or the home libvirt lab, over the network at all — each is its own isolated VPC/network. `common.overlay: true` in the lab JSON routes this lab's SITES to each other, site-to-site, by their real subnets, over a hub-and-spoke WireGuard overlay (`libs/overlay.py`):
+
+```mermaid
+graph TD
+    Hub["Overlay hub<br/>(gateway VM, stable public IP)"]
+    HomeGW["Home automation VM<br/>(site gateway)"]
+    GWB["Site gateway VM<br/>(account B)"]
+    HomeNode["home lab node"]
+    NodeA["node — account A (hub's own site)"]
+    NodeB["node — account B"]
+    HomeGW -- "wg0 spoke" --> Hub
+    GWB -- "wg0 spoke" --> Hub
+    HomeNode -. "local route" .-> HomeGW
+    NodeB -. "local route" .-> GWB
+    NodeA -. "on the hub's own subnet" .-> Hub
+```
+
+Only each site's own gateway ever joins the overlay itself — never an individual lab node. A "site" is the home libvirt lab or one cloud account; its gateway is either the home site's own automation VM (`mysource` in `/etc/lab_creation.cfg`) or, for a cloud account, a small dedicated VM auto-created/reused there (`lab-overlay-gw-<backend>[-<account>]`, the same naming convention as the cloud DNS VM). Every OTHER node just gets a plain, persistent local route to each other site's real subnet, via its own site's gateway — that's the whole mechanism, no per-node WireGuard membership at all.
+
+`OVERLAY_HUB_ACCOUNT` (required, in `/etc/lab_creation.cfg`) names the cloud account whose gateway VM is the hub — the one site with a stable public IP everyone else connects to. `OVERLAY_CIDR` (default `10.99.0.0/16`) is used only for the gateways' own point-of-presence addresses on the tunnel, not for routing real traffic; `OVERLAY_WG_PORT` (default `51820`) is the hub's listen port. Joining/leaving and route-pushing happen automatically as part of `setup_vm.py` — nothing else to run by hand.
+
+**Known gaps:** no DNS changes are made (a node is reachable by its real hostname once that name resolves into a now-routed subnet, not before); a site's already-provisioned nodes aren't retroactively re-routed when a new remote site joins later, only refreshed at each node's own provisioning time; AWS needs its site gateway's "source/dest check" disabled to forward traffic (handled automatically) — no equivalent exists yet for the other 7 cloud backends.
 
 ### Library loading order
 
@@ -908,6 +933,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | SMLM proxy |
 | `client_registration` | Register any VM as a Salt client of an existing `uyuni`/`smlm` server (activation key bootstrap + salt-key acceptance) |
 | [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager (SUMA), installed directly on the OS via `mgradm` — not Kubernetes |
+| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | Provisions a real Ansible control node: installs `ansible-core`, pushes example playbooks + a dynamic inventory script that queries `uyuni`/`smlm`'s own system list, sets up SSH access to the rest of the lab. Pairs with `uyuni`/`smlm`'s own `*_ansible_control_nodes` field, which enables the server-side "Ansible Control Node" entitlement |
 </details>
 
 <a id="addons-storage"></a>
@@ -919,7 +945,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`mariadb`](https://mariadb.org/) | MariaDB database |
 | [`postgresql`](https://www.postgresql.org/) | PostgreSQL database |
 | [`openldap`](https://www.openldap.org/) | OpenLDAP directory service |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) — the one add-on still implemented in bash |
+| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) |
 </details>
 
 <a id="addons-cicd"></a>
@@ -950,6 +976,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | [`openai`](https://openai.com/) | OpenAI API proxy (LiteLLM) |
 | [`kimi`](https://www.moonshot.ai/) | Moonshot AI Kimi API proxy (LiteLLM) |
 | [`open_webui`](https://openwebui.com/) | Chat frontend for Ollama / OpenAI-compatible endpoints |
+| [`hermes`](https://github.com/NousResearch/hermes-agent) | Hermes Agent — Nous Research's self-improving personal AI agent (Telegram/Discord/Slack bot + web dashboard) |
 | [`suse_ai`](https://www.suse.com/solutions/artificial-intelligence/) | SUSE's own Ollama + Open WebUI + Milvus AI stack |
 | [`milvus`](https://milvus.io/) | Milvus vector database (RAG/embedding search) |
 | [`qdrant`](https://qdrant.tech/) | Qdrant vector database (RAG/embedding search) |
@@ -1054,6 +1081,14 @@ Cipher (see `libs/crypto_store.py`): the passphrase runs through **Argon2id** (a
 
 A file can opt out of encryption with a top-level `unencrypted: true` (not the default — `setup_credentials.py` asks before writing one this way). `--encrypt-existing` encrypts only the sensitive-looking fields (secret/password/token-shaped names) in place, leaving e.g. `AWS_REGION`/`AWS_PROFILE` readable, and never overwrites its input — it writes `<name>.encrypted.yaml` alongside it for you to review and move into place. Requires the `cryptography` Python package (`python311-cryptography`, or `pip install cryptography`, ≥41 for Argon2id) on the automation VM — imported lazily, only when an actually-encrypted file is touched, so a lab that never sets `cloud_account` needs no new dependency.
 
+**External-service credentials (SCC, SUSE Application Collection, Hermes, …), added 2026-09-18.** The same `/etc/lab_creation/credentials/` store, encryption, and `setup_credentials.py` tool also cover non-cloud external-service credentials — not just cloud providers. A file is marked with `credential_kind` (e.g. `scc`, `appcollection`, `hermes`) instead of `cloudtype`, so the two concepts share the directory/format without ever colliding. Each addon that needs an external-service credential documents its own optional `<field>_account` (e.g. `smlm_scc_account`, `suse_ai_registry_account`, `hermes_account`) to name one explicitly; left unset, exactly one matching `credential_kind` file auto-discovers the same way `cloud_account` does. **Plaintext-in-lab-JSON remains fully valid either way** — this store is an optional alternative for the credential, never a requirement; every addon's own plaintext fields (`smlm_scc_user`, `suse_ai_registry_user`, `hermes_llm_api_key`, …) still work unchanged if you never touch the credential store at all.
+
+```shell
+setup_credentials.py   # interactive — now asks "cloud provider or external service?" first
+```
+
+One credential file per kind is reusable across every addon that needs that kind (e.g. a single `scc` file covers any addon's own SCC credentials), regardless of each addon's own JSON-field prefix — see `libs/addon_common.py`'s `resolve_credential()`/`Validator.vreq_or_credential()` and `libs/primary.py`'s `*_service_credential*` functions for the underlying mechanism.
+
 **Cloud backends (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) and `myip`:** leave a cloud-backend node's `myip` empty in the lab JSON — the real IP is only known once the provider assigns it at create time, not something you can decide in advance the way a static libvirt/Harvester IP works. `setup_vm.py` picks up the real IP from `create_vm()`'s own return value and registers it in DNS *after* the node actually exists, not before (a real bug found live-testing AWSBackend, 2026-09-06 — see TODO). `mymac` is similarly meaningless for a cloud backend — leave it unset; it's ignored rather than generated/conflict-checked.
 
 **Cloud DNS VM:** the first time any lab node uses a given cloud backend, `setup_vm.py` also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — `lab-dns-<backend>`, e.g. `lab-dns-aws` — running BIND. This exists because cloud nodes generally cannot reach `automation.mydemo.lab`'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in *both* this DNS VM and the central `automation.mydemo.lab` zone. **Two known gaps, live-tested 2026-09-09, neither closed:** (1) a freshly created cloud node does not yet automatically point its own resolution at this DNS VM, so a second cloud node in the same lab can't yet resolve a first one by hostname without further wiring; (2) querying this DNS VM's own zone via its AWS Elastic/Public IP from an external client (including automation.mydemo.lab itself) currently returns a bogus root-zone NXDOMAIN instead of the real answer — confirmed the write path (SSH-based zone registration) is solid and that querying via the VM's private IP or loopback works correctly, but the public-IP query path itself is not yet root-caused. See `libs/backends.py`'s `ensure_cloud_dns_vm()` docstring and TODO for the full investigation.
@@ -1088,7 +1123,7 @@ Installed Python library modules. Updated by running `install_automation_node_sc
 | `k8s.py` | Kubernetes cluster distro interface (RKE2/K3s) |
 | `addon_common.py` | Shared CLI plumbing every `install_*` addon uses (`--help`/`--version`/`--schema` dispatch, schema validation) |
 
-The four bash helpers (`lab_creation.bash`, `k8s_functions.bash`, `primary_functions.bash`, `extensions.sh`) are also still installed alongside these — kept indefinitely for `install_ds389`, the one addon that never got a Python port.
+`extensions.sh` (empty, unused) is also still installed alongside these. The other three bash helpers (`lab_creation.bash`, `k8s_functions.bash`, `primary_functions.bash`) were removed once `install_ds389` — their last consumer — was ported to Python (2026-09-21); the bash originals live on under `legacy_bash/`.
 
 <p align="right"><a href="#top">↑ back to top</a></p>
 
