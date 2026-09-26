@@ -208,20 +208,43 @@ def setup_gitlab_podman(hostname, cfg):
     ssh_run(hostname, "cat > /etc/systemd/system/gitlab.service <<'EOF'\n{}EOF".format(unit))
     ssh_run(hostname, "systemctl daemon-reload && systemctl enable gitlab.service", check=False)
 
-    print("- Waiting for GitLab's own internal reconfigure to finish and write its real root "
-          "password file (up to 5 minutes — GitLab's first boot is genuinely slow)")
-    password_file = None
+    print("- Waiting for GitLab to actually finish reconfiguring and start serving real HTTP "
+          "requests (up to 5 minutes — GitLab's first boot is genuinely slow)")
+    # Real bug found live 2026-09-26: GitLab's own Omnibus reconfigure writes
+    # /etc/gitlab/initial_root_password very early — confirmed live it was
+    # already present just ~20s after container start, while rails database
+    # migrations were still running minutes away from finishing — so an
+    # earlier version of this function that waited for THAT file alone
+    # declared success and printed a password long before GitLab was
+    # actually reachable at all (curl still got connection-refused for
+    # several more minutes after the "ready" message printed). Waiting on
+    # a real HTTP response from the login page instead — confirmed live
+    # this only starts succeeding once GitLab is genuinely up — and only
+    # THEN reading the password file, which is always already written by
+    # that point in Omnibus's own real bootstrap order.
+    gitlab_ready = False
     deadline = time.time() + 300
     while time.time() < deadline:
+        r = ssh_run(hostname, "curl -sk -o /dev/null -w '%{{http_code}}' http://localhost/users/sign_in",
+                    check=False, capture=True)
+        if r.returncode == 0 and (r.stdout or "").strip() == "200":
+            gitlab_ready = True
+            break
+        time.sleep(10)
+
+    password_file = None
+    if gitlab_ready:
         r = ssh_run(hostname, "podman exec gitlab cat /etc/gitlab/initial_root_password 2>/dev/null",
                     check=False, capture=True)
         if r.returncode == 0 and "Password:" in (r.stdout or ""):
             password_file = r.stdout
-            break
-        time.sleep(10)
 
     print("GitLab available at: http://{}:{}".format(gitlab_hostname, http_port))
     print("SSH (git over ssh):  ssh -p {} git@{}".format(ssh_port, gitlab_hostname))
+    if not gitlab_ready:
+        print("WARNING: GitLab was still not answering real HTTP requests after 5 minutes — it "
+              "may just need more time (a slower host, or a cold image pull, can both push first "
+              "boot past 5 minutes). Check progress with: podman logs gitlab")
     if password_file:
         for line in password_file.splitlines():
             if line.startswith("Password:"):
@@ -232,11 +255,13 @@ def setup_gitlab_podman(hostname, cfg):
                 break
     elif root_password:
         print("Initial root password: {} (as configured — could not confirm it was actually "
-              "applied; GitLab was still reconfiguring after 5 minutes)".format(root_password))
+              "applied yet)".format(root_password))
     else:
-        print("WARNING: could not read back GitLab's real generated root password within 5 "
-              "minutes — GitLab may still be reconfiguring. Check later with: "
-              "podman exec gitlab cat /etc/gitlab/initial_root_password")
+        print("Could not read back GitLab's real generated root password ({}). Check later "
+              "with: podman exec gitlab cat /etc/gitlab/initial_root_password".format(
+                  "GitLab wasn't ready yet" if not gitlab_ready else
+                  "it was ready but the password file wasn't found — unexpected, worth "
+                  "investigating directly"))
 
 
 def setup_gitlab_kubernetes(hostname, cfg):

@@ -6,8 +6,10 @@
 # (real chart values ground-truthed against charts.gitlab.io's own
 # values.yaml, the Let's Encrypt/public-domain die() guard). Run from
 # 56_gitlab.sh, in its own container — see tests/run_tests.sh.
+import io
 import shlex
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -42,16 +44,25 @@ def omnibus_config(run_cmd):
 
 
 # ── setup_gitlab_podman: real Omnibus container invocation ─────────────────
-# The readback loop (waiting for /etc/gitlab/initial_root_password) is
-# mocked to succeed on its first check, avoiding a real, unbounded-looking
-# busy-wait against a deadline — the same rapid-fire-iteration risk already
-# documented elsewhere in this test suite for other polling loops.
+# Real bug found live 2026-09-26: an earlier version of this function waited
+# only for /etc/gitlab/initial_root_password to appear before declaring
+# GitLab "ready" — confirmed live that file is written within ~20s of
+# container start, WHILE GitLab is still mid-reconfigure (rails database
+# migrations still running) and genuinely unreachable over HTTP for several
+# more minutes. The real fix waits for an actual HTTP 200 from the login
+# page first; these tests mock BOTH the readiness curl and the password
+# file read, and fast-forward time.time() as a safety net against a real,
+# unbounded-looking 300s busy-wait if a future change breaks that mock.
 igl.time.sleep = lambda s: None
+_fake_now = [0]
+igl.time.time = lambda: _fake_now.__setitem__(0, _fake_now[0] + 100) or _fake_now[0]
 ssh_calls = []
 
 
 def _fake_ssh_run(hostname, cmd, **kw):
     ssh_calls.append((hostname, cmd, kw))
+    if "curl -sk -o /dev/null" in cmd and "/users/sign_in" in cmd:
+        return mock.Mock(returncode=0, stdout="200", stderr="")
     if "initial_root_password" in cmd:
         return mock.Mock(returncode=0, stdout="Password: generated-pw123\n", stderr="")
     return mock.Mock(returncode=0, stdout="", stderr="")
@@ -124,6 +135,39 @@ check("setup_gitlab_podman: a custom hostname/ports/image/version reach the real
       and "-p 8080:80" in run_cmd and "-p 22022:22" in run_cmd
       and "registry.example.com/gitlab-ce:17.0.0-ce.0" in run_cmd
       and "external_url 'http://git.mydemo.lab:8080'" in omnibus_config(run_cmd))
+
+# Real bug found live 2026-09-26: the password file appearing does NOT mean
+# GitLab is ready — confirmed live it's written ~20s into a reconfigure
+# that then keeps running for several more minutes. This must NOT be
+# treated as ready when the real HTTP readiness check keeps failing: the
+# password file must never even be read, and a clear warning must print
+# (not a false "ready" claim).
+ssh_calls.clear()
+
+
+def _fake_never_ready(hostname, cmd, **kw):
+    ssh_calls.append((hostname, cmd, kw))
+    if "curl -sk -o /dev/null" in cmd and "/users/sign_in" in cmd:
+        return mock.Mock(returncode=0, stdout="503", stderr="")  # still reconfiguring
+    if "initial_root_password" in cmd:
+        return mock.Mock(returncode=0, stdout="Password: generated-pw123\n", stderr="")
+    return mock.Mock(returncode=0, stdout="", stderr="")
+
+
+igl.ssh_run = _fake_never_ready
+out = io.StringIO()
+with mock.patch.object(igl.primary, "find_service_credential_for_kind", return_value=(None, [])), \
+     redirect_stdout(out):
+    igl.setup_gitlab_podman("host1", {})
+printed = out.getvalue()
+check("setup_gitlab_podman: does NOT treat an early password file as 'ready' when the real "
+      "HTTP readiness check keeps failing",
+      not any("initial_root_password" in c[1] for c in ssh_calls))
+check("setup_gitlab_podman: prints a clear warning instead of falsely claiming success",
+      "WARNING" in printed and "still not answering real HTTP requests" in printed)
+check("setup_gitlab_podman: does NOT print an 'Initial root password:' line when it was never "
+      "confirmed ready", "Initial root password:" not in printed)
+igl.ssh_run = _fake_ssh_run
 
 
 # ── setup_gitlab_kubernetes: real Helm chart invocation ─────────────────────
