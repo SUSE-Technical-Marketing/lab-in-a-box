@@ -955,6 +955,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | Addon name | Description |
 |---|---|
 | [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
+| [`gitlab`](https://about.gitlab.com/) | GitLab — standalone Omnibus podman container (no Kubernetes) by default, or the real official Helm chart on a Kubernetes cluster |
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | StackState monitoring integration |
 | [`trento`](https://www.trento-project.io/) | SAP infrastructure monitoring |
