@@ -795,7 +795,7 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 
 插件通过名称在 kcluster 或节点的 `addons` 数组中被引用。对应的 `install_<name>` 脚本必须位于 `PATH` 中。
 
-<sub>快速跳转: <a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub>
+<sub>快速跳转: <a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub>
 
 <a id="addons-k8s"></a>
 <details open>
@@ -846,6 +846,7 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 | [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | SMLM 代理 |
 | `client_registration` | 将任意虚拟机注册为现有 `uyuni`/`smlm` 服务器的 Salt 客户端（激活密钥引导 + salt 密钥接受） |
 | [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager（SUMA），通过 `mgradm` 直接安装在操作系统上——不基于 Kubernetes |
+| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | 配置一个真实的 Ansible 控制节点：安装 `ansible-core`，推送示例 playbook 以及一个查询 `uyuni`/`smlm` 自身系统列表的动态清单脚本，并设置对实验室其余节点的 SSH 访问。与 `uyuni`/`smlm` 自身的 `*_ansible_control_nodes` 字段配合，启用服务器端的"Ansible Control Node"授权 |
 </details>
 
 <a id="addons-storage"></a>
@@ -854,10 +855,20 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 
 | 插件名称 | 说明 |
 |---|---|
-| [`mariadb`](https://mariadb.org/) | MariaDB 数据库 |
-| [`postgresql`](https://www.postgresql.org/) | PostgreSQL 数据库 |
+| [`mariadb`](https://mariadb.org/) | MariaDB 数据库——Kubernetes（无 Helm 清单）或直接安装在操作系统上；操作系统原生路径（`libs/db_common.py`）也被其他需要在同一主机上使用配套数据库的插件（`nextcloud`、`seafile`）直接复用 |
+| [`postgresql`](https://www.postgresql.org/) | PostgreSQL 数据库——Kubernetes（Helm）或直接安装在操作系统上；操作系统原生路径（`libs/db_common.py`）也被其他需要在同一主机上使用配套数据库的插件（例如 `nextcloud`）直接复用 |
 | [`openldap`](https://www.openldap.org/) | OpenLDAP 目录服务 |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server（LDAP）——唯一仍以 bash 实现的插件 |
+| [`ds389`](https://www.port389.org/) | 389 Directory Server（LDAP） |
+</details>
+
+<a id="addons-collaboration"></a>
+<details open>
+<summary><strong>协作与文件共享</strong></summary>
+
+| 插件名称 | 说明 |
+|---|---|
+| [`nextcloud`](https://nextcloud.com/) | Nextcloud——默认使用独立的 podman 容器（不依赖 Kubernetes，也是唯一支持离线（air-gap）应用安装的模式），或在 Kubernetes 集群上使用真实的社区 Helm chart；可选的 Talk/Groupware/Flow/Assistant 应用，以及 ONLYOFFICE/Euro-Office/Collabora 文档编辑集成 |
+| [`seafile`](https://www.seafile.com/) | Seafile——默认使用独立的 podman 容器（不依赖 Kubernetes），或在 Kubernetes 集群上使用真实的官方 Helm chart |
 </details>
 
 <a id="addons-cicd"></a>
@@ -867,9 +878,12 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 | 插件名称 | 说明 |
 |---|---|
 | [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
+| [`gitlab`](https://about.gitlab.com/) | GitLab——默认使用独立的 Omnibus podman 容器（不依赖 Kubernetes），或在 Kubernetes 集群上使用真实的官方 Helm chart |
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | StackState 监控集成 |
 | [`trento`](https://www.trento-project.io/) | SAP 基础设施监控 |
+| [`prometheus`](https://prometheus.io/) | 独立的 Prometheus 服务器（podman 容器，不依赖 Kubernetes）——抓取 `smlm`/`uyuni` 服务器自带的导出器（`smlm_monitoring_enabled`）或任意自定义的 `prometheus_scrape_configs` 目标 |
+| [`grafana`](https://grafana.com/) | 独立的 Grafana 服务器（podman 容器，不依赖 Kubernetes）——自动配置 Prometheus 数据源，并可选地为 `smlm`/`uyuni` 服务器自带的导出器配置真实的 Grafana Labs 社区仪表盘 |
 </details>
 
 <a id="addons-ai"></a>
@@ -886,6 +900,7 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 | [`openai`](https://openai.com/) | OpenAI API 代理（LiteLLM） |
 | [`kimi`](https://www.moonshot.ai/) | Moonshot AI Kimi API 代理（LiteLLM） |
 | [`open_webui`](https://openwebui.com/) | 面向 Ollama / 兼容 OpenAI 端点的聊天前端 |
+| [`hermes`](https://github.com/NousResearch/hermes-agent) | Hermes Agent——Nous Research 出品的自我进化型个人 AI 代理（Telegram/Discord/Slack 机器人 + Web 仪表盘） |
 | [`suse_ai`](https://www.suse.com/solutions/artificial-intelligence/) | SUSE 自研的 Ollama + Open WebUI + Milvus AI 技术栈 |
 | [`milvus`](https://milvus.io/) | Milvus 向量数据库（RAG/embedding 检索） |
 | [`qdrant`](https://qdrant.tech/) | Qdrant 向量数据库（RAG/embedding 检索） |

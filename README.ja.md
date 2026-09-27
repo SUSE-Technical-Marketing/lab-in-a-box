@@ -795,7 +795,7 @@ install_longhorn --schema yaml      # ...または YAML
 
 アドオンは kcluster またはノードの `addons` 配列に名前で参照される。対応する `install_<name>` スクリプトが `PATH` 上に存在する必要がある。
 
-<sub>ジャンプ: <a href="#addons-k8s">Kubernetes & GitOps</a> · <a href="#addons-security">セキュリティ & コンプライアンス</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージ & データベース</a> · <a href="#addons-cicd">CI/CD & ツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub>
+<sub>ジャンプ: <a href="#addons-k8s">Kubernetes & GitOps</a> · <a href="#addons-security">セキュリティ & コンプライアンス</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージ & データベース</a> · <a href="#addons-collaboration">コラボレーション & ファイル共有</a> · <a href="#addons-cicd">CI/CD & ツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub>
 
 <a id="addons-k8s"></a>
 <details open>
@@ -846,6 +846,7 @@ install_longhorn --schema yaml      # ...または YAML
 | [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | SMLM プロキシ |
 | `client_registration` | 任意の VM を既存の `uyuni`/`smlm` サーバーの Salt クライアントとして登録する（アクティベーションキーによるブートストラップ + salt キーの承認） |
 | [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager（SUMA）。`mgradm` を使って OS 上に直接インストールされる — Kubernetes ではない |
+| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | 実際の Ansible コントロールノードをプロビジョニングする：`ansible-core` をインストールし、サンプルの Playbook と `uyuni`/`smlm` 自身のシステム一覧を問い合わせる動的インベントリスクリプトを配置し、ラボの他のノードへの SSH アクセスを設定する。`uyuni`/`smlm` 自身の `*_ansible_control_nodes` フィールドと連携し、サーバー側の「Ansible Control Node」エンタイトルメントを有効化する |
 </details>
 
 <a id="addons-storage"></a>
@@ -854,10 +855,20 @@ install_longhorn --schema yaml      # ...または YAML
 
 | アドオン名 | 説明 |
 |---|---|
-| [`mariadb`](https://mariadb.org/) | MariaDB データベース |
-| [`postgresql`](https://www.postgresql.org/) | PostgreSQL データベース |
+| [`mariadb`](https://mariadb.org/) | MariaDB データベース — Kubernetes（Helm 不使用のマニフェスト）または OS に直接インストール。OS ネイティブのパス（`libs/db_common.py`）は、同じホスト上に付随データベースを必要とする他のアドオン（`nextcloud`、`seafile`）からも直接再利用される |
+| [`postgresql`](https://www.postgresql.org/) | PostgreSQL データベース — Kubernetes（Helm）または OS に直接インストール。OS ネイティブのパス（`libs/db_common.py`）は、同じホスト上に付随データベースを必要とする他のアドオン（例：`nextcloud`）からも直接再利用される |
 | [`openldap`](https://www.openldap.org/) | OpenLDAP ディレクトリサービス |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server（LDAP）— まだ bash で実装されている唯一のアドオン |
+| [`ds389`](https://www.port389.org/) | 389 Directory Server（LDAP） |
+</details>
+
+<a id="addons-collaboration"></a>
+<details open>
+<summary><strong>コラボレーション & ファイル共有</strong></summary>
+
+| アドオン名 | 説明 |
+|---|---|
+| [`nextcloud`](https://nextcloud.com/) | Nextcloud — デフォルトではスタンドアロンの podman コンテナ（Kubernetes 不使用、エアギャップ環境でのアプリインストールに対応する唯一のモード）、または Kubernetes クラスター上の実際のコミュニティ Helm チャート。オプションで Talk/Groupware/Flow/Assistant アプリ、および ONLYOFFICE/Euro-Office/Collabora によるドキュメント編集連携 |
+| [`seafile`](https://www.seafile.com/) | Seafile — デフォルトではスタンドアロンの podman コンテナ（Kubernetes 不使用）、または Kubernetes クラスター上の実際の公式 Helm チャート |
 </details>
 
 <a id="addons-cicd"></a>
@@ -867,9 +878,12 @@ install_longhorn --schema yaml      # ...または YAML
 | アドオン名 | 説明 |
 |---|---|
 | [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
+| [`gitlab`](https://about.gitlab.com/) | GitLab — デフォルトではスタンドアロンの Omnibus podman コンテナ（Kubernetes 不使用）、または Kubernetes クラスター上の実際の公式 Helm チャート |
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | StackState 監視連携 |
 | [`trento`](https://www.trento-project.io/) | SAP インフラストラクチャ監視 |
+| [`prometheus`](https://prometheus.io/) | スタンドアロンの Prometheus サーバー（podman コンテナ、Kubernetes 不使用）— `smlm`/`uyuni` サーバー自身のバンドル済みエクスポーター（`smlm_monitoring_enabled`）またはカスタムの `prometheus_scrape_configs` ターゲットをスクレイピングする |
+| [`grafana`](https://grafana.com/) | スタンドアロンの Grafana サーバー（podman コンテナ、Kubernetes 不使用）— Prometheus データソースを自動プロビジョニングし、オプションで `smlm`/`uyuni` サーバー自身のエクスポーター向けの実際の Grafana Labs コミュニティダッシュボードも設定する |
 </details>
 
 <a id="addons-ai"></a>
@@ -886,6 +900,7 @@ install_longhorn --schema yaml      # ...または YAML
 | [`openai`](https://openai.com/) | OpenAI API プロキシ（LiteLLM） |
 | [`kimi`](https://www.moonshot.ai/) | Moonshot AI Kimi API プロキシ（LiteLLM） |
 | [`open_webui`](https://openwebui.com/) | Ollama / OpenAI 互換エンドポイント向けのチャットフロントエンド |
+| [`hermes`](https://github.com/NousResearch/hermes-agent) | Hermes Agent — Nous Research の自己改善型パーソナル AI エージェント（Telegram/Discord/Slack ボット + Web ダッシュボード） |
 | [`suse_ai`](https://www.suse.com/solutions/artificial-intelligence/) | SUSE 独自の Ollama + Open WebUI + Milvus AI スタック |
 | [`milvus`](https://milvus.io/) | Milvus ベクトルデータベース（RAG/embedding 検索） |
 | [`qdrant`](https://qdrant.tech/) | Qdrant ベクトルデータベース（RAG/embedding 検索） |

@@ -795,7 +795,7 @@ install_longhorn --schema yaml      # ...ou YAML
 
 Les add-ons sont référencés par leur nom dans le tableau `addons` d'un kcluster ou d'un nœud. Le script `install_<name>` correspondant doit se trouver dans le `PATH`.
 
-<sub>Aller à : <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sécurité &amp; conformité</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Stockage &amp; bases de données</a> · <a href="#addons-cicd">CI/CD &amp; outils</a> · <a href="#addons-ai">IA / ML</a> · <a href="#addons-virt">Virtualisation</a> · <a href="#addons-demos">Applications de démo</a> · <a href="#addons-games">Jeux</a></sub>
+<sub>Aller à : <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sécurité &amp; conformité</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Stockage &amp; bases de données</a> · <a href="#addons-collaboration">Collaboration &amp; partage de fichiers</a> · <a href="#addons-cicd">CI/CD &amp; outils</a> · <a href="#addons-ai">IA / ML</a> · <a href="#addons-virt">Virtualisation</a> · <a href="#addons-demos">Applications de démo</a> · <a href="#addons-games">Jeux</a></sub>
 
 <a id="addons-k8s"></a>
 <details open>
@@ -846,6 +846,7 @@ Les add-ons sont référencés par leur nom dans le tableau `addons` d'un kclust
 | [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | Proxy SMLM |
 | `client_registration` | Enregistre n'importe quelle VM en tant que client Salt d'un serveur `uyuni`/`smlm` existant (amorçage par clé d'activation + acceptation de la clé Salt) |
 | [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager (SUMA), installé directement sur l'OS via `mgradm` — pas Kubernetes |
+| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | Provisionne un vrai nœud de contrôle Ansible : installe `ansible-core`, déploie des playbooks d'exemple + un script d'inventaire dynamique qui interroge la propre liste de systèmes de `uyuni`/`smlm`, configure l'accès SSH au reste du lab. S'associe au propre champ `*_ansible_control_nodes` de `uyuni`/`smlm`, qui active l'entitlement « Ansible Control Node » côté serveur |
 </details>
 
 <a id="addons-storage"></a>
@@ -854,10 +855,20 @@ Les add-ons sont référencés par leur nom dans le tableau `addons` d'un kclust
 
 | Nom de l'add-on | Description |
 |---|---|
-| [`mariadb`](https://mariadb.org/) | Base de données MariaDB |
-| [`postgresql`](https://www.postgresql.org/) | Base de données PostgreSQL |
+| [`mariadb`](https://mariadb.org/) | Base de données MariaDB — Kubernetes (manifeste sans Helm) ou installée nativement sur l'OS ; le chemin natif OS (`libs/db_common.py`) est aussi réutilisé directement par d'autres add-ons (`nextcloud`, `seafile`) qui ont besoin d'une base de données compagne sur le même hôte |
+| [`postgresql`](https://www.postgresql.org/) | Base de données PostgreSQL — Kubernetes (Helm) ou installée nativement sur l'OS ; le chemin natif OS (`libs/db_common.py`) est aussi réutilisé directement par d'autres add-ons (p. ex. `nextcloud`) qui ont besoin d'une base de données compagne sur le même hôte |
 | [`openldap`](https://www.openldap.org/) | Service d'annuaire OpenLDAP |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) — le seul add-on encore implémenté en bash |
+| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) |
+</details>
+
+<a id="addons-collaboration"></a>
+<details open>
+<summary><strong>Collaboration &amp; partage de fichiers</strong></summary>
+
+| Nom de l'add-on | Description |
+|---|---|
+| [`nextcloud`](https://nextcloud.com/) | Nextcloud — conteneurs podman autonomes (sans Kubernetes, le seul mode prenant en charge les installations d'applications en air gap) par défaut, ou le vrai chart Helm communautaire sur un cluster Kubernetes ; applications Talk/Groupware/Flow/Assistant optionnelles et intégration d'édition de documents ONLYOFFICE/Euro-Office/Collabora |
+| [`seafile`](https://www.seafile.com/) | Seafile — conteneurs podman autonomes (sans Kubernetes) par défaut, ou le vrai chart Helm officiel sur un cluster Kubernetes |
 </details>
 
 <a id="addons-cicd"></a>
@@ -867,9 +878,12 @@ Les add-ons sont référencés par leur nom dans le tableau `addons` d'un kclust
 | Nom de l'add-on | Description |
 |---|---|
 | [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
+| [`gitlab`](https://about.gitlab.com/) | GitLab — conteneur podman Omnibus autonome (sans Kubernetes) par défaut, ou le vrai chart Helm officiel sur un cluster Kubernetes |
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | Intégration de supervision StackState |
 | [`trento`](https://www.trento-project.io/) | Supervision d'infrastructure SAP |
+| [`prometheus`](https://prometheus.io/) | Serveur Prometheus autonome (conteneur podman, sans Kubernetes) — collecte les propres exporteurs intégrés d'un serveur `smlm`/`uyuni` (`smlm_monitoring_enabled`) ou toute cible personnalisée `prometheus_scrape_configs` |
+| [`grafana`](https://grafana.com/) | Serveur Grafana autonome (conteneur podman, sans Kubernetes) — provisionne automatiquement une source de données Prometheus et, optionnellement, le vrai tableau de bord communautaire de Grafana Labs pour les propres exporteurs d'un serveur `smlm`/`uyuni` |
 </details>
 
 <a id="addons-ai"></a>
@@ -886,6 +900,7 @@ Les add-ons sont référencés par leur nom dans le tableau `addons` d'un kclust
 | [`openai`](https://openai.com/) | Proxy de l'API OpenAI (LiteLLM) |
 | [`kimi`](https://www.moonshot.ai/) | Proxy de l'API Moonshot AI Kimi (LiteLLM) |
 | [`open_webui`](https://openwebui.com/) | Frontend de chat pour Ollama / points de terminaison compatibles OpenAI |
+| [`hermes`](https://github.com/NousResearch/hermes-agent) | Hermes Agent — l'agent IA personnel auto-améliorant de Nous Research (bot Telegram/Discord/Slack + tableau de bord web) |
 | [`suse_ai`](https://www.suse.com/solutions/artificial-intelligence/) | Stack IA propre à SUSE : Ollama + Open WebUI + Milvus |
 | [`milvus`](https://milvus.io/) | Base de données vectorielle Milvus (recherche RAG/embeddings) |
 | [`qdrant`](https://qdrant.tech/) | Base de données vectorielle Qdrant (recherche RAG/embeddings) |
