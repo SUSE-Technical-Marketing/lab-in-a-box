@@ -58,15 +58,15 @@ check("keycloak: the raw nasty payload never appears unquoted",
       "; rm -rf / $(id)" not in kc.replace(shlex.quote(NASTY), "<Q>"))
 
 
-# ── install_postgresql.pg_configure_os ─────────────────────────────────────
-import install_postgresql  # noqa: E402
+# ── db_common.pg_configure_os (install_postgresql.py's actual logic moved to
+#    libs/db_common.py 2026-09-27 so install_mariadb.py/install_nextcloud.py/
+#    install_seafile.py can share it) ────────────────────────────────────────
+import db_common  # noqa: E402
 rec = _Rec()
-install_postgresql.ssh_run = rec
-install_postgresql.ssh_output = lambda *a, **kw: "/var/lib/pgsql/data"
+db_common.ssh_run = rec
+db_common.ssh_output = lambda *a, **kw: "/var/lib/pgsql/data"
 # db/user != "postgres" so the CREATE DATABASE / CREATE USER / GRANT paths run
-install_postgresql.pg_configure_os("vm1", {
-    "postgresql_password": NASTY, "postgresql_db": "labdb", "postgresql_user": "labuser",
-}, "16")
+db_common.pg_configure_os("vm1", "labdb", "labuser", NASTY, NASTY, "16", "5432", "*")
 pg = rec.joined()
 check("postgresql: no `psql -c \"...\"` on the remote shell any more (all via stdin)",
       "psql -c " not in pg)

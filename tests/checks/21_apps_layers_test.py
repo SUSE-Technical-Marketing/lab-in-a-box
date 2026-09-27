@@ -93,10 +93,11 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
 # more (ansible_control_node, 2026-09-18), then +1 more (hermes, 2026-09-21), then +1 more
 # (ds389 — finally ported to Python with a real PLUGIN dict; previously deliberately
 # skipped/left as a broken bash script, 2026-09-21), then +1 more (gitlab, dual-mode
-# kubernetes/standalone-container, 2026-09-26).
+# kubernetes/standalone-container, 2026-09-26), then +2 more (nextcloud, seafile — both
+# dual-mode kubernetes/standalone-container, 2026-09-27).
 scripts_dir = _REPO / "scripts"
 addon_files = sorted(glob.glob(str(scripts_dir / "install_*.py")))
-check("found the expected 70 python addon scripts to check", len(addon_files) == 70)
+check("found the expected 72 python addon scripts to check", len(addon_files) == 72)
 missing_layers = []
 for path in addon_files:
     plugin = apps.load_plugin_from_path(path)
