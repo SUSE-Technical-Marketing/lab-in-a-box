@@ -123,7 +123,11 @@ def run_setup_smlm_podman(cfg, transactional, already_initialized=False):
                  "ensure_image_profiles", "ensure_kickstart_profiles", "ensure_users",
                  "ensure_ansible_control_node", "ensure_grafana_formula",
                  "ensure_virtual_host_managers", "ensure_snippets",
-                 "ensure_container_build_hosts", "ensure_mcp_server"):
+                 "ensure_container_build_hosts", "ensure_mcp_server",
+                 "ensure_system_custom_values", "ensure_custom_channels", "ensure_patches",
+                 "ensure_recurring_schedules", "ensure_maintenance_calendars",
+                 "ensure_maintenance_schedules", "ensure_action_chains",
+                 "ensure_system_profiles", "ensure_org_system_transfers"):
         setattr(ism.sc, name, (lambda n: lambda *a, **k: sc_calls.append((n, a, k)))(name))
 
     ism.setup_smlm_podman("sol.mydemo.lab", "hypervisor1", cfg)

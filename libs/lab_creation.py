@@ -927,6 +927,41 @@ def ssh_output(hostname, cmd):
     return ssh_run(hostname, cmd, capture=True).stdout.strip()
 
 
+def detect_os(hostname):
+    """
+    Detect the remote OS family/version from /etc/os-release. Shared by every
+    OS-native addon installer (install_postgresql.py, install_mariadb.py, ...)
+    that has to branch on distro to pick a package manager — promoted here
+    from install_postgresql.py's own former private pg_detect_os() once a
+    second addon needed the identical logic.
+    """
+    raw = ssh_run(hostname, "source /etc/os-release 2>/dev/null && "
+                  "printf '%s|%s|%s' \"${ID}\" \"${VERSION_ID}\" \"${ID_LIKE:-}\"",
+                  capture=True).stdout
+    parts = raw.split("|")
+    os_id = parts[0] if len(parts) > 0 else ""
+    os_ver_id = parts[1] if len(parts) > 1 else ""
+    os_like = parts[2] if len(parts) > 2 else ""
+    os_ver_major = os_ver_id.split(".")[0] if os_ver_id else ""
+    print("# Detected remote OS: id={} version={} like={}".format(os_id, os_ver_id, os_like))
+    return {"id": os_id, "ver_id": os_ver_id, "like": os_like, "ver_major": os_ver_major}
+
+
+def scp_to(hostname, local_path, remote_path, user="root"):
+    """
+    Copies a local file to a remote host via real scp — binary-safe, unlike
+    ssh_run()'s own input_text (that path runs subprocess.run with
+    universal_newlines=True, which would corrupt a binary file such as an
+    RPM). Same connection options as _SSH_BASE, so it behaves identically
+    re: host-key handling. Returns the CompletedProcess; caller checks
+    returncode (no `check` param here — every current caller wants to
+    handle a transfer failure with its own message, not a generic one).
+    """
+    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-q",
+            local_path, "{}@{}:{}".format(user, hostname, remote_path)]
+    return subprocess.run(args, capture_output=True, text=True)
+
+
 def purge_known_host(*names):
     """
     Remove any stale SSH host-key entries for the given hostname(s)/IP(s)

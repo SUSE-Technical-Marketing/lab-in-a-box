@@ -247,12 +247,17 @@
 #                             (that's client-side, out of scope here); use
 #                             smlm_activation_key_config_channels for newly-registered clients.
 #
-# OPTIONAL – Virtual Host Managers (Systems -> Virtual Host Managers in the Web UI). Only the
-# "aws" type is currently implemented — see libs/spacecmd_common.py's own section docstring for
-# the real, ground-truthed virtualhostmanager.create API call and its "AmazonEC2" module name.
-#   smlm_virtual_host_managers : [{"label": "...", "type": "aws" (default, only supported value),
+# OPTIONAL – Virtual Host Managers (Systems -> Virtual Host Managers in the Web UI). "aws" and
+# "libvirt" types are implemented — see libs/spacecmd_common.py's own section docstring for the
+# real, ground-truthed virtualhostmanager.create API call and each module's real name/params.
+#   smlm_virtual_host_managers : [{"label": "...", "type": "aws" (default),
 #                                  "region": "eu-central-1", "zone": "eu-central-1a",
-#                                  "access_key_id": "...", "secret_access_key": "..."}, ...]
+#                                  "access_key_id": "...", "secret_access_key": "..."},
+#                                 {"label": "...", "type": "libvirt",
+#                                  "uri": "qemu+ssh://root@nuc6.mydemo.lab/system",
+#                                  "sasl_username": "...", "sasl_password": "..."}  # both optional,
+#                                                                          # omit for SSH-key auth
+#                                ]
 #                             access_key_id/secret_access_key are usually left OUT of each entry
 #                             and resolved instead from a real, long-lived AWS credential — see
 #                             smlm_vhm_aws_account below. A per-entry access_key_id/
@@ -269,6 +274,22 @@
 #                             auto-discover the one 'vhm_aws' file if exactly one exists (same
 #                             resolve_credential() convention as smlm_scc_account elsewhere in
 #                             this file).
+#
+# OPTIONAL – Virtual guest provisioning (autoinstallation on a real virtualization host — a
+# registered Uyuni client with libvirt/KVM, e.g. the SAME real host a "libvirt"-type
+# smlm_virtual_host_managers entry above points at, though the two features don't require each
+# other — see libs/spacecmd_common.py's own section docstring for why). Explicit trigger only
+# (provisioning a guest is real, one-shot work — a genuine new VM gets created):
+#   smlm_virtual_guests       : [{
+#                                 "host": "nuc6.mydemo.lab",           # an ALREADY-REGISTERED
+#                                                                       # Uyuni client
+#                                 "name": "...",                       # new guest's name
+#                                 "kickstart_profile": "...",          # name ref into
+#                                                                       # smlm_kickstart_profiles
+#                                 "memory_mb": 2048, "vcpus": 2, "disk_gb": 20  # all optional
+#                               }, ...]
+#                             Run with: install_smlm.py <lab.json> --provision-guests (never
+#                             automatic).
 #
 # OPTIONAL – organizations (created after the above; each org gets its own admin session
 # for its own scoped provisioning). List of objects:
@@ -456,6 +477,164 @@
 #                             tunnel/port-forward the operator sets up. See ensure_mcp_server()'s
 #                             own docstring in spacecmd_common.py for the full ground-truthing.
 #
+# OPTIONAL – Recurring actions (general-purpose; the "environment"-scoped equivalent above
+# predates this and stays explicit-trigger-only for backward compatibility). Automatic +
+# idempotent (recurring.listByEntity, real+confirmed — ground-truthed 2026-09-25):
+#   smlm_recurring_actions    : [{
+#                                 "name": "...",                    # required, unique per entity
+#                                 "entity_type": "minion"|"group"|"org",
+#                                 "entity": "<system-or-group-name-or-numeric-org-id>",
+#                                 "cron_expr": "0 2 * * *",
+#                                 "schedule_type": "highstate",     # or "custom" (needs "states")
+#                                 "states": ["..."]                 # required if schedule_type=custom
+#                               }, ...]
+#
+# OPTIONAL – Maintenance windows (calendars + schedules). Automatic + idempotent
+# (maintenance.listCalendarLabels/listScheduleNames — ground-truthed 2026-09-25 against the exact
+# installed server version's own Java source, not the uyuni-project/uyuni GitHub repo's master
+# branch, which is bleeding-edge/unreleased and can genuinely differ from what's shipped):
+#   smlm_maintenance_calendars : [{"label": "...", "ical": "BEGIN:VCALENDAR\n...\nEND:VCALENDAR"},
+#                                 {"label": "...", "url": "https://.../calendar.ics"}, ...]
+#                             Exactly one of ical/url per entry.
+#   smlm_maintenance_schedules : [{"name": "...", "type": "single"|"multi", "calendar": "...",
+#                                  "systems": ["existing-system-name", ...]}, ...]
+#                             "calendar" is a name reference into smlm_maintenance_calendars above
+#                             (optional — a schedule can exist without one yet). "systems", if
+#                             given, assigns the schedule right after creating it
+#                             (maintenance.assignScheduleToSystems).
+#
+# OPTIONAL – Action chains. Automatic + idempotent by LABEL (actionchain.listChains — a chain
+# whose label already exists is left alone, actions included; the real API itself has no
+# per-action idempotency check). Ground-truthed 2026-09-25 against the exact installed server
+# version:
+#   smlm_action_chains        : [{"label": "...", "actions": [
+#                                  {"system": "...", "type": "script", "script": "echo hi"},
+#                                  {"system": "...", "type": "highstate"}
+#                                ]}, ...]
+#                             Deliberately never calls actionchain.scheduleChain — a chain is
+#                             created and its actions added (each becomes a real, concrete
+#                             scheduled Action server-side) but stays in "pending, unscheduled"
+#                             state (no execution date) rather than actually running, same
+#                             "create the example, don't trigger it" pattern as kickstart profiles.
+#
+# OPTIONAL – Custom software channels, pushed packages, and patches created from scratch.
+# Ground-truthed 2026-09-25 against the exact installed server version. Package push and patch
+# creation are one-shot/real-work in nature but ARE idempotent (skip on an already-present
+# package/advisory name), so both run automatically:
+#   smlm_custom_channels      : [{
+#                                 "label": "...", "name": "...", "summary": "...",
+#                                 "arch_label": "channel-x86_64",     # optional, this default covers
+#                                                                     #   x86_64 RPM channels
+#                                 "parent_label": "",                 # optional — a real existing
+#                                                                     #   base channel's label makes
+#                                                                     #   this a CHILD channel
+#                                 "checksum_type": "sha256",          # optional
+#                                 "packages": ["/local/path/to/some.rpm", ...]  # optional — LOCAL
+#                                 #   paths on the automation node running install_smlm.py, pushed
+#                                 #   via the real rhnpush client tool. Package push only works
+#                                 #   when smlm_deployment is "podman" (needs direct host+podman
+#                                 #   access to move a binary file all the way into the container,
+#                                 #   same restriction as smlm_mcp_server) — the channel itself
+#                                 #   still gets created either way.
+#                               }, ...]
+#   smlm_patches               : [{
+#                                 "advisory_name": "...",             # required, e.g. "LAB-2026:0001"
+#                                 "channel": "...",                   # name ref into smlm_custom_channels
+#                                 "synopsis": "...", "topic": "...", "description": "...",
+#                                 "solution": "...",                  # all optional, default to
+#                                                                     #   advisory_name/generic text
+#                                 "advisory_release": 1, "advisory_type": "Bug Fix Advisory",
+#                                 "product": "lab-in-a-box", "severity": "Low",  # all optional
+#                                 "packages": ["package-name", ...]   # optional, must already be
+#                                                                     #   IN "channel" (see
+#                                                                     #   smlm_custom_channels above)
+#                               }, ...]
+#                             Real, confirmed prerequisite (errata.create's own Java source):
+#                             "channel" is auto-added to /etc/rhn/rhn.conf's
+#                             java.allow_adding_patches_via_api key the first time it's used here
+#                             (a real, required server-side allowlist — errata.create refuses any
+#                             channel not on it) — this restarts tomcat to apply, so expect a
+#                             brief API blip right after the first patch of a run that creates one.
+#
+# OPTIONAL – Image builds (distinct from smlm_image_imports above, which imports an
+# ALREADY-BUILT image from a registry). Explicit trigger only (scheduling a build is one-shot,
+# real work — same reasoning as smlm_image_imports' own --import-images):
+#   smlm_image_builds          : [{"profile": "...", "build_host": "mercury.mydemo.lab",
+#                                  "version": "latest"}, ...]
+#                             "profile" is a name reference into smlm_image_profiles above.
+#                             "build_host" needs the "Container Build Host" entitlement already
+#                             enabled (smlm_image_build_hosts above). Run with:
+#                             install_smlm.py <lab.json> --build-images (never automatic).
+#
+# OPTIONAL – Stored system profiles (package profiles saved from an existing system, for later
+# comparison/provisioning). Automatic + idempotent (skip on an already-present label):
+#   smlm_system_profiles      : [{"system": "...", "label": "...", "description": "..."}, ...]
+#
+# OPTIONAL – Custom info VALUES on specific systems (distinct from smlm_custom_info_keys above,
+# which only defines the KEY server-wide). Automatic + idempotent:
+#   smlm_system_custom_values : [{"system": "...", "key": "...", "value": "..."}, ...]
+#                             "key" must already be defined via smlm_custom_info_keys above.
+#
+# OPTIONAL – Organization-to-organization system transfers. Automatic (not idempotency-checked
+# against systems already in the destination org — re-transferring one there is a harmless
+# no-op). Real, confirmed prerequisite (org.transferSystems' own apidoc): source and destination
+# orgs must already be in a trust relationship — set via that destination org's own "trust_with"
+# field under smlm_orgs above, which already runs before this step:
+#   smlm_org_system_transfers : [{"org": "...", "systems": ["existing-system-name", ...]}, ...]
+#
+# OPTIONAL – External authentication (real SAML 2.0 SSO via Keycloak — ground-truthed 2026-09-25
+# directly against uyuni-project.org's own auth-methods-sso.html + auth-methods-sso-example.html;
+# Uyuni's SSO is SAML, NOT OIDC — that's the separate web.oidc.* surface smlm_mcp_server's own
+# optional OAuth mode uses). Deploys Keycloak as its own standalone podman container on a
+# SEPARATE, real host (needs its own public reachability for the browser-redirect SAML flow —
+# this project's AWS nodes are the intended fit) and wires this server up to it. Explicit trigger
+# only (see below) — real, confirmed prerequisite: SSO makes the WEB UI's login SSO-EXCLUSIVE
+# (spacecmd/mgr-sync and this project's own automation are unaffected, confirmed in the same
+# docs — they keep using password auth), a real, user-visible behavior change:
+#   smlm_sso                  : {
+#                                 "keycloak_host": "neptune.mydemo.lab",  # required — a
+#                                                                          # DIFFERENT, real,
+#                                                                          # externally-reachable
+#                                                                          # host, not this server
+#                                 "keycloak_port": 8080,                  # optional
+#                                 "realm": "lab-in-a-box",                # optional
+#                                 "admin_user": "admin", "admin_password": "admin",  # Keycloak's
+#                                                                          # OWN admin — optional,
+#                                                                          # this default matches
+#                                                                          # the real dev-mode
+#                                                                          # container's own default
+#                                 "demo_user": "...",                     # optional — one EXTRA
+#                                 "demo_password": "...", "demo_email": "...",  # Keycloak user
+#                                                                          # beyond the ones
+#                                                                          # created automatically
+#                                                                          # (see below) — MUST
+#                                                                          # already be a real,
+#                                                                          # EXISTING Uyuni username
+#                                                                          # — SSO maps to an existing
+#                                                                          # account, never creates one
+#                               }
+#                             A Keycloak user is also created automatically for the real SMLM admin
+#                             account (smlm_admin_user/smlm_admin_pass above) and for every
+#                             smlm_users entry that has a real password (a "pam": true entry is
+#                             skipped — that authenticates against the OS directly, unrelated to
+#                             SAML SSO) — confirmed live 2026-09-25 that without this, logging in as
+#                             admin through the now-SSO-routed web UI fails at Keycloak with "invalid
+#                             username or password", even though admin's actual Uyuni credentials
+#                             were correct the whole time — the account simply didn't exist on the
+#                             Keycloak side at all.
+#                             Run with: install_smlm.py <lab.json> --enable-sso (never automatic).
+#                             REQUIREMENT confirmed live 2026-09-25: keycloak_host's own network
+#                             (e.g. its AWS security group, for a cloud node) must allow inbound
+#                             TCP on keycloak_port from wherever the WEB BROWSER connects from —
+#                             not just from this server or the automation node. The SAML flow
+#                             redirects the browser itself to http://<keycloak_host>:<port>/..., so
+#                             an SSH-reachable-but-otherwise-closed port (the failure mode this
+#                             project's own AWS nodes default to via aws_open_ports) causes a
+#                             silent browser-side connection timeout with nothing useful logged on
+#                             either server. Add keycloak_port to that node's aws_open_ports (AWS
+#                             backend) — or the equivalent for whatever backend hosts it — BEFORE
+#                             running --enable-sso.
+#
 # OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
 # List of objects, usable at the top level (scoped to the default org) or nested inside an
 # smlm_orgs entry (scoped to that org — same field name either way):
@@ -543,17 +722,30 @@
 #                             polls the named environment's status until built/failed. Run with:
 #                             install_smlm.py <lab.json> --run-clm-actions (never automatic).
 #
-# OPTIONAL – SCAP compliance auditing (legacy pre-staged-file model only — spacecmd's native
-# scap_* commands don't cover SMLM 5.2's newer "centralized policies" Technology Preview layer,
-# deliberately not automated here, see libs/spacecmd_common.py). Orchestration only: xccdf_path
+# OPTIONAL – SCAP compliance auditing (legacy pre-staged-file model — see the 2026-09-25
+# CORRECTION below for why the newer redesigned SCAP API isn't used instead, despite it existing
+# on this server). Orchestration only: xccdf_path
 # (and the OpenSCAP scanner + SCAP Security Guide content) must already exist on the target
 # system. Explicit trigger only — see "--run-scap-scans" below:
-#   smlm_scap_scans           : [{"system": "web1.mydemo.lab",
+#   smlm_scap_scans           : [{"system": "web1.mydemo.lab",   # exactly one of system/group
+#                                  "group": "web-servers",        # (added 2026-09-25) — fans out
+#                                                                  # to every member of that group
 #                                  "xccdf_path": "/usr/share/openscap/scap-security-xccdf.xml",
 #                                  "profile": "Web-Default"}, ...]
 #                             Heuristically idempotent (skips a system already scanned against the
 #                             same xccdf_path — path only, not path+profile). Run with:
 #                             install_smlm.py <lab.json> --run-scap-scans (never automatic).
+#                             CORRECTION (2026-09-25): the real system.scap.* namespace's newer
+#                             "policy/content/tailoring file" catalog objects (listPolicies/
+#                             listScapContent/listTailoringFiles) DO exist on this exact server
+#                             version, confirmed by fetching its own matching spacewalk-java git
+#                             tag directly — an earlier note here claiming they didn't exist was
+#                             checked only against the public API doc page, which hadn't caught
+#                             up with the shipped code. What's still true: those 3 are READ-ONLY
+#                             (no create* counterpart anywhere in the handler) — the objects can
+#                             only be uploaded via the web UI, not this JSON/API, so this field
+#                             stays on the older, always-available scheduleXccdfScan path above
+#                             (real XCCDF files on the target's own filesystem).
 #
 # OPTIONAL – CVE/OVAL audit (fully supported since SMLM 5.2). Pure read-only query, no JSON
 # config — run with:
@@ -598,8 +790,11 @@
 #                             group id; by default it's resolved heuristically from the group's name
 #                             (see libs/spacecmd_common.py's group_id_for) — supply "group_id"
 #                             directly if that resolution fails. Run schedules with:
-#                             install_smlm.py <lab.json> --run-recurring-schedules (never automatic
-#                             — recurring-action idempotency was never confirmed).
+#                             install_smlm.py <lab.json> --run-recurring-schedules (kept as an
+#                             explicit trigger for backward compatibility even though
+#                             ensure_recurring_schedule() is now confirmed idempotent — see
+#                             smlm_recurring_actions below for the general-purpose, automatic
+#                             equivalent of this same mechanism, not tied to an environment).
 #   smlm_grafana_formulas     : [{
 #                                 "system": "sol.mydemo.lab",        # required, a registered client
 #                                 "admin_user": "admin",             # optional (default: admin)
@@ -1084,11 +1279,23 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     virtual_host_managers = cfg.get("smlm_virtual_host_managers") or []
     mcp_server_set = cfg.get("smlm_mcp_server") is not None  # {} is a valid "enable with
                                                               # defaults" value, not "unset"
+    recurring_actions = cfg.get("smlm_recurring_actions") or []
+    maintenance_calendars = cfg.get("smlm_maintenance_calendars") or []
+    maintenance_schedules = cfg.get("smlm_maintenance_schedules") or []
+    action_chains = cfg.get("smlm_action_chains") or []
+    custom_channels = cfg.get("smlm_custom_channels") or []
+    patches = cfg.get("smlm_patches") or []
+    system_profiles = cfg.get("smlm_system_profiles") or []
+    system_custom_values = cfg.get("smlm_system_custom_values") or []
+    org_system_transfers = cfg.get("smlm_org_system_transfers") or []
     if (cfg.get("smlm_activation_key") or sync_channels or config_channels or orgs
             or access_groups or ansible_paths or content_projects or activation_keys
             or system_groups or custom_info_keys or system_tags or environments
             or distributions or kickstart_profiles or snippets or image_stores or image_profiles
             or image_build_hosts or virtual_host_managers or mcp_server_set
+            or recurring_actions or maintenance_calendars or maintenance_schedules
+            or action_chains or custom_channels or patches or system_profiles
+            or system_custom_values or org_system_transfers
             or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
@@ -1169,16 +1376,35 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             retries=10, retry_delay=60)
         rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "smlm")
         rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "smlm")
+        # System custom VALUES right after the KEY definitions just above —
+        # setCustomValues fails on an undefined key.
+        rps("system custom values", sc.ensure_system_custom_values, hostname, exec_prefix, cfg, "smlm")
         rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "smlm")
         rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "smlm")
         rps("grafana formula", sc.ensure_grafana_formula, hostname, exec_prefix, cfg, "smlm")
         rps("virtual host managers", sc.ensure_virtual_host_managers, hostname, exec_prefix, cfg, "smlm")
         rps("mcp server", sc.ensure_mcp_server, hostname, exec_prefix, cfg, "smlm")
+        # Custom software channels BEFORE the patches that get created in
+        # them — errata.create needs the channel to already exist and be
+        # allow-listed (see ensure_patches' own docstring).
+        rps("custom channels", sc.ensure_custom_channels, hostname, exec_prefix, cfg, "smlm")
+        rps("patches", sc.ensure_patches, hostname, exec_prefix, cfg, "smlm")
+        rps("recurring actions", sc.ensure_recurring_schedules, hostname, exec_prefix, cfg, "smlm")
+        rps("maintenance calendars", sc.ensure_maintenance_calendars, hostname, exec_prefix, cfg, "smlm")
+        rps("maintenance schedules", sc.ensure_maintenance_schedules, hostname, exec_prefix, cfg, "smlm")
+        rps("action chains", sc.ensure_action_chains, hostname, exec_prefix, cfg, "smlm")
+        rps("system profiles", sc.ensure_system_profiles, hostname, exec_prefix, cfg, "smlm")
         # Organizations run last and its own per-org steps (activation keys,
         # system groups, users) mirror the same top-level dependencies above
         # — same modest retry window.
         rps("organizations", sc.ensure_orgs, hostname, exec_prefix, cfg, "smlm", admin, password,
             retries=3, retry_delay=15)
+        # System transfers AFTER organizations: org.transferSystems needs
+        # the destination org to already exist and (per its own real API
+        # requirement) be in a trust relationship with the source org —
+        # both established by the "organizations" step just above via that
+        # org's own trust_with field.
+        rps("org system transfers", sc.ensure_org_system_transfers, hostname, exec_prefix, cfg, "smlm")
 
 
 _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
@@ -2042,6 +2268,26 @@ def export_smlm_config(hostname, exec_prefix, cfg, output_path=None):
         print(text)
 
 
+def _trigger_exec_prefix(hostname, cfg):
+    """
+    Real bug found live 2026-09-25: every explicit-trigger function below
+    (run_ansible_playbooks/run_clm_actions/run_scap_scans/cve_audit/
+    cve_audit_images/run_recurring_schedules) hardcoded the KUBERNETES
+    exec_prefix shape unconditionally, ignoring smlm_deployment entirely —
+    confirmed live against a real podman-deployed server (solar-system-
+    lab.json's own sol.mydemo.lab): --run-scap-scans silently did nothing
+    (ensure_spacecmd_config's own write against a bogus kubectl target
+    failed with no die() to surface it, and every step downstream no-
+    opped on an empty/broken session). Dispatches the same way the actual
+    setup_smlm_podman()/setup_smlm_kubernetes() top-level functions
+    already correctly do.
+    """
+    if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
+        return "mgrctl exec --"
+    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
+    return "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+
+
 def run_ansible_playbooks(hostname, cfg):
     """
     Schedules every entry in smlm_ansible_playbooks (see the JSON section
@@ -2054,8 +2300,7 @@ def run_ansible_playbooks(hostname, cfg):
     if not playbooks:
         print("No smlm_ansible_playbooks entries in the 'smlm' JSON section — nothing to run.")
         return
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2087,8 +2332,7 @@ def run_clm_actions(hostname, cfg):
     if not actions:
         print("No smlm_content_lifecycle_actions entries in the 'smlm' JSON section — nothing to run.")
         return
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2106,8 +2350,7 @@ def run_scap_scans(hostname, cfg):
     if not scans:
         print("No smlm_scap_scans entries in the 'smlm' JSON section — nothing to run.")
         return
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2117,8 +2360,7 @@ def run_scap_scans(hostname, cfg):
 def cve_audit(hostname, cfg, cve_id):
     """Prints audit.listSystemsByPatchStatus's raw result for `cve_id` — a
     pure read-only query, see libs/spacecmd_common.py."""
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2129,8 +2371,7 @@ def cve_audit_images(hostname, cfg, cve_id):
     """Prints audit.listImagesByPatchStatus's raw result for `cve_id` — the
     container/OS-image counterpart of cve_audit() above, same real 'audit'
     namespace, see libs/spacecmd_common.py's list_images_by_patch_status()."""
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2148,8 +2389,7 @@ def run_recurring_schedules(hostname, cfg):
     if not any(e.get("recurring_schedule") for e in environments):
         print("No smlm_environments entries with a recurring_schedule — nothing to run.")
         return
-    ns = ac.require_k8s_name(cfg, "smlm_ns", "uyuni-server")
-    exec_prefix = "kubectl exec -n {} deploy/uyuni -c uyuni --".format(ns)
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
     admin_user = cfg.get("smlm_admin_user") or "admin"
     admin_pass = cfg.get("smlm_admin_pass") or "admin123"
     sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
@@ -2164,7 +2404,12 @@ def main():
              "       {0} <lab.json> --run-scap-scans   # schedule smlm_scap_scans\n"
              "       {0} <lab.json> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
              "       {0} <lab.json> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
-             "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules"
+             "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules\n"
+             "       {0} <lab.json> --import-images   # schedule smlm_image_imports\n"
+             "       {0} <lab.json> --build-images   # schedule smlm_image_builds\n"
+             "       {0} <lab.json> --enable-sso   # deploy Keycloak + enable smlm_sso\n"
+             "       {0} <lab.json> --provision-guests   # schedule smlm_virtual_guests\n"
+             "       {0} <lab.json> --enable-ansible-control-nodes   # enable smlm_ansible_control_nodes"
              ).format(Path(__file__).name)
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
 
@@ -2225,6 +2470,45 @@ def main():
                                 sys.argv[3] if len(sys.argv) > 3 else None)
             return
 
+        # Real bug found live 2026-09-25: --run-scap-scans/--run-ansible-
+        # playbooks/--run-clm-actions/--cve-audit(-images)/
+        # --run-recurring-schedules were ALL only ever checked much further
+        # down in main(), in code that only runs for the Kubernetes
+        # deployment path (this whole "podman" branch unconditionally
+        # returns right after its own setup_smlm_podman() loop, below —
+        # confirmed live that this made every one of those flags
+        # permanently unreachable dead code whenever smlm_deployment is
+        # "podman", this project's own actively-used bare-metal/VM
+        # deployment mode). Added here, mirroring --import-images/
+        # --build-images' own already-correct nodes[0][0] resolution — the
+        # shared run_*() functions themselves now dispatch their own
+        # exec_prefix correctly via _trigger_exec_prefix() (see that
+        # function's own docstring for the other half of this same bug).
+        _podman_triggers = {
+            "--run-ansible-playbooks": run_ansible_playbooks,
+            "--run-clm-actions": run_clm_actions,
+            "--run-scap-scans": run_scap_scans,
+            "--run-recurring-schedules": run_recurring_schedules,
+        }
+        if len(sys.argv) > 2 and sys.argv[2] in _podman_triggers:
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            _podman_triggers[sys.argv[2]](nodes[0][0], cfg)
+            return
+
+        if len(sys.argv) > 3 and sys.argv[2] in ("--cve-audit", "--cve-audit-images"):
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            (cve_audit if sys.argv[2] == "--cve-audit" else cve_audit_images)(
+                nodes[0][0], cfg, sys.argv[3])
+            return
+
         # Schedule smlm_image_imports instead of installing when requested —
         # deliberately a separate, explicit trigger, same reasoning as
         # --run-ansible-playbooks: scheduling an import is not idempotent
@@ -2239,6 +2523,54 @@ def main():
             password = cfg.get("smlm_admin_pass") or "Smlm12345"
             sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
             sc.import_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        # Schedule smlm_image_builds — same explicit-trigger reasoning as
+        # --import-images just above (scheduling a build is one-shot, real work).
+        if len(sys.argv) > 2 and sys.argv[2] == "--build-images":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.build_images(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        # Deploy Keycloak + enable real SAML 2.0 SSO (smlm_sso) — explicit
+        # trigger, not automatic: per Uyuni's own real docs, enabling SSO
+        # makes the WEB UI's login SSO-only from then on (spacecmd/mgr-sync
+        # and this project's own automation are unaffected — they keep
+        # using password auth, confirmed in the same docs), a real,
+        # user-visible behavior change deliberate enough to want its own
+        # explicit trigger rather than happening on every routine run.
+        if len(sys.argv) > 2 and sys.argv[2] == "--enable-sso":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.ensure_sso(nodes[0][0], "mgrctl exec --", cfg, "smlm")
+            return
+
+        # Provision smlm_virtual_guests — real, one-shot new-VM creation via
+        # system.provisionVirtualGuest, same explicit-trigger reasoning as
+        # --build-images/--import-images above.
+        if len(sys.argv) > 2 and sys.argv[2] == "--provision-guests":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            admin = cfg.get("smlm_admin_user") or "admin"
+            password = cfg.get("smlm_admin_pass") or "Smlm12345"
+            sc.ensure_spacecmd_config(nodes[0][0], "mgrctl exec --", admin, password)
+            sc.provision_virtual_guests(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
         # Enable smlm_ansible_control_nodes' entitlement (+ highstate apply) AND

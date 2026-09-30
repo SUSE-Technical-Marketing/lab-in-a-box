@@ -36,6 +36,7 @@ import services  # noqa: E402
 import backends  # noqa: E402
 import lab_creation as lc  # noqa: E402
 import mgradm_common  # noqa: E402
+import db_common  # noqa: E402
 
 sys.path.insert(0, str(_REPO / "scripts"))
 import install_uyuni  # noqa: E402
@@ -1075,22 +1076,24 @@ check("install_smlm.main(): actually reaches setup_smlm() (proves it got all the
       len(smlm_setup_calls) == 1)
 
 
-# ── install_postgresql._digits_only(): guards postgresql_port/pg_version ───
-# Found in code review 2026-09-05: both were interpolated unquoted into
-# remote shell commands (package/service/unit names, "port = {port}") all
-# over this file, and _validate()'s own checks are never actually invoked
-# by the real deploy pipeline.
-check("_digits_only: a plain digit string passes through unchanged",
-      install_postgresql._digits_only({"p": "5432"}, "p", "1", "label") == "5432")
-check("_digits_only: a missing value falls back to the given default",
-      install_postgresql._digits_only({}, "p", "16", "label") == "16")
+# ── db_common.digits_only(): guards postgresql_port/pg_version/mariadb_port ──
+# Found in code review 2026-09-05 (originally as install_postgresql._digits_only,
+# moved to libs/db_common.py 2026-09-27 so install_mariadb.py/install_nextcloud.py/
+# install_seafile.py share the identical guard): both were interpolated unquoted
+# into remote shell commands (package/service/unit names, "port = {port}") all
+# over this file, and _validate()'s own checks are never actually invoked by the
+# real deploy pipeline.
+check("digits_only: a plain digit string passes through unchanged",
+      db_common.digits_only({"p": "5432"}, "p", "1", "label") == "5432")
+check("digits_only: a missing value falls back to the given default",
+      db_common.digits_only({}, "p", "16", "label") == "16")
 
 _digits_only_died = False
 try:
-    install_postgresql._digits_only({"p": "16; rm -rf /"}, "p", "1", "label")
+    db_common.digits_only({"p": "16; rm -rf /"}, "p", "1", "label")
 except SystemExit:
     _digits_only_died = True
-check("_digits_only: a value with a shell metacharacter dies rather than being "
+check("digits_only: a value with a shell metacharacter dies rather than being "
       "returned for interpolation into a remote command",
       _digits_only_died)
 
