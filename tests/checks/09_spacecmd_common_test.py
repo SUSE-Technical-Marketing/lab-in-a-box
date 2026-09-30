@@ -4223,6 +4223,101 @@ except SystemExit:
     died = True
 check("provision_virtual_guests: an entry missing 'name'/'kickstart_profile' dies", died)
 
+# -- SCAP Beta policy-based scanning (system.scap.*), added 2026-09-30 -------
+fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 5, "name": "SLES15 DataStream",
+                                       "dataStreamFileName": "ssg-sle15-ds.xml"}])))])
+sc.ssh_run = fake
+out = sc.list_scap_content("host1", "mgrctl exec --")
+check("list_scap_content: returns the parsed real response shape", out[0]["id"] == 5)
+
+fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(returncode=1, stderr="no beta"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.list_scap_content("host1", "mgrctl exec --")
+except SystemExit:
+    died = True
+check("list_scap_content: server-side failure dies", died)
+
+fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline", "scapContentId": 5}])))])
+sc.ssh_run = fake
+out = sc.list_scap_policies("host1", "mgrctl exec --")
+check("list_scap_policies: returns the parsed real response shape", out[0]["policyName"] == "sles15-baseline")
+
+fake = FakeSSH(responses=[("system.scap.listTailoringFiles", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 3, "name": "strict-tailoring", "orgId": 1}])))])
+sc.ssh_run = fake
+out = sc.list_scap_tailoring_files("host1", "mgrctl exec --")
+check("list_scap_tailoring_files: returns the parsed real response shape", out[0]["id"] == 3)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanWithPolicy", FakeResult(returncode=0, stdout="42")),
+])
+sc.ssh_run = fake
+action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
+                                                     date="2026-10-01T00:00:00")
+check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
+schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
+check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
+      "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
+      "sol.mydemo.lab" not in unwrap(schedule_cmd))
+check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
+      "2026-10-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["nosuch.lab"], 7)
+except SystemExit:
+    died = True
+check("schedule_beta_xccdf_scan_with_policy: an unresolvable system dies (via _system_id)", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="43")),
+])
+sc.ssh_run = fake
+action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
+                                                tailoring_file_id=3, fetch_remote_resources=True,
+                                                date="2026-10-01T00:00:00")
+check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
+custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
+check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
+      "params struct", '"scapContentId": 5' in unwrap(custom_cmd) and
+      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in unwrap(custom_cmd))
+check("schedule_beta_xccdf_scan_custom: optional tailoringFileId/fetchRemoteResources are "
+      "included when given", '"tailoringFileId": 3' in unwrap(custom_cmd) and
+      '"fetchRemoteResources": true' in unwrap(custom_cmd))
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="44")),
+])
+sc.ssh_run = fake
+sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
+                                    "xccdf_org.ssgproject.content_profile_standard",
+                                    date="2026-10-01T00:00:00")
+custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
+check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
+      "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and
+      "fetchRemoteResources" not in unwrap(custom_cmd))
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=1, stderr="beta features not enabled")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_profile")
+except SystemExit:
+    died = True
+check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

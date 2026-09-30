@@ -249,15 +249,25 @@ inline below:
     pushes nothing. SMLM 5.2 also introduced a "centralized policies /
     automated remediation" layer bolted onto the SAME system.scap namespace
     (listPolicies/listScapContent/listTailoringFiles/
-    scheduleBetaXccdfScanCustom/scheduleBetaXccdfScanWithPolicy) —
-    confirmed to exist at the API-doc level, explicitly Technology
-    Preview/Beta, with ZERO spacecmd coverage (no compliance.py/policy.py
-    module exists either) — and research this round could not even
-    independently confirm its Java handler source. Deliberately NOT
-    implemented here: building automation against an API surface this
-    unverified, on top of an explicitly Beta feature with no spacecmd
-    precedent to imitate, was judged too risky — flagged as still-open in
-    TODO rather than guessed at. There is also no built-in dedup for
+    scheduleBetaXccdfScanCustom/scheduleBetaXccdfScanWithPolicy),
+    explicitly Technology Preview/Beta, with ZERO spacecmd coverage (no
+    compliance.py/policy.py module exists either). An initial pass judged
+    this too unverified to build against; a later correction (2026-09-25,
+    see list_images_by_patch_status()'s own docstring below) confirmed all
+    5 methods DO exist, directly against the shipped server's Java source.
+    5 thin example wrapper functions (list_scap_content/list_scap_policies/
+    list_scap_tailoring_files/schedule_beta_xccdf_scan_with_policy/
+    schedule_beta_xccdf_scan_custom, added 2026-09-30, ground-truthed
+    directly against the real API reference pages) now wrap that surface —
+    see their own docstrings just above the "dev/QA/prod environment
+    topology" section further down. Still NOT wired into the automatic
+    install flow, and still requiring beta features enabled by hand in the
+    acting user's own Web UI account preferences (no XML-RPC toggle exists
+    for that), and content/policies/tailoring files can only be uploaded
+    through the Web UI (no create* API exists) — so this doesn't close the
+    "no SCAP policies/content defined" gap by itself, it only gives a way
+    to discover and trigger scans against whatever's already been uploaded
+    there by hand. There is also no built-in dedup for
     scheduleXccdfScan, so ensure_scap_scan() checks scap_listxccdfscans'
     raw output for the target xccdf_path first (a heuristic — it matches on
     path only, not path+profile, since listXccdfScans doesn't surface the
@@ -2983,6 +2993,157 @@ def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labe
     if r.returncode != 0:
         die("could not audit images for CVE '{}': {}".format(cve_id, (r.stderr or r.stdout or "").strip()))
     return r.stdout or ""
+
+
+# ─── SCAP Beta policy-based scanning (system.scap.*) — examples ─────────────
+# The 5 functions below wrap the real, confirmed Beta methods discussed in
+# list_images_by_patch_status()'s own 2026-09-25 correction comment above.
+# Ground-truthed 2026-09-30 directly against the real API reference pages
+# (documentation.suse.com/multi-linux-manager/5.2/api/docs/api/system.scap.html),
+# every parameter name/type/order and struct field below quoted from there,
+# not guessed. All 5 require the acting user (whichever account exec_prefix
+# authenticates as) to have beta features enabled in their own Web UI
+# account preferences first (validateBetaFeatureEnabled() in the real
+# handler) — no XML-RPC toggle exists for that setting, so it's a one-time,
+# by-hand Web UI step. listPolicies/listScapContent/listTailoringFiles are
+# READ-ONLY (no create* counterpart exists anywhere in the handler — those
+# catalog objects can only be uploaded through the Web UI), so the intended
+# real-world flow is: upload content/a policy/a tailoring file once via the
+# Web UI, use these 3 list functions to find its real numeric id, then
+# trigger a scan with one of the 2 schedule functions below. NOT
+# live-tested (no server available in this project's dev/CI environment
+# with beta features enabled).
+
+def list_scap_content(hostname, exec_prefix):
+    """
+    Returns system.scap.listScapContent(sessionKey) — every SCAP content
+    object (a DataStream + XCCDF file pair) already uploaded via the Web
+    UI, each a dict with real fields id/name/description/
+    dataStreamFileName/xccdfFileName. Pure read-only catalog lookup: use
+    the returned "id" as schedule_beta_xccdf_scan_custom()'s own
+    scap_content_id argument.
+    """
+    r = _api_call(hostname, exec_prefix, "system.scap.listScapContent", [])
+    if r.returncode != 0:
+        die("could not list SCAP content: {}".format((r.stderr or r.stdout or "").strip()))
+    try:
+        return json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("system.scap.listScapContent returned unparseable output: {}".format(r.stdout))
+
+
+def list_scap_policies(hostname, exec_prefix):
+    """
+    Returns system.scap.listPolicies(sessionKey) — every saved SCAP policy
+    (a content+profile+tailoring combination, pre-bundled via the Web UI so
+    a scan can be triggered by policy id alone), each a dict with real
+    fields id/policyName/description/scapContentId/xccdfProfileId/
+    tailoringFileId/tailoringProfileId/ovalFiles/advancedArgs/
+    fetchRemoteResources. Pure read-only catalog lookup: use the returned
+    "id" as schedule_beta_xccdf_scan_with_policy()'s own policy_id argument.
+    """
+    r = _api_call(hostname, exec_prefix, "system.scap.listPolicies", [])
+    if r.returncode != 0:
+        die("could not list SCAP policies: {}".format((r.stderr or r.stdout or "").strip()))
+    try:
+        return json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("system.scap.listPolicies returned unparseable output: {}".format(r.stdout))
+
+
+def list_scap_tailoring_files(hostname, exec_prefix):
+    """
+    Returns system.scap.listTailoringFiles(sessionKey) — every saved SCAP
+    tailoring file (an override of a content's own default XCCDF profile
+    rules) already uploaded via the Web UI, each a dict with real fields
+    id/name/fileName/orgId. Pure read-only catalog lookup: use the
+    returned "id" as either schedule_beta_xccdf_scan_custom()'s own
+    tailoring_file_id argument, or as a policy's own tailoringFileId when
+    building one through the Web UI.
+    """
+    r = _api_call(hostname, exec_prefix, "system.scap.listTailoringFiles", [])
+    if r.returncode != 0:
+        die("could not list SCAP tailoring files: {}".format((r.stderr or r.stdout or "").strip()))
+    try:
+        return json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("system.scap.listTailoringFiles returned unparseable output: {}".format(r.stdout))
+
+
+def schedule_beta_xccdf_scan_with_policy(hostname, exec_prefix, systems, policy_id, date=None):
+    """
+    Schedules a SCAP scan against `systems` (a list of hostnames/minion
+    ids, resolved to numeric sids via _system_id()) using an existing,
+    already-uploaded SCAP policy — see list_scap_policies() for real
+    policy ids on this server — via
+    system.scap.scheduleBetaXccdfScanWithPolicy(sessionKey, sids, policyId,
+    date). `date` is an ISO-8601 string (default: the current UTC time,
+    i.e. "run as soon as possible") — spacecmd's own 'api' passthrough
+    auto-converts a top-level ISO-8601-looking string into a real
+    dateTime.iso8601 before the XML-RPC call, the same mechanism
+    schedule_ansible_playbook() already relies on; no manual DateTime
+    construction needed here either. Returns the real numeric SCAP action
+    id. NOT IDEMPOTENT: each call schedules a brand-new scan, same
+    one-shot reasoning as every other schedule_* function in this module —
+    meant to be invoked explicitly, never as part of the automatic
+    ensure_* flow.
+    """
+    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    sids = [_system_id(hostname, exec_prefix, s) for s in systems]
+    r = _api_call(hostname, exec_prefix, "system.scap.scheduleBetaXccdfScanWithPolicy",
+                  [sids, int(policy_id), date])
+    if r.returncode != 0:
+        die("could not schedule SCAP policy scan (policy {}) on {}: {}".format(
+            policy_id, systems, (r.stderr or r.stdout or "").strip()))
+    action_id = (r.stdout or "").strip()
+    print("  Scheduled SCAP scan (policy {}) on {} — action id: {}".format(policy_id, systems, action_id))
+    return action_id
+
+
+def schedule_beta_xccdf_scan_custom(hostname, exec_prefix, systems, scap_content_id, xccdf_profile_id,
+                                    tailoring_file_id=None, tailoring_profile_id=None, oval_files=None,
+                                    advanced_args=None, fetch_remote_resources=False, date=None):
+    """
+    Schedules a SCAP scan against `systems` with an explicit
+    content+profile combination instead of a pre-saved policy (see
+    schedule_beta_xccdf_scan_with_policy() for that path), via
+    system.scap.scheduleBetaXccdfScanCustom(sessionKey, sids, params,
+    date). `scap_content_id` comes from list_scap_content(); the real API
+    doesn't expose a way to discover a content's own valid
+    `xccdf_profile_id` values — read them directly out of the uploaded
+    XCCDF/DataStream document, or from the Web UI's own scan-scheduling
+    form. `tailoring_file_id`/`tailoring_profile_id` (see
+    list_scap_tailoring_files()) let a saved tailoring override the
+    content's own default profile rules; `oval_files`/`advanced_args`/
+    `fetch_remote_resources` map straight onto the real params struct's own
+    same-named optional keys (fetch_remote_resources defaults to False,
+    matching the API's own documented default). `date` handling is
+    identical to schedule_beta_xccdf_scan_with_policy() above. Returns the
+    real numeric SCAP action id. NOT IDEMPOTENT — same one-shot reasoning
+    as every other schedule_* function in this module.
+    """
+    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    sids = [_system_id(hostname, exec_prefix, s) for s in systems]
+    params = {"scapContentId": int(scap_content_id), "xccdfProfileId": xccdf_profile_id}
+    if tailoring_file_id is not None:
+        params["tailoringFileId"] = int(tailoring_file_id)
+    if tailoring_profile_id:
+        params["tailoringProfileId"] = tailoring_profile_id
+    if oval_files:
+        params["ovalFiles"] = oval_files
+    if advanced_args:
+        params["advancedArgs"] = advanced_args
+    if fetch_remote_resources:
+        params["fetchRemoteResources"] = True
+
+    r = _api_call(hostname, exec_prefix, "system.scap.scheduleBetaXccdfScanCustom", [sids, params, date])
+    if r.returncode != 0:
+        die("could not schedule custom SCAP scan (content {}, profile {}) on {}: {}".format(
+            scap_content_id, xccdf_profile_id, systems, (r.stderr or r.stdout or "").strip()))
+    action_id = (r.stdout or "").strip()
+    print("  Scheduled custom SCAP scan (content {}, profile {}) on {} — action id: {}".format(
+        scap_content_id, xccdf_profile_id, systems, action_id))
+    return action_id
 
 
 # ─── dev/QA/prod environment topology ────────────────────────────────────────
