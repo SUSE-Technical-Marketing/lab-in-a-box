@@ -3146,6 +3146,186 @@ def schedule_beta_xccdf_scan_custom(hostname, exec_prefix, systems, scap_content
     return action_id
 
 
+# ─── SCAP policy creation (private Web UI REST route, not XML-RPC) ──────────
+# CORRECTION to this file's own SCAP Beta comment above ("no create* API
+# exists... catalog objects can only be uploaded through the Web UI"): that
+# claim was about the system.scap XML-RPC namespace specifically, re-verified
+# 2026-09-30 to be complete and accurate — a full listing of that namespace's
+# methods really does contain zero create/upload methods. But the Web UI
+# ITSELF is not unreachable — it's a real REST route
+# (com.suse.manager.webui.controllers.ScapAuditController.java, ground-truthed
+# directly against the uyuni-project/uyuni source, not guessed), and it's
+# automatable: POST /rhn/manager/api/audit/scap/policy/create takes plain
+# JSON (ScapPolicyJson.java's real field names below), and — critically —
+# every /rhn/manager/api/* route, including the login route itself, is in
+# Uyuni's own real, confirmed CSRF-exemption whitelist
+# (BaseAuthenticationService.java's/PxtAuthenticationService.java's
+# POST_UNPROTECTED_URIS set literally contains "/rhn/manager/api/") — so a
+# plain session cookie from a scripted login is enough, no CSRF token
+# scraping needed. This is still a PRIVATE, internal web-app API, not a
+# documented/versioned public one like system.scap's own XML-RPC surface —
+# it could change across releases without a deprecation notice, an explicit,
+# real caveat, not a hedge.
+#
+# SCAP CONTENT and TAILORING FILE upload go through the SAME controller
+# (createScapContent/createTailoringFile, both real multipart POST routes:
+# /rhn/manager/api/audit/scap/content/create takes fields name/description/
+# scapFile ("-ds.xml")/xccdfFile ("-xccdf.xml", same base name as scapFile);
+# /rhn/manager/api/audit/scap/tailoring-file/create takes name/description/
+# tailoring_file) — NOT implemented here: unlike a policy (a plain JSON
+# reference to ids), content/tailoring files need real DataStream/XCCDF/
+# tailoring XML files staged onto the SAME container spacecmd itself execs
+# into before they can be uploaded from there, and no kubectl-cp/mgrctl-cp
+# equivalent exists yet anywhere in this project to do that staging —
+# flagged as a real, separate follow-up, not silently skipped.
+
+_SCAP_WEB_COOKIE_JAR = "/tmp/lab-in-a-box-scap-session.jar"
+
+
+def scap_web_login(hostname, exec_prefix, user, password):
+    """
+    Logs into the real Web UI (not spacecmd/the XML-RPC session key) via
+    POST /rhn/manager/api/login — needed because SCAP policy creation has
+    no XML-RPC method at all (see the correction comment just above).
+    Executed via curl FROM INSIDE the same pod/container spacecmd itself
+    execs into (same exec_prefix, via _run()) — that pod's own web server
+    is reachable at https://localhost from there, the same assumption
+    every other addon's own internal HTTP readiness check already makes
+    (e.g. install_gitlab.py's/install_nextcloud.py's own status-page curl
+    checks). The session cookie is written to a cookie jar FILE inside the
+    container (survives across separate exec invocations into the same
+    running pod, unlike anything held in this Python process' own memory)
+    and reused by create_scap_policy() below. Dies on a failed login — a
+    wrong password here is a real, actionable configuration error. NOT
+    live-tested.
+    """
+    login_json = json.dumps({"login": user, "password": password})
+    cmd = ("curl -sk -c {jar} -o /dev/null -w '%{{http_code}}' "
+           "-H 'Content-Type: application/json' -X POST -d {data} "
+           "https://localhost/rhn/manager/api/login").format(
+               jar=shlex.quote(_SCAP_WEB_COOKIE_JAR), data=shlex.quote(login_json))
+    r = _run(hostname, exec_prefix, cmd, check=False, capture=True)
+    status = (r.stdout or "").strip()
+    if r.returncode != 0 or status != "200":
+        die("could not log into the Web UI as '{}' (HTTP {}): {}".format(
+            user, status or "?", (r.stderr or "").strip()))
+
+
+def scap_policy_exists(hostname, exec_prefix, policy_name):
+    """
+    Whether a SCAP policy named `policy_name` already exists, via
+    list_scap_policies() — the real XML-RPC read path, and the SAME
+    underlying ScapPolicy database row the web-only create route below
+    writes to (both go through the same ScapFactory/ScapPolicy domain
+    classes, confirmed directly from the real source), so this stays a
+    reliable idempotency check despite the two paths using different
+    protocols.
+    """
+    policies = list_scap_policies(hostname, exec_prefix)
+    return any(p.get("policyName") == policy_name for p in policies)
+
+
+def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccdf_profile_id,
+                       description=None, earliest=None, tailoring_file=None, tailoring_profile_id=None,
+                       oval_files=None, advanced_args=None, fetch_remote_resources=False):
+    """
+    Creates a new SCAP policy via POST
+    /rhn/manager/api/audit/scap/policy/create — the real, only mechanism
+    that exists for this (see this section's own correction comment
+    above). Requires scap_web_login() to have been called first on this
+    same hostname/exec_prefix (reuses its cookie jar). `policy_name`,
+    `scap_content_id` (from list_scap_content()) and `xccdf_profile_id`
+    are the real required fields (ScapAuditController.java's own
+    validatePolicyFields() — confirmed, quoted from source, not guessed);
+    every other parameter is optional and mirrors ScapPolicyJson.java's
+    own real field names 1:1. `earliest`, if given, must already be an
+    ISO_LOCAL_DATE_TIME-formatted string (e.g. "2026-10-01T00:00:00") —
+    unlike this module's XML-RPC schedule_* functions, this is a plain
+    JSON string field parsed by Java's own DateTimeFormatter.
+    ISO_LOCAL_DATE_TIME, NOT the auto-converted top-level ISO-8601 XML-RPC
+    mechanism those rely on. Returns the real numeric policy id. NOT
+    IDEMPOTENT on its own — see ensure_scap_policies() below for the
+    idempotent orchestrator, and scap_policy_exists() for the check this
+    doesn't do itself. NOT live-tested.
+    """
+    body = {"policyName": policy_name, "scapContentId": int(scap_content_id), "xccdfProfileId": xccdf_profile_id}
+    if description:
+        body["description"] = description
+    if earliest:
+        body["earliest"] = earliest
+    if tailoring_file:
+        body["tailoringFile"] = tailoring_file
+    if tailoring_profile_id:
+        body["tailoringProfileId"] = tailoring_profile_id
+    if oval_files:
+        body["ovalFiles"] = oval_files
+    if advanced_args:
+        body["advancedArgs"] = advanced_args
+    if fetch_remote_resources:
+        body["fetchRemoteResources"] = True
+
+    body_json = json.dumps(body)
+    cmd = ("curl -sk -b {jar} -c {jar} -H 'Content-Type: application/json' -X POST -d {data} "
+           "https://localhost/rhn/manager/api/audit/scap/policy/create").format(
+               jar=shlex.quote(_SCAP_WEB_COOKIE_JAR), data=shlex.quote(body_json))
+    r = _run(hostname, exec_prefix, cmd, check=False, capture=True)
+    if r.returncode != 0:
+        die("could not create SCAP policy '{}': {}".format(policy_name, (r.stderr or "").strip()))
+    try:
+        result = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        die("SCAP policy create for '{}' returned unparseable output (session cookie expired or "
+            "scap_web_login() was never called?): {}".format(policy_name, r.stdout))
+    if not result.get("success"):
+        die("could not create SCAP policy '{}': {}".format(
+            policy_name, "; ".join(result.get("messages") or []) or r.stdout))
+    policy_id = result.get("data")
+    print("  Created SCAP policy '{}' (id: {})".format(policy_name, policy_id))
+    return policy_id
+
+
+def ensure_scap_policies(hostname, exec_prefix, cfg, prefix, admin_user, admin_pass):
+    """
+    Orchestrates <prefix>_scap_policies: a list of dicts, each with real
+    ScapPolicyJson-shaped keys (policy_name/scap_content_id/
+    xccdf_profile_id required; description/earliest/tailoring_file/
+    tailoring_profile_id/oval_files/advanced_args/fetch_remote_resources
+    optional — same names as create_scap_policy()'s own parameters).
+    Idempotent: logs in once via scap_web_login() using `admin_user`/
+    `admin_pass` (the caller's own resolved admin account — same explicit
+    pass-through shape as ensure_orgs()'s own default_admin_user/
+    default_admin_pass, since install_smlm.py's and install_uyuni.py's own
+    admin-credential JSON field names differ: smlm_admin_user/
+    smlm_admin_pass vs. uyuni_admin/uyuni_password — no single
+    "<prefix>_admin_user" guess works for both), lists existing policies
+    once, then creates only the ones not already present by name. No-op
+    if the field is unset or empty. NOT live-tested.
+    """
+    policies = cfg.get("{}_scap_policies".format(prefix)) or []
+    if not policies:
+        return
+    scap_web_login(hostname, exec_prefix, admin_user, admin_pass)
+    existing = list_scap_policies(hostname, exec_prefix)
+    existing_names = {p.get("policyName") for p in existing}
+
+    for p in policies:
+        policy_name = p.get("policy_name")
+        scap_content_id = p.get("scap_content_id")
+        xccdf_profile_id = p.get("xccdf_profile_id")
+        if not policy_name or scap_content_id is None or not xccdf_profile_id:
+            die("{}_scap_policies: an entry needs 'policy_name', 'scap_content_id' and "
+                "'xccdf_profile_id'".format(prefix))
+        if policy_name in existing_names:
+            print("  SCAP policy '{}' already exists — leaving it alone".format(policy_name))
+            continue
+        create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccdf_profile_id,
+                           description=p.get("description"), earliest=p.get("earliest"),
+                           tailoring_file=p.get("tailoring_file"),
+                           tailoring_profile_id=p.get("tailoring_profile_id"),
+                           oval_files=p.get("oval_files"), advanced_args=p.get("advanced_args"),
+                           fetch_remote_resources=bool(p.get("fetch_remote_resources")))
+
+
 # ─── dev/QA/prod environment topology ────────────────────────────────────────
 # System groups, multi-key activation-key/group linkage, custom-info tags,
 # recurring patch schedules, and a thin composition layer over all of the

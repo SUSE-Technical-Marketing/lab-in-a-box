@@ -741,11 +741,49 @@
 #                             version, confirmed by fetching its own matching spacewalk-java git
 #                             tag directly — an earlier note here claiming they didn't exist was
 #                             checked only against the public API doc page, which hadn't caught
-#                             up with the shipped code. What's still true: those 3 are READ-ONLY
-#                             (no create* counterpart anywhere in the handler) — the objects can
-#                             only be uploaded via the web UI, not this JSON/API, so this field
+#                             up with the shipped code. Those 3 XML-RPC methods are READ-ONLY (no
+#                             create* counterpart anywhere in the system.scap handler); this field
 #                             stays on the older, always-available scheduleXccdfScan path above
 #                             (real XCCDF files on the target's own filesystem).
+#                             SCAP POLICY CREATION (2026-09-30): re-verified the ENTIRE system.scap
+#                             namespace (10 methods total, including overloads) has no create/
+#                             upload method of any kind — but the Web UI itself does, via a real
+#                             internal REST route (com.suse.manager.webui.controllers.
+#                             ScapAuditController.java, ground-truthed directly against the
+#                             uyuni-project/uyuni source), automated below since it needs only a
+#                             session cookie (every /rhn/manager/api/* route, including login, is
+#                             in Uyuni's own confirmed CSRF-exempt whitelist — no token scraping
+#                             needed). This is a private, internal API, not the documented/
+#                             versioned public XML-RPC one — could change across releases without
+#                             a deprecation notice, a real caveat, not a hedge:
+#   smlm_scap_policies        : [{"policy_name": "sles15-baseline",   # required
+#                                  "scap_content_id": 5,                # required — a real SCAP
+#                                                                  # content id already uploaded via
+#                                                                  # the Web UI (Audit > SCAP Content)
+#                                  "xccdf_profile_id":
+#                                    "xccdf_org.ssgproject.content_profile_standard",  # required —
+#                                                                  # not discoverable via any API;
+#                                                                  # read it out of the uploaded
+#                                                                  # XCCDF/DataStream document, or
+#                                                                  # the Web UI's own create-policy
+#                                                                  # form
+#                                  "description": "...",             # optional
+#                                  "earliest": "2026-10-01T00:00:00", # optional, ISO_LOCAL_DATE_TIME
+#                                  "tailoring_file": "...",           # optional
+#                                  "tailoring_profile_id": "...",     # optional
+#                                  "oval_files": "...",               # optional
+#                                  "advanced_args": "...",            # optional
+#                                  "fetch_remote_resources": true}, ...]  # optional, default false
+#                             Idempotent (skips a policy that already exists by name) and AUTOMATIC
+#                             — runs as part of the normal install flow, unlike smlm_scap_scans
+#                             above. Authenticates as smlm_admin_user/smlm_admin_pass (the same
+#                             account every other ensure_* step already uses). SCAP CONTENT/
+#                             TAILORING FILE upload (the actual DataStream/XCCDF/tailoring XML
+#                             files) is NOT automated — those need to be staged onto the server's
+#                             own container filesystem first, and no kubectl-cp/mgrctl-cp
+#                             equivalent exists yet in this project to do that; upload them once,
+#                             by hand, via the Web UI (Audit > SCAP Content / Tailoring Files),
+#                             then reference their real id here.
 #
 # OPTIONAL – CVE/OVAL audit (fully supported since SMLM 5.2). Pure read-only query, no JSON
 # config — run with:
@@ -2237,6 +2275,8 @@ def setup_smlm(hostname, definition, clu_name, clu_type, mydomain, cfg):
         sc.ensure_ansible_control_node(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_ansible_paths(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_content_projects(hostname, exec_prefix, cfg, "smlm")
+        sc.ensure_scap_policies(hostname, exec_prefix, cfg, "smlm",
+                                cfg.get("smlm_admin_user") or "admin", cfg.get("smlm_admin_pass") or "admin123")
         sc.ensure_custom_info_keys(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_system_tags(hostname, exec_prefix, cfg, "smlm")
         sc.ensure_environments(hostname, exec_prefix, cfg, "smlm")

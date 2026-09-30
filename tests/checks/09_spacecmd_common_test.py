@@ -4318,6 +4318,112 @@ except SystemExit:
     died = True
 check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
 
+# -- SCAP policy creation via the private Web UI REST route, added 2026-09-30 -
+fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="200"))])
+sc.ssh_run = fake
+sc.scap_web_login("host1", "mgrctl exec --", "admin", "s3cr3t'pw")
+check("scap_web_login: exactly one curl call, POSTing to the real login route", len(fake.calls) == 1)
+login_cmd = unwrap(fake.calls[0][1])
+check("scap_web_login: JSON body carries login/password under the real LoginCredentials field "
+      "names", '"login": "admin"' in login_cmd and '"password": "s3cr3t' in login_cmd)
+check("scap_web_login: posts to the real /rhn/manager/api/login route (CSRF-exempt, confirmed "
+      "against the real POST_UNPROTECTED_URIS whitelist)", "https://localhost/rhn/manager/api/login" in login_cmd)
+check("scap_web_login: writes the session cookie to a jar file, not held only in this process",
+      sc._SCAP_WEB_COOKIE_JAR in login_cmd)
+
+fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="401"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.scap_web_login("host1", "mgrctl exec --", "admin", "wrongpw")
+except SystemExit:
+    died = True
+check("scap_web_login: a non-200 HTTP status (bad credentials) dies", died)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout=json.dumps({"success": True, "data": 9})))])
+sc.ssh_run = fake
+policy_id = sc.create_scap_policy("host1", "mgrctl exec --", "sles15-baseline", 5,
+                                   "xccdf_org.ssgproject.content_profile_standard",
+                                   fetch_remote_resources=True)
+check("create_scap_policy: returns the real numeric policy id from the response's 'data' field",
+      policy_id == 9)
+create_cmd = unwrap(fake.calls[0][1])
+check("create_scap_policy: required fields reach the real ScapPolicyJson-shaped body",
+      '"policyName": "sles15-baseline"' in create_cmd and '"scapContentId": 5' in create_cmd and
+      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in create_cmd)
+check("create_scap_policy: fetchRemoteResources is included when true",
+      '"fetchRemoteResources": true' in create_cmd)
+check("create_scap_policy: posts to the real policy-create route, reusing the same cookie jar "
+      "scap_web_login() wrote", "https://localhost/rhn/manager/api/audit/scap/policy/create" in create_cmd and
+      sc._SCAP_WEB_COOKIE_JAR in create_cmd)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout=json.dumps({"success": False, "messages": ["SCAP Content ID is required"]})))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.create_scap_policy("host1", "mgrctl exec --", "bad-policy", 5, "some_profile")
+except SystemExit:
+    died = True
+check("create_scap_policy: a logical failure (success=false in the JSON body, real HTTP 200) "
+      "dies rather than reporting a false success", died)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout="<html>not logged in</html>"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.create_scap_policy("host1", "mgrctl exec --", "bad-policy", 5, "some_profile")
+except SystemExit:
+    died = True
+check("create_scap_policy: unparseable output (e.g. an HTML redirect from an expired/missing "
+      "session) dies with a clear message instead of crashing on json.loads", died)
+
+fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline"}])))])
+sc.ssh_run = fake
+check("scap_policy_exists: true when a policy with that name is already in list_scap_policies()",
+      sc.scap_policy_exists("host1", "mgrctl exec --", "sles15-baseline"))
+check("scap_policy_exists: false for a name not present",
+      not sc.scap_policy_exists("host1", "mgrctl exec --", "nosuchpolicy"))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_scap_policies("host1", "mgrctl exec --", {}, "uyuni", "admin", "pw")
+check("ensure_scap_policies: no-op when the field is unset — no login, no listing, no create",
+      len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[
+    ("rhn/manager/api/login", FakeResult(returncode=0, stdout="200")),
+    ("system.scap.listPolicies", FakeResult(
+        returncode=0, stdout=json.dumps([{"id": 7, "policyName": "already-there"}]))),
+    ("rhn/manager/api/audit/scap/policy/create", FakeResult(
+        returncode=0, stdout=json.dumps({"success": True, "data": 11}))),
+])
+sc.ssh_run = fake
+sc.ensure_scap_policies("host1", "mgrctl exec --", {"uyuni_scap_policies": [
+    {"policy_name": "already-there", "scap_content_id": 5, "xccdf_profile_id": "p1"},
+    {"policy_name": "new-policy", "scap_content_id": 5, "xccdf_profile_id": "p2"},
+]}, "uyuni", "admin", "pw")
+create_calls = [c for c in fake.calls if "scap/policy/create" in c[1]]
+check("ensure_scap_policies: skips a policy that already exists by name", len(create_calls) == 1)
+check("ensure_scap_policies: creates only the genuinely-missing one",
+      '"policyName": "new-policy"' in unwrap(create_calls[0][1]))
+
+fake = FakeSSH(responses=[
+    ("rhn/manager/api/login", FakeResult(returncode=0, stdout="200")),
+    ("system.scap.listPolicies", FakeResult(returncode=0, stdout=json.dumps([]))),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_scap_policies("host1", "mgrctl exec --",
+                            {"uyuni_scap_policies": [{"policy_name": "incomplete"}]}, "uyuni", "admin", "pw")
+except SystemExit:
+    died = True
+check("ensure_scap_policies: an entry missing scap_content_id/xccdf_profile_id dies", died)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
