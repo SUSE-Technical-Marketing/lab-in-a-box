@@ -882,7 +882,7 @@ install_longhorn --schema yaml      # ...or YAML
 
 Addons are referenced by name in the `addons` array of a kcluster or node. The corresponding `install_<name>` script must be on `PATH`.
 
-<sub>Jump to: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Security &amp; compliance</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Storage &amp; databases</a> · <a href="#addons-cicd">CI/CD &amp; tooling</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">Virtualization</a> · <a href="#addons-demos">Demo applications</a> · <a href="#addons-games">Games</a></sub>
+<sub>Jump to: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Security &amp; compliance</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Storage &amp; databases</a> · <a href="#addons-collaboration">Collaboration &amp; file sharing</a> · <a href="#addons-cicd">CI/CD &amp; tooling</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">Virtualization</a> · <a href="#addons-demos">Demo applications</a> · <a href="#addons-games">Games</a></sub>
 
 <a id="addons-k8s"></a>
 <details open>
@@ -942,10 +942,20 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 
 | Addon name | Description |
 |---|---|
-| [`mariadb`](https://mariadb.org/) | MariaDB database |
-| [`postgresql`](https://www.postgresql.org/) | PostgreSQL database |
+| [`mariadb`](https://mariadb.org/) | MariaDB database — Kubernetes (Helm-less manifest) or installed natively on the OS; the OS-native path (`libs/db_common.py`) is also reused directly by other addons (`nextcloud`, `seafile`) that need a companion database on the same host |
+| [`postgresql`](https://www.postgresql.org/) | PostgreSQL database — Kubernetes (Helm) or installed natively on the OS; the OS-native path (`libs/db_common.py`) is also reused directly by other addons (e.g. `nextcloud`) that need a companion database on the same host |
 | [`openldap`](https://www.openldap.org/) | OpenLDAP directory service |
 | [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) |
+</details>
+
+<a id="addons-collaboration"></a>
+<details open>
+<summary><strong>Collaboration &amp; file sharing</strong></summary>
+
+| Addon name | Description |
+|---|---|
+| [`nextcloud`](https://nextcloud.com/) | Nextcloud — standalone podman containers (no Kubernetes, the only mode that supports airgapped app installs) by default, or the real community Helm chart on a Kubernetes cluster; optional Talk/Groupware/Flow/Assistant apps and ONLYOFFICE/Euro-Office/Collabora document-editing integration |
+| [`seafile`](https://www.seafile.com/) | Seafile — standalone podman containers (no Kubernetes) by default, or the real official Helm chart on a Kubernetes cluster |
 </details>
 
 <a id="addons-cicd"></a>
@@ -955,6 +965,7 @@ Addons are referenced by name in the `addons` array of a kcluster or node. The c
 | Addon name | Description |
 |---|---|
 | [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
+| [`gitlab`](https://about.gitlab.com/) | GitLab — standalone Omnibus podman container (no Kubernetes) by default, or the real official Helm chart on a Kubernetes cluster |
 | [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
 | [`stackpack`](https://www.stackstate.com/) | StackState monitoring integration |
 | [`trento`](https://www.trento-project.io/) | SAP infrastructure monitoring |

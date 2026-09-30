@@ -43,9 +43,13 @@ except FileNotFoundError:
 
 
 # ── schema(): capabilities attached for a real kubernetes-layer addon ────────
+# install_mariadb gained a second, os-native layer 2026-09-27 (setup_mariadb_os(),
+# also reused directly by install_nextcloud.py/install_seafile.py for their own
+# companion database) — no longer a pure single-layer example, but still a real
+# addon that legitimately supports "kubernetes" among its layers.
 sc = discovery.schema("install_mariadb")
-check("schema('install_mariadb') has a capabilities.layers of ['kubernetes']",
-      sc.get("capabilities", {}).get("layers") == ["kubernetes"])
+check("schema('install_mariadb') has 'kubernetes' among its capabilities.layers",
+      "kubernetes" in sc.get("capabilities", {}).get("layers", []))
 check("schema('install_mariadb') keeps its own schema fields (section) too",
       sc.get("section") == "mariadb")
 
@@ -64,8 +68,8 @@ check("discover() finds a reasonable number of addons (>= 30)", len(items) >= 30
 missing = [it["name"] for it in items if "layers" not in it]
 check("every discover() item has a 'layers' key: {}".format(missing), missing == [])
 mariadb_item = next((it for it in items if it["name"] == "install_mariadb"), None)
-check("discover()'s install_mariadb entry has layers=['kubernetes']",
-      mariadb_item is not None and mariadb_item["layers"] == ["kubernetes"])
+check("discover()'s install_mariadb entry has 'kubernetes' among its layers",
+      mariadb_item is not None and "kubernetes" in mariadb_item["layers"])
 
 
 if failures:
