@@ -134,3 +134,8 @@ mysource='automation.mydemo.lab'
 
 
 
+
+# LAB_HOSTS_FILE: also write every lab VM's "<ip> <fqdn> <short>" into this file
+# (e.g. /etc/hosts) when it's registered in DNS — for an automation node that
+# doesn't run BIND itself. Unset (the default): off.
+#LAB_HOSTS_FILE=/etc/hosts

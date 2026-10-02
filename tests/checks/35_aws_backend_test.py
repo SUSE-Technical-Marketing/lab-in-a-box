@@ -543,6 +543,63 @@ check("create_vm() uses cloud_instance_type verbatim, bypassing _pick_instance_t
       "m5.2xlarge" in run_instances_call and "t3.medium" not in run_instances_call)
 
 
+# ── nested_virtualization: opt-in, OFF by default (existing behavior unaffected) ──
+# added 2026-09-30 — see AWSBackend's own docstring for the full "why" (running this project's
+# real kickstart/Harvester-ISO pipeline on a cloud-provisioned EC2 "hypervisor" node).
+b7 = backends.AWSBackend("eu-central-1", profile="lab")
+b7._user_data_by_vm["vm1"] = ""
+calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
+    b7.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
+                  iso_image="ami-0123456789abcdef0")
+run_instances_call = next(c for c in calls if "run-instances" in c)
+check("create_vm(): --cpu-options is completely absent when nested_virtualization isn't "
+      "requested — every pre-existing lab is unaffected", "--cpu-options" not in run_instances_call)
+
+b8 = backends.AWSBackend("eu-central-1", profile="lab")
+b8._user_data_by_vm["vm1"] = ""
+calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
+    b8.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
+                  iso_image="ami-0123456789abcdef0", cloud_instance_type="m8id.8xlarge",
+                  nested_virtualization="true")
+run_instances_call = next(c for c in calls if "run-instances" in c)
+check("create_vm(): nested_virtualization=true on a real supported family adds the exact, "
+      "documented AWS CLI flag", "--cpu-options" in run_instances_call and
+      "NestedVirtualization=enabled" in run_instances_call)
+
+died = []
+b9 = backends.AWSBackend("eu-central-1", profile="lab")
+b9._user_data_by_vm["vm1"] = ""
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run), \
+     mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
+    try:
+        # No cloud_instance_type override -> _pick_instance_type() resolves the T3 family,
+        # which does NOT support nested virtualization.
+        b9.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
+                      iso_image="ami-0123456789abcdef0", nested_virtualization="true")
+    except SystemExit:
+        pass
+check("create_vm(): nested_virtualization=true with the default (unsupported) T3 family dies "
+      "with a clear message, rather than reaching a confusing AWS API rejection",
+      any("nested" in m.lower() and "t3.medium" in m for m in died))
+
+died = []
+b10 = backends.AWSBackend("eu-central-1", profile="lab")
+b10._user_data_by_vm["vm1"] = ""
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run), \
+     mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
+    try:
+        b10.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
+                       iso_image="ami-0123456789abcdef0", cloud_instance_type="c5.xlarge",
+                       nested_virtualization="true")
+    except SystemExit:
+        pass
+check("create_vm(): nested_virtualization=true with an explicit but unsupported family (c5, "
+      "not c7i/c8i) also dies, not just the default table",
+      any("c5.xlarge" in m for m in died))
+
+
 # ── AWS_INSTANCE_TYPES: resolve() parses the config override into instance_types ──
 resolved = backends.AWSBackend.resolve(
     {}, "vm1", {"AWS_REGION": "eu-central-1", "AWS_PROFILE": "lab",

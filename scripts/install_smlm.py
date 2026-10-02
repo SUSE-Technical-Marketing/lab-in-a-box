@@ -133,6 +133,51 @@
 #   smlm_ssl_password     : password for the self-signed SSL cert `mgradm install`
 #                            generates, "podman" deployment only  (default: same as
 #                            smlm_admin_pass)
+#   smlm_ssl_country      : SSL CA subject: country (2 letters), "podman" deployment only.
+#                            This and the 5 fields below are passed to `mgradm install`
+#                            as --ssl-<field> only when set (mgradm's own defaults apply
+#                            otherwise), and only on a fresh install — ignored when the
+#                            uyuni-server container already exists.
+#   smlm_ssl_state        : SSL CA subject: state/province
+#   smlm_ssl_city         : SSL CA subject: city
+#   smlm_ssl_org          : SSL CA subject: organization
+#   smlm_ssl_ou           : SSL CA subject: organizational unit
+#   smlm_ssl_email        : SSL CA subject: e-mail address
+#
+# OPTIONAL – SUSE's own server image ("podman" deployment only)
+#   smlm_byos             : "true" when the node boots SUSE's SUSE Multi-Linux Manager Server (options: true, false)
+#                            BYOS image (qcow2 for KVM, or a cloud marketplace BYOS image)
+#                            instead of a plain SLES: it is registered with
+#                            smlm_scc_regcode as is (no containers module, no SMLM
+#                            extension, no tooling install — mgradm is already there),
+#                            then installed like any other.            (default: false)
+#
+# OPTIONAL – pre-built server images ("podman" deployment only)
+#   smlm_preinstalled     : "true" when the node boots from an image that already (options: true, false)
+#                            contains an installed, channel-synced server (built
+#                            once ahead of time because the channel download takes
+#                            hours). When the uyuni-server container already exists,
+#                            SCC registration and the mgradm/podman tooling install
+#                            are skipped, smlm_scc_regcode is no longer required,
+#                            and channels already present on the server are not
+#                            re-added (so no mirror credentials are needed either).
+#                            Missing channels are still added as usual.
+#                            (default: false)
+#   smlm_image_admin_pass : admin password the image was built with. When set and
+#                            smlm_admin_pass does not log in, the admin password is
+#                            changed to smlm_admin_pass (XML-RPC user.setDetails)
+#                            before any other step, so every deployed lab gets its
+#                            own password instead of the one baked into the image.
+#
+# OPTIONAL – server-side conveniences ("podman" deployment only)
+#   smlm_salt_auto_accept : "true" to accept every new salt minion key automatically (options: true, false)
+#                            (drops /etc/salt/master.d/zz-lab-auto-accept.conf in the
+#                            server container and restarts salt-master). Meant for
+#                            throw-away labs only.                (default: false)
+#   smlm_bootstrap_scripts : [{"name": "generic_bootstrap.sh", "url": "https://..."}]
+#                            Extra client bootstrap scripts downloaded on the server
+#                            host and published under /pub/bootstrap/<name> (mode
+#                            0755). name must be a plain file name.
 #
 # OPTIONAL – Helm / release
 #   smlm_version          : Helm chart version         (empty = latest, e.g. "5.2.0")
@@ -215,6 +260,10 @@
 #                             native activationkey_addpackages — applied on every run, not just at
 #                             key-creation time (idempotent: diffs against
 #                             activationkey_listpackages first and only adds what's missing)
+#   smlm_channels             : Software channel labels (list, or space-separated string) to add
+#                             with `mgr-sync add channels`, "podman" deployment only — together
+#                             with every activation key's own child channels. Needs
+#                             smlm_scc_user/smlm_scc_password (mirror credentials).
 #   smlm_sync_channels        : Space-separated software channel labels to ensure are synced
 #                             (each via 'mgr-sync add channel <label>' if not already present in
 #                             'spacecmd softwarechannel_list') before the activation key is created
@@ -495,7 +544,14 @@
 # branch, which is bleeding-edge/unreleased and can genuinely differ from what's shipped):
 #   smlm_maintenance_calendars : [{"label": "...", "ical": "BEGIN:VCALENDAR\n...\nEND:VCALENDAR"},
 #                                 {"label": "...", "url": "https://.../calendar.ics"}, ...]
-#                             Exactly one of ical/url per entry.
+#                             Exactly one of ical/url per entry. SYNCED, not just created (2026-09-30):
+#                             an already-existing calendar whose live ical/url differs from this
+#                             field gets updated via the real maintenance.updateCalendar (reschedule
+#                             strategy "Fail" — never silently cancels an already-scheduled action),
+#                             ground-truthed against MaintenanceHandler.java. Runs automatically on
+#                             every normal install, or surgically against an already-provisioned
+#                             live server via: install_smlm.py <lab.json> --sync-maintenance-calendars
+#                             (never touches anything else).
 #   smlm_maintenance_schedules : [{"name": "...", "type": "single"|"multi", "calendar": "...",
 #                                  "systems": ["existing-system-name", ...]}, ...]
 #                             "calendar" is a name reference into smlm_maintenance_calendars above
@@ -897,10 +953,13 @@ PLUGIN = {
 
 import json
 import os
+import re
 import shlex
+import ssl
 import subprocess
 import sys
 import time
+import xmlrpc.client
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -912,6 +971,115 @@ import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
 from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log  # noqa: E402
+
+
+_BOOTSTRAP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _is_true(value):
+    return value is True or str(value).lower() == "true"
+
+
+def _api_login_ok(hostname, login, password):
+    """True if login/password authenticates against the server's XML-RPC API."""
+    ctx = ssl._create_unverified_context()  # lab server, self-signed certificate
+    client = xmlrpc.client.ServerProxy("https://{}/rpc/api".format(hostname), context=ctx)
+    try:
+        client.auth.logout(client.auth.login(login, password))
+        return True
+    except xmlrpc.client.Fault:
+        return False
+
+
+def rotate_admin_password(hostname, admin, password, previous):
+    """
+    Make `password` the admin password of a server built from an image whose
+    admin password was `previous` (smlm_image_admin_pass). No-op when
+    `password` already works; dies when neither does.
+    """
+    if _api_login_ok(hostname, admin, password):
+        return
+    if not previous or not _api_login_ok(hostname, admin, previous):
+        die("neither smlm_admin_pass nor smlm_image_admin_pass log in as '{}' on '{}'".format(
+            admin, hostname))
+    print("- Replacing the image's admin password with this lab's smlm_admin_pass")
+    ctx = ssl._create_unverified_context()
+    client = xmlrpc.client.ServerProxy("https://{}/rpc/api".format(hostname), context=ctx)
+    key = client.auth.login(admin, previous)
+    try:
+        client.user.setDetails(key, admin, {"password": password})
+    finally:
+        client.auth.logout(key)
+
+
+def _existing_channels(hostname, admin, password):
+    """Software channel labels already present on the server."""
+    out = ssh_run(hostname, "mgrctl exec -- spacecmd -q -u {} -p {} -- softwarechannel_list".format(
+        shlex.quote(admin), shlex.quote(password)), check=False, capture=True).stdout or ""
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def ensure_salt_auto_accept(hostname):
+    print("- Enabling salt auto_accept for new minion keys")
+    script = ("mkdir -p /etc/salt/master.d && "
+              "printf 'auto_accept: True\\n' > /etc/salt/master.d/zz-lab-auto-accept.conf && "
+              "systemctl restart salt-master")
+    ssh_run(hostname, "mgrctl exec -- sh -c {}".format(shlex.quote(script)), check=False)
+
+
+def ensure_bootstrap_scripts(hostname, scripts):
+    for entry in scripts:
+        name, url = entry["name"], entry["url"]
+        print("- Publishing bootstrap script /pub/bootstrap/{}".format(name))
+        tmp = "/tmp/lab-bootstrap-{}".format(name)
+        dest = "/srv/www/htdocs/pub/bootstrap/{}".format(name)
+        ssh_run(hostname, "curl -4 -fsSL --retry 5 -o {tmp} {url} && "
+                          "mgrctl cp {tmp} server:{dest} && "
+                          "mgrctl exec -- chmod 0755 {dest} && rm -f {tmp}".format(
+                              tmp=shlex.quote(tmp), url=shlex.quote(url), dest=shlex.quote(dest)))
+
+
+def _registry_login(hostname, scc_user, scc_password):
+    """
+    podman login to registry.suse.com with the SCC account, when one is given.
+    Separate from the SUSEConnect registration: mgradm pulls SMLM's entitled
+    container images from registry.suse.com, which needs its own podman login,
+    per the docs' own troubleshooting section (see setup_smlm_podman()'s own
+    docstring).
+    """
+    if scc_user and scc_password:
+        print("- Logging into registry.suse.com")
+        ssh_run(hostname, "echo {} | podman login -u {} --password-stdin registry.suse.com".format(
+            shlex.quote(scc_password), shlex.quote(scc_user)), check=False)
+    else:
+        print("- smlm_scc_user/smlm_scc_password not set — skipping podman login to "
+              "registry.suse.com; relying on SUSEConnect registration alone to authorize "
+              "the image pull (see setup_smlm_podman()'s own docstring)")
+
+
+def _register_byos_image(hostname, virt_srv, regcode):
+    """
+    smlm_byos: the node boots SUSE's own SUSE Multi-Linux Manager Server image
+    (BYOS — bring your own subscription: the qcow2 for KVM, or the cloud
+    marketplace BYOS image). That image already ships mgradm/mgrctl/podman and
+    has SMLM itself as its base product, so it only needs registering with the
+    operator's own regcode — no containers module, no SMLM extension, no
+    tooling install. On its transactional (SL Micro) base the registration is
+    `transactional-update register`, which takes effect after a reboot.
+    NOT live-tested (no SMLM BYOS image/regcode in this environment).
+    """
+    if ssh_run(hostname, "command -v mgradm", check=False).returncode != 0:
+        die("smlm_byos is set, but '{}' has no mgradm — boot it from SUSE's SUSE Multi-Linux "
+            "Manager Server BYOS image".format(hostname))
+    print("- smlm_byos: registering SUSE's SMLM Server image with smlm_scc_regcode")
+    transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
+    cmd = "transactional-update --quiet register -r {}" if transactional else "SUSEConnect -r {}"
+    if ssh_run(hostname, cmd.format(shlex.quote(regcode)), check=False).returncode != 0:
+        die("could not register '{}' with smlm_scc_regcode".format(hostname))
+    if transactional:
+        reboot_vm(virt_srv, hostname)
+        time.sleep(5)
+        check_ssh_conn(hostname)
 
 
 def _validate(v):
@@ -931,8 +1099,13 @@ def _validate(v):
         # also set, since mgr-sync has no other way to learn which channels
         # are entitled (see setup_smlm_podman()'s own die() for the runtime
         # version of this same check).
-        v.vreq_or_credential("smlm", "smlm_scc_regcode", "scc", account_field="smlm_scc_account")
-        if cfg.get("smlm_channels") or cfg.get("smlm_activation_keys"):
+        # smlm_preinstalled images skip SCC registration entirely (see
+        # setup_smlm_podman()), so neither the regcode nor the mirror
+        # credentials can be required up front — setup_smlm_podman() still
+        # dies at runtime if channels turn out to be missing.
+        if not _is_true(cfg.get("smlm_preinstalled")):
+            v.vreq_or_credential("smlm", "smlm_scc_regcode", "scc", account_field="smlm_scc_account")
+        if (cfg.get("smlm_channels") or cfg.get("smlm_activation_keys")) and not _is_true(cfg.get("smlm_preinstalled")):
             v.vreq_or_credential("smlm", "smlm_scc_user", "scc", account_field="smlm_scc_account")
             v.vreq_or_credential("smlm", "smlm_scc_password", "scc", account_field="smlm_scc_account")
     else:
@@ -944,6 +1117,13 @@ def _validate(v):
     v.vbool("smlm", "smlm_super_privileged")
     v.vbool("smlm", "smlm_db_ha")
     v.vbool("smlm", "smlm_db_ha_sync")
+    v.vbool("smlm", "smlm_preinstalled")
+    v.vbool("smlm", "smlm_byos")
+    v.vbool("smlm", "smlm_salt_auto_accept")
+    for entry in cfg.get("smlm_bootstrap_scripts") or []:
+        if not isinstance(entry, dict) or not entry.get("url") or not _BOOTSTRAP_NAME_RE.match(str(entry.get("name", ""))):
+            v.errors.append("[ERROR] smlm.smlm_bootstrap_scripts: every entry needs a plain file "
+                            "'name' (letters, digits, '.', '_', '-') and a 'url'")
     v.vport("smlm", "smlm_db_ha_replicas")
 
 
@@ -1044,60 +1224,61 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
     email = cfg.get("smlm_email") or "admin@lab.local"
 
-    print("- Registering the host with SCC")
-    ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
-    # sle-module-containers MUST be registered before the SMLM extension
-    # itself — confirmed live 2026-09-13: SCC's own registration server
-    # rejects the SMLM module outright ("requires one of these products to
-    # be activated first: Containers Module 15 SP7 x86_64", HTTP 422) if
-    # attempted first. An earlier version of this function registered the
-    # containers module later, only in the plain-SLES package-install
-    # branch below (where it's ALSO needed, for podman itself) — too late
-    # for this dependency check, which happens regardless of base OS. Free
-    # module, no regcode needed, same as the official docs' own example.
-    ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
-    r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
-                check=False)
-    if r.returncode != 0:
-        die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
-            "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
-            "own docstring for how to find it)".format(product, hostname))
-
     scc_user = cfg.get("smlm_scc_user")
     scc_password = cfg.get("smlm_scc_password")
-    if scc_user and scc_password:
-        # Separate from the SUSEConnect registration above: mgradm pulls
-        # SMLM's entitled container images from registry.suse.com, which
-        # needs its own podman login, per the docs' own troubleshooting
-        # section (see this function's own docstring).
-        print("- Logging into registry.suse.com")
-        ssh_run(hostname, "echo {} | podman login -u {} --password-stdin registry.suse.com".format(
-            shlex.quote(scc_password), shlex.quote(scc_user)), check=False)
+    # A pre-built image (smlm_preinstalled) already carries the registered
+    # tooling and the installed server; repeating SCC registration would need
+    # a regcode the lab no longer has to provide.
+    preinstalled = _is_true(cfg.get("smlm_preinstalled")) and ssh_run(
+        hostname, "podman container exists uyuni-server", check=False).returncode == 0
+    if preinstalled:
+        print("- smlm_preinstalled: uyuni-server already present — skipping SCC registration "
+              "and mgradm tooling install")
+    elif _is_true(cfg.get("smlm_byos")):
+        _register_byos_image(hostname, virt_srv, regcode)
+        _registry_login(hostname, scc_user, scc_password)
     else:
-        print("- smlm_scc_user/smlm_scc_password not set — skipping podman login to "
-              "registry.suse.com; relying on SUSEConnect registration alone to authorize "
-              "the image pull (see setup_smlm_podman()'s own docstring)")
+        print("- Registering the host with SCC")
+        ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
+        # sle-module-containers MUST be registered before the SMLM extension
+        # itself — confirmed live 2026-09-13: SCC's own registration server
+        # rejects the SMLM module outright ("requires one of these products to
+        # be activated first: Containers Module 15 SP7 x86_64", HTTP 422) if
+        # attempted first. An earlier version of this function registered the
+        # containers module later, only in the plain-SLES package-install
+        # branch below (where it's ALSO needed, for podman itself) — too late
+        # for this dependency check, which happens regardless of base OS. Free
+        # module, no regcode needed, same as the official docs' own example.
+        ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
+        r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
+                    check=False)
+        if r.returncode != 0:
+            die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
+                "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
+                "own docstring for how to find it)".format(product, hostname))
 
-    print("- Installing mgradm tooling")
-    pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
-    is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
-    if is_transactional:
-        # SL Micro base — ships podman by default; package changes land in a
-        # new snapshot that only takes effect after a reboot, same as
-        # install_uyuni.py's own (Micro-only) assumption.
-        ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
-        reboot_vm(virt_srv, hostname)
-        time.sleep(5)
-        check_ssh_conn(hostname)
-    else:
-        # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
-        # does NOT ship podman by default; needs an explicit podman
-        # install/enable first (confirmed from the official docs). The
-        # containers module itself is already registered above, before the
-        # SMLM module registration attempt — no need to repeat it here.
-        ssh_run(hostname, "zypper --non-interactive install -y podman")
-        ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
-        ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
+        _registry_login(hostname, scc_user, scc_password)
+
+        print("- Installing mgradm tooling")
+        pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
+        is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
+        if is_transactional:
+            # SL Micro base — ships podman by default; package changes land in a
+            # new snapshot that only takes effect after a reboot, same as
+            # install_uyuni.py's own (Micro-only) assumption.
+            ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
+            reboot_vm(virt_srv, hostname)
+            time.sleep(5)
+            check_ssh_conn(hostname)
+        else:
+            # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
+            # does NOT ship podman by default; needs an explicit podman
+            # install/enable first (confirmed from the official docs). The
+            # containers module itself is already registered above, before the
+            # SMLM module registration attempt — no need to repeat it here.
+            ssh_run(hostname, "zypper --non-interactive install -y podman")
+            ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+            ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
 
     print("- Installing SUSE Multi-Linux Manager server")
     admin = cfg.get("smlm_admin_user") or "admin"
@@ -1149,6 +1330,9 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # Confidential Computing attestation container — see this JSON section's
         # own smlm_coco_replicas doc comment above for the real, ground-truthed
         # `mgradm install podman --help` flags this maps to.
+        for field in ("country", "state", "city", "org", "ou", "email"):
+            if cfg.get("smlm_ssl_" + field):
+                install_cmd += " --ssl-{} {}".format(field, shlex.quote(str(cfg["smlm_ssl_" + field])))
         if cfg.get("smlm_coco_replicas") is not None:
             install_cmd += " --coco-replicas {}".format(shlex.quote(str(cfg["smlm_coco_replicas"])))
         if cfg.get("smlm_coco_image"):
@@ -1162,6 +1346,11 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         time.sleep(5)
         check_ssh_conn(hostname)
     ensure_server_container_active(hostname)
+    if cfg.get("smlm_image_admin_pass"):
+        rotate_admin_password(hostname, admin, password, cfg["smlm_image_admin_pass"])
+    if _is_true(cfg.get("smlm_salt_auto_accept")):
+        ensure_salt_auto_accept(hostname)
+    ensure_bootstrap_scripts(hostname, cfg.get("smlm_bootstrap_scripts") or [])
 
     print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
 
@@ -1210,7 +1399,12 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             if c not in channels:
                 channels.append(c)
 
-    if channels or cfg.get("smlm_activation_keys"):
+    if preinstalled and channels:
+        present = _existing_channels(hostname, admin, password)
+        channels = [c for c in channels if c not in present]
+        print("- smlm_preinstalled: {} requested channel(s) missing from the image{}".format(
+            len(channels), (": " + " ".join(channels)) if channels else " — skipping mgr-sync"))
+    if channels or (cfg.get("smlm_activation_keys") and not preinstalled):
         # Unlike the podman-registry login above (a fallback the docs frame
         # as optional), this step IS required: mgr-sync has no visibility
         # into which channels/products are entitled until the server's own
@@ -2397,6 +2591,29 @@ def run_scap_scans(hostname, cfg):
     sc.run_scap_scans(hostname, exec_prefix, cfg, "smlm")
 
 
+def sync_maintenance_calendars(hostname, cfg):
+    """
+    Pushes every entry in smlm_maintenance_calendars (see the JSON section
+    comment above) to the live server via sc.ensure_maintenance_calendars —
+    genuinely idempotent (creates a missing calendar, updates one whose
+    content differs, no-ops if it already matches — see
+    libs/spacecmd_common.py's sync_maintenance_calendar()), but still a
+    separate, explicit trigger rather than folded into the full automatic
+    setup_smlm() flow: this lets a calendar's schedule be pushed to an
+    already-provisioned live server surgically, without re-running every
+    other provisioning step against it too.
+    """
+    calendars = cfg.get("smlm_maintenance_calendars") or []
+    if not calendars:
+        print("No smlm_maintenance_calendars entries in the 'smlm' JSON section — nothing to sync.")
+        return
+    exec_prefix = _trigger_exec_prefix(hostname, cfg)
+    admin_user = cfg.get("smlm_admin_user") or "admin"
+    admin_pass = cfg.get("smlm_admin_pass") or "admin123"
+    sc.ensure_spacecmd_config(hostname, exec_prefix, admin_user, admin_pass)
+    sc.ensure_maintenance_calendars(hostname, exec_prefix, cfg, "smlm")
+
+
 def cve_audit(hostname, cfg, cve_id):
     """Prints audit.listSystemsByPatchStatus's raw result for `cve_id` — a
     pure read-only query, see libs/spacecmd_common.py."""
@@ -2442,6 +2659,7 @@ def main():
              "       {0} <lab.json> --run-ansible-playbooks   # schedule smlm_ansible_playbooks\n"
              "       {0} <lab.json> --run-clm-actions   # build/promote smlm_content_lifecycle_actions\n"
              "       {0} <lab.json> --run-scap-scans   # schedule smlm_scap_scans\n"
+             "       {0} <lab.json> --sync-maintenance-calendars   # push smlm_maintenance_calendars\n"
              "       {0} <lab.json> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
              "       {0} <lab.json> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
              "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules\n"
@@ -2528,6 +2746,7 @@ def main():
             "--run-ansible-playbooks": run_ansible_playbooks,
             "--run-clm-actions": run_clm_actions,
             "--run-scap-scans": run_scap_scans,
+            "--sync-maintenance-calendars": sync_maintenance_calendars,
             "--run-recurring-schedules": run_recurring_schedules,
         }
         if len(sys.argv) > 2 and sys.argv[2] in _podman_triggers:
@@ -2694,6 +2913,14 @@ def main():
     # reasoning as --run-ansible-playbooks/--run-clm-actions.
     if len(sys.argv) > 2 and sys.argv[2] == "--run-scap-scans":
         run_scap_scans(vm_name, cfg)
+        return
+
+    # Push smlm_maintenance_calendars to an already-provisioned live server
+    # instead of installing when requested — genuinely idempotent (unlike
+    # the triggers above), but still explicit so it can run surgically
+    # against a live server without re-running the whole automatic flow.
+    if len(sys.argv) > 2 and sys.argv[2] == "--sync-maintenance-calendars":
+        sync_maintenance_calendars(vm_name, cfg)
         return
 
     # Ad-hoc CVE/OVAL patch-status audit — read-only, takes the CVE id as a

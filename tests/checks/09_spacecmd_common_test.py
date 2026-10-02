@@ -3132,6 +3132,103 @@ sc.ensure_maintenance_calendar("host1", "mgrctl exec --", "cal1", url="https://x
 check("ensure_maintenance_calendar: skips when label already listed",
       not any("maintenance.createCalendar" in c[1] for c in fake.calls))
 
+# -- maintenance_calendar_details / update_maintenance_calendar / sync_maintenance_calendar
+# (added 2026-09-30 — ensure_maintenance_calendars() was create-only before this, silently never
+# pushing a changed ical to an already-existing live calendar; see libs/spacecmd_common.py) ------
+fake = FakeSSH(responses=[("maintenance.getCalendarDetails", FakeResult(
+    # Real, confirmed live 2026-09-30 against sol.mydemo.lab: getCalendarDetails wraps the
+    # single struct in a one-element JSON array on the wire, despite the Java return type
+    # being singular — this is the exact shape a real server sends, not the naive bare-dict
+    # guess an earlier version of this test used before that live bug was found.
+    returncode=0, stdout=json.dumps([{"id": 1, "label": "cal1", "ical": "OLD"}])))])
+sc.ssh_run = fake
+details = sc.maintenance_calendar_details("host1", "mgrctl exec --", "cal1")
+check("maintenance_calendar_details: unwraps the real one-element-array response into a plain "
+      "struct", details["ical"] == "OLD")
+
+fake = FakeSSH(responses=[("maintenance.getCalendarDetails", FakeResult(returncode=1, stderr="not found"))])
+sc.ssh_run = fake
+check("maintenance_calendar_details: returns None for a calendar that doesn't exist (real API "
+      "throws EntityNotExistsFaultException)",
+      sc.maintenance_calendar_details("host1", "mgrctl exec --", "nosuch") is None)
+
+fake = FakeSSH(responses=[("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+update_cmd = next(c[1] for c in fake.calls if "maintenance.updateCalendar" in c[1])
+check("update_maintenance_calendar: sends the new ical under the real 'ical' details key",
+      '"ical": "NEW"' in unwrap(update_cmd))
+check("update_maintenance_calendar: defaults rescheduleStrategy to the real API's own safer "
+      "option (\"Fail\" — never silently cancels a scheduled action unless told to)",
+      '["Fail"]' in unwrap(update_cmd))
+
+fake = FakeSSH(responses=[("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW", reschedule_strategy=["Cancel"])
+update_cmd = next(c[1] for c in fake.calls if "maintenance.updateCalendar" in c[1])
+check("update_maintenance_calendar: an explicit reschedule_strategy overrides the default",
+      '["Cancel"]' in unwrap(update_cmd))
+
+died = False
+try:
+    sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1")
+except SystemExit:
+    died = True
+check("update_maintenance_calendar: neither ical nor url given dies", died)
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "OLD"}]))),
+    ("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]")),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+check("sync_maintenance_calendar: calls updateCalendar when the existing content differs",
+      any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "SAME"}]))),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="SAME")
+check("sync_maintenance_calendar: no-op (no create, no update) when content already matches",
+      not any("maintenance.createCalendar" in c[1] or "maintenance.updateCalendar" in c[1]
+              for c in fake.calls))
+
+# Real bug found live 2026-09-30 against sol.mydemo.lab: the server strips trailing whitespace
+# from stored ical text, so a desired value ending in "\n" compared unequal to the server's own
+# already-correct copy on every single run, forcing a spurious update every time.
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "SAME"}]))),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="SAME\n")
+check("sync_maintenance_calendar: a trailing newline on the desired ical does NOT count as a "
+      "real difference from the server's own (whitespace-stripped) stored copy",
+      not any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=1, stderr="not found")),
+    ("maintenance.listCalendarLabels", FakeResult(returncode=0, stdout="[]")),
+    ("maintenance.createCalendar", FakeResult(returncode=0, stdout="{}")),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+check("sync_maintenance_calendar: creates (not updates) when the calendar doesn't exist yet",
+      any("maintenance.createCalendar" in c[1] for c in fake.calls)
+      and not any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+# ensure_maintenance_calendars() orchestrator now syncs content, not just create-if-missing.
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "OLD"}]))),
+    ("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]")),
+])
+sc.ssh_run = fake
+sc.ensure_maintenance_calendars("host1", "mgrctl exec --",
+                                {"smlm_maintenance_calendars": [{"label": "cal1", "ical": "NEW"}]}, "smlm")
+check("ensure_maintenance_calendars: the orchestrator pushes a changed ical to an already-"
+      "existing calendar (the real bug this whole section fixes)",
+      any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
 died = False
 try:
     sc.ensure_maintenance_schedule("host1", "mgrctl exec --", "sched1", "bogus")

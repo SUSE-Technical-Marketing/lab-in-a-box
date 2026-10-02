@@ -4293,7 +4293,7 @@ def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fq
     return r3.returncode == 0 and "bootstrap complete" in out3.lower()
 
 
-def _ensure_client_can_resolve_server(client_hostname, server_fqdn):
+def _ensure_client_can_resolve_server(client_hostname, server_fqdn, server_ip=None):
     """
     Pushes a static /etc/hosts entry for server_fqdn onto client_hostname —
     see ensure_client_registered()'s own docstring for the real, confirmed-
@@ -4308,11 +4308,17 @@ def _ensure_client_can_resolve_server(client_hostname, server_fqdn):
     resolved locally either — nothing this function can do about that, and
     the real bootstrap attempt right after this will fail with its own
     clear error instead.
+
+    server_ip (optional) is pinned as given instead of resolving server_fqdn
+    here — for labs where that name means something different on the
+    automation node than on the client's own network (e.g. several copies of
+    one lab on a host, each answering to the same server name).
     """
-    try:
-        server_ip = socket.gethostbyname(server_fqdn)
-    except socket.gaierror:
-        return
+    if not server_ip:
+        try:
+            server_ip = socket.gethostbyname(server_fqdn)
+        except socket.gaierror:
+            return
     hosts_line = "{} {}".format(server_ip, server_fqdn)
     ssh_run(client_hostname,
             "grep -qF {line} /etc/hosts || echo {line} >> /etc/hosts".format(
@@ -4321,7 +4327,8 @@ def _ensure_client_can_resolve_server(client_hostname, server_fqdn):
 
 
 def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn, activation_key,
-                              reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None):
+                              reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None,
+                              profile_name=None, server_ip=None):
     """
     Register client_hostname as a Salt client of the Uyuni/SMLM server
     reached via (hostname, exec_prefix), using an activation key the caller
@@ -4353,6 +4360,12 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     exists for. Omit it and that whole recovery path is simply skipped —
     the original curl-only behavior, unchanged.
 
+    profile_name (optional): the system's name in SMLM/Uyuni, passed to the
+    bootstrap script as PROFILENAME — which writes it as the salt minion ID
+    (and the susemanager profile_name grain) instead of the client's own
+    hostname. The salt-key checks below then look for that ID; SSH still
+    targets client_hostname.
+
     Real bug found live 2026-09-24 (solar-system-lab.json, saturn.mydemo.lab
     / neptune.mydemo.lab, both AWS EC2): a client on a completely different
     network (AWS's own VPC DNS, or systemd-resolved's stub resolver) simply
@@ -4370,11 +4383,12 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     eventual real salt-minion connection), on ANY client whose own DNS
     can't reach this lab, not just AWS ones specifically.
     """
-    if saltkey_accepted(hostname, exec_prefix, client_hostname):
+    minion_id = profile_name or client_hostname
+    if saltkey_accepted(hostname, exec_prefix, minion_id):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
         return
 
-    _ensure_client_can_resolve_server(client_hostname, server_fqdn)
+    _ensure_client_can_resolve_server(client_hostname, server_fqdn, server_ip)
 
     # Resolve to Uyuni's real, org-id-prefixed key name (see
     # resolve_activation_key_name's docstring) — both mgr-bootstrap and the
@@ -4392,6 +4406,8 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
 
     print("  Bootstrapping '{}' against '{}'".format(client_hostname, server_fqdn))
     env = "ACTIVATION_KEYS={}".format(shlex.quote(activation_key))
+    if profile_name:
+        env += " PROFILENAME={}".format(shlex.quote(profile_name))
     if reactivation_key:
         env += " REACTIVATION_KEY={}".format(shlex.quote(reactivation_key))
     # Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
@@ -4447,9 +4463,9 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
 
     def _wait_for_pending_key():
         for _ in range(retry_limit):
-            if client_hostname in saltkey_pending(hostname, exec_prefix):
+            if minion_id in saltkey_pending(hostname, exec_prefix):
                 return True
-            if saltkey_accepted(hostname, exec_prefix, client_hostname):
+            if saltkey_accepted(hostname, exec_prefix, minion_id):
                 return None  # already accepted by something else while polling
             time.sleep(retry_interval)
         return False
@@ -4482,7 +4498,7 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
                     client_hostname, retry_limit * retry_interval, server_fqdn,
                     bootstrap_out[-500:] if bootstrap_out else "(no output captured)"))
 
-    saltkey_accept(hostname, exec_prefix, client_hostname)
+    saltkey_accept(hostname, exec_prefix, minion_id)
     print("  Accepted salt key for '{}'".format(client_hostname))
 
 
@@ -4730,7 +4746,10 @@ def ensure_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=Non
     (raw ICal text) or maintenance.createCalendarWithUrl (a URL Uyuni
     downloads ICal data from) — exactly one of `ical`/`url` must be given.
     Skipped if `label` already appears in maintenance.listCalendarLabels'
-    output (no separate "exists" check in the real API).
+    output (no separate "exists" check in the real API) — deliberately
+    create-only, never touches an already-existing calendar's own content;
+    see sync_maintenance_calendar() below for the update-aware version
+    ensure_maintenance_calendars()'s own orchestrator actually uses.
     """
     if bool(ical) == bool(url):
         die("maintenance calendar '{}': exactly one of 'ical' or 'url' is required".format(label))
@@ -4746,14 +4765,112 @@ def ensure_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=Non
     print("  Created maintenance calendar '{}'".format(label))
 
 
+def maintenance_calendar_details(hostname, exec_prefix, label):
+    """
+    Returns the real maintenance.getCalendarDetails(sessionKey, label) struct
+    (id/orgId/label/ical, plus url if the calendar was created from one) —
+    ground-truthed directly against MaintenanceHandler.java/
+    MaintenanceCalendarSerializer.java (same spacewalk-java-5.2.19 release
+    already confirmed installed on sol.mydemo.lab — see this section's own
+    top comment), NOT the public API doc page alone. Returns None if the
+    calendar doesn't exist (real API throws EntityNotExistsFaultException,
+    surfacing here as a non-zero returncode) — used by
+    sync_maintenance_calendar() to decide create vs. update vs. no-op.
+
+    Real bug found live 2026-09-30 against sol.mydemo.lab: despite
+    MaintenanceHandler.java's own Java return type being the singular
+    MaintenanceCalendar (not a list), spacecmd's 'api' passthrough actually
+    hands back a ONE-ELEMENT JSON ARRAY wrapping that single struct on the
+    wire — confirmed directly against a real response, not assumed from the
+    Java signature alone. Unwrapped here so every caller gets the plain
+    struct.
+    """
+    r = _api_call(hostname, exec_prefix, "maintenance.getCalendarDetails", [label])
+    if r.returncode != 0:
+        return None
+    try:
+        parsed = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(parsed, list):
+        return parsed[0] if parsed else None
+    return parsed
+
+
+def update_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=None, reschedule_strategy=None):
+    """
+    Updates an ALREADY-EXISTING Maintenance Calendar's ical/url content via
+    the real maintenance.updateCalendar(sessionKey, label, {ical|url},
+    rescheduleStrategy) — ground-truthed directly against
+    MaintenanceHandler.java (same release already confirmed installed on
+    sol.mydemo.lab), the one thing ensure_maintenance_calendar() above
+    deliberately never does. `reschedule_strategy` (a list of strings, the
+    real API's own type) defaults to ["Fail"] — its own documented safer
+    option: real confirmed values are "Cancel" (cancels any already-
+    scheduled action that falls outside the new calendar's windows) or
+    "Fail" (refuses the whole update instead, leaving the calendar
+    untouched, if such a conflict exists) — this never silently cancels a
+    scheduled action unless the caller explicitly opts into "Cancel".
+    """
+    if bool(ical) == bool(url):
+        die("maintenance calendar '{}': exactly one of 'ical' or 'url' is required".format(label))
+    details = {"ical": ical} if ical else {"url": url}
+    strategy = reschedule_strategy or ["Fail"]
+    r = _api_call(hostname, exec_prefix, "maintenance.updateCalendar", [label, details, strategy])
+    if r.returncode != 0:
+        die("could not update maintenance calendar '{}': {}".format(
+            label, (r.stderr or r.stdout or "").strip()))
+    print("  Updated maintenance calendar '{}'".format(label))
+
+
+def sync_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=None, reschedule_strategy=None):
+    """
+    Ensures maintenance calendar `label` exists AND its content matches
+    `ical`/`url` — creates it (ensure_maintenance_calendar()) if missing,
+    updates it (update_maintenance_calendar()) if it exists with DIFFERENT
+    content (compared via a real maintenance.getCalendarDetails lookup, not
+    blindly re-pushed every run), or does nothing if content already
+    matches. This is what ensure_maintenance_calendars()'s own orchestrator
+    actually calls — makes the lab-JSON file a genuine source of truth for
+    an existing calendar's schedule, not just its initial creation.
+    """
+    if bool(ical) == bool(url):
+        die("maintenance calendar '{}': exactly one of 'ical' or 'url' is required".format(label))
+    existing = maintenance_calendar_details(hostname, exec_prefix, label)
+    if existing is None:
+        ensure_maintenance_calendar(hostname, exec_prefix, label, ical=ical, url=url)
+        return
+    current = existing.get("ical") if ical else existing.get("url")
+    desired = ical or url
+    # .rstrip(), not ==: real bug found live 2026-09-30 against sol.mydemo.lab — the server
+    # itself strips trailing whitespace/newlines from stored ical text (confirmed: a value
+    # with a trailing "\n" was round-tripped through updateCalendar/getCalendarDetails without
+    # one), so a caller-provided ical ending in "\n" compared unequal to the server's own
+    # already-correct copy on EVERY run, causing update_maintenance_calendar() to fire a
+    # spurious update every single time instead of being a genuine no-op — trailing whitespace
+    # carries no meaning in iCalendar (RFC 5545) either way, so this is a safe normalization,
+    # not a loosened comparison.
+    if (current or "").rstrip() == (desired or "").rstrip():
+        print("  Maintenance calendar '{}' already has the desired content — leaving it alone".format(label))
+        return
+    update_maintenance_calendar(hostname, exec_prefix, label, ical=ical, url=url,
+                                reschedule_strategy=reschedule_strategy)
+
+
 def ensure_maintenance_calendars(hostname, exec_prefix, cfg, prefix):
-    """Orchestrates <prefix>_maintenance_calendars: a list of {label, ical, url} dicts."""
+    """
+    Orchestrates <prefix>_maintenance_calendars: a list of {label, ical, url}
+    dicts, synced (not just created) via sync_maintenance_calendar() —
+    upgraded 2026-09-30 from create-only so an edit to an already-deployed
+    calendar's schedule in the lab JSON actually reaches an already-existing
+    live server on the next normal run, not just a fresh install.
+    """
     for entry in cfg.get("{}_maintenance_calendars".format(prefix)) or []:
         label = entry.get("label")
         if not label:
             die("{}_maintenance_calendars: an entry is missing 'label'".format(prefix))
-        ensure_maintenance_calendar(hostname, exec_prefix, label,
-                                     ical=entry.get("ical"), url=entry.get("url"))
+        sync_maintenance_calendar(hostname, exec_prefix, label,
+                                  ical=entry.get("ical"), url=entry.get("url"))
 
 
 def ensure_maintenance_schedule(hostname, exec_prefix, name, schedule_type, calendar=None):
