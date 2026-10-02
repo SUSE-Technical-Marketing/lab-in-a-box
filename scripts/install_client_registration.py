@@ -81,6 +81,16 @@
 #                                           minion's key to appear pending
 #                                           after bootstrap (default: 30)
 #   client_registration_retry_interval   : seconds between polls (default: 10)
+#   client_registration_server_ip        : IP the client pins client_registration_server
+#                                           to in its /etc/hosts (default: the name as
+#                                           resolved on the automation node) — for labs
+#                                           where that name differs per network
+#   client_registration_profile_name     : the system's name in the server (its
+#                                           salt minion ID), passed to bootstrap as
+#                                           PROFILENAME; default: the node's own name.
+#                                           Usually set per node (nodes[x].addons
+#                                           override), e.g. a workshop's
+#                                           "at-ct-pro" for VM zzsles15a
 
 __version__ = "526bc48"
 
@@ -215,6 +225,8 @@ def _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activatio
         retry_limit=int(cfg.get("client_registration_retry_limit") or 30),
         retry_interval=int(cfg.get("client_registration_retry_interval") or 10),
         base_channel=base_channel,
+        profile_name=cfg.get("client_registration_profile_name") or None,
+        server_ip=cfg.get("client_registration_server_ip") or None,
     )
 
 

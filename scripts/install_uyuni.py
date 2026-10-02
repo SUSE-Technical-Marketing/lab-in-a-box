@@ -200,17 +200,51 @@
 #                             polls the named environment's status until built/failed. Run with:
 #                             install_uyuni.py <lab.json> --run-clm-actions (never automatic).
 #
-# OPTIONAL – SCAP compliance auditing (legacy pre-staged-file model only — spacecmd's native
-# scap_* commands don't cover Uyuni/SMLM 5.2's newer "centralized policies" Technology Preview
-# layer, deliberately not automated here, see libs/spacecmd_common.py). Orchestration only:
-# xccdf_path (and the OpenSCAP scanner + SCAP Security Guide content) must already exist on the
-# target system. Explicit trigger only — see "--run-scap-scans" below:
+# OPTIONAL – SCAP compliance auditing (legacy pre-staged-file model — spacecmd's native scap_*
+# commands only cover this always-available scheduleXccdfScan path, see libs/spacecmd_common.py).
+# Orchestration only: xccdf_path (and the OpenSCAP scanner + SCAP Security Guide content) must
+# already exist on the target system. Explicit trigger only — see "--run-scap-scans" below:
 #   uyuni_scap_scans          : [{"system": "web1.mydemo.lab",
 #                                  "xccdf_path": "/usr/share/openscap/scap-security-xccdf.xml",
 #                                  "profile": "Web-Default"}, ...]
 #                             Heuristically idempotent (skips a system already scanned against the
 #                             same xccdf_path — path only, not path+profile). Run with:
 #                             install_uyuni.py <lab.json> --run-scap-scans (never automatic).
+#
+# OPTIONAL – SCAP policy creation. Uyuni/SMLM 5.2's newer "centralized policies" system.scap.*
+# XML-RPC namespace is READ-ONLY (listPolicies/listScapContent/listTailoringFiles — no create*
+# method anywhere in it, re-verified 2026-09-30 against the full namespace listing), so this goes
+# through the Web UI's own internal REST route instead
+# (com.suse.manager.webui.controllers.ScapAuditController.java, ground-truthed directly against
+# the uyuni-project/uyuni source) — a private, internal API, not the documented/versioned public
+# XML-RPC one, could change across releases without a deprecation notice:
+#   uyuni_scap_policies       : [{"policy_name": "sles15-baseline",   # required
+#                                  "scap_content_id": 5,                # required — a real SCAP
+#                                                                  # content id already uploaded via
+#                                                                  # the Web UI (Audit > SCAP Content)
+#                                  "xccdf_profile_id":
+#                                    "xccdf_org.ssgproject.content_profile_standard",  # required —
+#                                                                  # not discoverable via any API;
+#                                                                  # read it out of the uploaded
+#                                                                  # XCCDF/DataStream document, or
+#                                                                  # the Web UI's own create-policy
+#                                                                  # form
+#                                  "description": "...",             # optional
+#                                  "earliest": "2026-10-01T00:00:00", # optional, ISO_LOCAL_DATE_TIME
+#                                  "tailoring_file": "...",           # optional
+#                                  "tailoring_profile_id": "...",     # optional
+#                                  "oval_files": "...",               # optional
+#                                  "advanced_args": "...",            # optional
+#                                  "fetch_remote_resources": true}, ...]  # optional, default false
+#                             Idempotent (skips a policy that already exists by name) and AUTOMATIC.
+#                             Authenticates as uyuni_admin/uyuni_password (the same account every
+#                             other ensure_* step already uses). SCAP CONTENT/TAILORING FILE upload
+#                             (the actual DataStream/XCCDF/tailoring XML files) is NOT automated —
+#                             those need to be staged onto the server's own container filesystem
+#                             first, and no kubectl-cp/mgrctl-cp equivalent exists yet in this
+#                             project to do that; upload them once, by hand, via the Web UI
+#                             (Audit > SCAP Content / Tailoring Files), then reference their real
+#                             id here.
 #
 # OPTIONAL – CVE/OVAL audit (fully supported since SMLM 5.2 / stable in Uyuni). Pure read-only
 # query, no JSON config — run with:
@@ -450,6 +484,7 @@ def setup_uyuni(hostname, virt_srv, cfg):
         rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "uyuni",
             retries=10, retry_delay=60)
         rps("content projects", sc.ensure_content_projects, hostname, exec_prefix, cfg, "uyuni")
+        rps("SCAP policies", sc.ensure_scap_policies, hostname, exec_prefix, cfg, "uyuni", admin, password)
         rps("custom info keys", sc.ensure_custom_info_keys, hostname, exec_prefix, cfg, "uyuni")
         rps("system tags", sc.ensure_system_tags, hostname, exec_prefix, cfg, "uyuni")
         rps("environments", sc.ensure_environments, hostname, exec_prefix, cfg, "uyuni")

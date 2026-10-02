@@ -2,6 +2,7 @@
 locale: en_US.UTF-8
 timezone: Europe/Zurich
 fqdn: ${_vm_name}
+$( [[ "${ssh_pwauth,,}" == "true" ]] && printf 'ssh_pwauth: true\ndisable_root: false' )
 autoinstall:
   version: 1
   identity:
