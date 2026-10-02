@@ -17,7 +17,11 @@ then
 	cd "$_scripts_path" || exit
 fi
 
-# Let's do a backup first
+# Let's do a backup first (_backup=off skips it — for callers such as an
+# automated re-install on every deploy, which would otherwise leave one
+# tarball per run in ~).
+if [[ "${_backup:-on}" != "off" ]]
+then
 _timestamp="$(date +%s)"
 tar --ignore-failed-read -cJf ~/"backups-install_automation_node_scripts-${_timestamp}.tar.xz" \
   /usr/local/lib/lab_creation/ \
@@ -26,13 +30,18 @@ tar --ignore-failed-read -cJf ~/"backups-install_automation_node_scripts-${_time
   /etc/lab_creation* \
   /srv/www/htdocs/lab_creation/ \
   /srv/www/lab-builder/
+fi
 
 # scripts/ and libs/ Python files are pinned to python3.11 explicitly (the
 # automation VM's default `python3` is 3.6, too old for this codebase) —
 # refuse to deploy rather than install scripts that can't run.
-if ! command -v python3.11 >/dev/null 2>&1
+# _python_bin overrides the interpreter on hosts that ship a newer Python but
+# no python3.11 (e.g. SLES 16: python3.13) — the installed scripts' shebangs
+# are rewritten to it below. Default unchanged: python3.11.
+_python_bin="${_python_bin:-python3.11}"
+if ! command -v "${_python_bin}" >/dev/null 2>&1
 then
-	echo "ERROR: python3.11 is required (this project's Python code is pinned to it) but was not found on PATH." >&2
+	echo "ERROR: ${_python_bin} is required (this project's Python code is pinned to python3.11; set _python_bin to use another interpreter) but was not found on PATH." >&2
 	exit 1
 fi
 
@@ -108,12 +117,24 @@ do
 done
 
 # Non-addon, non-orchestration tooling.
-for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py
+for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
     sed -i "s/__LABVERSION__/$(git log -1 --format='%h' -- scripts/${i} 2>/dev/null || echo 'unknown')/" "/usr/local/bin/${i}"
     chmod 0755 "/usr/local/bin/${i}"
 done
+
+# Point the installed scripts at _python_bin when it isn't the default.
+if [[ "${_python_bin}" != "python3.11" ]]
+then
+    for i in /usr/local/bin/install_* /usr/local/bin/setup_lab.py /usr/local/bin/setup_vm.py \
+             /usr/local/bin/destroy_vm.py /usr/local/bin/destroy_lab.py /usr/local/bin/lab_schema \
+             /usr/local/bin/refresh_hypervisor_status.py /usr/local/bin/setup_harvester_cluster.py \
+             /usr/local/bin/build_lab_usb.py /usr/local/bin/setup_credentials.py /usr/local/bin/vm_power.py
+    do
+        [[ -f "${i}" ]] && sed -i "1s|^#!/usr/bin/env python3.11\$|#!/usr/bin/env ${_python_bin}|" "${i}"
+    done
+fi
 
 # Old bash orchestration binaries are fully superseded by the ones installed
 # above — remove them so nothing can ever dispatch to a stale copy.

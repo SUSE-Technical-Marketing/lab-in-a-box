@@ -238,6 +238,21 @@ def _parse_k8s_memory(value):
     return int(float(value) / 1024)  # bare bytes
 
 
+def parse_open_ports(ports):
+    """[(port, protocol)] from a lab-JSON open_ports list ("443", "69/udp", 8080, ...)."""
+    out = []
+    for entry in ports or []:
+        port_s, _, proto = str(entry).partition("/")
+        out.append((int(port_s), (proto or "tcp").lower()))
+    return out
+
+
+def _gce_name(text):
+    """A GCE resource name (lowercase letters, digits, '-', starting with a letter)."""
+    name = re.sub(r"[^a-z0-9-]+", "-", text.lower()).strip("-")
+    return ("lab-" + name)[:63].rstrip("-")
+
+
 class VMBackend(object):
     """Interface every compute backend implements."""
 
@@ -298,6 +313,33 @@ class VMBackend(object):
 
     def reboot_vm(self, vm_name):
         raise NotImplementedError
+
+    def vm_state(self, vm_name):
+        """
+        Power state of an existing VM, in the provider's own words (e.g.
+        "running", "stopped"), or "not found". Added 2026-09-30 for
+        scripts/vm_power.py; backends that don't implement it raise
+        NotImplementedError and vm_power.py reports "unsupported".
+        """
+        raise NotImplementedError
+
+    def start_vm(self, vm_name):
+        """Power on an existing, stopped VM (see vm_state)."""
+        raise NotImplementedError
+
+    def stop_vm(self, vm_name):
+        """Shut down an existing VM without deleting it (see vm_state)."""
+        raise NotImplementedError
+
+    def open_vm_ports(self, vm_name, ports):
+        """
+        Make `ports` (a lab-JSON open_ports list: "443", "69/udp", ...; tcp by
+        default) reachable from anywhere on an existing VM. Best effort and
+        idempotent; added 2026-09-30. Default: nothing to do for this backend
+        (libvirt has no firewall of its own; the host forwards ports) — cloud
+        backends override it with their own firewall/security-group mechanism.
+        """
+        log("- open_ports: nothing to open on the '{}' backend".format(type(self).__name__))
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
         raise NotImplementedError
@@ -1782,6 +1824,32 @@ class HetznerBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
+    def vm_state(self, vm_name):
+        server = self._find_server(vm_name)
+        return (server or {}).get("status", "unknown") if server else "not found"
+
+    def start_vm(self, vm_name):
+        self._server_action(vm_name, "poweron")
+
+    def stop_vm(self, vm_name):
+        self._server_action(vm_name, "shutdown")  # ACPI, like the other backends' graceful stop
+
+    def _server_action(self, vm_name, action):
+        server = self._find_server(vm_name)
+        if not server:
+            die("Hetzner server '{}' not found — cannot {}".format(vm_name, action))
+        try:
+            self._api("POST", "/servers/{}/actions/{}".format(server["id"], action))
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """Hetzner Cloud instances accept inbound traffic unless a firewall/security group
+        you set up says otherwise — nothing for lab-in-a-box to open."""
+        if ports:
+            log("- open_ports: Hetzner Cloud lets inbound traffic in by default — nothing to "
+                "open (add rules yourself if this project filters traffic)")
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
         server = self._find_server(vm_name)
@@ -1917,6 +1985,32 @@ class AWSBackend(VMBackend):
     with --count; a subnet with MapPublicIpOnLaunch=false, a common real-world default, needs
     --associate-public-ip-address explicitly or the instance ends up unreachable) — neither was
     guessed, both confirmed against the real API via --dry-run before being fixed here.
+
+    NESTED VIRTUALIZATION (2026-09-30, opt-in, OFF by default — every existing lab is unaffected):
+    per-node/common lab-JSON field `aws_nested_virtualization: "true"` adds
+    `--cpu-options "NestedVirtualization=enabled"` to run-instances — AWS's own real, documented
+    (not guessed) mechanism (docs.aws.amazon.com/AWSEC2/latest/UserGuide/
+    amazon-ec2-nested-virtualization.html) for running a hypervisor (KVM, this project's own
+    requirement) INSIDE a regular, non-bare-metal EC2 instance, announced Feb 2026 and expanded
+    since. This is what makes it possible to run this project's own kickstart/combustion-based
+    lab pipeline — including a real Harvester HCI ISO install, which needs genuine /dev/kvm, not
+    Kubernetes-only KubeVirt — directly on a cloud-provisioned EC2 "hypervisor" node, the same way
+    it already runs on a real physical host, with ZERO changes to anything past create_vm(): the
+    resulting instance is just an SSH-reachable Linux box with working /dev/kvm once
+    setup_kvm_node.py installs libvirt on it, indistinguishable from bare metal to every other
+    layer of this project. See _NESTED_VIRT_SUPPORTED_FAMILIES below for the real, current, exact
+    supported-family list (ground-truthed against that same AWS doc page, not inferred) — dies
+    with a clear message
+    naming a real supported alternative if the resolved instance_type's family isn't in it, rather
+    than reaching a confusing mid-launch AWS API rejection. Requires an explicit
+    cloud_instance_type from a supported family — this backend's own default INSTANCE_TYPES table
+    (the T3 burstable family) does NOT support nested virtualization, so nested virt without an
+    explicit cloud_instance_type override dies with the same clear message, rather than silently
+    launching a t3.* instance that would then fail at the real AWS API layer instead. NOT
+    live-tested (no AWS account in this project's dev/CI environment with quota for one of the
+    real supported 8th-gen instance families) — real reference implementation exists though:
+    avaleror/suse-virt-workshop (a separate, unrelated project) documents this exact pattern
+    working end-to-end against a real m8id.8xlarge instance.
     """
 
     # Smallest-to-largest by (cores, memory_gb) — the standard burstable general-purpose family,
@@ -1926,6 +2020,19 @@ class AWSBackend(VMBackend):
     INSTANCE_TYPES = [
         ("t3.medium", 2, 4), ("t3.large", 2, 8), ("t3.xlarge", 4, 16), ("t3.2xlarge", 8, 32),
     ]
+
+    # Exact instance-family list AWS documents as supporting nested virtualization — quoted
+    # verbatim (lowercased for comparison) from docs.aws.amazon.com/AWSEC2/latest/UserGuide/
+    # amazon-ec2-nested-virtualization.html's own "Considerations" section, ground-truthed
+    # 2026-09-30, not inferred/extrapolated from a partial announcement. Only NON-bare-metal
+    # ("virtual") instance types are listed there in the first place — a `.metal` instance
+    # already has direct, unmediated hardware virtualization access and needs no such flag.
+    _NESTED_VIRT_SUPPORTED_FAMILIES = {
+        "m7i", "m7i-flex", "m8i", "m8id", "m8i-flex",
+        "c7i", "c7i-flex", "c8i", "c8id", "c8i-flex",
+        "r7i", "r7iz", "r8i", "r8id", "r8i-flex", "x8i",
+        "i7i", "i7ie",
+    }
 
     def __init__(self, region, profile=None, access_key=None, secret_key=None, session_token=None,
                  subnet_id=None, security_group_id=None, key_name=None, instance_types=None,
@@ -2121,6 +2228,33 @@ class AWSBackend(VMBackend):
             self._aws("ec2", "reboot-instances", "--instance-ids", instance["InstanceId"])
         except RuntimeError as e:
             die(str(e))
+
+    def vm_state(self, vm_name):
+        instance = self._find_instance(vm_name)
+        return (instance.get("State") or {}).get("Name", "unknown") if instance else "not found"
+
+    def start_vm(self, vm_name):
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("EC2 instance '{}' not found — cannot start".format(vm_name))
+        try:
+            self._aws("ec2", "start-instances", "--instance-ids", instance["InstanceId"])
+        except RuntimeError as e:
+            die(str(e))
+
+    def stop_vm(self, vm_name):
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("EC2 instance '{}' not found — cannot stop".format(vm_name))
+        try:
+            self._aws("ec2", "stop-instances", "--instance-ids", instance["InstanceId"])
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """Same security-group rules create_vm() adds for open_ports (aws_open_ports)."""
+        if ports:
+            self.ensure_ports_open(ports)
 
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
@@ -2339,7 +2473,8 @@ class AWSBackend(VMBackend):
 
     def create_vm(
         self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network,
-        config_method="", iso_image="", mymac=None, cloud_instance_type="", open_ports=None, **kwargs
+        config_method="", iso_image="", mymac=None, cloud_instance_type="", open_ports=None,
+        nested_virtualization="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
         self._ensure_internet_gateway()
@@ -2348,6 +2483,22 @@ class AWSBackend(VMBackend):
         # per explicit user request — bypasses _pick_instance_type() entirely and uses the given
         # EC2 instance type name verbatim.
         instance_type = cloud_instance_type or self._pick_instance_type(vm_cpu, vm_mem, vm_name)
+
+        # nested_virtualization: opt-in, added 2026-09-30 — see this class' own docstring for the
+        # full "why" (running this project's real kickstart/Harvester-ISO pipeline on a
+        # cloud-provisioned EC2 "hypervisor" node instead of only real bare metal). Dies here,
+        # before ever calling run-instances, rather than letting AWS itself reject an
+        # unsupported family mid-launch with a less actionable error.
+        nested_virt_enabled = str(nested_virtualization).lower() == "true"
+        if nested_virt_enabled:
+            family = instance_type.split(".")[0].lower()
+            if family not in self._NESTED_VIRT_SUPPORTED_FAMILIES:
+                die("backend 'aws': aws_nested_virtualization is 'true' but instance type '{}' "
+                    "(family '{}') doesn't support it — AWS's own current supported-family list "
+                    "is: {}. Set cloud_instance_type to one of those (e.g. \"m8id.8xlarge\") "
+                    "explicitly; this backend's own default T3 family never supports nested "
+                    "virtualization.".format(
+                        instance_type, family, ", ".join(sorted(self._NESTED_VIRT_SUPPORTED_FAMILIES))))
 
         image_result = self._aws("ec2", "describe-images", "--image-ids", iso_image)
         images = (image_result or {}).get("Images", [])
@@ -2403,8 +2554,13 @@ class AWSBackend(VMBackend):
             args += ["--security-group-ids", self.security_group_id]
         if self.key_name:
             args += ["--key-name", self.key_name]
+        if nested_virt_enabled:
+            # The exact, documented flag (docs.aws.amazon.com/AWSEC2/latest/UserGuide/
+            # amazon-ec2-nested-virtualization.html's own "AWS CLI" example) — not a guess.
+            args += ["--cpu-options", "NestedVirtualization=enabled"]
 
-        log("Creating VM '{}' on AWS EC2 (instance_type={})".format(vm_name, instance_type))
+        log("Creating VM '{}' on AWS EC2 (instance_type={}{})".format(
+            vm_name, instance_type, ", nested virtualization enabled" if nested_virt_enabled else ""))
         try:
             run_result = self._aws(*args)
         except RuntimeError as e:
@@ -2610,6 +2766,41 @@ class GCPBackend(VMBackend):
     def reboot_vm(self, vm_name):
         try:
             self._gcloud("compute", "instances", "reset", vm_name, "--zone", self.zone)
+        except RuntimeError as e:
+            die(str(e))
+
+    def vm_state(self, vm_name):
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("status", "unknown") if instance else "not found"
+
+    def start_vm(self, vm_name):
+        try:
+            self._gcloud("compute", "instances", "start", vm_name, "--zone", self.zone)
+        except RuntimeError as e:
+            die(str(e))
+
+    def stop_vm(self, vm_name):
+        try:
+            self._gcloud("compute", "instances", "stop", vm_name, "--zone", self.zone)
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """One firewall rule per VM (lab-<vm>), allowing `ports` from anywhere to instances
+        carrying the same-named network tag, which is then added to the VM. NOT live-verified."""
+        if not ports:
+            return
+        name = _gce_name(vm_name.split(".")[0])
+        allow = ",".join("{}:{}".format(proto, port) for port, proto in parse_open_ports(ports))
+        try:
+            existing = self._gcloud("compute", "firewall-rules", "list", "--filter", "name={}".format(name))
+            if existing:
+                self._gcloud("compute", "firewall-rules", "update", name, "--allow", allow)
+            else:
+                self._gcloud("compute", "firewall-rules", "create", name,
+                             "--network", self.network or "default", "--direction", "INGRESS",
+                             "--allow", allow, "--source-ranges", "0.0.0.0/0", "--target-tags", name)
+            self._gcloud("compute", "instances", "add-tags", vm_name, "--zone", self.zone, "--tags", name)
         except RuntimeError as e:
             die(str(e))
 
@@ -2877,6 +3068,37 @@ class AlibabaBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
+    def vm_state(self, vm_name):
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("Status", "unknown") if instance else "not found"
+
+    def start_vm(self, vm_name):
+        self._instance_call(vm_name, "StartInstance")
+
+    def stop_vm(self, vm_name):
+        self._instance_call(vm_name, "StopInstance")
+
+    def _instance_call(self, vm_name, call):
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("Alibaba Cloud instance '{}' not found — cannot {}".format(vm_name, call))
+        try:
+            self._aliyun(call, "--InstanceId", instance["InstanceId"])
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """Ingress rules from anywhere on the configured ALIBABA_SECURITY_GROUP_ID (shared by
+        the lab's instances). A rule that already exists is fine. NOT live-verified."""
+        for port, proto in parse_open_ports(ports):
+            try:
+                self._aliyun("AuthorizeSecurityGroup", "--SecurityGroupId", self.security_group_id,
+                             "--IpProtocol", proto, "--PortRange", "{0}/{0}".format(port),
+                             "--SourceCidrIp", "0.0.0.0/0")
+            except RuntimeError as e:
+                if "duplicate" not in str(e).lower():
+                    die(str(e))
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
         instance = self._find_instance(vm_name)
@@ -3110,6 +3332,32 @@ class ScalewayBackend(VMBackend):
             self._api("POST", "/servers/{}/action".format(server["id"]), {"action": "reboot"})
         except RuntimeError as e:
             die(str(e))
+
+    def vm_state(self, vm_name):
+        server = self._find_server(vm_name)
+        return (server or {}).get("state", "unknown") if server else "not found"
+
+    def start_vm(self, vm_name):
+        self._server_action(vm_name, "poweron")
+
+    def stop_vm(self, vm_name):
+        self._server_action(vm_name, "poweroff")
+
+    def _server_action(self, vm_name, action):
+        server = self._find_server(vm_name)
+        if not server:
+            die("Scaleway server '{}' not found — cannot {}".format(vm_name, action))
+        try:
+            self._api("POST", "/servers/{}/action".format(server["id"]), {"action": action})
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """Scaleway (default security group policy: accept) instances accept inbound traffic unless a firewall/security group
+        you set up says otherwise — nothing for lab-in-a-box to open."""
+        if ports:
+            log("- open_ports: Scaleway (default security group policy: accept) lets inbound traffic in by default — nothing to "
+                "open (add rules yourself if this project filters traffic)")
 
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
@@ -3355,6 +3603,38 @@ class UpCloudBackend(VMBackend):
             self._api("POST", "/server/{}/restart".format(server["uuid"]), {"restart_server": {}})
         except RuntimeError as e:
             die(str(e))
+
+    def vm_state(self, vm_name):
+        server = self._find_server(vm_name)
+        return (server or {}).get("state", "unknown") if server else "not found"
+
+    def start_vm(self, vm_name):
+        server = self._require_server(vm_name, "start")
+        try:
+            self._api("POST", "/server/{}/start".format(server["uuid"]))
+        except RuntimeError as e:
+            die(str(e))
+
+    def stop_vm(self, vm_name):
+        server = self._require_server(vm_name, "stop")
+        try:
+            self._api("POST", "/server/{}/stop".format(server["uuid"]),
+                      {"stop_server": {"stop_type": "soft", "timeout": "120"}})
+        except RuntimeError as e:
+            die(str(e))
+
+    def _require_server(self, vm_name, action):
+        server = self._find_server(vm_name)
+        if not server:
+            die("UpCloud server '{}' not found — cannot {}".format(vm_name, action))
+        return server
+
+    def open_vm_ports(self, vm_name, ports):
+        """UpCloud (server firewall off by default) instances accept inbound traffic unless a firewall/security group
+        you set up says otherwise — nothing for lab-in-a-box to open."""
+        if ports:
+            log("- open_ports: UpCloud (server firewall off by default) lets inbound traffic in by default — nothing to "
+                "open (add rules yourself if this project filters traffic)")
 
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
@@ -3629,6 +3909,33 @@ class OVHcloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
+    def vm_state(self, vm_name):
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("status", "unknown") if instance else "not found"
+
+    def start_vm(self, vm_name):
+        self._instance_action(vm_name, "start")
+
+    def stop_vm(self, vm_name):
+        self._instance_action(vm_name, "stop")
+
+    def _instance_action(self, vm_name, action):
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("OVHcloud instance '{}' not found — cannot {}".format(vm_name, action))
+        try:
+            self._api("POST", "/cloud/project/{}/instance/{}/{}".format(
+                self.service_name, instance["id"], action))
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """OVHcloud Public Cloud instances accept inbound traffic unless a firewall/security group
+        you set up says otherwise — nothing for lab-in-a-box to open."""
+        if ports:
+            log("- open_ports: OVHcloud Public Cloud lets inbound traffic in by default — nothing to "
+                "open (add rules yourself if this project filters traffic)")
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
         instance = self._find_instance(vm_name)
@@ -3850,6 +4157,48 @@ class ExoscaleBackend(VMBackend):
             self._exo("compute", "instance", "reboot", vm_name, "-f")
         except RuntimeError as e:
             die(str(e))
+
+    def vm_state(self, vm_name):
+        instance = self._find_instance(vm_name)
+        return (instance or {}).get("state", "unknown") if instance else "not found"
+
+    def start_vm(self, vm_name):
+        try:
+            self._exo("compute", "instance", "start", vm_name)
+        except RuntimeError as e:
+            die(str(e))
+
+    def stop_vm(self, vm_name):
+        try:
+            self._exo("compute", "instance", "stop", vm_name, "--force")
+        except RuntimeError as e:
+            die(str(e))
+
+    def open_vm_ports(self, vm_name, ports):
+        """A per-VM security group (lab-<vm>) with one ingress rule per port from anywhere,
+        attached to the instance — Exoscale's default security group lets nothing in. Rules or
+        an attachment that already exist are fine. NOT live-verified."""
+        if not ports:
+            return
+        name = _gce_name(vm_name.split(".")[0])
+        try:
+            groups = self._exo("compute", "security-group", "list") or []
+            if not any(g.get("name") == name for g in groups):
+                self._exo("compute", "security-group", "create", name)
+        except RuntimeError as e:
+            die(str(e))
+        for port, proto in parse_open_ports(ports):
+            try:
+                self._exo("compute", "security-group", "rule", "add", name, "--flow", "ingress",
+                          "--protocol", proto, "--port", str(port), "--network", "0.0.0.0/0")
+            except RuntimeError as e:
+                if "already" not in str(e).lower() and "duplicate" not in str(e).lower():
+                    die(str(e))
+        try:
+            self._exo("compute", "instance", "security-group", "add", vm_name, name)
+        except RuntimeError as e:
+            if "already" not in str(e).lower():
+                die(str(e))
 
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))

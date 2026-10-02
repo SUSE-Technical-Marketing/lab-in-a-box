@@ -200,6 +200,36 @@ class DNSService(AuxService):
             self._remote(server, "systemctl restart named", check=False)
         subprocess.run(["systemctl", "restart", "named"], check=False)
 
+    def _hosts_file(self):
+        """
+        lab_creation.cfg's LAB_HOSTS_FILE (e.g. /etc/hosts), or None. When set,
+        every VM registered in DNS also gets a line there — for automation
+        nodes that don't run BIND themselves (e.g. a rodeo-cli host), so they
+        can still reach each VM by name, including a cloud VM whose IP is only
+        known once it exists. Added 2026-09-30.
+        """
+        try:
+            import primary
+            path = (primary.load_config() or {}).get("LAB_HOSTS_FILE", "")
+        except (Exception, SystemExit):  # no/invalid lab_creation.cfg: feature off
+            return None
+        return Path(path) if path else None
+
+    def _hosts_line(self, vm_name, myip):
+        return "{}  {} {}  # lab-in-a-box".format(myip, vm_name, vm_name.split(".")[0])
+
+    def _update_hosts_file(self, vm_name, myip=None):
+        """Replace (or with myip=None, remove) vm_name's LAB_HOSTS_FILE line."""
+        path = self._hosts_file()
+        if path is None:
+            return
+        suffix = "  {} {}  # lab-in-a-box".format(vm_name, vm_name.split(".")[0])
+        lines = path.read_text().splitlines() if path.exists() else []
+        lines = [l for l in lines if not l.endswith(suffix)]
+        if myip:
+            lines.append(self._hosts_line(vm_name, myip))
+        path.write_text("\n".join(lines) + "\n")
+
     def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
         """Add forward (A) and reverse (PTR) DNS records for a VM."""
         log("Adding DNS entry for '{}' → {}".format(vm_name, myip))
@@ -225,6 +255,7 @@ class DNSService(AuxService):
             self._dns_remove_ptr_for_octet(rev_file, last_octet)
             self._dns_add_line(lan_file, a_record)
             self._dns_add_line(rev_file, ptr_record)
+            self._update_hosts_file(vm_name, myip)
             self.restart_named()
 
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
@@ -248,6 +279,7 @@ class DNSService(AuxService):
 
             self._dns_remove_line(rev_file, ptr_record)
             self._dns_remove_line(lan_file, a_record)
+            self._update_hosts_file(vm_name)
             self.restart_named()
 
     def add_service_dns(self, definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=None):

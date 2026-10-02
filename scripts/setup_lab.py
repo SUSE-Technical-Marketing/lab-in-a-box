@@ -304,6 +304,29 @@ def validate_addon_configs(definition, json_file, issues_out=None):
     return True
 
 
+def phase_fetch_images(definition, config, iso_loc):
+    """
+    Download every base image a node declares with ISO_URL (+ ISO_SHA256 or
+    ISO_SHA256_URL) into ISO_LOC on each KVM host that node can be created on,
+    before the preflight looks for it there. Already-verified copies are kept;
+    see lc.fetch_source_image().
+    """
+    requests = lc.image_download_requests(definition)
+    if not requests:
+        return
+    lc.log("Fetching base images")
+    lc._level += 1
+    done = set()
+    for vm_name, image, url, sha256, sha256_url in requests:
+        for host in lc.image_source_hosts(definition, vm_name, config):
+            if (host, image) in done:
+                continue
+            state = lc.fetch_source_image(host, iso_loc, image, url, sha256, sha256_url)
+            lc.log("  {} on {}: {}".format(image, host, state))
+            done.add((host, image))
+    lc._level -= 1
+
+
 def phase_services(definition, config, defaults):
     """
     Configure+enable every service listed in common.services (optional;
@@ -803,6 +826,8 @@ def main():
     cpu, mem, disk, ncount = _report.resources
     lc.log("This lab needs {} vCPU, {} MiB RAM, {} GiB disk in total across {} node(s)".format(
         cpu, mem, disk, ncount))
+
+    phase_fetch_images(definition, config, iso_loc)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,

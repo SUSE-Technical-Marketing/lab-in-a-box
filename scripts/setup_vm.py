@@ -137,6 +137,11 @@ def provision_vm(definition, config, defaults, vm_name):
     # libvirt/Harvester's is. create_vm()'s return value (see VMBackend.create_vm()'s own
     # docstring) reports that real IP for cloud backends; libvirt/Harvester return None and env's
     # already-known static myip is used unchanged, exactly as before this change.
+    # open_ports (any backend) + the older AWS-only aws_open_ports, merged.
+    open_ports = []
+    for entry in list(env.get("open_ports") or []) + list(env.get("aws_open_ports") or []):
+        if str(entry) not in open_ports:
+            open_ports.append(str(entry))
     created_ip = backend.create_vm(
         vm_name,
         env.get("VM_CPU", ""), env.get("VM_MEM", ""), env.get("VM_DSK", ""),
@@ -165,11 +170,20 @@ def provision_vm(definition, config, defaults, vm_name):
         # opens on the security group, in addition to always opening SSH from this
         # automation node's own IP — added 2026-09-13, see AWSBackend._ensure_
         # security_group_access()'s own docstring for the real bug this fixes.
-        # Ignored by every other backend (absorbed by their own **kwargs).
-        open_ports=env.get("aws_open_ports") or [],
+        # Ignored by every other backend (absorbed by their own **kwargs). The generic
+        # open_ports field (any cloud backend, see open_vm_ports() below) is merged in.
+        open_ports=open_ports,
+        # aws_nested_virtualization: opt-in, "true"/unset (default "" = off, unchanged existing
+        # behavior) — added 2026-09-30, see AWSBackend's own docstring for the full "why" (running
+        # this project's real kickstart/Harvester-ISO pipeline on a cloud-provisioned EC2
+        # "hypervisor" node). Ignored by every other backend (absorbed by their own **kwargs).
+        nested_virtualization=env.get("aws_nested_virtualization") or "",
     )
     if created_ip:
         env["myip"] = created_ip
+    if open_ports:
+        # Every backend's own firewall/security-group mechanism (VMBackend.open_vm_ports).
+        backend.open_vm_ports(vm_name, open_ports)
 
     # Honours a per-node/common "cloud_account" (its cloudtype), same as get_backend() above —
     # so a multi-account cloud lab still routes through the cloud-DNS-VM path below.

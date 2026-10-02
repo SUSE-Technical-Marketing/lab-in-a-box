@@ -15,3 +15,11 @@ memory/
 
 # Condensed record of completed work, split out from TODO — local only
 CHANGELOG
+
+# Local lab definitions at the repo root (and their backups) carry real
+# credentials — SCC regcodes, admin/DB passwords. Examples that belong in git
+# live under examples/ and templates/ with placeholder values.
+/*.json
+/*.json.*
+/*.jsonb*
+/*.jsonbackup*

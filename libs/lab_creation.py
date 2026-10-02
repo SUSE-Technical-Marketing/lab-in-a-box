@@ -663,6 +663,21 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             for line in combined.splitlines():
                 err("addon '{}': {}".format(addon, re.sub(r"^\[ERROR\]\s*", "", line)))
 
+    # ── 5b. Base image downloads (ISO_URL) ────────────────────────────────────
+    if _jq_or(common.get("ISO_URL")):
+        for issue in image_source_issues("common", iso, _jq_or(common.get("ISO_URL")),
+                                         _jq_or(common.get("ISO_SHA256")), _jq_or(common.get("ISO_SHA256_URL"))):
+            err(issue)
+    for node in nodes_to_check:
+        node_cfg = nodes.get(node) or {}
+        if _jq_or(node_cfg.get("ISO_URL")):
+            node_img = _jq_or(node_cfg.get("ISO_IMAGE")) or iso
+            for issue in image_source_issues("nodes.{}".format(node), node_img, _jq_or(node_cfg.get("ISO_URL")),
+                                             _jq_or(node_cfg.get("ISO_SHA256")),
+                                             _jq_or(node_cfg.get("ISO_SHA256_URL"))):
+                err(issue)
+    downloadable = {req[1] for req in image_download_requests(definition)}
+
     # ── 6. Hypervisor: source image exists ────────────────────────────────────
     # Per-node/per-host: with multiple KVM hosts a node's image needs to
     # exist on the specific host it resolves to (ISO_LOC is the same path on
@@ -696,6 +711,10 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
              "test -f '{}/{}'".format(iso_loc, img)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        if test.returncode != 0 and img in downloadable:
+            warn("{}: image '{}' not yet at {}:{}/{} — setup_lab.py downloads it (ISO_URL)".format(
+                label, img, host, iso_loc, img))
+            return
         if test.returncode != 0:
             avail_proc = subprocess.run(
                 ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-q",
@@ -1329,6 +1348,131 @@ def _virt_srv_for_host(host, default_host, config):
     if host == default_host and config.get("VIRT_SRV"):
         return config["VIRT_SRV"]
     return "qemu+ssh://root@{}/system?keyfile=.ssh/id_rsa".format(host)
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_IMAGE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+
+
+def image_source_issues(label, image, url, sha256, sha256_url):
+    """
+    Problems with one ISO_URL/ISO_SHA256/ISO_SHA256_URL triple (an empty list
+    when it is usable). The checksum is mandatory: a downloaded base image is
+    only ever booted once it matches.
+    """
+    issues = []
+    if _empty(image) or not _IMAGE_FILE_RE.match(image):
+        issues.append("{}: ISO_URL needs ISO_IMAGE to be a plain file name (got '{}')".format(label, image))
+    urls = url.split()
+    if not urls or not all(re.match(r"^(https?|file)://", u) for u in urls):
+        issues.append("{}.ISO_URL: each URL must start with http://, https:// or file://".format(label))
+    if sha256 and not _SHA256_RE.match(sha256.lower()):
+        issues.append("{}.ISO_SHA256: must be a 64-character hex sha256".format(label))
+    if not sha256 and not sha256_url.startswith("https://"):
+        issues.append("{}: ISO_URL needs ISO_SHA256, or ISO_SHA256_URL (https://)".format(label))
+    return issues
+
+
+def image_download_requests(definition):
+    """
+    (vm_name, image, url, sha256, sha256_url) for every node whose base image
+    has an ISO_URL, on the libvirt backend (cloud and Harvester nodes are skipped:
+    they boot a provider image by name). A node-level ISO_URL belongs to that node's ISO_IMAGE; the
+    common ISO_URL only to common.ISO_IMAGE (a node that sets its own
+    ISO_IMAGE without its own ISO_URL downloads nothing).
+    """
+    common = definition.get("common") or {}
+    requests = []
+    for vm_name, node in (definition.get("nodes") or {}).items():
+        node = node or {}
+        backend = _jq_or(node.get("backend")) or _jq_or(common.get("backend"))
+        cloud_account = _jq_or(node.get("cloud_account")) or _jq_or(common.get("cloud_account"))
+        if cloud_account or (backend and backend != "libvirt"):
+            continue  # cloud/Harvester nodes boot provider images, never a local qcow2
+        if _jq_or(node.get("ISO_URL")):
+            src = node
+        elif _empty(_jq_or(node.get("ISO_IMAGE"))) and _jq_or(common.get("ISO_URL")):
+            src = common
+        else:
+            continue
+        image = _jq_or(node.get("ISO_IMAGE")) or _jq_or(common.get("ISO_IMAGE"))
+        requests.append((vm_name, image, _jq_or(src.get("ISO_URL")),
+                         _jq_or(src.get("ISO_SHA256")).lower(), _jq_or(src.get("ISO_SHA256_URL"))))
+    return requests
+
+
+def image_source_hosts(definition, vm_name, config):
+    """
+    Every KVM host `vm_name` could be created on: its explicit kvm_host, else
+    all configured hosts (select_kvm_host() only picks one at creation time,
+    so the image has to be on each candidate).
+    """
+    explicit = ((definition.get("nodes") or {}).get(vm_name) or {}).get("kvm_host")
+    if explicit:
+        return [explicit]
+    hosts, default_host = _configured_hosts(config)
+    return list(hosts) or ([default_host] if default_host else [])
+
+
+_FETCH_IMAGE_SCRIPT = r"""
+set -eu
+dest=__ISO_LOC__/__IMAGE__
+marker="${dest}.sha256-verified"
+want=__SHA256__
+if [ -z "${want}" ]; then
+  want=$(curl -4 -fsSL --retry 3 --max-time 60 __SHA256_URL__          | awk -v n=__IMAGE__ 'NF==1 || $2==n || $2=="*"n {print tolower($1); exit}')
+fi
+if ! printf '%s' "${want}" | grep -Eq '^[0-9a-f]{64}$'; then
+  echo "no sha256 for __IMAGE__ in __SHA256_URL__" >&2; exit 3
+fi
+if [ -f "${dest}" ] && [ -f "${marker}" ] && [ "$(cat "${marker}")" = "${want} $(stat -c %s "${dest}")" ]; then
+  echo "cached"; exit 0
+fi
+mkdir -p __ISO_LOC__
+if [ ! -f "${dest}" ]; then
+  fetched=
+  for url in __URLS__; do
+    if curl -4 -fL --retry 5 --retry-delay 10 -C - -o "${dest}.part" "${url}"; then
+      fetched=1; break
+    fi
+    echo "download from ${url} failed, trying the next source" >&2
+  done
+  [ -n "${fetched}" ] || { echo "no source could deliver __IMAGE__" >&2; exit 5; }
+  mv "${dest}.part" "${dest}"
+fi
+got=$(sha256sum "${dest}" | awk '{print $1}')
+if [ "${got}" != "${want}" ]; then
+  mv "${dest}" "${dest}.corrupt"
+  echo "sha256 mismatch for __IMAGE__ (moved aside to ${dest}.corrupt)" >&2; exit 4
+fi
+echo "${want} $(stat -c %s "${dest}")" > "${marker}"
+echo "downloaded"
+"""
+
+
+def fetch_source_image(host, iso_loc, image, url, sha256="", sha256_url=""):
+    """
+    Make sure `image` is in ISO_LOC on KVM host `host`: download it from `url`
+    — one URL, or several whitespace-separated mirrors tried in order — (IPv4,
+    resumable) unless an already-verified copy is there, and check it
+    against `sha256` (or the digest published at `sha256_url`). Idempotent —
+    a verified copy is recorded in <image>.sha256-verified and never fetched
+    again. Returns "cached" or "downloaded"; dies on any failure.
+    """
+    issues = image_source_issues("image '{}'".format(image), image, url, sha256, sha256_url)
+    if issues:
+        die("; ".join(issues))
+    script = _FETCH_IMAGE_SCRIPT
+    script = script.replace("__URLS__", " ".join(shlex.quote(u) for u in url.split()))
+    for key, value in (("__ISO_LOC__", iso_loc.rstrip("/")), ("__IMAGE__", image),
+                       ("__SHA256__", sha256.lower()), ("__SHA256_URL__", sha256_url)):
+        script = script.replace(key, shlex.quote(value))
+    log("- Base image \"{}{}{}\" on {}".format(_RED, image, _RESET, host))
+    r = ssh_run(host, "bash -s", input_text=script, check=False, capture=True)
+    out = (r.stdout or "").strip()
+    if r.returncode != 0:
+        die("could not fetch base image '{}' onto {}: {}".format(image, host, out or "exit {}".format(r.returncode)))
+    return out.splitlines()[-1] if out else "downloaded"
 
 
 def resolve_kvm_host(definition, vm_name, config, vm_img_loc=None):

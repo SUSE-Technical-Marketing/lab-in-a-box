@@ -3132,6 +3132,103 @@ sc.ensure_maintenance_calendar("host1", "mgrctl exec --", "cal1", url="https://x
 check("ensure_maintenance_calendar: skips when label already listed",
       not any("maintenance.createCalendar" in c[1] for c in fake.calls))
 
+# -- maintenance_calendar_details / update_maintenance_calendar / sync_maintenance_calendar
+# (added 2026-09-30 — ensure_maintenance_calendars() was create-only before this, silently never
+# pushing a changed ical to an already-existing live calendar; see libs/spacecmd_common.py) ------
+fake = FakeSSH(responses=[("maintenance.getCalendarDetails", FakeResult(
+    # Real, confirmed live 2026-09-30 against sol.mydemo.lab: getCalendarDetails wraps the
+    # single struct in a one-element JSON array on the wire, despite the Java return type
+    # being singular — this is the exact shape a real server sends, not the naive bare-dict
+    # guess an earlier version of this test used before that live bug was found.
+    returncode=0, stdout=json.dumps([{"id": 1, "label": "cal1", "ical": "OLD"}])))])
+sc.ssh_run = fake
+details = sc.maintenance_calendar_details("host1", "mgrctl exec --", "cal1")
+check("maintenance_calendar_details: unwraps the real one-element-array response into a plain "
+      "struct", details["ical"] == "OLD")
+
+fake = FakeSSH(responses=[("maintenance.getCalendarDetails", FakeResult(returncode=1, stderr="not found"))])
+sc.ssh_run = fake
+check("maintenance_calendar_details: returns None for a calendar that doesn't exist (real API "
+      "throws EntityNotExistsFaultException)",
+      sc.maintenance_calendar_details("host1", "mgrctl exec --", "nosuch") is None)
+
+fake = FakeSSH(responses=[("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+update_cmd = next(c[1] for c in fake.calls if "maintenance.updateCalendar" in c[1])
+check("update_maintenance_calendar: sends the new ical under the real 'ical' details key",
+      '"ical": "NEW"' in unwrap(update_cmd))
+check("update_maintenance_calendar: defaults rescheduleStrategy to the real API's own safer "
+      "option (\"Fail\" — never silently cancels a scheduled action unless told to)",
+      '["Fail"]' in unwrap(update_cmd))
+
+fake = FakeSSH(responses=[("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW", reschedule_strategy=["Cancel"])
+update_cmd = next(c[1] for c in fake.calls if "maintenance.updateCalendar" in c[1])
+check("update_maintenance_calendar: an explicit reschedule_strategy overrides the default",
+      '["Cancel"]' in unwrap(update_cmd))
+
+died = False
+try:
+    sc.update_maintenance_calendar("host1", "mgrctl exec --", "cal1")
+except SystemExit:
+    died = True
+check("update_maintenance_calendar: neither ical nor url given dies", died)
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "OLD"}]))),
+    ("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]")),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+check("sync_maintenance_calendar: calls updateCalendar when the existing content differs",
+      any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "SAME"}]))),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="SAME")
+check("sync_maintenance_calendar: no-op (no create, no update) when content already matches",
+      not any("maintenance.createCalendar" in c[1] or "maintenance.updateCalendar" in c[1]
+              for c in fake.calls))
+
+# Real bug found live 2026-09-30 against sol.mydemo.lab: the server strips trailing whitespace
+# from stored ical text, so a desired value ending in "\n" compared unequal to the server's own
+# already-correct copy on every single run, forcing a spurious update every time.
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "SAME"}]))),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="SAME\n")
+check("sync_maintenance_calendar: a trailing newline on the desired ical does NOT count as a "
+      "real difference from the server's own (whitespace-stripped) stored copy",
+      not any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=1, stderr="not found")),
+    ("maintenance.listCalendarLabels", FakeResult(returncode=0, stdout="[]")),
+    ("maintenance.createCalendar", FakeResult(returncode=0, stdout="{}")),
+])
+sc.ssh_run = fake
+sc.sync_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="NEW")
+check("sync_maintenance_calendar: creates (not updates) when the calendar doesn't exist yet",
+      any("maintenance.createCalendar" in c[1] for c in fake.calls)
+      and not any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
+# ensure_maintenance_calendars() orchestrator now syncs content, not just create-if-missing.
+fake = FakeSSH(responses=[
+    ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "OLD"}]))),
+    ("maintenance.updateCalendar", FakeResult(returncode=0, stdout="[]")),
+])
+sc.ssh_run = fake
+sc.ensure_maintenance_calendars("host1", "mgrctl exec --",
+                                {"smlm_maintenance_calendars": [{"label": "cal1", "ical": "NEW"}]}, "smlm")
+check("ensure_maintenance_calendars: the orchestrator pushes a changed ical to an already-"
+      "existing calendar (the real bug this whole section fixes)",
+      any("maintenance.updateCalendar" in c[1] for c in fake.calls))
+
 died = False
 try:
     sc.ensure_maintenance_schedule("host1", "mgrctl exec --", "sched1", "bogus")
@@ -4222,6 +4319,207 @@ try:
 except SystemExit:
     died = True
 check("provision_virtual_guests: an entry missing 'name'/'kickstart_profile' dies", died)
+
+# -- SCAP Beta policy-based scanning (system.scap.*), added 2026-09-30 -------
+fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 5, "name": "SLES15 DataStream",
+                                       "dataStreamFileName": "ssg-sle15-ds.xml"}])))])
+sc.ssh_run = fake
+out = sc.list_scap_content("host1", "mgrctl exec --")
+check("list_scap_content: returns the parsed real response shape", out[0]["id"] == 5)
+
+fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(returncode=1, stderr="no beta"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.list_scap_content("host1", "mgrctl exec --")
+except SystemExit:
+    died = True
+check("list_scap_content: server-side failure dies", died)
+
+fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline", "scapContentId": 5}])))])
+sc.ssh_run = fake
+out = sc.list_scap_policies("host1", "mgrctl exec --")
+check("list_scap_policies: returns the parsed real response shape", out[0]["policyName"] == "sles15-baseline")
+
+fake = FakeSSH(responses=[("system.scap.listTailoringFiles", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 3, "name": "strict-tailoring", "orgId": 1}])))])
+sc.ssh_run = fake
+out = sc.list_scap_tailoring_files("host1", "mgrctl exec --")
+check("list_scap_tailoring_files: returns the parsed real response shape", out[0]["id"] == 3)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanWithPolicy", FakeResult(returncode=0, stdout="42")),
+])
+sc.ssh_run = fake
+action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
+                                                     date="2026-10-01T00:00:00")
+check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
+schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
+check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
+      "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
+      "sol.mydemo.lab" not in unwrap(schedule_cmd))
+check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
+      "2026-10-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["nosuch.lab"], 7)
+except SystemExit:
+    died = True
+check("schedule_beta_xccdf_scan_with_policy: an unresolvable system dies (via _system_id)", died)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="43")),
+])
+sc.ssh_run = fake
+action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
+                                                tailoring_file_id=3, fetch_remote_resources=True,
+                                                date="2026-10-01T00:00:00")
+check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
+custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
+check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
+      "params struct", '"scapContentId": 5' in unwrap(custom_cmd) and
+      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in unwrap(custom_cmd))
+check("schedule_beta_xccdf_scan_custom: optional tailoringFileId/fetchRemoteResources are "
+      "included when given", '"tailoringFileId": 3' in unwrap(custom_cmd) and
+      '"fetchRemoteResources": true' in unwrap(custom_cmd))
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="44")),
+])
+sc.ssh_run = fake
+sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
+                                    "xccdf_org.ssgproject.content_profile_standard",
+                                    date="2026-10-01T00:00:00")
+custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
+check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
+      "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and
+      "fetchRemoteResources" not in unwrap(custom_cmd))
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
+    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=1, stderr="beta features not enabled")),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_profile")
+except SystemExit:
+    died = True
+check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
+
+# -- SCAP policy creation via the private Web UI REST route, added 2026-09-30 -
+fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="200"))])
+sc.ssh_run = fake
+sc.scap_web_login("host1", "mgrctl exec --", "admin", "s3cr3t'pw")
+check("scap_web_login: exactly one curl call, POSTing to the real login route", len(fake.calls) == 1)
+login_cmd = unwrap(fake.calls[0][1])
+check("scap_web_login: JSON body carries login/password under the real LoginCredentials field "
+      "names", '"login": "admin"' in login_cmd and '"password": "s3cr3t' in login_cmd)
+check("scap_web_login: posts to the real /rhn/manager/api/login route (CSRF-exempt, confirmed "
+      "against the real POST_UNPROTECTED_URIS whitelist)", "https://localhost/rhn/manager/api/login" in login_cmd)
+check("scap_web_login: writes the session cookie to a jar file, not held only in this process",
+      sc._SCAP_WEB_COOKIE_JAR in login_cmd)
+
+fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="401"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.scap_web_login("host1", "mgrctl exec --", "admin", "wrongpw")
+except SystemExit:
+    died = True
+check("scap_web_login: a non-200 HTTP status (bad credentials) dies", died)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout=json.dumps({"success": True, "data": 9})))])
+sc.ssh_run = fake
+policy_id = sc.create_scap_policy("host1", "mgrctl exec --", "sles15-baseline", 5,
+                                   "xccdf_org.ssgproject.content_profile_standard",
+                                   fetch_remote_resources=True)
+check("create_scap_policy: returns the real numeric policy id from the response's 'data' field",
+      policy_id == 9)
+create_cmd = unwrap(fake.calls[0][1])
+check("create_scap_policy: required fields reach the real ScapPolicyJson-shaped body",
+      '"policyName": "sles15-baseline"' in create_cmd and '"scapContentId": 5' in create_cmd and
+      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in create_cmd)
+check("create_scap_policy: fetchRemoteResources is included when true",
+      '"fetchRemoteResources": true' in create_cmd)
+check("create_scap_policy: posts to the real policy-create route, reusing the same cookie jar "
+      "scap_web_login() wrote", "https://localhost/rhn/manager/api/audit/scap/policy/create" in create_cmd and
+      sc._SCAP_WEB_COOKIE_JAR in create_cmd)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout=json.dumps({"success": False, "messages": ["SCAP Content ID is required"]})))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.create_scap_policy("host1", "mgrctl exec --", "bad-policy", 5, "some_profile")
+except SystemExit:
+    died = True
+check("create_scap_policy: a logical failure (success=false in the JSON body, real HTTP 200) "
+      "dies rather than reporting a false success", died)
+
+fake = FakeSSH(responses=[("rhn/manager/api/audit/scap/policy/create", FakeResult(
+    returncode=0, stdout="<html>not logged in</html>"))])
+sc.ssh_run = fake
+died = False
+try:
+    sc.create_scap_policy("host1", "mgrctl exec --", "bad-policy", 5, "some_profile")
+except SystemExit:
+    died = True
+check("create_scap_policy: unparseable output (e.g. an HTML redirect from an expired/missing "
+      "session) dies with a clear message instead of crashing on json.loads", died)
+
+fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline"}])))])
+sc.ssh_run = fake
+check("scap_policy_exists: true when a policy with that name is already in list_scap_policies()",
+      sc.scap_policy_exists("host1", "mgrctl exec --", "sles15-baseline"))
+check("scap_policy_exists: false for a name not present",
+      not sc.scap_policy_exists("host1", "mgrctl exec --", "nosuchpolicy"))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+sc.ensure_scap_policies("host1", "mgrctl exec --", {}, "uyuni", "admin", "pw")
+check("ensure_scap_policies: no-op when the field is unset — no login, no listing, no create",
+      len(fake.calls) == 0)
+
+fake = FakeSSH(responses=[
+    ("rhn/manager/api/login", FakeResult(returncode=0, stdout="200")),
+    ("system.scap.listPolicies", FakeResult(
+        returncode=0, stdout=json.dumps([{"id": 7, "policyName": "already-there"}]))),
+    ("rhn/manager/api/audit/scap/policy/create", FakeResult(
+        returncode=0, stdout=json.dumps({"success": True, "data": 11}))),
+])
+sc.ssh_run = fake
+sc.ensure_scap_policies("host1", "mgrctl exec --", {"uyuni_scap_policies": [
+    {"policy_name": "already-there", "scap_content_id": 5, "xccdf_profile_id": "p1"},
+    {"policy_name": "new-policy", "scap_content_id": 5, "xccdf_profile_id": "p2"},
+]}, "uyuni", "admin", "pw")
+create_calls = [c for c in fake.calls if "scap/policy/create" in c[1]]
+check("ensure_scap_policies: skips a policy that already exists by name", len(create_calls) == 1)
+check("ensure_scap_policies: creates only the genuinely-missing one",
+      '"policyName": "new-policy"' in unwrap(create_calls[0][1]))
+
+fake = FakeSSH(responses=[
+    ("rhn/manager/api/login", FakeResult(returncode=0, stdout="200")),
+    ("system.scap.listPolicies", FakeResult(returncode=0, stdout=json.dumps([]))),
+])
+sc.ssh_run = fake
+died = False
+try:
+    sc.ensure_scap_policies("host1", "mgrctl exec --",
+                            {"uyuni_scap_policies": [{"policy_name": "incomplete"}]}, "uyuni", "admin", "pw")
+except SystemExit:
+    died = True
+check("ensure_scap_policies: an entry missing scap_content_id/xccdf_profile_id dies", died)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
