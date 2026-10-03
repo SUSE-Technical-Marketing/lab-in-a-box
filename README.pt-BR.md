@@ -3,10 +3,7 @@
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-3d-spin-dark.gif">
-      <img src="media/brand/logo-3d-spin.gif" width="240" alt="Logotipo do lab-in-a-box: cubos brilhantes aninhados dentro de uma caixa de vidro, representando VMs aninhadas dentro de uma máquina física" />
-    </picture>
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="Logotipo do lab-in-a-box: cubos brilhantes aninhados dentro de uma caixa de vidro, representando VMs aninhadas dentro de uma máquina física" />
   </a>
   <br/>
   <picture>
@@ -93,8 +90,8 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 ## Arquitetura
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="Diagrama geral da arquitetura"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="Diagrama de rede e serviços"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="Diagrama geral da arquitetura"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="Diagrama de rede e serviços"/></picture></kbd>
 </p>
 
 O sistema é construído em torno de uma **arquitetura de dois níveis**:

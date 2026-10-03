@@ -173,6 +173,7 @@
       this._toolbar.appendChild(this._objBtn);
       this._toolbar.appendChild(this._glbBtn);
       root.appendChild(this._toolbar);
+      if (this.hasAttribute('notoolbar')) this._toolbar.style.display = 'none';
       this._setButtonsEnabled(false);
       /** Resolves with { THREE } once the scene is live — build the model
        *  in `await stage.ready` so nothing races the library load. */

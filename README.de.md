@@ -3,10 +3,7 @@
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-3d-spin-dark.gif">
-      <img src="media/brand/logo-3d-spin.gif" width="240" alt="lab-in-a-box-Logo: verschachtelte leuchtende Würfel in einer Glasbox, symbolisch für verschachtelte VMs innerhalb eines physischen Hosts" />
-    </picture>
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="lab-in-a-box-Logo: verschachtelte leuchtende Würfel in einer Glasbox, symbolisch für verschachtelte VMs innerhalb eines physischen Hosts" />
   </a>
   <br/>
   <picture>
@@ -93,8 +90,8 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 ## Architektur
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="Architekturübersichtsdiagramm"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="Netzwerk- und Service-Diagramm"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="Architekturübersichtsdiagramm"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="Netzwerk- und Service-Diagramm"/></picture></kbd>
 </p>
 
 Das System basiert auf einer **zweistufigen Architektur**:

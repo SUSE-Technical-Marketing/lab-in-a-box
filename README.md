@@ -3,10 +3,7 @@
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-3d-spin-dark.gif">
-      <img src="media/brand/logo-3d-spin.gif" width="240" alt="lab-in-a-box logo: nested glowing cubes inside a glass box, representing nested VMs inside a physical host" />
-    </picture>
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="lab-in-a-box logo: nested glowing cubes inside a glass box, representing nested VMs inside a physical host" />
   </a>
   <br/>
   <picture>
@@ -90,8 +87,8 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 ## Architecture
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="Architecture overview diagram"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="Network and services diagram"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="Architecture overview diagram"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="Network and services diagram"/></picture></kbd>
 </p>
 
 The system is built around a **two-tier architecture**:

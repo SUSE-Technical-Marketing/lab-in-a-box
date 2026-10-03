@@ -509,8 +509,13 @@ function serializeForm() {
 let mermaidReady = false;
 function initMermaid() {
   if (mermaidReady || typeof mermaid === "undefined") return;
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", securityLevel: "strict" });
+  const forced = document.documentElement.getAttribute("data-theme");
+  const dark = forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  // lab-in-a-box brand palette
+  const themeVariables = dark
+    ? { background: "#1b1e23", primaryColor: "#23272d", primaryBorderColor: "#2fd1c2", primaryTextColor: "#f3f4f5", secondaryColor: "#2c3138", tertiaryColor: "#1b1e23", lineColor: "#a9aeb7", clusterBkg: "#23272d", clusterBorder: "#353a42", fontFamily: '"Schibsted Grotesk","Helvetica Neue",Helvetica,Arial,sans-serif' }
+    : { background: "#ffffff", primaryColor: "#f3f4f5", primaryBorderColor: "#0f8f86", primaryTextColor: "#23272d", secondaryColor: "#eceef1", tertiaryColor: "#ffffff", lineColor: "#5a606b", clusterBkg: "#ffffff", clusterBorder: "#dfe2e6", fontFamily: '"Schibsted Grotesk","Helvetica Neue",Helvetica,Arial,sans-serif' };
+  mermaid.initialize({ startOnLoad: false, theme: "base", themeVariables, securityLevel: "strict" });
   mermaidReady = true;
 }
 
@@ -748,4 +753,11 @@ window.addEventListener("DOMContentLoaded", () => {
 
   loadComponents().catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
   loadStatus();
+});
+
+// Re-theme the diagram when the user switches light/dark from the toggle.
+document.addEventListener("themechange", () => {
+  mermaidReady = false;
+  const tab = document.getElementById("viewTabDiagram");
+  if (tab && tab.classList.contains("active")) tab.click();
 });

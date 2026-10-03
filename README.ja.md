@@ -3,10 +3,7 @@
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-3d-spin-dark.gif">
-      <img src="media/brand/logo-3d-spin.gif" width="240" alt="lab-in-a-box のロゴ：ガラスの箱の中に入れ子になった光る立方体。物理マシンの中に入れ子になった VM を表している" />
-    </picture>
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="lab-in-a-box のロゴ：ガラスの箱の中に入れ子になった光る立方体。物理マシンの中に入れ子になった VM を表している" />
   </a>
   <br/>
   <picture>
@@ -93,8 +90,8 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 ## アーキテクチャ
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="アーキテクチャ概要図"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="ネットワーク・サービス図"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="アーキテクチャ概要図"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="ネットワーク・サービス図"/></picture></kbd>
 </p>
 
 このシステムは **2階層アーキテクチャ** を中心に構築されている：

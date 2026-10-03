@@ -1,20 +1,33 @@
+/* lab-in-a-box brand palette — light by default, dark via OS setting or the theme toggle */
 :root{
-  --bg:#f4f5f7; --panel:#ffffff; --ink:#1c2430; --muted:#6b7683;
-  --line:#e3e6ea; --accent:#2f8f5b; --accent-ink:#fff;
-  --field-bg:#fff; --code:#eef1f4; --danger:#c0392b; --ok:#2f8f5b;
-  --shadow:0 1px 3px rgba(20,30,45,.08),0 6px 20px rgba(20,30,45,.05);
+  color-scheme:light;
+  --bg:#eceef1; --panel:#ffffff; --ink:#23272d; --muted:#5a606b;
+    --line:#dfe2e6; --accent:#0f8f86; --accent-ink:#ffffff;
+    --field-bg:#ffffff; --code:#f3f4f5; --danger:#c4553f; --ok:#0f8f86;
+    --coral:#e2725b; --gold:#e8b450; --navy:#1f2f4a;
+    --shadow:0 1px 2px rgba(35,39,45,.06),0 6px 20px rgba(35,39,45,.05);
 }
 @media (prefers-color-scheme:dark){
-  :root{
-    --bg:#12161c; --panel:#1a2028; --ink:#e7ecf2; --muted:#93a0af;
-    --line:#2a323d; --accent:#3fae6f; --field-bg:#131820; --code:#232b35;
-    --danger:#e06a5c; --ok:#4fbe7f;
-    --shadow:0 1px 3px rgba(0,0,0,.3),0 6px 22px rgba(0,0,0,.25);
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#16191e; --panel:#23272d; --ink:#f3f4f5; --muted:#a9aeb7;
+    --line:#353a42; --accent:#2fd1c2; --accent-ink:#16191e;
+    --field-bg:#1b1e23; --code:#2c3138; --danger:#f08a74; --ok:#2fd1c2;
+    --coral:#f08a74; --gold:#e8b450; --navy:#b5bfd0;
+    --shadow:0 1px 3px rgba(0,0,0,.35),0 6px 22px rgba(0,0,0,.28);
   }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#16191e; --panel:#23272d; --ink:#f3f4f5; --muted:#a9aeb7;
+    --line:#353a42; --accent:#2fd1c2; --accent-ink:#16191e;
+    --field-bg:#1b1e23; --code:#2c3138; --danger:#f08a74; --ok:#2fd1c2;
+    --coral:#f08a74; --gold:#e8b450; --navy:#b5bfd0;
+    --shadow:0 1px 3px rgba(0,0,0,.35),0 6px 22px rgba(0,0,0,.28);
 }
 *{box-sizing:border-box}
 body{
-  margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  margin:0;font:15px/1.5 "Schibsted Grotesk","Helvetica Neue",Helvetica,Arial,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);color:var(--ink);
 }
 code{background:var(--code);padding:.05em .35em;border-radius:4px;font-size:.88em}
@@ -28,7 +41,20 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   padding:.85rem 1.4rem;background:var(--panel);border-bottom:1px solid var(--line);
 }
 .brand{display:flex;align-items:center;gap:.9rem}
-.logo{font-size:1.6rem;color:var(--accent);line-height:1}
+.logo{display:block;width:38px;height:auto;flex:none}
+.logo-dark{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .logo-light{display:none}:root:not([data-theme="light"]) .logo-dark{display:block}}
+:root[data-theme="dark"] .logo-light{display:none}
+:root[data-theme="dark"] .logo-dark{display:block}
+.brand-name .in-a{color:var(--accent);font-weight:500}
+.brand-name .sep{color:var(--coral);font-weight:800}
+.top-actions{display:flex;align-items:center;gap:.6rem}
+.theme-toggle{
+  display:flex;align-items:center;gap:.4rem;padding:.4rem .75rem;border:1px solid var(--line);border-radius:999px;
+  background:var(--panel);color:var(--ink);font:600 .8rem/1 inherit;font-family:inherit;cursor:pointer;
+}
+.theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.theme-toggle .dot{width:.7rem;height:.7rem;border-radius:50%;background:linear-gradient(90deg,var(--ink) 50%,var(--panel) 50%);box-shadow:0 0 0 1.5px var(--ink)}
 .sub{margin:.15rem 0 0;color:var(--muted);font-size:.8rem}
 .count-pill{
   background:var(--accent);color:var(--accent-ink);border-radius:999px;
@@ -128,7 +154,7 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .component-list li.pinned{border:1px dashed var(--accent)}
 .component-list li.pinned .ci-title{color:var(--accent)}
 .instances{display:flex;flex-direction:column;gap:.7rem}
-.instance{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:.7rem;background:var(--bg)}
+.instance{border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:8px;padding:.7rem;background:var(--bg)}
 .instance .inst-key{border-color:var(--accent)}
 .btn.add-inst{margin-top:.7rem;width:100%;border-style:dashed;color:var(--accent)}
 .btn.rm-inst{margin-top:.3rem;font-size:.76rem;padding:.2rem .55rem;color:var(--danger)}

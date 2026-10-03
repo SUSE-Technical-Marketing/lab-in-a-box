@@ -3,10 +3,7 @@
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-3d-spin-dark.gif">
-      <img src="media/brand/logo-3d-spin.gif" width="240" alt="lab-in-a-box 徽标：玻璃盒子中嵌套的发光立方体，象征着物理主机内嵌套运行的虚拟机" />
-    </picture>
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="lab-in-a-box 徽标：玻璃盒子中嵌套的发光立方体，象征着物理主机内嵌套运行的虚拟机" />
   </a>
   <br/>
   <picture>
@@ -93,8 +90,8 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 ## 架构
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="架构概览图"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="网络与服务图"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="架构概览图"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="网络与服务图"/></picture></kbd>
 </p>
 
 整个系统围绕**双层架构**构建：
