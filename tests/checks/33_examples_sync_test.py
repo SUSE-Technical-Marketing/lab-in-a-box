@@ -78,7 +78,7 @@ def extract_jsonc_after(readme_text, anchor):
     return json.loads(strip_jsonc_comments(m.group(1)))
 
 
-readme_text = (_REPO / "README.md").read_text()
+readme_text = (_REPO / "docs" / "md" / "README.md").read_text()
 
 # name -> the README anchor whose NEXT ```jsonc fence is that example's
 # source of truth. rancher-cluster's own "### RKE2 + Rancher + Longhorn"
