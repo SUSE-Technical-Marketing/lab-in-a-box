@@ -24,7 +24,48 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect which files changed
+    runs-on: ubuntu-latest
+    outputs:
+      py: ${{ steps.filter.outputs.py }}
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Classify changed files (every job runs on push; PRs run only what they touch)
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "py=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files:"; echo "$files"
+          py=false; code=false
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            case "$f" in
+              *.md|docs/*|media/*|readme-brand/*) ;;
+              *) code=true ;;
+            esac
+            case "$f" in
+              *.py|scripts/lab_schema|libs/*) py=true; code=true ;;
+            esac
+          done <<< "$files"
+          echo "py=$py" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   python311:
+    needs: changes
+    if: needs.changes.outputs.py == 'true'
     name: Python 3.11 syntax + import check
     runs-on: ubuntu-latest
     steps:
@@ -51,6 +92,8 @@ jobs:
           PY
 
   addon-schemas:
+    needs: changes
+    if: needs.changes.outputs.py == 'true'
     name: Every add-on prints its schema
     runs-on: ubuntu-latest
     steps:
@@ -81,6 +124,8 @@ jobs:
           exit "$fail"
 
   test-suite:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: Containerized test suite (tests/run_tests.sh)
     runs-on: ubuntu-latest
     steps:
@@ -93,6 +138,8 @@ jobs:
         run: tests/run_tests.sh
 
   shellcheck:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: shellcheck (bash sources)
     runs-on: ubuntu-latest
     steps:
