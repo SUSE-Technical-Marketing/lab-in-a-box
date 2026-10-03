@@ -6,14 +6,22 @@ name: Package
 # which distros each format covers and why python3.11/helm/kubectl/
 # virt-install are deliberately NOT hard package dependencies.
 #
-# Tags are expected to be clean semver ("vX.Y.Z") — a tag with a suffix
-# like "-rc1" would break the RPM Version field (RPM doesn't allow hyphens
-# there); not handled here on purpose, matching the project's stated
-# release scheme.
+# Tags are clean semver, with or without a leading "v" ("1.10.0" or
+# "v1.10.0") — a tag with a suffix like "-rc1" would break the RPM Version
+# field (RPM doesn't allow hyphens there); not handled here on purpose,
+# matching the project's stated release scheme. workflow_dispatch rebuilds
+# the packages for an existing tag, e.g. releases published before this
+# trigger existed.
 on:
   push:
     tags:
-      - "v*"
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build packages for (e.g. 1.10.0)"
+        required: true
 
 permissions:
   contents: write # to create the GitHub Release and upload assets
@@ -24,11 +32,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Compute package version from the tag
         id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Stage package contents (tracked files only, dev/CI-only dirs excluded)
@@ -63,5 +76,6 @@ jobs:
       - name: Upload packages to the GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: dist/*
           fail_on_unmatched_files: true
