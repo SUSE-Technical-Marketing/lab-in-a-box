@@ -3,8 +3,8 @@
 
 Run from the repository root: python3 docs/build_docs.py  (needs the `markdown` package).
 Output: docs/index.html (README.md), one page per translation, and docs/webui.html.
-Every page shows the rotating 3D logo (docs/assets/hero.js) as its header.
 """
+import html
 import re
 import sys
 from pathlib import Path
@@ -12,7 +12,6 @@ from pathlib import Path
 import markdown
 
 DOCS = Path(__file__).resolve().parent
-REPO = DOCS.parent
 SOURCE = DOCS / "md"
 REPO_URL = "https://github.com/SUSE-Technical-Marketing/lab-in-a-box"
 
@@ -42,48 +41,126 @@ IMPORT_MAP = """<script type="importmap">
 }
 </script>"""
 
+FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+    'family=Schibsted+Grotesk:wght@500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400'
+    '&family=IBM+Plex+Mono:wght@400&display=swap">'
+)
+
 STYLE = """
 :root {
-  --bg: #eceef1; --panel: #ffffff; --ink: #23272d; --muted: #5a606b; --line: #dfe2e6;
-  --accent: #0f8f86; --stage: #e8eaed; --code: #f3f4f5;
+  --bg: #f5f6f8; --panel: #ffffff; --ink: #1d2026; --muted: #5b6270; --line: #e1e4e9;
+  --accent: #0b7a73; --code: #eceef2; --stage: #e9ebef;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #16191e; --panel: #23272d; --ink: #f3f4f5; --muted: #a9aeb7; --line: #353a42;
-    --accent: #2fd1c2; --stage: #1d2128; --code: #2c3138; color-scheme: dark;
+    --bg: #121519; --panel: #1a1e24; --ink: #eceef2; --muted: #9aa3b0; --line: #2b313a;
+    --accent: #2fd1c2; --code: #1b2028; --stage: #1a1f26; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #16191e; --panel: #23272d; --ink: #f3f4f5; --muted: #a9aeb7; --line: #353a42;
-  --accent: #2fd1c2; --stage: #1d2128; --code: #2c3138; color-scheme: dark;
+  --bg: #121519; --panel: #1a1e24; --ink: #eceef2; --muted: #9aa3b0; --line: #2b313a;
+  --accent: #2fd1c2; --code: #1b2028; --stage: #1a1f26; color-scheme: dark;
 }
-body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 16px/1.6 "Helvetica Neue", Helvetica, Arial, sans-serif; padding-inline: 16px; }
-a { color: var(--accent); }
-header.site { max-width: 980px; margin: 0 auto; padding-block: 24px 8px; text-align: center; }
-#hero { width: min(360px, 80vw); height: 340px; margin: 0 auto; border-radius: 12px; background: var(--stage);
-  display: flex; align-items: center; justify-content: center; }
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 400 17px/1.7 "Source Serif 4", Georgia, "Times New Roman", serif;
+  padding-inline: 20px; padding-block: 0 56px;
+}
+a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+.topbar {
+  max-width: 1080px; margin: 0 auto; padding-block: 22px 18px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+}
+.lockup { display: block; height: 40px; width: auto; }
+.lockup--dark { display: none; }
+html[data-theme="dark"] .lockup--light { display: none; }
+html[data-theme="dark"] .lockup--dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .lockup--light { display: none; }
+  html:not([data-theme="light"]) .lockup--dark { display: block; }
+}
+.topbar nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; font: 500 14px/1.4 "Schibsted Grotesk", system-ui, sans-serif; }
+.topbar nav a { color: var(--muted); text-decoration: none; padding-block: 4px; }
+.topbar nav a:hover { color: var(--ink); }
+.topbar nav a[aria-current="page"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.theme-toggle {
+  font: 500 14px/1 "Schibsted Grotesk", system-ui, sans-serif; color: var(--ink);
+  background: transparent; border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 14px; cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--accent); }
+
+.opening {
+  max-width: 1080px; margin: 0 auto; padding-block: 28px 40px;
+  display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 48px; align-items: center;
+}
+#hero {
+  width: 100%; aspect-ratio: 1 / 1; border-radius: 16px; background: var(--stage);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
 #hero canvas { width: 100%; height: 100%; display: block; touch-action: none; }
-#hero img { max-width: 80%; height: auto; }
-.wordmark { display: block; margin: 8px auto 0; max-width: min(420px, 90%); height: auto; }
-nav.site { max-width: 980px; margin: 0 auto; padding-block: 12px; display: flex; flex-wrap: wrap; gap: 8px 14px;
-  justify-content: center; border-bottom: 1px solid var(--line); font-size: 14px; }
-nav.site a { text-decoration: none; }
-nav.site a[aria-current="page"] { font-weight: 600; color: var(--ink); }
-main { max-width: 980px; margin: 0 auto; padding-block: 24px 48px; min-width: 0; }
-main h1, main h2, main h3 { line-height: 1.25; text-wrap: balance; }
-main h2 { margin-top: 2.2em; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
-main table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; font-size: 14px; }
-main th, main td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
-main pre { background: var(--code); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
-main code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
-main img { max-width: 100%; height: auto; }
-main details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
-main summary { cursor: pointer; font-weight: 600; }
-pre.mermaid { background: var(--panel); text-align: center; }
-footer.site { max-width: 980px; margin: 0 auto; padding-block: 16px 32px; border-top: 1px solid var(--line);
-  color: var(--muted); font-size: 13px; }
+#hero img { width: 62%; height: auto; }
+.opening-text h1 {
+  font: 700 clamp(2.1rem, 4.6vw, 3.2rem)/1.06 "Schibsted Grotesk", system-ui, sans-serif;
+  letter-spacing: -0.02em; margin: 0 0 18px; text-wrap: balance;
+}
+.lead { font-size: 1.14rem; line-height: 1.6; color: var(--muted); margin: 0; max-width: 34ch; text-wrap: pretty; }
+.hint { font: 400 14px/1.4 "Schibsted Grotesk", system-ui, sans-serif; color: var(--muted); margin-top: 22px; }
+
+main.doc { max-width: 720px; margin: 0 auto; min-width: 0; }
+main.doc > p, main.doc > ul, main.doc > ol { max-width: 68ch; }
+main.doc h1, main.doc h2, main.doc h3, main.doc h4 {
+  font-family: "Schibsted Grotesk", system-ui, sans-serif; line-height: 1.22; letter-spacing: -0.01em; text-wrap: balance;
+}
+main.doc h1 { font-size: 2rem; margin: 0 0 0.6em; }
+main.doc h2 { font-size: 1.55rem; font-weight: 700; margin: 2.8em 0 0.6em; }
+main.doc h3 { font-size: 1.2rem; font-weight: 700; margin: 2em 0 0.4em; }
+main.doc p, main.doc ul, main.doc ol { margin: 0 0 1.1em; }
+main.doc li + li { margin-top: 0.3em; }
+main.doc table {
+  border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%;
+  font: 400 14px/1.5 "Schibsted Grotesk", system-ui, sans-serif; margin: 1.4em 0;
+}
+main.doc th, main.doc td { border-bottom: 1px solid var(--line); padding: 9px 12px; text-align: left; vertical-align: top; }
+main.doc th { font-weight: 700; }
+main.doc code {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.86em;
+  background: var(--code); padding: 0.1em 0.35em; border-radius: 4px;
+}
+main.doc pre {
+  background: var(--code); padding: 16px 18px; border-radius: 10px; overflow-x: auto; margin: 1.4em 0;
+  line-height: 1.55;
+}
+main.doc pre code { background: none; padding: 0; font-size: 13px; }
+main.doc img { max-width: 100%; height: auto; }
+main.doc details { border-top: 1px solid var(--line); padding: 10px 0; }
+main.doc summary { cursor: pointer; font: 700 15px/1.4 "Schibsted Grotesk", system-ui, sans-serif; }
+pre.mermaid { background: var(--panel); border: 1px solid var(--line); text-align: center; }
+main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
+.anchor-top { display: block; height: 0; }
+footer.site {
+  max-width: 720px; margin: 56px auto 0; padding-top: 22px; border-top: 1px solid var(--line);
+  font: 400 14px/1.5 "Schibsted Grotesk", system-ui, sans-serif; color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .opening { grid-template-columns: 1fr; gap: 28px; padding-block: 12px 28px; }
+  #hero { max-width: 360px; margin: 0 auto; }
+  .opening-text { text-align: center; }
+  .lead { margin-inline: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
 """
 
 HERO_SCRIPT = '<script type="module" src="assets/hero.js"></script>'
@@ -93,16 +170,47 @@ MERMAID_SCRIPT = (
     'mermaid.initialize({ startOnLoad: true, theme: "neutral" });'
     "</script>"
 )
+THEME_INIT = """<script>
+(function () {
+  try {
+    var saved = localStorage.getItem('lab-theme');
+    if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved);
+  } catch (e) {}
+})();
+</script>"""
+
+THEME_TOGGLE = """<script>
+(function () {
+  var root = document.documentElement, btn = document.getElementById('theme-toggle');
+  function effective() {
+    var explicit = root.getAttribute('data-theme');
+    if (explicit) return explicit;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function label() {
+    var dark = effective() === 'dark';
+    btn.textContent = dark ? 'Light' : 'Dark';
+    btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+  label();
+  btn.addEventListener('click', function () {
+    var next = effective() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('lab-theme', next); } catch (e) {}
+    label();
+  });
+})();
+</script>"""
 
 
 def strip_logo_header(text):
-    """Remove the README's own logo block: the hero replaces it on every page."""
+    """Remove the README's own logo block: the header replaces it on every page."""
     return re.sub(
         r'<a id="top"></a>\s*<p align="center">\s*<a href="[^"]*logo[^"]*">.*?</p>\s*',
         "",
         text,
         count=1,
-        flags=re.S,
+        flags=re.DOTALL,
     )
 
 
@@ -114,17 +222,17 @@ def rewrite_links(text):
     def page_link(match):
         target = match.group(2)
         if target in PAGE_FOR_SOURCE:
-            return "{}{}".format(match.group(1), PAGE_FOR_SOURCE[target])
+            return f"{match.group(1)}{PAGE_FOR_SOURCE[target]}"
         return match.group(0)
 
     text = re.sub(r'((?:href="|\]\())(README[\w.-]*\.md)', page_link, text)
     text = re.sub(
         r'\]\((?!https?:|#|\.\./|mailto:)([\w./-]+\.(?:md|py|sh|json|yaml|yml|txt|cfg|bash|sh))\)',
-        lambda m: "]({}/blob/main/{})".format(REPO_URL, m.group(1)),
+        lambda m: f"]({REPO_URL}/blob/main/{m.group(1)})",
         text,
     )
-    text = re.sub(r'\]\(README\.md#', "](index.html#", text)
-    text = re.sub(r'\]\(([\w.-]+/)\)', lambda m: "]({}/tree/main/{})".format(REPO_URL, m.group(1)), text)
+    text = re.sub(r"\]\(README\.md#", "](index.html#", text)
+    text = re.sub(r"\]\(([\w.-]+/)\)", lambda m: f"]({REPO_URL}/tree/main/{m.group(1)})", text)
     return text
 
 
@@ -143,45 +251,73 @@ def render_body(text):
         r'<pre><code class="language-mermaid">(.*?)</code></pre>',
         r'<pre class="mermaid">\1</pre>',
         html,
-        flags=re.S,
+        flags=re.DOTALL,
     )
     return html
+
+
+def split_lead(html):
+    """Take the first real prose paragraph out of the body to serve as the page's lead line."""
+    for match in re.finditer(r"<p>(.*?)</p>", html, flags=re.DOTALL):
+        plain = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+        if len(plain) > 60:
+            return match.group(1), html[: match.start()] + html[match.end():]
+    return "", html
 
 
 def nav_html(current_out):
     links = []
     for _, out, label in PAGES:
         current = ' aria-current="page"' if out == current_out else ""
-        links.append('<a href="{}"{}>{}</a>'.format(out, current, label))
-    return "<nav class=\"site\">{}</nav>".format(" · ".join(links))
+        links.append(f'<a href="{out}"{current}>{label}</a>')
+    return "<nav aria-label=\"Documentation\">{}</nav>".format("".join(links))
 
 
-def page(title, body, current_out, mermaid):
+def page(title, lead, body, current_out, mermaid):
     return "\n".join([
         "<!doctype html>",
         '<html lang="en">',
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        "<title>{}</title>".format(title),
+        f"<title>{title}</title>",
+        '<meta name="description" content="{}">'.format(
+            html.escape(re.sub(r"<[^>]+>", "", lead).strip()[:160], quote=True)
+        ),
         '<link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">',
+        FONTS,
         IMPORT_MAP,
-        "<style>{}</style>".format(STYLE),
+        f"<style>{STYLE}</style>",
+        THEME_INIT,
         "</head>",
         "<body>",
-        '<header class="site">',
-        '<div id="hero" role="img" aria-label="lab-in-a-box logo, a rotating 3D cube (drag to rotate)">',
-        '<img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo">',
-        "</div>",
-        '<picture><source media="(prefers-color-scheme: dark)" srcset="../media/brand/logo-text-dark.png">'
-        '<img class="wordmark" src="../media/brand/logo-text.png" alt="lab-in-a-box wordmark"></picture>',
+        '<a id="top" class="anchor-top"></a>',
+        '<header class="topbar">',
+        (
+            '<a href="index.html" aria-label="lab-in-a-box home">'
+            '<img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box">'
+            '<img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true">'
+            "</a>"
+        ),
+        f"<div>{nav_html(current_out)}",
+        '<button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>',
         "</header>",
-        nav_html(current_out),
-        '<a id="top"></a>',
-        "<main>",
+        '<section class="opening">',
+        (
+            '<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube">'
+            '<img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>'
+        ),
+        '<div class="opening-text">',
+        f"<h1>{title}</h1>",
+        f'<p class="lead">{lead}</p>',
+        '<p class="hint">Drag the cube to rotate it.</p>',
+        "</div>",
+        "</section>",
+        '<main class="doc">',
         body,
         "</main>",
-        '<footer class="site">Generated from docs/md/ by docs/build_docs.py. Edit the Markdown, then rebuild.</footer>',
+        '<footer class="site">Generated from docs/md/ by docs/build_docs.py.</footer>',
+        THEME_TOGGLE,
         HERO_SCRIPT,
         MERMAID_SCRIPT if mermaid else "",
         "</body>",
@@ -196,13 +332,15 @@ def build():
         text = strip_logo_header(text)
         text = rewrite_links(text)
         body = render_body(text)
-        title = "lab-in-a-box" if out == "index.html" else "lab-in-a-box · {}".format(label)
-        html = page(title, body, out, mermaid='class="mermaid"' in body)
+        body = re.sub(r"^\s*<h1[^>]*>.*?</h1>", "", body, count=1, flags=re.DOTALL)
+        lead, body = split_lead(body)
+        title = "lab-in-a-box" if out == "index.html" else f"lab-in-a-box · {label}"
+        html = page(title, lead, body, out, mermaid='class="mermaid"' in body)
         (DOCS / out).write_text(html, encoding="utf-8")
-        print("wrote docs/{}".format(out))
+        print(f"wrote docs/{out}")
 
 
 if __name__ == "__main__":
     if not SOURCE.is_dir():
-        sys.exit("missing source directory: {}".format(SOURCE))
+        sys.exit(f"missing source directory: {SOURCE}")
     build()

@@ -1,4 +1,9 @@
-# lab-in-a-box
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="media/brand/lockup-horizontal-dark.svg">
+    <img src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box" width="420">
+  </picture>
+</p>
 
 [![CI](https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml/badge.svg)](https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-GPLv3-12a99d.svg)
