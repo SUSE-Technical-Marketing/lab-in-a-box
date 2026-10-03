@@ -9,7 +9,7 @@
 ![License](https://img.shields.io/badge/license-GPLv3-12a99d.svg)
 ![Python](https://img.shields.io/badge/python-3.11-1f2f4a.svg)
 
-lab-in-a-box turns a single bare-metal machine into a self-contained lab factory. Point it at a JSON or YAML file describing the VMs, Kubernetes clusters and software you want, and it builds the whole lab: DNS, provisioning, cluster bring-up and add-ons.
+lab-in-a-box builds complete labs from a single JSON or YAML file: the VMs, DNS, Kubernetes clusters and add-ons you describe. The VMs can run on your own KVM hosts, on Harvester, or on any of eight public clouds, and the same file works across them.
 
 **Documentation:** https://suse-technical-marketing.github.io/lab-in-a-box/
 
@@ -21,7 +21,7 @@ lab-in-a-box turns a single bare-metal machine into a self-contained lab factory
 
 ## Repository layout
 
-- `docs/md/` — the documentation sources (Markdown)
+- `docs/src/` — the documentation sources (HTML fragments)
 - `docs/` — the generated site (GitHub Pages). Rebuild with `python3 docs/build_docs.py`
 - `scripts/`, `libs/`, `webui/`, `templates/` — the code
 - `tests/` — the containerized test suite (`tests/run_tests.sh`)

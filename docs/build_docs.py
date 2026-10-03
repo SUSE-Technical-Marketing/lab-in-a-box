@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
-"""Build the documentation site in docs/ from the Markdown sources in docs/md/.
+"""Build the documentation site in docs/ from the HTML fragments in docs/src/.
 
-Run from the repository root: python3 docs/build_docs.py  (needs the `markdown` package).
-Output: docs/index.html (README.md), one page per translation, and docs/webui.html.
+Run from the repository root: python3 docs/build_docs.py
+Output: docs/index.html (English), one page per translation, and docs/webui.html.
 """
 import html
 import re
 import sys
 from pathlib import Path
 
-import markdown
-
 DOCS = Path(__file__).resolve().parent
-SOURCE = DOCS / "md"
-REPO_URL = "https://github.com/SUSE-Technical-Marketing/lab-in-a-box"
+SOURCE = DOCS / "src"
 
 PAGES = [
-    ("README.md", "index.html", "English"),
-    ("README.de.md", "de.html", "Deutsch"),
-    ("README.es.md", "es.html", "Español"),
-    ("README.fr.md", "fr.html", "Français"),
-    ("README.ja.md", "ja.html", "日本語"),
-    ("README.pt-BR.md", "pt-BR.html", "Português (Brasil)"),
-    ("README.zh-CN.md", "zh-CN.html", "简体中文"),
-    ("README.webui.md", "webui.html", "Web UI"),
+    ("index.html", "index.html", "English"),
+    ("de.html", "de.html", "Deutsch"),
+    ("es.html", "es.html", "Español"),
+    ("fr.html", "fr.html", "Français"),
+    ("ja.html", "ja.html", "日本語"),
+    ("pt-BR.html", "pt-BR.html", "Português (Brasil)"),
+    ("zh-CN.html", "zh-CN.html", "简体中文"),
+    ("webui.html", "webui.html", "Web UI"),
 ]
-PAGE_FOR_SOURCE = {src: out for src, out, _ in PAGES}
 
 IMPORT_MAP = """<script type="importmap">
 {
@@ -145,6 +141,11 @@ main.doc img { max-width: 100%; height: auto; }
 main.doc details { border-top: 1px solid var(--line); padding: 10px 0; }
 main.doc summary { cursor: pointer; font: 700 15px/1.4 "Schibsted Grotesk", system-ui, sans-serif; }
 pre.mermaid { background: var(--panel); border: 1px solid var(--line); text-align: center; }
+main.doc blockquote {
+  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 0 8px 8px 0; font-size: 0.95em; color: var(--muted);
+}
+main.doc blockquote p { margin: 0; }
 main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
 .anchor-top { display: block; height: 0; }
 footer.site {
@@ -203,62 +204,12 @@ THEME_TOGGLE = """<script>
 </script>"""
 
 
-def strip_logo_header(text):
-    """Remove the README's own logo block: the header replaces it on every page."""
-    return re.sub(
-        r'<a id="top"></a>\s*<p align="center">\s*<a href="[^"]*logo[^"]*">.*?</p>\s*',
-        "",
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
-
-
-def rewrite_links(text):
-    """Point links and image paths at the generated pages and the repo."""
-    text = re.sub(r'(src|href)="media/', r'\1="../media/', text)
-    text = re.sub(r'\]\(media/', "](../media/", text)
-
-    def page_link(match):
-        target = match.group(2)
-        if target in PAGE_FOR_SOURCE:
-            return f"{match.group(1)}{PAGE_FOR_SOURCE[target]}"
-        return match.group(0)
-
-    text = re.sub(r'((?:href="|\]\())(README[\w.-]*\.md)', page_link, text)
-    text = re.sub(
-        r'\]\((?!https?:|#|\.\./|mailto:)([\w./-]+\.(?:md|py|sh|json|yaml|yml|txt|cfg|bash|sh))\)',
-        lambda m: f"]({REPO_URL}/blob/main/{m.group(1)})",
-        text,
-    )
-    text = re.sub(r"\]\(README\.md#", "](index.html#", text)
-    text = re.sub(r"\]\(([\w.-]+/)\)", lambda m: f"]({REPO_URL}/tree/main/{m.group(1)})", text)
-    return text
-
-
-def github_slug(value, separator):
-    """Heading anchors built the way GitHub builds them, so in-page links still resolve."""
-    return re.sub(r"[^\w\- ]", "", value.strip().lower()).replace(" ", separator)
-
-
-def render_body(text):
-    html = markdown.markdown(
-        text,
-        extensions=["tables", "fenced_code", "attr_list", "md_in_html", "toc", "sane_lists"],
-        extension_configs={"toc": {"slugify": github_slug}},
-    )
-    html = re.sub(
-        r'<pre><code class="language-mermaid">(.*?)</code></pre>',
-        r'<pre class="mermaid">\1</pre>',
-        html,
-        flags=re.DOTALL,
-    )
-    return html
-
-
 def split_lead(html):
-    """Take the first real prose paragraph out of the body to serve as the page's lead line."""
+    """Take the first prose paragraph outside any blockquote to serve as the page's lead line."""
+    quoted = [m.span() for m in re.finditer(r"<blockquote>.*?</blockquote>", html, flags=re.DOTALL)]
     for match in re.finditer(r"<p>(.*?)</p>", html, flags=re.DOTALL):
+        if any(start <= match.start() < end for start, end in quoted):
+            continue
         plain = re.sub(r"<[^>]+>", "", match.group(1)).strip()
         if len(plain) > 60:
             return match.group(1), html[: match.start()] + html[match.end():]
@@ -316,7 +267,7 @@ def page(title, lead, body, current_out, mermaid):
         '<main class="doc">',
         body,
         "</main>",
-        '<footer class="site">Generated from docs/md/ by docs/build_docs.py.</footer>',
+        '<footer class="site">Generated from docs/src/ by docs/build_docs.py.</footer>',
         THEME_TOGGLE,
         HERO_SCRIPT,
         MERMAID_SCRIPT if mermaid else "",
@@ -328,15 +279,11 @@ def page(title, lead, body, current_out, mermaid):
 
 def build():
     for source, out, label in PAGES:
-        text = (SOURCE / source).read_text(encoding="utf-8")
-        text = strip_logo_header(text)
-        text = rewrite_links(text)
-        body = render_body(text)
-        body = re.sub(r"^\s*<h1[^>]*>.*?</h1>", "", body, count=1, flags=re.DOTALL)
+        body = (SOURCE / source).read_text(encoding="utf-8")
         lead, body = split_lead(body)
         title = "lab-in-a-box" if out == "index.html" else f"lab-in-a-box · {label}"
-        html = page(title, lead, body, out, mermaid='class="mermaid"' in body)
-        (DOCS / out).write_text(html, encoding="utf-8")
+        page_html = page(title, lead, body, out, mermaid='class="mermaid"' in body)
+        (DOCS / out).write_text(page_html, encoding="utf-8")
         print(f"wrote docs/{out}")
 
 
