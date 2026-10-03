@@ -21,6 +21,20 @@ fi
 # ── Automated tests — every check runs inside a disposable podman container
 # (tests/Containerfile), never on the host directly. See tests/run_tests.sh.
 # Skip for one commit if truly needed: git commit --no-verify
+# A commit that only touches documentation or media (no code, tests, templates,
+# or webui) has nothing to test, so the suite is skipped for it.
+_code_changed=0
+while IFS= read -r _file; do
+    case "${_file}" in
+        *.md|docs/*|media/*) ;;
+        *) _code_changed=1; break ;;
+    esac
+done < <(git diff --cached --name-only)
+if [[ ${_code_changed} -eq 0 ]]; then
+    echo "pre-commit: only documentation/media staged — skipping the test suite" >&2
+    exit 0
+fi
+
 if ! command -v podman >/dev/null 2>&1; then
     echo "pre-commit: podman not found — skipping containerized tests (install podman to enable them)" >&2
     exit 0

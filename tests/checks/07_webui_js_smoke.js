@@ -8,7 +8,7 @@ const vm = require("vm");
 
 const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
 const sandbox = {
-  document: { querySelectorAll: () => [] },
+  document: { querySelectorAll: () => [], addEventListener: () => {} },
   window: { addEventListener: () => {} },
   console,
 };
