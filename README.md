@@ -1,18 +1,22 @@
 <a id="top"></a>
-# lab-in-a-box
 
 <p align="center">
-  <img src="media/logo.png" width="180" alt="lab-in-a-box logo: nested glowing cubes inside a glass box, representing nested VMs inside a physical host" />
+  <a href="https://rmahique.github.io/lab-in-a-box/logo/">
+    <img src="media/brand/logo-3d-4f.svg" width="240" alt="lab-in-a-box logo: nested glowing cubes inside a glass box, representing nested VMs inside a physical host" />
+  </a>
   <br/>
-  <img src="media/logo-text.png" width="420" alt="lab-in-a-box wordmark" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="media/brand/logo-text-dark.png">
+    <img src="media/brand/logo-text.png" width="420" alt="lab-in-a-box wordmark" />
+  </picture>
 </p>
 
 <p align="center">
   <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="License" src="https://img.shields.io/badge/license-GPLv3-blue.svg">
-  <img alt="Python" src="https://img.shields.io/badge/python-3.11-blue.svg">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-containerized%20(podman)-success.svg">
-  <img alt="Add-ons" src="https://img.shields.io/badge/add--ons-64-informational.svg">
+  <img alt="License" src="https://img.shields.io/badge/license-GPLv3-12a99d.svg">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11-1f2f4a.svg">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-containerized%20(podman)-0f8f86.svg">
+  <img alt="Add-ons" src="https://img.shields.io/badge/add--ons-64-e2725b.svg">
 </p>
 
 <p align="center">
@@ -82,8 +86,8 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 ## Architecture
 
 <p align="center" float="left">
-  <kbd><img src="media/diagram1.svg" width="800" alt="Architecture overview diagram"/></kbd>
-  <kbd><img src="media/diagram2.svg" width="800" alt="Network and services diagram"/></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="media/diagram1.svg" width="800" alt="Architecture overview diagram"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="media/diagram2.svg" width="800" alt="Network and services diagram"/></picture></kbd>
 </p>
 
 The system is built around a **two-tier architecture**:

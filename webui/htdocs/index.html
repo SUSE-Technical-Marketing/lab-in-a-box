@@ -4,19 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>lab-in-a-box · lab builder</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16191e" media="(prefers-color-scheme: dark)">
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">▚</span>
+      <img class="logo logo-light" src="logo-icon.svg" alt="lab-in-a-box">
+      <img class="logo logo-dark" src="logo-icon-dark.svg" alt="" aria-hidden="true">
       <div>
-        <h1>lab&#8209;in&#8209;a&#8209;box · lab builder</h1>
+        <h1 class="brand-name">lab <span class="in-a">in<span class="sep">·</span>a</span> box · lab builder</h1>
         <p class="sub">Forms generated live from each component's <code>--schema</code>. Nothing here is hard&#8209;coded.</p>
       </div>
     </div>
-    <div class="count-pill" id="countPill" title="Components discovered at runtime">
-      <span id="countNum">…</span> <span class="count-label">components</span>
+    <div class="top-actions">
+      <button type="button" class="theme-toggle" id="themeToggle" title="Theme: auto (follows your system), light, or dark"><span class="dot"></span><span class="t-label">Auto</span></button>
+      <div class="count-pill" id="countPill" title="Components discovered at runtime">
+        <span id="countNum">…</span> <span class="count-label">components</span>
+      </div>
     </div>
   </header>
 
