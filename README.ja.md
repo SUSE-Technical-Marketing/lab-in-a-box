@@ -1,5 +1,4 @@
 <a id="top"></a>
-# lab-in-a-box
 
 <p align="center">
   <a href="https://rmahique.github.io/lab-in-a-box/logo/">
