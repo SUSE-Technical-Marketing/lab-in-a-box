@@ -81,20 +81,8 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
       })
 
 
-# ── every real install_*.py PLUGIN declares a non-empty layers (regression
-#    guard for the mechanical 40-file sweep — catches anything left on the
-#    DEFAULT_PLUGIN fallback by accident) ──────────────────────────────────────
-# Count last updated 2026-09-06: +10 AI/ML addons (suse_ai, apertus, kimi, open_webui, milvus,
-# qdrant, weaviate, gpu_operator, anthropic, openai) on top of the prior 40, then +11 more
-# (qwen, mistral, codellama, starcoder2, agones, suse_observability, games, mailman,
-# mediagoblin, colt, wikimusic), then the single bundled "games" addon was replaced with one
-# addon per self-hosted game (-1 games, +3: supertux_classic, skynet_simulator, open_saber),
-# then +1 more (home_assistant), then +2 more (prometheus, grafana — both 2026-09-16), then +1
-# more (ansible_control_node, 2026-09-18), then +1 more (hermes, 2026-09-21), then +1 more
-# (ds389 — finally ported to Python with a real PLUGIN dict; previously deliberately
-# skipped/left as a broken bash script, 2026-09-21), then +1 more (gitlab, dual-mode
-# kubernetes/standalone-container, 2026-09-26), then +2 more (nextcloud, seafile — both
-# dual-mode kubernetes/standalone-container, 2026-09-27).
+# ── every install_*.py plugin declares a non-empty layers list ──────────────
+# This catches a plugin that falls back to DEFAULT_PLUGIN by accident. Each install script must declare its own layers.
 scripts_dir = _REPO / "scripts"
 addon_files = sorted(glob.glob(str(scripts_dir / "install_*.py")))
 check("found the expected 72 python addon scripts to check", len(addon_files) == 72)
