@@ -1,103 +1,47 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install GitLab — either as a standalone podman
-# container directly on a host/VM (no Kubernetes needed) or on a real
-# Kubernetes cluster via GitLab's own official Helm chart.
+# Part of lab-in-a-box. Installs GitLab either as a standalone podman container on a host or VM, with no Kubernetes, or on a
+# Kubernetes cluster with GitLab's official Helm chart.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# References (fetched raw, ground-truthed 2026-09-26, not guessed):
-#   https://gitlab.com/gitlab-org/charts/gitlab/-/raw/master/values.yaml
-#     (the real, current chart's own default values — confirms global.edition,
-#     global.hosts.domain/https, installCertmanager, certmanager-issuer.email,
-#     and that nginx-ingress.enabled defaults to false — this chart assumes
-#     the cluster already has an ingress controller, matching RKE2/K3s's own
-#     bundled one, so this addon does not need to bundle a second one itself)
-#   GitLab's own long-documented Omnibus Docker deployment shape (single
-#   all-in-one container, GITLAB_OMNIBUS_CONFIG env var for Ruby-DSL config
-#   overrides, real root password readable from
-#   /etc/gitlab/initial_root_password inside the container after first boot —
-#   this addon reads that file back directly rather than assuming any
-#   particular override env var took effect, so the password it prints is
-#   always the one actually in use, not a guess)
+# References: the chart's values.yaml (https://gitlab.com/gitlab-org/charts/gitlab/-/raw/master/values.yaml) and GitLab's Omnibus
+# Docker deployment. The container follows the Omnibus Docker shape: GITLAB_OMNIBUS_CONFIG carries the configuration, and the initial
+# root password is written to /etc/gitlab/initial_root_password inside the container. The script reads that file back, so the
+# password it prints is the one in use.
 #
-# ─── JSON section: "gitlab" ───────────────────────────────────────────────────
+# JSON section: "gitlab"
+#   gitlab_deployment    : "podman" (default) runs one Omnibus container on the target host. "kubernetes" deploys the official
+#                          Helm chart once, to the server node of the cluster.
 #
-#   gitlab_deployment    : "podman" (default) = a single standalone Omnibus
-#                           container directly on the target host/VM, no
-#                           Kubernetes involved at all — matches GitLab's own
-#                           official Docker quickstart exactly. "kubernetes" =
-#                           the real official Helm chart (charts.gitlab.io),
-#                           deployed once to the cluster's server node.
+# podman fields
+#   gitlab_image         : container image (default gitlab/gitlab-ce, the upstream Omnibus CE image)
+#   gitlab_version       : image tag (default latest)
+#   gitlab_hostname      : external_url hostname (default: the node's own hostname). GitLab uses it in every link and redirect. A later
+#                          change needs gitlab-ctl reconfigure.
+#   gitlab_https_port    : host port for container port 443 (default 443)
+#   gitlab_http_port     : host port for container port 80 (default 80)
+#   gitlab_ssh_port      : host port for container port 22 (default 2222). Port 22 is normally the host's own sshd.
+#   gitlab_root_password : initial root password. GitLab applies it only on the first boot of the container. When it is unset, the
+#                          script reads the password GitLab generated in /etc/gitlab/initial_root_password. That file expires after 24 hours.
+#   gitlab_account       : name of an encrypted credential file of kind "gitlab" under /etc/lab_creation/credentials/ to read
+#                          gitlab_root_password from. It is auto-discovered when exactly one such file exists and this is unset.
 #
-# ── "podman" fields ───────────────────────────────────────────────────────────
-#   gitlab_image          : container image                (default: "gitlab/gitlab-ce" —
-#                           the real upstream Omnibus CE image; there is no SUSE-branded
-#                           GitLab image)
-#   gitlab_version         : image tag                      (default: "latest")
-#   gitlab_hostname         : external_url hostname to configure GitLab with
-#                           (default: the target node's own hostname). Real GitLab behavior:
-#                           this becomes the literal external_url GitLab redirects to and signs
-#                           links with — get it right up front, changing it later needs a real
-#                           `gitlab-ctl reconfigure`.
-#   gitlab_https_port       : host port -> container 443    (default: 443)
-#   gitlab_http_port        : host port -> container 80     (default: 80)
-#   gitlab_ssh_port         : host port -> container 22     (default: 2222 — NOT the real 22,
-#                           since that's almost always already the HOST's own sshd; GitLab's
-#                           own docs use 2222 as their own example for exactly this reason)
-#   gitlab_root_password    : initial root password. GitLab's real Omnibus behavior: this is
-#                           injected via GITLAB_OMNIBUS_CONFIG's gitlab_rails
-#                           ['initial_root_password'], which only takes effect on the container's
-#                           very FIRST boot (a real, documented GitLab limitation — it does not
-#                           reset an existing instance's password on a later restart). Left
-#                           unset, this addon reads back whatever GitLab itself auto-generated
-#                           at /etc/gitlab/initial_root_password (valid 24h only, GitLab's own
-#                           real expiry) and prints that instead, rather than assuming any
-#                           particular value took effect.
-#   gitlab_account          : name of an encrypted credential_kind "gitlab" file under
-#                           /etc/lab_creation/credentials/ (see README's Credentials section) to
-#                           read gitlab_root_password from instead of this section's own
-#                           plaintext field — auto-discovered if exactly one "gitlab" credential
-#                           file exists and this is left unset.
+# kubernetes fields
+#   gitlab_rel           : Helm repo alias (default gitlab)
+#   gitlab_repo_url      : Helm repo URL (default https://charts.gitlab.io/)
+#   gitlab_chart_version : Helm chart version (empty = latest)
+#   gitlab_namespace     : Kubernetes namespace (default gitlab)
+#   gitlab_edition       : "ce" (default, free and open source) or "ee". The chart default is ee.
+#   gitlab_https         : "true" or "false" (default false). The chart's default TLS uses a public Let's Encrypt certificate through
+#                          cert-manager HTTP-01, which needs a publicly resolvable hostname. Set it to true only for a public domain.
+#   gitlab_cert_manager_email : contact e-mail for the Let's Encrypt issuer. Required when gitlab_https is true.
+#   gitlab_extra_values  : a dict of extra key=value pairs for helm upgrade --install, for settings this addon has no field for,
+#                          for example {"gitlab.gitaly.persistence.size": "20Gi"}.
 #
-# ── "kubernetes" fields ───────────────────────────────────────────────────────
-#   gitlab_rel              : Helm repo alias               (default: "gitlab")
-#   gitlab_repo_url         : Helm repo URL                 (default: "https://charts.gitlab.io/")
-#   gitlab_chart_version     : Helm chart version             (empty = latest)
-#   gitlab_namespace        : Kubernetes namespace           (default: "gitlab")
-#   gitlab_edition          : "ce" (default, free/open-source) or "ee" — the chart's own
-#                           default is "ee"; this addon defaults to "ce" instead, matching this
-#                           project's own general preference for free/open-source tooling
-#                           (see README/CLAUDE.md).
-#   gitlab_https            : "true"/"false"                 (default: "false" — REAL reason:
-#                           the chart's own default TLS setup provisions real Let's Encrypt
-#                           certs via cert-manager's HTTP01 challenge, which requires the
-#                           hostname to be a REAL, PUBLICLY RESOLVABLE domain pointed at the
-#                           cluster's ingress IP; this project's own lab domain convention
-#                           (*.mydemo.lab) is never publicly resolvable, so Let's Encrypt would
-#                           just hang/fail forever. Set "true" only against a real public domain.)
-#   gitlab_cert_manager_email : email for the Let's Encrypt ACME issuer — REQUIRED if
-#                           gitlab_https is "true" (the chart's own certmanager-issuer.email;
-#                           Let's Encrypt itself requires a real contact address).
-#   gitlab_extra_values      : [OPTIONAL] a dict of additional raw `--set key=value` pairs to
-#                           pass straight through to `helm upgrade --install`, for anything this
-#                           addon doesn't expose its own field for — e.g.
-#                           {"gitlab.gitaly.persistence.size": "20Gi"}.
-#
-# Real minimum resource requirements (GitLab's own documented reference architecture, even for a
-# single-node "just try it" install): 4 vCPU / 8GB RAM at an absolute minimum, considerably more
-# comfortable at 4 vCPU / 16GB — GitLab bundles its own PostgreSQL, Redis, Gitaly and (in
-# Kubernetes mode) object storage-backed registry/pages services internally; this is a genuinely
-# heavy application, not a lightweight one.
-#
-# NOT live-tested in Kubernetes mode — no real Kubernetes cluster was available in this session
-# to deploy the Helm chart against. The chart values above are ground-truthed against the real,
-# current upstream values.yaml (see the reference at the top of this file), but the full
-# kubernetes-mode pipeline has only been exercised via the mocked test suite. Podman mode follows
-# GitLab's own long-stable, extremely widely used Docker deployment shape closely enough that
-# it's expected to work as documented, but was also not live-tested against real infrastructure
-# in this session (no spare host with the real resource budget above was available).
+# Resources: GitLab needs at least 4 vCPU and 8 GB of RAM. 4 vCPU and 16 GB is more comfortable. GitLab runs its own PostgreSQL,
+# Redis and Gitaly services.
 
-__version__ = "__LABVERSION__"
+__version__ = "8e8d2f1"
 
 PLUGIN = {
     "name": "gitlab",
@@ -210,18 +154,9 @@ def setup_gitlab_podman(hostname, cfg):
 
     print("- Waiting for GitLab to actually finish reconfiguring and start serving real HTTP "
           "requests (up to 5 minutes — GitLab's first boot is genuinely slow)")
-    # Real bug found live 2026-09-26: GitLab's own Omnibus reconfigure writes
-    # /etc/gitlab/initial_root_password very early — confirmed live it was
-    # already present just ~20s after container start, while rails database
-    # migrations were still running minutes away from finishing — so an
-    # earlier version of this function that waited for THAT file alone
-    # declared success and printed a password long before GitLab was
-    # actually reachable at all (curl still got connection-refused for
-    # several more minutes after the "ready" message printed). Waiting on
-    # a real HTTP response from the login page instead — confirmed live
-    # this only starts succeeding once GitLab is genuinely up — and only
-    # THEN reading the password file, which is always already written by
-    # that point in Omnibus's own real bootstrap order.
+    # Wait for a real HTTP response from the login page before reading the root password. GitLab writes the password file early,
+    # while database migrations still run, so the file alone does not show that GitLab is ready. The file is read after the response,
+    # when Omnibus has finished writing it.
     gitlab_ready = False
     deadline = time.time() + 300
     while time.time() < deadline:

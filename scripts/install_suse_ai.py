@@ -1,76 +1,39 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install SUSE AI (SUSE's own Ollama + Open WebUI + Milvus AI stack)
+# Part of lab-in-a-box. Installs SUSE AI, SUSE's Ollama, Open WebUI and Milvus stack.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# JSON section: "suse_ai" — configurable keys:
-#   suse_ai_registry_user     : [MANDATORY] SUSE Application Collection registry username (your SCC
-#                               login email — same credential family as this project's SUSE_regcode/
-#                               SUSE_email registration keys, but a SEPARATE Application Collection
-#                               entitlement token, not your SCC registration code itself)
-#   suse_ai_registry_password : [MANDATORY] SUSE Application Collection registry password/token
-#   suse_ai_registry_account : [OPTIONAL] name of an encrypted credential_kind "appcollection"
-#                               file under /etc/lab_creation/credentials/ (see README's
-#                               Credentials section) to read suse_ai_registry_user/
-#                               suse_ai_registry_password from instead of this section's own
-#                               plaintext fields — auto-discovered if exactly one
-#                               "appcollection" credential file exists and this is left unset.
-#                               The plaintext fields above remain fully valid either way.
-#   suse_ai_registry          : [OPTIONAL] OCI registry host (default: dp.apps.rancher.io)
-#   suse_ai_ns                : [OPTIONAL] namespace (default: suse-private-ai — SUSE's own documented
-#                               default, kept as-is rather than following this project's usual
-#                               <name>-system convention, to match SUSE's own docs/support examples)
-#   suse_ai_components        : [OPTIONAL] space-separated list of components to install (default:
-#                               "ollama open-webui"). Add "milvus" for local RAG vector search — Open
-#                               WebUI can use Milvus OR OpenSearch as its RAG backend; OpenSearch isn't
-#                               wired up here, add it via a separate addon/values override if preferred.
-#   suse_ai_ollama_version     : [OPTIONAL] chart version pin for the ollama component (empty = latest)
-#   suse_ai_open_webui_version : [OPTIONAL] chart version pin for the open-webui component
-#   suse_ai_milvus_version     : [OPTIONAL] chart version pin for the milvus component
-#   suse_ai_tls_source         : [OPTIONAL] "suse-private-ai" (self-signed, default) | "letsEncrypt"
-#                               (needs public DNS + cert-manager's HTTP-01) | "secret" (bring your own
-#                               cert, no cert-manager needed)
-#   suse_ai_shorthn            : [OPTIONAL] hostname prefix for Open WebUI's ingress (default: ai)
-#   suse_ai_extra_set_<component> : [OPTIONAL] e.g. suse_ai_extra_set_open-webui — a raw space-
-#                               separated "key=value" list appended as extra `--set` flags to that
-#                               component's helm install, for anything not covered by the keys above
-#                               (see the note below on why this exists instead of guessed values keys)
+# JSON section: "suse_ai"
+#   suse_ai_registry_user      : [MANDATORY] SUSE Application Collection registry user (the SCC login e-mail). This is an Application
+#                                Collection entitlement token, separate from the SCC registration code.
+#   suse_ai_registry_password  : [MANDATORY] Application Collection registry password or token
+#   suse_ai_registry_account   : [OPTIONAL] name of an encrypted credential file of kind "appcollection" under
+#                                /etc/lab_creation/credentials/ for the registry user and password. It is auto-discovered when exactly
+#                                one such file exists and this is unset. The plaintext fields remain valid.
+#   suse_ai_registry           : OCI registry host (default dp.apps.rancher.io)
+#   suse_ai_ns                 : namespace (default suse-private-ai, SUSE's documented default)
+#   suse_ai_components         : space-separated components (default "ollama open-webui"). Add "milvus" for local RAG vector search.
+#                                OpenSearch is not wired up here.
+#   suse_ai_ollama_version     : chart version pin for ollama (empty = latest)
+#   suse_ai_open_webui_version : chart version pin for open-webui
+#   suse_ai_milvus_version     : chart version pin for milvus
+#   suse_ai_tls_source         : "suse-private-ai" (self-signed, default), "letsEncrypt" (needs public DNS and cert-manager HTTP-01), or
+#                                "secret" (a certificate you provide, without cert-manager)
+#   suse_ai_shorthn            : hostname prefix for the Open WebUI ingress (default ai)
+#   suse_ai_extra_set_<component> : space-separated key=value pairs, added as --set flags to that component's helm install, for settings
+#                                the keys above do not cover.
 #
-# PREREQUISITES this addon does NOT install for you (document/configure separately): cert-manager
-# (unless suse_ai_tls_source="secret"), an ingress controller already present on the cluster, and
-# (confirmed live, see below) a StorageClass — a bare RKE2 cluster has none by default.
+# Prerequisites this addon does not install: cert-manager (unless suse_ai_tls_source is "secret"), an ingress controller, and a StorageClass.
 #
-# PARTIALLY LIVE-TESTED 2026-09-05 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab: the
-# namespace + `application-collection` docker-registry Secret creation both confirmed working
-# end-to-end for real (`kubectl get secret application-collection -n suse-private-ai` — type
-# kubernetes.io/dockerconfigjson, present). The OCI `helm registry login` step itself could NOT be
-# exercised for real — no genuine SUSE Application Collection entitlement was available, only this
-# project's own SUSE_email/SUSE_regcode (SCC product-registration credentials) from
-# lab_creation.cfg, tried on the theory they might double as Application Collection access. They do
-# NOT: a real `401 Unauthorized` came back from dp.apps.rancher.io, confirming these are genuinely
-# separate credential families — exactly what this addon's own header already (correctly) warned
-# about before this test. A real bug WAS found and fixed by this: the login failure crashed with an
-# uncaught RuntimeError/Python traceback instead of a clear message — `setup_suse_ai_registry()` now
-# checks the login's exit code itself and dies with an actionable error instead. Still not verified:
-# an actual successful login/chart pull, which needs a real entitlement to test at all.
+# The addon creates the namespace and the application-collection registry Secret. The chart references are
+# oci://dp.apps.rancher.io/charts/<component>. The Milvus reference follows SUSE's published example. The ollama reference follows the same
+# pattern but is not confirmed, so check it with helm show chart before relying on it.
 #
-# Additionally verified against documentation.suse.com/suse-ai/1.0 and github.com/SUSE/suse-ai-deployer, 2026-09-05:
-# the suse-private-ai namespace default, the "application-collection" registry-secret convention, the
-# ollama/open-webui/milvus component split, and the oci://dp.apps.rancher.io/charts/milvus chart
-# reference (confirmed via a real community install example: `helm upgrade --install milvus
-# oci://dp.apps.rancher.io/charts/milvus -n suseai --version 4.2.2`). NOT independently confirmed:
-# the exact OCI chart path for "ollama" (assumed to follow the same oci://<registry>/charts/<name>
-# pattern as milvus, since SUSE's own meta chart deploys it as a same-family component — verify with
-# `helm show chart oci://dp.apps.rancher.io/charts/ollama` before relying on it), and the SUSE-AI-
-# specific Open WebUI chart's own ingress/TLS values keys (this project's community "open_webui"
-# addon's keys are confirmed for the UPSTREAM open-webui chart, but SUSE republishes its own OCI build
-# which may structure ingress/TLS differently around suse_ai_tls_source above — hence the
-# suse_ai_extra_set_<component> escape hatch instead of guessing a specific key that might silently
-# produce an unreachable service).
+# SUSE's Open WebUI build can use different ingress and TLS keys from the upstream chart that the open_webui addon uses. Use
+# suse_ai_extra_set_<component> for those. A failed registry login is reported with an actionable error.
 #
-# This deploys SUSE's own curated, GPU-aware rebuild of the same Ollama/Open-WebUI/Milvus components
-# this project's separate "ollama"/"open_webui"/"milvus" addons already install from their community
-# upstream charts — don't run both against the same cluster/namespace at once.
+# This addon deploys SUSE's rebuild of the Ollama, Open WebUI and Milvus components. The ollama, open_webui and milvus addons install
+# the community builds, so do not run both against the same cluster and namespace.
 
 __version__ = "0259515"
 
