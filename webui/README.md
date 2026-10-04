@@ -26,6 +26,16 @@ The only fixed convention is the schema vocabulary: a **field** is any object
 with `name` + `type`; `fields`/`sections` are structural; a section may carry
 `repeatable`. Everything else is discovered.
 
+## Try it online (GitHub Pages)
+
+**[→ Open lab-builder in your browser](https://rmahique.github.io/lab-in-a-box/index-static.html)** — no backend required, fully static.
+
+This version regenerates automatically on every commit via GitHub Actions:
+- All 72 addon schemas embedded in a single HTML file
+- Offline-capable — works without internet after load
+- Drag VMs/clusters/add-ons in the cube canvas, edit configs, download lab.json
+- No server, no login, no state saved anywhere
+
 ## Run locally (any machine with Python 3)
 
 ```bash
