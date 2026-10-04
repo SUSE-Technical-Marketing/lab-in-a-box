@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on Scaleway ─
 check("list_used_macs() returns empty (Scaleway has no MAC concept)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): no MAC concept, no generation, pure passthrough
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -182,8 +182,7 @@ def _fake_urlopen(req, timeout=30):
 with mock.patch.object(backends.urllib.request, "urlopen", side_effect=_fake_urlopen):
     returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init", iso_image="img-1")
 
-check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-      "contract)", returned_ip == "203.0.113.40")
+check("create_vm() returns the real IP once the instance is confirmed running", returned_ip == "203.0.113.40")
 create_req = next(r for r in requests_seen if r.get_method() == "POST" and r.full_url.endswith("/servers"))
 create_body = json.loads(create_req.data.decode("utf-8"))
 check("create_vm() sends the real image ID", create_body.get("image") == "img-1")
@@ -209,8 +208,8 @@ if poweron_req is not None:
 
 
 # ── cloud_instance_type: explicit override bypasses _pick_server_type() entirely ──
-# added 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-# ceiling — see _parse_sku_table()'s own docstring and README's Compute backends table.
+# No provider's sizing catalog is a hardcoded ceiling. See _parse_sku_table()'s docstring and
+# README's Compute backends table.
 b5 = backends.ScalewayBackend("secretkey", "proj-1", "fr-par-1")
 b5._user_data_by_vm["vm1"] = ""
 requests_seen = []

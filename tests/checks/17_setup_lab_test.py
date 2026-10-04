@@ -234,7 +234,7 @@ check("phase_create_vms: --keep + a VM that doesn't exist yet is still (re)creat
 
 # keep=True, backend can't even be reached (e.g. an expired cloud SSO token) ->
 # must NOT be treated as "doesn't exist, will recreate" — that conflation is
-# exactly what nearly destroyed a real production server live. The node is left
+# a destructive mistake. The node is left
 # untouched (no destroy/provision) and recorded as FAILED instead.
 for k in calls:
     calls[k].clear()
@@ -295,8 +295,8 @@ check("phase_create_vms: a node whose provision_vm() raises RuntimeError doesn't
 
 
 # ── _RunReport / print_summary: end-of-run overview of what worked / failed ──
-# setup_lab.py used to swallow a failed node/addon with one mid-run [WARN] and
-# then just say "LAB setup completed" — print_summary() gives a grouped
+# A failed node or addon must not be reported only by one mid-run [WARN] followed by
+# "LAB setup completed". print_summary() gives a grouped
 # breakdown and _report.failed drives main()'s exit code.
 setup_lab._report = setup_lab._RunReport()
 setup_lab._report.resources = (12, 24576, 240, 4)

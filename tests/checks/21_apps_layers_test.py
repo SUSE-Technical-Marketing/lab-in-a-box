@@ -54,8 +54,7 @@ with tempfile.NamedTemporaryFile(mode="w", suffix="", delete=False) as f:
 
 plugin = apps.load_plugin_from_path(bash_fixture, name="install_ds389")
 check("load_plugin_from_path falls back gracefully for a bash-shaped file "
-      "(regression guard for the shape install_ds389 used to have, before it was ported "
-      "to a real PLUGIN dict 2026-09-21 — a synthetic fixture here, not the real file)",
+      "(a synthetic PLUGIN fixture, not the real file)",
       plugin.get("name") == "install_ds389" and plugin.get("layers") == [layers.LAYER_KUBERNETES])
 
 

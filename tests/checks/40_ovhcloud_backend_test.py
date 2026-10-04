@@ -221,8 +221,7 @@ def _fake_api(method, path, body=None):
 with mock.patch.object(b3, "_pick_flavor", return_value="flavor-medium") as m_pick:
     with mock.patch.object(b3, "_api", side_effect=_fake_api) as m_api:
         returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init", iso_image="img-uuid")
-    check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-          "contract)", returned_ip == "203.0.113.60")
+    check("create_vm() returns the real IP once the instance is confirmed running", returned_ip == "203.0.113.60")
     check("create_vm() sizes via _pick_flavor(), not a static table", m_pick.called)
     create_call = next(c for c in m_api.call_args_list if c[0][0] == "POST")
     check("create_vm() POSTs to the real instance-create endpoint",

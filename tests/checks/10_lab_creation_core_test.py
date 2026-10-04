@@ -1048,7 +1048,7 @@ _vc_script = _vc_kwargs.get("input") or ""
 if isinstance(_vc_script, bytes):
     _vc_script = _vc_script.decode()
 check("prepare_virt_customize: the shipped hypervisor script is valid Python "
-      "(a real syntax bug here was caught this way live 2026-09-23)",
+      "(catches syntax errors in the generated script)",
       __import__("ast").parse(_vc_script) is not None if _vc_script else False)
 check("prepare_virt_customize: writes /etc/hostname directly via --run-command, not relying "
       "solely on --hostname (which libguestfs gets wrong for this image)",

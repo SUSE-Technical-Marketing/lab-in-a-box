@@ -106,7 +106,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on Exoscale ─
 check("list_used_macs() returns empty (Exoscale has no MAC concept)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): no MAC concept, no generation, pure passthrough
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -193,8 +193,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
     with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
         returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init", iso_image="tpl-1")
 
-    check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-          "contract)", returned_ip == "203.0.113.70")
+    check("create_vm() returns the real IP once the instance is confirmed running", returned_ip == "203.0.113.70")
     create_call = next(c for c in calls if "create" in c)
     check("create_vm() sends the real template ID", "tpl-1" in create_call)
     check("create_vm() picks a real instance-type", "standard.medium" in create_call)
@@ -205,8 +204,8 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
     check("create_vm() uses the real vm_name as the instance name", "vm1" in create_call)
 
     # ── cloud_instance_type: explicit override bypasses _pick_instance_type() entirely ──
-    # added 2026-09-10 per explicit user request that no provider's sizing catalog be a
-    # hardcoded ceiling — see _parse_sku_table()'s own docstring and README's Compute backends
+    # No provider's sizing catalog is a hardcoded ceiling. See _parse_sku_table()'s docstring and
+    # README's Compute backends
     # table.
     b5 = backends.ExoscaleBackend("exokey", "exosecret", "ch-gva-2", lab_setup_path=tempfile_dir)
     b5.push_provisioning_files("vm1", config_method="cloud-init")

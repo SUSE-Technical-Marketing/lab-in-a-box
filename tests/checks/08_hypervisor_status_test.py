@@ -59,8 +59,8 @@ finally:
     lab_creation.ssh_output = _orig_ssh_output
 
 # -- host_status (mocked ssh_output, success + failure) ----------------------
-# Regression test for a real bug (2026-08-27): host_status used to run virsh
-# via a qemu+ssh://root@{host} URI even though it was already executing
+# Regression test: host_status must not run virsh via a qemu+ssh://root@{host} URI when it is
+# already executing
 # remotely ON {host} — a redundant loopback SSH hop whose host key is never
 # pre-accepted, hanging forever when run unattended. virsh must run locally
 # (qemu:///system) since we're already on the target host.

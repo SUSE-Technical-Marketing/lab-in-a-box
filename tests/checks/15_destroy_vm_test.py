@@ -61,7 +61,7 @@ check("destroy_vm: normal path resolves the backend, removes DNS, then deletes t
 
 
 # ── a cloud-backend node (empty myip in the JSON, by design) resolves its real IP
-#    via backend.get_ip() BEFORE delete_vm() removes the instance — 2026-09-09 fix ──
+#    via backend.get_ip() BEFORE delete_vm() removes the instance ──
 class _FakeCloudBackend:
     def __init__(self):
         self.calls = []

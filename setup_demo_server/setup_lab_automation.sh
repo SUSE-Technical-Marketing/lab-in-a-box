@@ -550,7 +550,7 @@ HELMSCRIPT
     local _rc=$?
 
     # id_rsa.pub only exists inside the guest now — pull it out the same
-    # way configure_ssh() used to (via /mnt) so the rest of this script's
+    # way configure_ssh() does (via /mnt) so the rest of this script's
     # own authorized_keys/pubkey-echo behavior is unaffected.
     guestfish --ro -i -a /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 \
         download /root/.ssh/id_rsa.pub "${_stage}/id_rsa.pub" 2>/dev/null

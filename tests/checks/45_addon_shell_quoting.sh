@@ -1,5 +1,5 @@
 #!/bin/bash
-# Targeted regression tests for the 2026-09-10 shell-quoting fix: addon-config
+# Targeted regression tests for shell quoting: addon-config
 # passwords / db+user names must be shlex-quoted before reaching a remote shell.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail

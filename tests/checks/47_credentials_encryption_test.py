@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Integration tests for the encrypted-credentials feature (2026-09-11):
+# Integration tests for the encrypted-credentials feature:
 # primary.py's try_load_cloud_account() decrypt/cache/opt-out handling, and
 # scripts/setup_credentials.py's two modes. Uses the REAL crypto_store
 # (cryptography package) — nothing about the cipher itself is mocked, only
@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as d:
 
 
 # ── real subprocess: stdin running out mid-prompt must abort cleanly ────────
-# Found live 2026-09-11: EOFError/KeyboardInterrupt from input()/getpass()
+# EOFError/KeyboardInterrupt from input()/getpass()
 # weren't caught anywhere, so piped stdin running out mid-sequence (a real,
 # ordinary way for scripted or fat-fingered input to end) surfaced as a raw
 # Python traceback instead of a clean "Aborted" message.

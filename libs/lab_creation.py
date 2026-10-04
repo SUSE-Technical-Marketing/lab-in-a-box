@@ -642,8 +642,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # ── 6b. Hypervisor: VM_DSK must not be smaller than the source image ──────
     # `qemu-img resize` (run at copy time by every non-install_iso config_method)
     # fails outright if asked to shrink an image below its own virtual size —
-    # reported live as "qemu-img: Use the --shrink option to perform a shrink
-    # operation." / a hard provisioning error for a node with a too-small VM_DSK.
+    # qemu-img reports "Use the --shrink option to perform a shrink operation." as a hard
+    # provisioning error for a node with a too-small VM_DSK.
     # Rather than let that surface mid-run, detect it here: bump the node's
     # VM_DSK up to the image's real virtual size (in memory only — the on-disk
     # lab file is untouched) and record a warning so the summary shows it.
@@ -801,7 +801,7 @@ def ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="roo
 
     # Quiet-by-default: when the caller isn't explicitly capturing and debug is
     # off, capture the output internally and only print it if the command fails
-    # or looks like it emitted a warning/error. debug on -> stream live, as before.
+    # or looks like it emitted a warning/error. debug on -> stream live.
     # A caller that passes capture=True is unaffected (it reads .stdout itself).
     quiet = (not capture) and (not _DEBUG)
     result = subprocess.run(

@@ -34,12 +34,10 @@ except FileNotFoundError:
 
 try:
     path = discovery._def_path("install_ds389")
-    check("_def_path finds install_ds389.py (finally ported 2026-09-21 — the bash original, "
-          "the one addon that used to have no .py counterpart, moved to legacy_bash/)",
+    check("_def_path finds install_ds389.py (a Python addon script)",
           path.endswith("install_ds389.py") and Path(path).is_file())
 except FileNotFoundError:
-    check("_def_path finds install_ds389.py (finally ported 2026-09-21 — the bash original, "
-          "the one addon that used to have no .py counterpart, moved to legacy_bash/)", False)
+    check("_def_path finds install_ds389.py (a Python addon script)", False)
 
 
 # ── schema(): capabilities for a kubernetes-layer addon ──────────────────────
