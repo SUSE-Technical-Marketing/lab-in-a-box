@@ -5,11 +5,9 @@ try_load_cloud_account()/scripts/setup_credentials.py). Small, single-purpose
 functions, no file/YAML I/O of its own, so every caller that needs to
 encrypt or decrypt a credential value goes through the exact same path.
 
-Cipher design (confirmed with the user 2026-09-11 — see that session's own
-transcript for the reasoning): for a passphrase-encrypted file, the KDF is
-the real security boundary, not the cipher — AES-256 alone is already
-considered secure against any known or realistically foreseeable attack.
-So the hardening here is layered two ways: an intentionally slow, memory-
+Cipher design: for a passphrase-encrypted file, the KDF is the security
+boundary, and AES-256 alone is considered secure. The hardening is layered
+two ways: an intentionally slow, memory-
 hard KDF (Argon2id), and TWO independent, differently-designed AEAD ciphers
 cascaded rather than one, each keyed by its own subkey with its own domain-
 separation label via HKDF-SHA512 — a catastrophic break of either single
@@ -26,15 +24,10 @@ Each layer is its own AEAD (authenticated) construction, so a wrong
 passphrase or a tampered/corrupt envelope is caught as an
 InvalidTag -> DecryptionError, not silently "decrypted" into garbage.
 
-NOT live-tested against every `cryptography` package version — Argon2id
-support needs cryptography>=41 (added 2023); if the installed version is
-older, derive_master_key() raises a clear RuntimeError naming the fix
-rather than a confusing ImportError deep in a stack trace. Argon2id's own
-keyword-argument names (`salt`/`length`/`iterations`/`lanes`/`memory_cost`)
-are believed correct as of that library's stable 41.x+ API but were not
-empirically verified against a live install before this file was written —
-tests/checks/46_crypto_store.sh's round-trip test IS that live check; if it
-fails with a TypeError from the Argon2id(...) call, that's what changed.
+Argon2id support needs cryptography>=41. On an older version, derive_master_key()
+raises a RuntimeError that names the fix. The Argon2id keyword arguments are
+salt, length, iterations, lanes and memory_cost. A TypeError raised by the
+Argon2id(...) call means those names changed upstream.
 """
 import base64
 import os

@@ -3472,9 +3472,8 @@ def update_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=Non
     """
     Updates an ALREADY-EXISTING Maintenance Calendar's ical/url content via
     the real maintenance.updateCalendar(sessionKey, label, {ical|url},
-    rescheduleStrategy) — ground-truthed directly against
-    MaintenanceHandler.java (same release already confirmed installed on
-    sol.mydemo.lab), the one thing ensure_maintenance_calendar() above
+    rescheduleStrategy), implemented in MaintenanceHandler.java. This is the one thing
+    ensure_maintenance_calendar() above
     deliberately never does. `reschedule_strategy` (a list of strings, the
     real API's own type) defaults to ["Fail"] — its own documented safer
     option: real confirmed values are "Cancel" (cancels any already-

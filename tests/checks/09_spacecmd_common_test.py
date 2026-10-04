@@ -73,11 +73,8 @@ check("ensure_spacecmd_config: uses the given exec_prefix",
       cmd.startswith("kubectl exec ") and "-n ns deploy/uyuni -c uyuni" in cmd)
 check("ensure_spacecmd_config: writes to ~/.spacecmd/config", "~/.spacecmd/config" in cmd)
 check("ensure_spacecmd_config: password passed via stdin, not argv", "s3cr3t" not in cmd and kwargs.get("input_text") and "s3cr3t" in kwargs["input_text"])
-check("ensure_spacecmd_config: kubectl exec gets -i since input_text is given (confirmed live: "
-      "neither mgrctl nor kubectl exec forward stdin without it)", " -i " in " {} ".format(cmd))
-check("ensure_spacecmd_config: server is always localhost, never a caller-supplied FQDN "
-      "(confirmed live: the exec'd container/pod can't reach its own external hostname over "
-      "HTTP)", "server=localhost" in kwargs.get("input_text", ""))
+check("ensure_spacecmd_config: kubectl exec gets -i since input_text is given", " -i " in " {} ".format(cmd))
+check("ensure_spacecmd_config: server is always localhost, never a caller-supplied FQDN", "server=localhost" in kwargs.get("input_text", ""))
 
 # Without input_text, no -i is added, and kubectl exec -- is passed through unchanged.
 fake = FakeSSH()
@@ -883,9 +880,7 @@ try:
     sc.ensure_user_role("host1", "mgrctl exec --", "bob", "read-only-ops")
 except SystemExit:
     died = True
-check("ensure_user_role: user_addrole failure warns, doesn't die (confirmed live: even a "
-      "satellite_admin session gets the identical rejection for a custom access-group label, "
-      "so this can't be treated as a config mistake worth aborting the whole run over)",
+check("ensure_user_role: user_addrole failure warns, doesn't die",
       died is False)
 
 # -- ensure_access_groups: full orchestration --------------------------------
@@ -953,8 +948,7 @@ sc.ensure_ansible_path("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --", 1
                         "/srv/ansible/playbooks")
 create_cmd = next((c[1] for c in fake.calls if "ansible.createAnsiblePath" in c[1]), "")
 check("ensure_ansible_path: create command carries type/server_id/path as a bare JSON "
-      "object, not wrapped in a one-element array (confirmed live: -A binds the whole "
-      "list as the arg for a single-arg method)",
+      "object, not wrapped in a one-element array",
       '{"type": "playbook", "server_id": 123, "path": "/srv/ansible/playbooks"}' in create_cmd
       and '[{"type"' not in create_cmd)
 
@@ -1254,9 +1248,7 @@ create_cmds = [c for c in cmds if "createEnvironment" in c]
 check("ensure_content_environments: creates every stage", len(create_cmds) == 3)
 check("ensure_content_environments: first stage has an empty predecessor",
       '["proj", "", "dev", "dev", "dev"]' in create_cmds[0])
-check("ensure_content_environments: second stage's predecessor is the first stage's label "
-      "(confirmed live: this was NOT advancing before the fix, silently building a set of "
-      "disconnected 'first' environments instead of a chain)",
+check("ensure_content_environments: second stage's predecessor is the first stage's label",
       '["proj", "dev", "test", "test", "test"]' in create_cmds[1])
 check("ensure_content_environments: third stage's predecessor is the second stage's label",
       '["proj", "test", "prod", "prod", "prod"]' in create_cmds[2])
@@ -2429,8 +2421,7 @@ check("describe_activation_key: child channels are every ' |-- '-prefixed line, 
       "sle-product-sles15-sp7-updates-x86_64 sle15-sp7-installer-updates-x86_64")
 check("describe_activation_key: groups", ak["smlm_activation_key_groups"] == "prod")
 check("describe_activation_key: an EMPTY section (Configuration Channels here) contributes no "
-      "field at all — confirmed live 2026-09-16 this used to bleed the NEXT header's own text in "
-      "as bogus content when the boundary regex assumed two blank lines instead of one",
+      "field at all, and the section boundary is a single blank line",
       "smlm_activation_key_config_channels" not in ak)
 check("describe_activation_key: an empty Entitlements section is also omitted, not an empty string",
       "smlm_activation_key_entitlements" not in ak)
@@ -2549,8 +2540,7 @@ try:
 except SystemExit:
     died = True
 check("ensure_distribution: a missing install tree warns, doesn't die (a real, expected, "
-      "self-populated-out-of-band state, confirmed live 2026-09-16 — must not abort every "
-      "orchestration step after it)", died is False)
+      "self-populated-out-of-band state, must not abort every orchestration step after it)", died is False)
 
 fake = FakeSSH(responses=[
     ("kickstart_list", FakeResult(returncode=0, stdout="")),
@@ -2943,7 +2933,7 @@ check("ensure_mcp_server: env file binds to real host loopback only, default por
       and "0.0.0.0" not in env_kwargs["input_text"])
 run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
 check("ensure_mcp_server: podman run uses --network=host (sibling-container DNS/hosts "
-      "isolation confirmed live to break UYUNI_SERVER resolution otherwise), no -p mapping",
+      "isolation would break UYUNI_SERVER resolution), no -p mapping",
       "--network=host" in run_cmd and " -p " not in run_cmd)
 check("ensure_mcp_server: uses --env-file, never -e (credentials must not leak into 'podman "
       "inspect'/'ps')", "--env-file" in run_cmd and " -e " not in run_cmd)
@@ -3448,7 +3438,7 @@ check("ensure_keycloak: uses start-dev (matches the real worked example doc)",
 check("ensure_keycloak: ensures podman is available before touching the container",
       any("command -v podman" in c for c in cmds))
 check("ensure_keycloak: caps JVM heap/metaspace so the build-and-exit phase can't OOM a "
-      "small host (confirmed live 2026-09-25 on neptune.mydemo.lab, ~900MB RAM)",
+      "small host",
       any("JAVA_OPTS_APPEND" in c and "Xmx384m" in c for c in cmds))
 check("ensure_keycloak: publishes the container's HTTPS listener (8443), not the plaintext one",
       any("-p 8080:8443" in c for c in cmds))
@@ -3483,8 +3473,7 @@ sc._ensure_keycloak_tls_cert("neptune.mydemo.lab")
 check("_ensure_keycloak_tls_cert: does nothing when a cert+key already exist",
       not any("openssl" in c[1] for c in fake.calls))
 check("_ensure_keycloak_tls_cert: still re-asserts readable permissions on an EXISTING cert — "
-      "self-heals a cert generated by an earlier, buggy version of this function (confirmed "
-      "live 2026-09-25: root-only 600 perms on a real pre-existing cert on pluto.mydemo.lab)",
+      "self-heals a cert whose key is root-only (600) by making it world-readable",
       any("chmod 644 /etc/keycloak-tls/key.pem" in c[1] for c in fake.calls))
 
 fake = FakeSSH(responses=[
@@ -3497,9 +3486,8 @@ cmds = [c[1] for c in fake.calls]
 check("_ensure_keycloak_tls_cert: generates a self-signed cert+key when missing",
       any("openssl req -x509" in c and "/etc/keycloak-tls/cert.pem" in c and
           "/etc/keycloak-tls/key.pem" in c for c in cmds))
-check("_ensure_keycloak_tls_cert: makes the key world-readable — confirmed live 2026-09-25 the "
-      "official Keycloak image runs as a non-root user and fails to start (AccessDeniedException) "
-      "against openssl's own default root-only 600 key mode",
+check("_ensure_keycloak_tls_cert: makes the key world-readable, since the official Keycloak "
+      "image runs as a non-root user and openssl's default key mode is root-only 600",
       any("chmod 644 /etc/keycloak-tls/key.pem" in c for c in cmds))
 
 fake = FakeSSH(responses=[
@@ -3554,10 +3542,8 @@ check("ensure_keycloak: restarts a stopped container in place rather than recrea
       any("podman start keycloak" in c for c in cmds) and
       not any("podman run -d --name keycloak" in c for c in cmds))
 
-# A container that's stopped AND won't come up cleanly on restart (e.g. the
-# real OOM scenario, before the memory cap fix existed) gets recreated with
-# the corrected settings, rather than dying outright — self-healing, so no
-# manual `podman rm` was needed to recover the real neptune.mydemo.lab state.
+# A stopped container that does not start cleanly is recreated with the current
+# settings, so no manual `podman rm` is needed.
 _state = {"recreated": False}
 
 
@@ -3638,10 +3624,8 @@ create_client_cmd = next(c for c in cmds if "create clients -r" in c)
 check("ensure_keycloak_saml_client: real dotted-attribute kcadm syntax, exact quoting",
       'attributes."saml.assertion.signature"=true' in create_client_cmd
       and 'attributes."saml.client.signature"=false' in create_client_cmd)
-check("ensure_keycloak_saml_client: sets the real logout service URL on create — real bug found "
-      "live 2026-09-26: Keycloak refuses to finish SAML logout without one ('Can't finish SAML "
-      "logout as there is no logout binding set'), surfacing to the user as a generic 'Logout "
-      "failed' page instead of actually logging them out",
+check("ensure_keycloak_saml_client: sets the logout service URL on create, since Keycloak "
+      "refuses to finish SAML logout without one",
       "attributes.saml_single_logout_service_url_redirect=https://sol.mydemo.lab/rhn/manager/sso/sls"
       in create_client_cmd)
 check("ensure_keycloak_saml_client: client protocol is saml, clientId is the real SP entityid",
@@ -3650,12 +3634,8 @@ check("ensure_keycloak_saml_client: client protocol is saml, clientId is the rea
 mapper_cmd = next(c for c in cmds if "create clients/abc-123-uuid/protocol-mappers/models" in c)
 check("ensure_keycloak_saml_client: 'uid' mapper uses saml-user-property-mapper on username",
       'config."attribute.name"=uid' in mapper_cmd and 'config."user.attribute"=username' in mapper_cmd)
-check("ensure_keycloak_saml_client: does NOT set friendlyName on the mapper — confirmed live "
-      "2026-09-25 that setting it to the same value as attribute.name makes Keycloak emit two "
-      "separate <Attribute Name=\"uid\"> elements in the real SAML response, which java-saml's "
-      "own strict parser rejects with 'Found an Attribute element with duplicated Name' — this "
-      "silently broke every real login attempt, surfacing to the browser as a plain "
-      "'Page Not Found' on the ACS URL itself",
+check("ensure_keycloak_saml_client: does NOT set friendlyName on the mapper, since a value equal "
+      "to attribute.name makes Keycloak emit a duplicate <Attribute Name> element that java-saml rejects",
       "friendly.name" not in mapper_cmd)
 
 # An existing mapper that carries the bad friendlyName is corrected in place. Otherwise an already-deployed server would stay broken.
@@ -3759,7 +3739,7 @@ check("ensure_keycloak_user: creates the user then sets its password",
       and any("set-password -r" in c and "--username brahe" in c for c in cmds))
 # Keycloak 26 requires firstName and lastName, and a user without them cannot log in. emailVerified is set for the same reason.
 check("ensure_keycloak_user: sets firstName/lastName (defaulting to the username) and "
-      "emailVerified=true on create — required for real login to succeed, confirmed live",
+      "emailVerified=true on create",
       any("create users -r" in c and "firstName=brahe" in c and "lastName=brahe" in c and
           "emailVerified=true" in c for c in cmds))
 
@@ -3843,10 +3823,8 @@ cmds = [c[1] for c in fake.calls]
 input_texts = [c[2].get("input_text") for c in fake.calls if c[2].get("input_text")]
 check("ensure_sso: writes all 7 rhn.conf keys, including the idp.x509cert fix, on a fresh config",
       any("java.sso.onelogin.saml2.idp.x509cert = FAKECERTDATA123==" in t for t in input_texts))
-check("ensure_sso: writes the idp.single_logout_service.url key — real bug found live 2026-09-26: "
-      "without it, java-saml's SettingsBuilder falls back to its own bundled example default, the "
-      "literal placeholder 'https://your-idp-entity-slo-endpoint/', so logging out redirected "
-      "there and never actually logged the user out at all",
+check("ensure_sso: writes the idp.single_logout_service.url key, since java-saml otherwise "
+      "falls back to its bundled placeholder endpoint",
       any("java.sso.onelogin.saml2.idp.single_logout_service.url = "
           "https://neptune.mydemo.lab:8080/realms/lab-in-a-box/protocol/saml" in t for t in input_texts))
 check("ensure_sso: restarts mgradm when new keys were actually written",
@@ -4074,9 +4052,7 @@ check("ensure_virtual_host_manager_libvirt: sends the real 'uri' param (bare, no
       "the gatherer module appends that itself)",
       any('"uri": "qemu+ssh://root@nuc6.mydemo.lab/system"' in c for c in cmds))
 check("ensure_virtual_host_manager_libvirt: sends non-empty sasl_username/sasl_password "
-      "placeholders even when unset — confirmed live 2026-09-25 the server's own "
-      "isConfigurationValid() rejects the create call outright if either is missing/empty, "
-      "despite neither being functionally used for a qemu+ssh:// URI",
+      "placeholders even when unset, since the server rejects an empty value on create",
       any('"sasl_username": "n/a"' in c and '"sasl_password": "n/a"' in c for c in cmds))
 
 fake = FakeSSH(responses=[
@@ -4124,10 +4100,7 @@ create_cmd = next(c for c in cmds if "system.provisionVirtualGuest" in c)
 check("provision_virtual_guest: resolves host to sid, calls system.provisionVirtualGuest with "
       "the real arg order (hostSid, guestName, kickstartLabel, memMb, vcpus, diskGb)",
       '[42, "vguest1", "sles15sp7-example-ks", 2048, 2, 20]' in unwrap(create_cmd))
-check("provision_virtual_guest: ensures the host carries the Virtualization Host entitlement "
-      "first — reproducible from the lab definition alone, confirmed live 2026-09-26 that nothing "
-      "in this project had ever explicitly requested it even though a real host (nuc6.mydemo.lab) "
-      "already had it",
+check("provision_virtual_guest: ensures the host carries the Virtualization Host entitlement first",
       any("system.addEntitlements" in c and '"virtualization_host"' in unwrap(c) for c in cmds))
 
 fake = FakeSSH(responses=[

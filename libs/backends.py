@@ -388,9 +388,8 @@ class LibvirtBackend(VMBackend):
         return run_libvirt_tool("virt-install", self.remote_host, self.virt_srv, args, **kwargs)
 
     def _virt_xml(self, *args, **kwargs):
-        """Same fallback as _virsh(), for virt-xml (used to edit an already-
-        defined domain's XML in place — see create_vm()'s autoinstall branch
-        for why this is needed)."""
+        """Same fallback as _virsh(), for virt-xml (edits an already-defined domain's
+        XML in place, as used by create_vm()'s autoinstall branch)."""
         return run_libvirt_tool("virt-xml", self.remote_host, self.virt_srv, args, **kwargs)
 
     @classmethod

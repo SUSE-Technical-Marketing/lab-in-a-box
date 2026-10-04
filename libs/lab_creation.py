@@ -1324,8 +1324,7 @@ def resolve_kvm_host(definition, vm_name, config, vm_img_loc=None):
     Precedence: an explicit nodes[vm_name].kvm_host override wins; otherwise
     select_kvm_host() picks one from KVM_HOSTS. With zero or one configured
     host (today's single-hypervisor setups, or KVM_HOSTS unset), no
-    selection logic runs at all — the sole host is used directly, same as
-    before this feature existed.
+    selection logic runs at all — the sole host is used directly.
 
     Returns (remote_host, virt_srv).
     """
@@ -2089,9 +2088,8 @@ def prepare_install_iso(
     is copied to the hypervisor.
 
     ROOT_SSH_PUBKEY is used by all four install types. It defaults to the automation VM's own ~/.ssh/id_rsa.pub, unless root_ssh_key
-    names an existing key file. Kickstart and AutoYaST used to write the ROOT_SSH_KEY config value into authorized_keys. That value
-    can drift from the real key, which leaves the VM unreachable. ROOT_SSH_KEY is still provided as a render variable, so custom
-    templates that refer to it keep working.
+    names an existing key file. ROOT_SSH_KEY is provided only as a render variable, for custom templates that refer
+    to it. It is not written to authorized_keys, because it can differ from the real key.
 
     ROOT_PWD_HASH is used as it is. The hash contains '$', and it is not escaped.
     """

@@ -9,9 +9,8 @@ libs/lab_usb.py — supporting logic for scripts/build_lab_usb.py.
 Design (see /root/.claude/plans/wiggly-zooming-pretzel.md for the full
 write-up): create one ordinary VM (the "lab-host VM") using this project's
 existing VM-creation pipeline, bootstrap it with the SAME already-tested
-NAT-mode automation-VM flow this session already built and live-tested
-(setup_kvm_node.py + setup_lab_automation.sh, _network_mode=nat) — nothing
-new there at all — then run the lab's own setup_lab.py, unchanged, ON that
+NAT-mode automation-VM flow (setup_kvm_node.py + setup_lab_automation.sh,
+_network_mode=nat) with no changes, then run the lab's own setup_lab.py, unchanged, ON that
 nested automation VM against a version of the lab definition whose node
 addresses have been remapped into the internal NAT range. Shut the lab-host
 VM down and its own disk (raw, not QCOW2 — see backends.LibvirtBackend.
@@ -84,8 +83,7 @@ def remap_lab_definition_to_nat(definition, nat_cidr="192.168.150.0/24",
         # (an empty {} or null node entry, e.g. a minimal node relying
         # entirely on inherited common defaults) — mutating that instead
         # of the real per-node dict silently drops myip for that node
-        # (confirmed live in code review 2026-09-05: a node with a plain
-        # `{}` entry never got a myip at all in the remapped output).
+        # (a node whose entry is a plain `{}` would otherwise get no myip in the remapped output).
         # Replace the falsy entry with a real dict in `nodes` itself first.
         if not node_cfg:
             node_cfg = nodes[node_name] = {}

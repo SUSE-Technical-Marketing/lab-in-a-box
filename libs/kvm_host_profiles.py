@@ -272,9 +272,7 @@ class _SuseRegisteredProfile(_SuseZypperProfile):
             raise RuntimeError(
                 "SLES host registration requires a regcode — set SUSE_regcode "
                 "(and optionally SUSE_email/SUSE_url) in lab.cfg, or pre-register "
-                "this host with SUSEConnect yourself before running this. Confirmed "
-                "live 2026-08-29: SUSEConnect --product fails with 'Please provide "
-                "Registration Code' against a genuinely unregistered SLES host.")
+                "this host with SUSEConnect yourself before running this.")
 
         ver_id = self.os_info.get("VERSION_ID", "")
         arch = platform.machine()
