@@ -2,6 +2,7 @@
 """Build a self-contained, static webui HTML file with embedded schemas."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +14,21 @@ def load_schemas():
         sys.exit(1)
     with open(schema_file) as f:
         return json.load(f)
+
+def load_base_schema():
+    """Load the base schema from lab_schema --base."""
+    try:
+        result = subprocess.run(
+            ["python3.11", str(Path(__file__).parent / "lab_schema"), "--base"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except Exception as e:
+        print(f"Warning: Could not load base schema: {e}", file=sys.stderr)
+    return None
 
 def load_files():
     """Load HTML, CSS, and JS files."""
@@ -43,7 +59,7 @@ def extract_body(html):
     except ValueError:
         return "<body></body>"
 
-def build_static_html(schemas, files):
+def build_static_html(schemas, base_schema, files):
     """Assemble the static HTML with embedded schemas and assets."""
 
     html_content = files.get("index.html", "")
@@ -55,10 +71,14 @@ def build_static_html(schemas, files):
     head = extract_head(html_content)
     body = extract_body(html_content)
 
-    # Build the embedded schema script
+    # Build the embedded schemas
     schemas_json = json.dumps(schemas)
+    base_schema_json = json.dumps(base_schema or {})
     schema_script = f"""<script id="embedded-schemas" type="application/json">
 {schemas_json}
+</script>
+<script id="embedded-base-schema" type="application/json">
+{base_schema_json}
 </script>"""
 
     # Build final HTML with:
@@ -115,15 +135,7 @@ window.apiGet = async function(action, params = {{}}) {{
   // For all other actions: static mode doesn't support them
   // Return safe defaults or throw with a clear message
   if (action === 'base') {{
-    // Base schema with empty ISO choices (static can't query hypervisor)
-    return {{
-      sections: {{
-        common: {{ fields: [], description: '' }},
-        nodes: {{ fields: [], description: '' }},
-        kclusters: {{ fields: [], description: '' }},
-        pxe: {{ fields: [], description: '' }}
-      }}
-    }};
+    return JSON.parse(document.getElementById('embedded-base-schema').textContent);
   }}
   if (action === 'status') {{
     return {{ available: false }};
@@ -149,11 +161,12 @@ window.apiGet = async function(action, params = {{}}) {{
 def main():
     """Main entry point."""
     schemas = load_schemas()
+    base_schema = load_base_schema()
     files = load_files()
 
     output_path = Path(__file__).parent.parent / "webui" / "htdocs" / "index-static.html"
 
-    static_html = build_static_html(schemas, files)
+    static_html = build_static_html(schemas, base_schema, files)
 
     with open(output_path, "w") as f:
         f.write(static_html)
