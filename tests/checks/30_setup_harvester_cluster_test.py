@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/setup_harvester_cluster.py (new, 2026-08-30) — the
-# PXE-based Harvester HCI cluster bootstrap script. No podman/root/real
-# network needed: urllib fetches, virt-install, and the VIP-wait poll are
-# all mocked; template rendering uses the REAL bash-eval process_template()
-# against the real shipped templates, so a real substitution bug would
-# still be caught. Run from 30_setup_harvester_cluster.sh, in its own
-# container — see tests/run_tests.sh.
+# Unit tests for scripts/setup_harvester_cluster.py, the PXE-based Harvester HCI cluster bootstrap. No podman, root or real network is
+# needed. urllib fetches, virt-install and the VIP wait are mocked. Template rendering uses the real process_template() on the real
+# templates, so a substitution error is caught. Run from 30_setup_harvester_cluster.sh, in its own container (see tests/run_tests.sh).
 import sys
 import tempfile
 from pathlib import Path
@@ -216,13 +212,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("join config also gets the optional install.* extra-lines block",
           "replica_count: 1" in config_text)
 
-# ── _yaml_scalar(): a value's own quotes/backslashes/newlines must not corrupt
-#    or inject into the rendered YAML ──────────────────────────────────────
-# Found live 2026-09-05: without escaping, a system_settings value ending in
-# a literal newline injected a brand-new, unrelated top-level `install:` key
-# into the document — not just a cosmetic corruption, a real YAML-injection
-# bug (this project's own cluster.json is normally operator-controlled, but
-# nothing about _yaml_scalar() itself should silently trust that).
+# ── _yaml_scalar(): quotes, backslashes and newlines are escaped ──────────────
+# A value with a newline must not add a top-level key to the rendered YAML. _yaml_scalar() escapes it.
 check('_yaml_scalar: embedded double-quotes are escaped, not passed through raw',
       shc._yaml_scalar('a"b') == '"a\\"b"')
 check('_yaml_scalar: embedded backslashes are escaped (before quotes, so the '
@@ -263,10 +254,7 @@ def _fake_run_libvirt_tool(binary, remote_host, virt_srv, args, **kwargs):
 
 shc.run_libvirt_tool = _fake_run_libvirt_tool
 
-# known_hosts purge — same fix setup_lab.py/destroy_lab.py already apply to
-# every normal lab VM, added here after a live test (2026-09-04) found a
-# stale host key from a PREVIOUSLY-reused lab IP made ssh_run() refuse a
-# genuinely-answering, freshly-installed node outright.
+# The known_hosts entries are purged before the first connection, as setup_lab.py does, so a reused IP does not refuse a new node.
 keygen_calls = []
 _real_subprocess_run = lc.subprocess.run
 

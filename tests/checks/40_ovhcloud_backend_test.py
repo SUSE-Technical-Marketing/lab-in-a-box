@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-# Unit tests for libs/backends.py's OVHcloudBackend — every HTTP call
-# (urllib.request.urlopen) is mocked (no real OVHcloud account/project
-# available anywhere in this environment). Asserts the request-signing
-# algorithm itself (the part confirmed against OVH's own published API
-# docs), the /auth/time clock-sync call, flavor-list-based sizing (no
-# static SKU table here — see the class docstring for why), config_method
-# enforcement, and MAC handling — not real API behavior; this backend is
-# explicitly the least-verified in the file, see OVHcloudBackend's own
-# docstring. Run from 40_ovhcloud_backend.sh, in its own container — see
-# tests/run_tests.sh.
+# Unit tests for OVHcloudBackend in libs/backends.py. Every HTTP call (urllib.request.urlopen) is mocked. The tests check the request
+# signing, the /auth/time call, flavor-list sizing, the config_method rule and the MAC handling. They do not test real API behaviour.
+# Run from 40_ovhcloud_backend.sh, in its own container (see tests/run_tests.sh).
 import hashlib
 import json
 import sys
@@ -160,7 +153,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on OVHcloud ─
 check("list_used_macs() returns empty (OVHcloud has no MAC concept)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): a cloud backend has no MAC concept, so the value is passed through unchanged.
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -241,11 +234,8 @@ with mock.patch.object(b3, "_pick_flavor", return_value="flavor-medium") as m_pi
     check("create_vm() sends the stashed userData", body.get("userData") == "#cloud-config\n")
 
 
-# ── cloud_instance_type: explicit override skips the live _pick_flavor() API call entirely ──
-# added 2026-09-10 per explicit user request — OVHcloud has no static sizing table to override
-# via config (flavors come from a real live API call — see _pick_flavor()'s own docstring), so
-# cloud_instance_type is the only override mechanism for this backend, and it must also avoid the
-# extra live API round-trip _pick_flavor() would otherwise make. See README's Compute backends table.
+# ── cloud_instance_type: explicit override skips the flavor API call ─────────
+# OVHcloud flavors come from a live API call. cloud_instance_type is the only override, and it skips that call.
 b5 = backends.OVHcloudBackend("appkey", "appsecret", "consumerkey", "proj-1", "GRA7")
 b5._user_data_by_vm["vm1"] = ""
 with mock.patch.object(b5, "_pick_flavor", return_value="flavor-medium") as m_pick2:

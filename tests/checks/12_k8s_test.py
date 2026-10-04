@@ -72,11 +72,8 @@ check("K3sDistro first node: no K3S_URL/K3S_TOKEN on the server install",
       "K3S_URL" not in install_cmd and "K3S_TOKEN" not in install_cmd)
 check("K3sDistro first node: --tls-san includes the cluster FQDN",
       "--tls-san cluster1.mydemo.lab" in install_cmd)
-# Live-tested 2026-09-04: k3s's own install.sh does not reliably leave the
-# service running (confirmed on this project's own default SL-Micro image —
-# a stale "please reboot" flag left the unit enabled but never started, with
-# no error at all) — K3sDistro must explicitly start it itself, exactly like
-# RKE2Distro already always has.
+# K3sDistro starts the service explicitly. The k3s install script can leave the service enabled but not started, so both RKE2Distro
+# and K3sDistro start it themselves.
 check("K3sDistro first node: explicitly starts the k3s service itself, "
       "rather than trusting get.k3s.io's install script to have done it",
       any(c == "systemctl enable --now k3s" for h, c, kw in fake.calls))
@@ -98,12 +95,8 @@ check("K3sDistro join: K3S_TOKEN carries the join token", "K3S_TOKEN=TOKEN123" i
 check("K3sDistro join: explicitly starts k3s-agent itself, same reasoning as the server case",
       any(c == "systemctl enable --now k3s-agent" for h, c, kw in fake.calls))
 
-# ── K3sDistro: clu_rel/clu_name/mydomain must be shell-quoted ────────────────
-# Found in code review 2026-09-05: clu_rel (a free-text lab.json value with
-# no format validation) was piped straight into the remote install command
-# unquoted, and clu_name/mydomain the same way in --tls-san. A value with a
-# shell metacharacter must not be able to break, or inject into, this
-# remote command.
+# ── K3sDistro: clu_rel, clu_name and mydomain are shell-quoted ───────────────
+# These values are free text from the lab JSON. They are quoted, so no value can break or inject into the remote command.
 fake = FakeSSH(responses=[("node-token", FakeResult(stdout="TOKEN123\n"))])
 k8s.ssh_run = fake
 distro.install_server("vm1", "cluster1", {"clu_rel": "stable; rm -rf /", "mydomain": "mydemo.lab"})
@@ -165,10 +158,8 @@ try:
     check("RKE2Distro: rsyncs the rendered config to the remote host",
           any(a[0] == "rsync" for a, kw in fake_subproc.calls))
 
-    # ── clu_rel/install_method must be shell-quoted ──────────────────────
-    # Found in code review 2026-09-05: both are free-text lab.json values
-    # with no format validation, piped straight into this remote install
-    # command unquoted.
+    # ── clu_rel and install_method are shell-quoted ──────────────────────────
+    # These are free text from the lab JSON, so they are quoted before they reach the remote install command.
     fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
     k8s.ssh_run = fake_ssh
     distro.install_server("vm1", "cluster1", {
@@ -249,9 +240,7 @@ check("create_basic_auth_secret: names the secret and namespace correctly",
 check("create_basic_auth_secret: passes username/password as --from-literal values",
       "--from-literal=username=admin" in cmd and "--from-literal=password=s3cr3t" in cmd)
 
-# a password with shell metacharacters must be shlex-quoted, never able to
-# break out of the remote command string (targeted fix, 2026-09-10 — see TODO's
-# positional-{}-in-shell-command follow-up).
+# A password with shell metacharacters is shlex-quoted, so it cannot break out of the remote command string.
 import shlex as _shlex
 fake = FakeSSH()
 k8s.ssh_run = fake

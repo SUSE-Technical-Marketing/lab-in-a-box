@@ -42,22 +42,16 @@ except FileNotFoundError:
           "the one addon that used to have no .py counterpart, moved to legacy_bash/)", False)
 
 
-# ── schema(): capabilities attached for a real kubernetes-layer addon ────────
-# install_mariadb gained a second, os-native layer 2026-09-27 (setup_mariadb_os(),
-# also reused directly by install_nextcloud.py/install_seafile.py for their own
-# companion database) — no longer a pure single-layer example, but still a real
-# addon that legitimately supports "kubernetes" among its layers.
+# ── schema(): capabilities for a kubernetes-layer addon ──────────────────────
+# install_mariadb supports the kubernetes layer and the OS-native layer, and it is the example for a kubernetes addon.
 sc = discovery.schema("install_mariadb")
 check("schema('install_mariadb') has 'kubernetes' among its capabilities.layers",
       "kubernetes" in sc.get("capabilities", {}).get("layers", []))
 check("schema('install_mariadb') keeps its own schema fields (section) too",
       sc.get("section") == "mariadb")
 
-# ── schema(): capabilities attached for a real standalone-container addon ──
-# install_suma's own install() runs `mgradm ... install podman` — a real
-# podman container on the host, not a bare package/binary (which is what
-# LAYER_OS_NATIVE means) — corrected 2026-08-29 after live-testing found
-# this addon (and install_uyuni, same mgradm/podman mechanism) misclassified.
+# ── schema(): capabilities for a standalone-container addon ──────────────────
+# install_suma installs with mgradm and podman on the host, so it is a container addon, not an OS-native package.
 sc = discovery.schema("install_suma")
 check("schema('install_suma') has a capabilities.layers of ['standalone-container']",
       sc.get("capabilities", {}).get("layers") == ["standalone-container"])

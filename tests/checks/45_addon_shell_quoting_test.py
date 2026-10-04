@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-# Targeted regression tests for the 2026-09-10 shell-quoting fix (TODO's
-# "positional {} in a shell command" follow-up): addon-config free text
-# (passwords, db/user names) must be shlex-quoted before it reaches a remote
-# shell via ssh_run(), so a value containing ' " ; $() can't break out of the
-# command string. Covers the handful of genuinely-unquoted sites found by the
-# audit: install_keycloak, install_rancher, install_postgresql (k8s.create_
-# basic_auth_secret and backends.copy_vm_image are covered in 12_k8s /
-# 18_live_bugfixes). Run from 45_addon_shell_quoting.sh, in its own container.
+# Regression tests for shell-quoting. Addon config values, such as passwords and database and user names, are shlex-quoted before
+# they reach a remote shell through ssh_run(), so a value with quotes, semicolons or $() cannot break out of the command. Covers
+# install_keycloak, install_rancher and install_postgresql. The k8s and backends sites are covered in 12_k8s and 18_live_bugfixes.
+# Run from 45_addon_shell_quoting.sh, in its own container.
 import shlex
 import sys
 from pathlib import Path
@@ -58,9 +54,8 @@ check("keycloak: the raw nasty payload never appears unquoted",
       "; rm -rf / $(id)" not in kc.replace(shlex.quote(NASTY), "<Q>"))
 
 
-# ── db_common.pg_configure_os (install_postgresql.py's actual logic moved to
-#    libs/db_common.py 2026-09-27 so install_mariadb.py/install_nextcloud.py/
-#    install_seafile.py can share it) ────────────────────────────────────────
+# ── db_common.pg_configure_os ────────────────────────────────────────────────
+# The PostgreSQL OS configuration lives in libs/db_common.py, shared by the database addons.
 import db_common  # noqa: E402
 rec = _Rec()
 db_common.ssh_run = rec
