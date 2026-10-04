@@ -42,31 +42,23 @@
   </section>
 
   <main class="layout">
-    <!-- component catalogue -->
+    <!-- blocks to drag into the lab: VM, cluster, add-ons (discovered at run time) -->
     <aside class="panel catalogue">
       <div class="panel-head">
-        <h2>Components</h2>
-        <input id="filter" type="search" placeholder="filter…" autocomplete="off">
+        <h2>Blocks</h2>
+        <input id="filter" type="search" placeholder="filter add-ons…" autocomplete="off">
       </div>
-      <ul id="componentList" class="component-list" aria-live="polite"></ul>
+      <div id="palette" class="palette" aria-live="polite"></div>
       <p class="src-note" id="srcNote"></p>
     </aside>
 
-    <!-- schema-driven form -->
-    <section class="panel form-area">
+    <!-- the lab: common settings on top, clusters and VMs below -->
+    <section class="panel canvas-area" aria-label="Lab canvas">
       <div class="panel-head">
-        <h2 id="formTitle">Select a component</h2>
-        <label class="opt-toggle" title="Hide every field that isn't required, to build a minimal lab faster">
-          <input type="checkbox" id="requiredOnlyToggle"> Required only
-        </label>
-        <button id="addBtn" class="btn primary" disabled>Add to lab</button>
+        <h2>Lab</h2>
+        <span class="canvas-hint">Drag blocks in · double-click to edit · Delete removes</span>
       </div>
-      <p id="formDesc" class="form-desc"></p>
-      <div id="formLayers" class="ci-layers"></div>
-      <form id="schemaForm" autocomplete="off"></form>
-      <div id="formEmpty" class="empty-state">
-        <p>Pick a component on the left to build its configuration.</p>
-      </div>
+      <div id="canvas" class="canvas"></div>
     </section>
 
     <!-- assembled lab -->
@@ -94,6 +86,30 @@
       <p class="hint">Validation and save run through the project's own Python libraries on the server.</p>
     </aside>
   </main>
+
+
+  <!-- editor: the schema-driven form for the double-clicked block -->
+  <dialog id="editor" class="editor" aria-labelledby="editorTitle">
+    <div class="editor-head">
+      <div>
+        <h2 id="editorKind"></h2>
+        <h3 id="editorTitle"></h3>
+      </div>
+      <label class="opt-toggle" title="Hide every field that isn't required, to build a minimal lab faster">
+        <input type="checkbox" id="requiredOnlyToggle"> Required only
+      </label>
+    </div>
+    <p id="editorDesc" class="form-desc"></p>
+    <div id="formLayers" class="ci-layers"></div>
+    <form id="schemaForm" autocomplete="off"></form>
+    <div class="editor-foot">
+      <button type="button" id="editorRemove" class="btn danger">Remove</button>
+      <button type="button" id="editorImages" class="btn" title="Re-check available images without losing what you've typed">↻ Refresh images</button>
+      <span class="spacer"></span>
+      <button type="button" id="editorCancel" class="btn">Cancel</button>
+      <button type="button" id="editorApply" class="btn primary">Apply</button>
+    </div>
+  </dialog>
 
   <footer class="foot">lab&#8209;in&#8209;a&#8209;box · lab-builder · <code>__LABVERSION__</code></footer>
 

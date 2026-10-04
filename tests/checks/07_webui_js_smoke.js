@@ -184,6 +184,37 @@ check("no nodes -> nothing to draw", sandbox.buildMermaidDiagram({}) === null);
     def.includes(nodeId + " -.-> "));
 }
 
+// -- compileLab: block canvas -> lab.json ---------------------------------
+check("empty model compiles to an empty lab", JSON.stringify(sandbox.compileLab({ common: {}, items: [], addonCfg: {} })) === "{}");
+{
+  const model = {
+    common: { VM_MEM: "8192", VM_DSK: "" },
+    items: [
+      { id: "c1", type: "cluster", name: "clu1", cfg: { clu_type: "rke2" }, parent: null },
+      { id: "n1", type: "node", name: "n1.lab", cfg: { myip: "10.0.0.1" }, parent: "c1" },
+      { id: "n2", type: "node", name: "n2.lab", cfg: { myip: "10.0.0.2", VM_MEM: "4096" }, parent: null },
+      { id: "n3", type: "node", name: "", cfg: { myip: "10.0.0.3" }, parent: null },
+      { id: "a1", type: "addon", comp: "rancher", section: "rancher", flat: true, parent: "c1" },
+      { id: "a2", type: "addon", comp: "mariadb", section: "mariadb", flat: true, parent: "n2" },
+      { id: "a3", type: "addon", comp: "longhorn", section: "longhorn", flat: true, parent: null },
+    ],
+    addonCfg: { rancher: { rancher_Version: "2.13" } },
+  };
+  const lab = JSON.parse(JSON.stringify(sandbox.compileLab(model)));
+  check("compileLab: empty common values are dropped", JSON.stringify(lab.common) === '{"VM_MEM":"8192"}');
+  check("compileLab: a VM dropped on a cluster gets kcluster",
+    lab.nodes["n1.lab"].kcluster === "clu1" && lab.nodes["n2.lab"].kcluster === undefined);
+  check("compileLab: per-VM override survives", lab.nodes["n2.lab"].VM_MEM === "4096");
+  check("compileLab: an unnamed VM is skipped", Object.keys(lab.nodes).length === 2);
+  check("compileLab: cluster add-ons listed on the cluster", JSON.stringify(lab.kclusters.clu1.addons) === '["rancher"]');
+  check("compileLab: VM add-ons listed on the VM", JSON.stringify(lab.nodes["n2.lab"].addons) === '["mariadb"]');
+  check("compileLab: add-on config becomes its own top-level section", lab.rancher.rancher_Version === "2.13");
+  check("compileLab: an add-on with no config still gets an (empty) section",
+    JSON.stringify(lab.mariadb) === "{}" && JSON.stringify(lab.longhorn) === "{}");
+  const def = sandbox.buildMermaidDiagram(JSON.parse(JSON.stringify(lab)));
+  check("compileLab output feeds the diagram renderer unchanged", def.includes('subgraph n_clu_clu1["clu1 (rke2)"]'));
+}
+
 if (failures) {
   console.error(failures + " check(s) failed");
   process.exit(1);
