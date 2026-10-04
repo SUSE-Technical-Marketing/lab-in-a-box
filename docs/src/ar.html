@@ -1,0 +1,314 @@
+<html dir="rtl" lang="ar"><p><strong>lab-in-a-box</strong> ينشئ معامل كاملة من ملف JSON أو YAML واحد: أجهزة الافتراضية، DNS، عناقيد Kubernetes والإضافات التي تصفها. يمكن تشغيل أجهزة الافتراضية على أجهزة KVM التي تملكها أو على Harvester أو على واحدة من ثماني سحب عامة، وينجح الملف ذاته على جميعها.</p>
+<h2 id="why-lab-in-a-box">لماذا lab-in-a-box؟</h2>
+<ul>
+<li><strong>ملف واحد، أمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes (RKE2 أو K3s) والإضافات بشكل إعلاني. ينشئهما <code>setup_lab.py</code> بترتيب الاعتماديات، دون الحاجة لتشغيل <code>virt-install</code> أو Ansible بيدويًا.</li>
+<li><strong>معمل في البيت أو السحابة، نفس التعريف.</strong> تعمل أجهزة المعمل الافتراضية على أجهزة KVM التي تملكها أو على Harvester HCI أو على AWS أو Google Cloud أو Alibaba Cloud أو Hetzner أو Scaleway أو UpCloud أو OVHcloud أو Exoscale. يمكن للمعامل أن تمتد عبر أجهزة KVM متعددة، ومعمل واحدة يمكن أن تجمع السحب والمواقع عبر <a href="#cross-cloud-wireguard-overlay">تراكب WireGuard بين السحب</a>.</li>
+<li><strong>72 إضافة مسبقة التكامل.</strong> Rancher و Longhorn و NeuVector و Harbor و Keycloak و Jenkins و Argo CD و SUSE Multi-Linux Manager/Uyuni و Nextcloud وأكثر، بالإضافة إلى تطبيقات عرض توضيحي عرضية الضعف لتدريب الأمان.</li>
+<li><strong>واجهة ويب تتابع الكود.</strong> <a href="#web-ui-lab-builder">lab-builder</a> يصيّر كل نموذج مباشرة من مخطط الإضافة الخاص بها. يظهر الحقل الجديد في نص برمجي في الواجهة دون تغييرات الواجهة الأمامية.</li>
+<li><strong>توفير قابل للاستبدال.</strong> Ignition و Combustion لـ SLE Micro و cloud-init لـ openSUSE و Ubuntu و <code>virt-customize</code> للصور القديمة أو التثبيت المأمور من ISO تثبيت فعلي (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
+<li><strong>بيانات الاعتماد خارج ملف المعمل.</strong> يمكن لبيانات اعتماد السحابة والخدمات أن تسكن في ملفات مشفرة لكل حساب (استخراج المفتاح بـ Argon2id متبوعًا بـ AES-256-GCM و ChaCha20-Poly1305 متسلسلة).</li>
+<li><strong>اختبارات مُحاوية.</strong> يعمل كل فحص في حاويته <code>podman</code> القابلة للتجاهل الخاصة والمستقلة، وخطاف قبل الالتزام يشغل الفحوصات ذات الصلة.</li>
+</ul>
+<hr />
+<h2 id="table-of-contents">جدول المحتويات</h2>
+<ul>
+<li><a href="#architecture">العمارة</a></li>
+<li><a href="#how-it-works">كيفية عمله</a></li>
+<li><a href="#quick-start">البدء السريع</a></li>
+<li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li>
+<li><a href="#lab-definition-format">صيغة تعريف المعمل</a></li>
+<li><a href="#examples">أمثلة</a></li>
+<li><a href="#step-by-step-walkthroughs">نزهات خطوة بخطوة</a></li>
+<li><a href="#available-commands">الأوامر المتاحة</a></li>
+<li><a href="#available-addons">الإضافات المتاحة</a></li>
+<li><a href="#configuration-reference">مرجع التكوين</a></li>
+<li><a href="#testing">الاختبار</a></li>
+<li><a href="#contributing--developer-setup">المساهمة / إعداد المطور</a></li>
+</ul>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="architecture">العمارة</h2>
+<p align="center" float="left">
+</p>
+
+<p>يعتمد النظام على <strong>عمارة ذات مستويين</strong>:</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;عميل المشغل&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;عقدة المراقب — KVM/QEMU&quot;]
+        AutoVM[&quot;جهاز الأتمتة الافتراضي&lt;br/&gt;DNS · HTTP · النصوص · الويب UI&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;جهاز معمل افتراضي&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;جهاز معمل افتراضي&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;جهاز معمل افتراضي&quot;]
+    end
+</pre>
+<h3 id="hypervisor-nodes">عقد المراقب</h3>
+<p>واحد أو أكثر من أجهزة فيزيائية (معادن عارية) مع KVM/QEMU. يستضيف كل واحد أجهزة افتراضية معمل ويحتفظ بصور QCOW2 المصدر في <code>/var/lib/libvirt/images/sources/</code>. يكفي NUC أو محطة عمل أو أي آلة x86_64 تشغل KVM. يمكن للمعامل التي تتطلب سعة أكثر مما توفره آلة واحدة أن تمتد عبر <strong>أجهزة KVM متعددة</strong> — انظر <a href="#multi-host-labs">معامل متعددة الأجهزة</a> أدناه.</p>
+<h3 id="automation-vm">جهاز الأتمتة الافتراضي</h3>
+<p>جهاز افتراضي صغير على المراقب يعمل كمستوى التحكم لجميع المعمل. يوفر:</p>
+<ul>
+<li><strong>DNS</strong> — BIND (<code>named</code>) يخدم نطاق المعمل ويعيد توجيه الاستعلامات الخارجية، بحيث يتم حل جميع أسماء مضيفي المعمل من أي عميل يشير إليه</li>
+<li><strong>HTTP</strong> — تقديم الملفات المؤقتة (Ignition و Combustion و cloud-init) في <code>/srv/www/htdocs/lab_creation/</code></li>
+<li><strong>النصوص</strong> — جميع أوامر إدارة المعمل مثبتة في <code>/usr/local/bin/</code></li>
+<li><strong>واجهة الويب</strong> (اختيارية) — <a href="#web-ui-lab-builder">lab-builder</a> ومصمم قائم على المتصفح لملفات lab.json</li>
+</ul>
+<p>يتم تشغيل جميع أوامر المستخدم <strong>على جهاز الأتمتة الافتراضي</strong>. يتصل عبر SSH مع المراقب أو المراقبين والأجهزة الافتراضية المنشأة. بعد الإعداد الأول لا يتطلب الوصول المباشر إلى المراقب.</p>
+<h3 id="under-the-hood">تحت الغطاء</h3>
+<p>أدوات سطر الأوامر وكل إضافة هي Python 3.11 وتوجد في <code>libs/</code> و <code>scripts/</code> ومثبتة في <code>/usr/local/lib/lab_creation/</code>. يتم تنظيمها حول مجموعة صغيرة من وحدات مكتبة مشتركة (<code>lab_creation.py</code> و <code>backends.py</code> و <code>services.py</code> و <code>spacecmd_common.py</code> إلخ) التي لا تعتمد على بعضها البعض. ينفذ إنشاء الجهاز الافتراضي عبر واجهة <code>VMBackend</code> قابلة للاستبدال مع عشر تطبيقات: libvirt و Harvester وثماني سحب عامة (انظر <a href="#compute-backends">الواجهات الخلفية الحسابية</a>). لا تتغير الإضافات وكود التنسيق بينها. يتم أرشفة تطبيقات Bash التي استبدلت تحت <code>legacy_bash/</code> — بما في ذلك <code>install_ds389</code> الأصلي.</p>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="how-it-works">كيفية عمله</h2>
+<h3 id="deploy-pipeline">خط أنابيب النشر</h3>
+<p>ينفذ <code>setup_lab.py</code> تسلسلاً ثابتًا من المراحل. يتم تخطي المرحلتين الخاصتين بـ Kubernetes تمامًا لمعمل بدون قسم <code>kclusters</code>:</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;has kclusters&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;no kclusters&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;has kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;no kclusters&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="vm-provisioning">توفير الجهاز الافتراضي</h3>
+<p>ينشأ كل جهاز افتراضي كالتالي:
+1. تحديد أي مراقب KVM يقيم عليه (الحقل الصريح <code>kvm_host</code> أو الاختيار التلقائي بالسعة الحرة — انظر <a href="#multi-host-labs">معامل متعددة الأجهزة</a>)
+2. نسخ وتوسيع صورة QCOW2 المصدر على ذلك المراقب
+3. إنشاء ملفات المؤقت من القوالب وفقًا لـ <code>config_method</code>
+4. تسجيل إدخال DNS في BIND
+5. تشغيل <code>virt-install</code> على المراقب عبر SSH
+6. انتظار توفر SSH</p>
+<p>يتم التحكم في طريقة التوفير بواسطة <code>config_method</code> في JSON المعمل (لكل عقدة أو في <code>common</code>):</p>
+<table>
+<thead>
+<tr>
+<th>القيمة</th>
+<th>الطريقة</th>
+<th>تستخدم ل</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(فارغ، الافتراضي)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>cloud-init ISO</td>
+<td>openSUSE Leap و Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>يعدل QCOW2 مباشرة على المراقب (<code>virt-customize</code>) — لا يوجد دعم Ignition/cloud-init مطلوب على الضيف</td>
+<td>CentOS 7 و RHEL/Debian القديم أو أي صورة بدون Ignition/cloud-init</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>التثبيت المأمور من ISO تثبيت فعلي (AutoYaST أو Kickstart أو Preseed أو AutoInstall محدد عبر <code>install_type</code>)</td>
+<td>التوزيعات بدون مسار توفير آخر</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends">الواجهات الخلفية الحسابية</h3>
+<p>حيث تنشأ جهاز المعمل الافتراضي يقرره واجهة <code>VMBackend</code> قابلة للاستبدال. يتم حلها مرة واحدة لكل عقدة من حقل <code>backend</code> الخاص بها (أو من <code>cloud_account</code> الذي يعني الواجهة الخلفية). الافتراضي هو <code>libvirt</code>. تتحدث كل إضافة وسكريبت تنسيق مع الواجهة الخلفية المحللة بنفس الطريقة بغض النظر عما هي:</p>
+<table>
+<thead>
+<tr>
+<th>الواجهة الخلفية</th>
+<th>حيث يعمل الجهاز الافتراضي</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>libvirt</code></td>
+<td>مراقب KVM/QEMU تشغله (الافتراضي)</td>
+</tr>
+<tr>
+<td><code>harvester</code></td>
+<td>عنقود Harvester HCI كـ KubeVirt VirtualMachines</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>Amazon EC2</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td>Google Compute Engine</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td>Alibaba Cloud ECS</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td>Hetzner Cloud</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td>Scaleway Instances</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td>UpCloud</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td>OVHcloud Public Cloud</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td>Exoscale</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kubernetes-setup">إعداد Kubernetes</h3>
+<p>بمجرد تشغيل الأجهزة الافتراضية ينشر <code>setup_lab.py</code> Kubernetes على كل عقدة وفقًا لقسم <code>kclusters</code> من JSON. يدعم كل من RKE2 و K3s. بمجرد أن يكون عنقود جاهزًا تعمل إضافاته بالتتابع. الإضافات الافتراضية (المخصصة لعقدة فردية بدلاً من عنقود) تعمل لاحقًا مرة يكون هذا العقدة موفرة.</p>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="quick-start">البدء السريع</h2>
+<pre class="mermaid">flowchart TD
+    S1[&quot;1. تحضير نظام التشغيل المراقب&quot;] --&gt; S2[&quot;2. تمهيد سكريبتات الإعداد&quot;]
+    S2 --&gt; S3[&quot;3. تكوين وتشغيل إعداد عقدة KVM&quot;]
+    S3 --&gt; S4[&quot;4. تكوين جهاز الأتمتة الافتراضي&quot;]
+    S4 --&gt; S5[&quot;5. الإشارة إلى DNS للعميل جهاز الأتمتة الافتراضي&quot;]
+    S5 --&gt; S6[&quot;6. بناء أول معمل&quot;]
+</pre>
+<h3 id="requirements">المتطلبات</h3>
+<ul>
+<li>آلة يمكن تشغيل KVM عليها (Intel VT-x أو AMD-V مفعل)</li>
+<li>إمكانية الوصول للإنترنت (أو مرآة محلية) لتحميل الحزم والصور</li>
+<li>صورة QCOW2 لنظام التشغيل المختار في <code>/var/lib/libvirt/images/sources/</code> على المراقب</li>
+</ul>
+<aside class="callout callout-important"><p>يتطلب جهاز الأتمتة الافتراضي <code>python3.11</code> على وجه التحديد — تم تثبيت السلسلة الأداة عليه صراحة. توفر معظم التوزيعات <code>python3</code> معياري أقدم بالإضافة إلى ذلك. ينقطع السكريبت عن الإعداد إذا فقد <code>python3.11</code>.</p></aside>
+<p>الصور المختبرة:
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — موصى بها تستخدم مع Ignition+Combustion
+- openSUSE Leap Micro — مدعومة تستخدم مع cloud-init</p>
+<h3 id="step-1--prepare-the-hypervisor-os">الخطوة 1 — تحضير نظام التشغيل المراقب</h3>
+<p>ثبت SLES (أو توزيع Linux قادر على KVM آخر) على الأجهزة الخاصة بك. أثناء التثبيت اختر:
+- <strong>الشبكات</strong>: إنشاء جسر (<code>br0</code>) متصل بـ NIC الرئيسي الخاص بك مع IP ثابت
+- <strong>دور النظام</strong>: مضيف الافتراضية KVM</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">الخطوة 2 — تمهيد سكريبتات الإعداد</h3>
+<p>من أي آلة Linux بها وصول SSH للمراقب:</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>هذا يحمل سكريبتات الإعداد إلى <code>/var/tmp/setup_demo_server/</code>.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">الخطوة 3 — تكوين وتشغيل إعداد عقدة KVM</h3>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p>الإعدادات المهمة في <code>lab.cfg</code>:</p>
+<table>
+<thead>
+<tr>
+<th>الإعداد</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ROOT_PWD_HASH</code></td>
+<td>كلمة مرور root مُجزأة — توليد باستخدام <code>mkpasswd --method=SHA-512 --stdin</code></td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_PUB_KEY</code></td>
+<td>مفتاح SSH العام الخاص بك للوصول بدون كلمة مرور</td>
+</tr>
+<tr>
+<td><code>AUTOMATION_HOSTNAME</code></td>
+<td>اسم مضيف جهاز الأتمتة الافتراضي (مثل <code>automation.mydemo.lab</code>)</td>
+</tr>
+<tr>
+<td><code>_QCOW_IMAGE</code></td>
+<td>اسم ملف صورة QCOW2 المصدر</td>
+</tr>
+<tr>
+<td>إعدادات الشبكة</td>
+<td>IP و البوابة و القناع و DNS لشبكة المعمل</td>
+</tr>
+</tbody>
+</table>
+<p>ثم قم بتشغيل الإعداد (استبدل <code>&lt;IP&gt;</code> بـ IP المراقب الخاص بك أو حذفه للإعداد المحلي):</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>هذا يزود جهاز الأتمتة الافتراضي ويبدأ جميع الخدمات المطلوبة.</p>
+<h3 id="step-4--configure-the-automation-vm">الخطوة 4 — تكوين جهاز الأتمتة الافتراضي</h3>
+<p>اتصل عبر SSH بجهاز الأتمتة الافتراضي وثبّت سكريبتات المعمل:</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<p>الإعدادات المهمة في <code>lab_creation.cfg</code>:</p>
+<table>
+<thead>
+<tr>
+<th>الإعداد</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>اسم مضيف أو IP مراقب KVM (الأساسي)</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(اختياري)</em> قائمة مفصولة بمسافات من أجهزة المراقب الإضافية لـ <a href="#multi-host-labs">معمل متعددة الأجهزة</a></td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>محتوى المفتاح العام SSH للإدراج في الأجهزة الافتراضية</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>URI اتصال libvirt (مثل <code>qemu+ssh://root@hypervisor/system</code>)</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>شبكة libvirt الافتراضية للأجهزة الافتراضية (مثل <code>bridge=br0</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">الخطوة 5 — الإشارة إلى DNS للعميل جهاز الأتمتة الافتراضي</h3>
+<p>لحل أسماء المضيفين من سطح المكتب الخاص بك:</p>
+<pre><code class="language-shell"># Linux (NetworkManager):
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# أو أضفه إلى /etc/resolv.conf:
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="step-6--build-your-first-lab">الخطوة 6 — بناء أول معمل</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>ستجد نقاط بداية أكثر أدناه في <a href="#examples">أمثلة</a>. بدلاً من ذلك يمكنك فتح <a href="#web-ui-lab-builder">الواجهة</a> بدلاً من كتابة JSON يدويًا.</p>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
+<p>مصمم ملفات <code>lab.json</code> قائم على المتصفح يقيّم <strong>مكتبات Python الخاصة بالمشروع في وقت التشغيل</strong>. لا يملك معرفة مدمجة عن أي إضافة. حدد مكون وسيُصيّر نموذج مباشرة من مخططها. أضفِ حقل إلى سكريبت وستعرضه الواجهة دون تغييرات الواجهة الأمامية.</p>
+<pre><code class="language-shell"># الطريقة الأسرع لتجربتها — لا توجد مسؤوليات خارج Python:
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>للإنتاج (Apache أو خدمة systemd/init مستقلة بالإضافة إلى HTTPS فوق شهادة موقعة ذاتيًا) انظر <strong><a href="webui.html">README.webui.md</a></strong>. هناك توصيف الأنماط الثلاثة و HTTP API وحل المشاكل.</p>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="lab-definition-format">صيغة تعريف المعمل</h2>
+<p>تُعرّف المعامل كملفات JSON أو YAML (يُكتشف تلقائيًا انظر الملاحظة أدناه). التنسيق الحالي يدعم عناقيد Kubernetes متعددة لكل معمل (<code>kclusters</code>). التنسيق لعنقود واحد (<code>cluster</code>) يجد في <code>examples/cluster.json.template</code>.</p>
+<p>المزيد من الأقسام (خطوات توضيحية تفصيلية والمراجع والأمثلة) موجودة في الوثائق الكاملة على <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="testing">الاختبار</h2>
+<p>يعمل كل فحص في حاويته <code>podman</code> المستقلة والقابلة للتجاهل الخاصة به:</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p align="left"><a href="#top">↑ للأعلى</a></p>
+
+<hr />
+<h2 id="contributing--developer-setup">المساهمة / إعداد المطور</h2>
+<p>انظر <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> على GitHub للدليل الكامل.</p>
+</html>

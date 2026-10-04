@@ -2,6 +2,10 @@
 /*
  * lab-builder frontend.
  *
+ * The lab is built on a canvas of 3D cubes (VM, cluster, add-on, common settings):
+ * drag them in, double-click to edit. Each editor is the same schema-driven form
+ * as before; the canvas only changes how the lab.json is assembled.
+ *
  * The renderer knows nothing about any specific script or field. It walks a
  * schema tree (Option B): any object with `name`+`type` is a FIELD, wherever it
  * lives; `fields`/`sections` are structural wrappers that don't appear in output;
@@ -27,7 +31,12 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 // that name (node/kcluster instances, present and future) should show it as
 // their *effective* default instead of the schema's hardcoded one. Reset on
 // every fresh schema load (selectBase/selectComponent).
-const state = { components: [], current: null, lab: {}, commonDefaults: {} };
+const state = {
+  components: [], lab: {}, commonDefaults: {},
+  // block model behind the canvas (see compileLab); state.lab is compiled from it
+  model: { common: {}, items: [], addonCfg: {}, seq: 0 },
+  sel: "common", editing: null, base: null, schemaCache: {},
+};
 
 // ---- tiny DOM helpers ------------------------------------------------------
 const $ = (s, r = document) => r.querySelector(s);
@@ -60,42 +69,81 @@ async function apiPost(action, payload) {
   return j;
 }
 
-// ---- catalogue -------------------------------------------------------------
+// ---- catalogue (palette) ----------------------------------------------------
 async function loadComponents() {
   const data = await apiGet("components");
   state.components = data.components;
   $("#countNum").textContent = data.count;
   $("#srcNote").textContent = `read from ${data.scripts_dir}`;
-  renderCatalogue("");
+  renderPalette($("#filter").value || "");
 }
-function renderCatalogue(filter) {
-  const ul = $("#componentList");
-  ul.innerHTML = "";
-  const f = filter.toLowerCase();
-  // pinned base-topology entry (common/nodes/kclusters)
-  if (!f || "lab topology common nodes kclusters".includes(f)) {
-    const li = el("li", "pinned");
-    li.appendChild(el("div", "ci-title", "▚ Lab topology"));
-    li.appendChild(el("div", "ci-desc", "common · nodes · kclusters"));
-    li.addEventListener("click", () => selectBase(li));
-    ul.appendChild(li);
+
+// What a palette entry creates when it is dropped on the lab. Add-ons are
+// discovered at run time (state.components); "__pxe" is the one base-schema
+// section that is optional and flat, so it behaves like an add-on cube.
+const PXE_SPEC = { type: "addon", comp: "__pxe", title: "pxe" };
+let drag = null;   // current drag payload: {from:"palette", spec} | {from:"item", id}
+
+function paletteCube(spec, label, letter, tip) {
+  const d = el("div", "pal-cube");
+  d.tabIndex = 0; d.draggable = true; d.title = tip + " — drag into the lab, or click to add";
+  d.appendChild(makeCube(spec.type, 44, letter));
+  d.appendChild(el("span", "pal-label", label));
+  d.addEventListener("dragstart", (e) => { drag = { from: "palette", spec }; e.dataTransfer.effectAllowed = "copy"; try { e.dataTransfer.setData("text/plain", label); } catch (x) { /* ignore */ } });
+  d.addEventListener("dragend", () => { drag = null; clearOver(); });
+  d.addEventListener("click", () => addFromPalette(spec));
+  d.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); addFromPalette(spec); } });
+  return d;
+}
+
+function paletteRow(spec, title, desc, meta, layers) {
+  const li = el("li", "pal-row");
+  li.tabIndex = 0; li.draggable = true; li.title = "Drag onto a cluster or VM, or click to add";
+  const flat = el("span", "flat");
+  for (let j = 0; j < 9; j++) { const t = el("span"); t.style.background = CUBE_PAL.addon[CUBE_PAT[j]]; flat.appendChild(t); }
+  li.appendChild(flat);
+  const txt = el("div", "pal-txt");
+  txt.appendChild(el("div", "ci-title", title));
+  if (desc) txt.appendChild(el("div", "ci-desc", desc));
+  if (meta) txt.appendChild(el("div", "ci-meta", meta));
+  if (layers && layers.length) {
+    const l = el("div", "ci-layers");
+    layers.forEach((x) => l.appendChild(el("span", "layer-badge layer-" + x, x)));
+    txt.appendChild(l);
+  }
+  li.appendChild(txt);
+  li.addEventListener("dragstart", (e) => { drag = { from: "palette", spec }; e.dataTransfer.effectAllowed = "copy"; try { e.dataTransfer.setData("text/plain", title); } catch (x) { /* ignore */ } });
+  li.addEventListener("dragend", () => { drag = null; clearOver(); });
+  li.addEventListener("click", () => addFromPalette(spec));
+  li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); addFromPalette(spec); } });
+  return li;
+}
+
+function renderPalette(filter) {
+  const root = $("#palette");
+  root.innerHTML = "";
+  const f = (filter || "").toLowerCase();
+  if (!f) {
+    const g = el("div", "pal-group");
+    g.appendChild(el("h3", "pal-title", "Lab"));
+    const grid = el("div", "pal-grid");
+    grid.appendChild(paletteCube({ type: "node" }, "VM", "V", "A virtual machine (or an existing host)"));
+    grid.appendChild(paletteCube({ type: "cluster" }, "Cluster", "K", "A Kubernetes cluster (RKE2 or K3s)"));
+    g.appendChild(grid);
+    root.appendChild(g);
+  }
+  const g = el("div", "pal-group");
+  g.appendChild(el("h3", "pal-title", "Add-ons"));
+  const ul = el("ul", "component-list");
+  if (!f || "pxe tftp dhcp boot service".includes(f)) {
+    ul.appendChild(paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", []));
   }
   state.components
     .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f))
-    .forEach((c) => {
-      const li = el("li");
-      li.dataset.name = c.name;
-      li.appendChild(el("div", "ci-title", c.title));
-      if (c.description) li.appendChild(el("div", "ci-desc", c.description));
-      li.appendChild(el("div", "ci-meta", `${c.field_count} option${c.field_count === 1 ? "" : "s"}`));
-      if (c.layers && c.layers.length) {
-        const layers = el("div", "ci-layers");
-        c.layers.forEach((l) => layers.appendChild(el("span", "layer-badge layer-" + l, l)));
-        li.appendChild(layers);
-      }
-      li.addEventListener("click", () => selectComponent(c.name, li));
-      ul.appendChild(li);
-    });
+    .forEach((c) => ul.appendChild(paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
+      c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers)));
+  g.appendChild(ul);
+  root.appendChild(g);
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
@@ -152,41 +200,409 @@ async function loadStatus() {
   }
 }
 
-// ---- schema form -----------------------------------------------------------
-async function selectComponent(name, li) {
-  document.querySelectorAll("#componentList li").forEach((x) => x.classList.remove("active"));
-  if (li) li.classList.add("active");
-  const schema = await apiGet("schema", { name });
-  state.current = schema;
-  state.commonDefaults = {};
-  $("#formTitle").textContent = schema.section || schema.component || name;
-  $("#formDesc").textContent = schema.description || "";
-  const layersEl = $("#formLayers");
-  if (layersEl) {
-    layersEl.innerHTML = "";
-    const layers = (schema.capabilities && schema.capabilities.layers) || [];
-    layers.forEach((l) => layersEl.appendChild(el("span", "layer-badge layer-" + l, l)));
-  }
-  $("#formEmpty").hidden = true;
-  $("#addBtn").disabled = false;
-  const form = $("#schemaForm");
-  form.innerHTML = "";
-  walk(schema, form, []);
+// ---- cubes -------------------------------------------------------------------
+// Every block is a 3D cube with nine tiles per face, like the logo. The colour
+// family says what it is: navy VM, coral cluster, teal add-on, sand common.
+const CUBE_PAL = {
+  node: ["#1f2f4a", "#12a99d", "#d9c7a3"],
+  cluster: ["#e2725b", "#1f2f4a", "#d9c7a3"],
+  addon: ["#12a99d", "#1f2f4a", "#d9c7a3"],
+  common: ["#d9c7a3", "#12a99d", "#e2725b"],
+};
+const CUBE_PAT = [0, 1, 0, 2, 0, 1, 0, 2, 0];
+const CUBE_FACES = [
+  ["rotateY(0deg)", 1], ["rotateY(90deg)", 0.86], ["rotateX(90deg)", 1.1],
+  ["rotateY(180deg)", 0.9], ["rotateY(-90deg)", 0.78], ["rotateX(-90deg)", 0.8],
+];
+function makeCube(kind, size, letter) {
+  const pal = CUBE_PAL[kind] || CUBE_PAL.node;
+  const wrap = el("span", "cube");
+  wrap.style.setProperty("--s", size + "px");
+  wrap.setAttribute("aria-hidden", "true");
+  const box = el("span", "cube-box");
+  CUBE_FACES.forEach((fc, fi) => {
+    const face = el("span", "cube-face");
+    face.style.transform = fc[0] + " translateZ(calc(var(--s) / 2))";
+    face.style.filter = "brightness(" + fc[1] + ")";
+    for (let j = 0; j < 9; j++) {
+      const t = el("span", "cube-tile");
+      t.style.background = pal[CUBE_PAT[(j + fi * 2) % 9]];
+      if (fi === 0 && j === 4 && letter) t.textContent = letter;
+      face.appendChild(t);
+    }
+    box.appendChild(face);
+  });
+  wrap.appendChild(box);
+  return wrap;
 }
 
-async function selectBase(li) {
-  document.querySelectorAll("#componentList li").forEach((x) => x.classList.remove("active"));
-  if (li) li.classList.add("active");
-  const schema = await apiGet("base");
-  state.current = schema;
-  state.commonDefaults = {};
-  $("#formTitle").textContent = "Lab topology";
-  $("#formDesc").textContent = schema.description || "";
-  $("#formEmpty").hidden = true;
-  $("#addBtn").disabled = false;
+// ---- lab model: blocks -> lab.json ---------------------------------------------
+// The canvas edits state.model; state.lab (what Validate/Download/Save/the JSON
+// tab/the diagram all read) is always compileLab(state.model). Nothing about
+// the saved format changes — only how it is assembled.
+//   model.common   : {field: value}                       -> lab.common
+//   model.items    : {id,type:"node"|"cluster"|"addon",…}  -> lab.nodes / lab.kclusters / add-on sections
+//   model.addonCfg : {section: {field: value}}             -> one shared section per add-on
+const HIDDEN_NODE_FIELDS = new Set(["kcluster", "addons"]);   // set by dropping, not typing
+const HIDDEN_CLUSTER_FIELDS = new Set(["addons"]);
+
+function cleanObj(o) {
+  const r = {};
+  Object.keys(o || {}).forEach((k) => {
+    const v = o[k];
+    if (v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length)) return;
+    r[k] = v;
+  });
+  return r;
+}
+
+function compileLab(model) {
+  const lab = {};
+  const common = cleanObj(model.common);
+  if (Object.keys(common).length) lab.common = common;
+  const byId = {};
+  model.items.forEach((i) => { byId[i.id] = i; });
+  const attached = (id) => {
+    const names = [];
+    model.items.forEach((a) => {
+      if (a.type === "addon" && a.parent === id && a.section && !names.includes(a.section)) names.push(a.section);
+    });
+    return names;
+  };
+  const nodes = {}, clusters = {};
+  model.items.forEach((i) => {
+    if (i.type === "node" && i.name) {
+      const o = cleanObj(i.cfg);
+      const c = i.parent && byId[i.parent];
+      if (c && c.name) o.kcluster = c.name;
+      const ad = attached(i.id);
+      if (ad.length) o.addons = ad;
+      nodes[i.name] = o;
+    } else if (i.type === "cluster" && i.name) {
+      const o = cleanObj(i.cfg);
+      const ad = attached(i.id);
+      if (ad.length) o.addons = ad;
+      clusters[i.name] = o;
+    }
+  });
+  if (Object.keys(nodes).length) lab.nodes = nodes;
+  if (Object.keys(clusters).length) lab.kclusters = clusters;
+  model.items.forEach((a) => {
+    if (a.type !== "addon" || !a.section) return;
+    const frag = model.addonCfg[a.section] || {};
+    if (a.flat === false) Object.assign(lab, frag); else lab[a.section] = frag;
+  });
+  return lab;
+}
+
+function getPath(obj, path) {
+  let o = obj;
+  for (const k of path) { if (o == null) return undefined; o = o[k]; }
+  return o;
+}
+
+// "needs input" markers: required fields with no value and no schema default.
+function missingRequired(item) {
+  const secs = state.base && state.base.sections;
+  if (!secs) return 0;
+  const m = state.model;
+  const miss = (fields, cfg) => (fields || []).filter((f) => f.required && (f.default === undefined || f.default === "")
+    && (cfg[f.name] === undefined || cfg[f.name] === "")).length;
+  if (item === "common") return miss(secs.common.fields, m.common);
+  if (item.type === "node") return miss(secs.nodes.fields, item.cfg) + (item.name ? 0 : 1);
+  if (item.type === "cluster") return miss(secs.kclusters.fields, item.cfg) + (item.name ? 0 : 1);
+  const sc = state.schemaCache[item.comp];
+  return sc ? miss(sc.fields, m.addonCfg[item.section] || {}) : 0;
+}
+
+async function loadBase() {
+  state.base = await apiGet("base");
+  return state.base;
+}
+async function loadAddonSchema(comp) {
+  let sc;
+  if (comp === "__pxe") {
+    const base = await loadBase();
+    sc = { section: "pxe", description: base.sections.pxe.description, fields: base.sections.pxe.fields };
+  } else {
+    sc = await apiGet("schema", { name: comp });
+  }
+  state.schemaCache[comp] = sc;
+  return sc;
+}
+
+async function createItem(spec) {
+  const m = state.model;
+  const count = m.items.filter((i) => i.type === spec.type).length + 1;
+  const id = spec.type[0] + (++m.seq);
+  if (spec.type === "node") {
+    const dom = m.common.mydomain;
+    return { id, type: "node", name: "node" + count + (dom ? "." + dom : ""), cfg: {}, parent: null };
+  }
+  if (spec.type === "cluster") {
+    return { id, type: "cluster", name: "cluster" + count, parent: null,
+      cfg: cleanObj({ clu_type: "rke2", clu_rel: "stable", mydomain: m.common.mydomain }) };
+  }
+  const sc = await loadAddonSchema(spec.comp);
+  return { id, type: "addon", comp: spec.comp, section: sc.section || sc.component || spec.comp,
+    flat: Array.isArray(sc.fields) && !!sc.section, parent: null };
+}
+
+// Where a dropped block ends up: VMs join a cluster, add-ons attach to a
+// cluster or VM, clusters always sit at the top level.
+function placeItem(item, targetId) {
+  const t = targetId ? state.model.items.find((i) => i.id === targetId) : null;
+  if (item.type === "node") item.parent = t ? (t.type === "cluster" ? t.id : (t.type === "node" ? t.parent : null)) : null;
+  else if (item.type === "addon") item.parent = t && t.id !== item.id ? (t.type === "addon" ? t.parent : t.id) : null;
+  else item.parent = null;
+}
+
+async function handleDrop(targetId) {
+  const d = drag; drag = null; clearOver();
+  if (!d) return;
+  const m = state.model;
+  let item;
+  try {
+    if (d.from === "palette") { item = await createItem(d.spec); m.items.push(item); }
+    else item = m.items.find((i) => i.id === d.id);
+  } catch (e) { toast("Could not add: " + e.message); return; }
+  if (!item) return;
+  if (item.type !== "cluster") placeItem(item, targetId);
+  state.sel = item.id;
+  renderCanvas();
+  refreshLab();
+}
+
+function addFromPalette(spec) {
+  const sel = state.model.items.find((i) => i.id === state.sel);
+  drag = { from: "palette", spec };
+  return handleDrop(sel && sel.type !== "addon" ? sel.id : null);
+}
+
+function removeItem(id) {
+  const m = state.model;
+  m.items = m.items.filter((i) => i.id !== id && !(i.type === "addon" && i.parent === id));
+  m.items.forEach((i) => { if (i.type === "node" && i.parent === id) i.parent = null; });
+  if (state.sel === id) state.sel = "common";
+  renderCanvas();
+  refreshLab();
+}
+
+// ---- canvas ------------------------------------------------------------------
+function clearOver() { document.querySelectorAll(".drop-over").forEach((x) => x.classList.remove("drop-over")); }
+function wireDrop(elm, targetId) {
+  elm.addEventListener("dragover", (e) => {
+    if (!drag) return;
+    e.preventDefault(); e.stopPropagation();
+    if (!elm.classList.contains("drop-over")) { clearOver(); elm.classList.add("drop-over"); }
+  });
+  elm.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); handleDrop(targetId); });
+}
+function selectBlock(id) {
+  state.sel = id;
+  document.querySelectorAll("#canvas .block").forEach((b) => b.classList.toggle("selected", b.dataset.id === id));
+}
+
+const BLOCK_SIZE = { common: 64, cluster: 60, node: 50, addon: 36, mini: 24 };
+
+function blockEl(item, mini) {
+  const type = item === "common" ? "common" : item.type;
+  const id = item === "common" ? "common" : item.id;
+  const b = el("div", "block block-" + type + (mini ? " block-mini" : ""));
+  b.dataset.id = id;
+  b.tabIndex = 0;
+  b.draggable = type !== "common" && type !== "cluster";
+  let name, sub, letter;
+  if (type === "common") {
+    const c = state.model.common;
+    name = "Common settings";
+    const bits = [];
+    if (c.VM_MEM) bits.push(c.VM_MEM + " MiB");
+    if (c.VM_CPU) bits.push(c.VM_CPU + " vCPU");
+    if (c.VM_DSK) bits.push(c.VM_DSK + " GiB");
+    if (c.ISO_IMAGE) bits.push(c.ISO_IMAGE);
+    sub = bits.length ? bits.join(" · ") : "defaults for every VM — double-click to set";
+    letter = "C";
+  } else if (type === "node") {
+    name = item.name || "unnamed VM"; sub = item.cfg.myip || "no IP yet"; letter = "V";
+  } else if (type === "cluster") {
+    name = item.name || "unnamed cluster"; sub = item.cfg.clu_type || "cluster"; letter = "K";
+  } else {
+    name = item.section; sub = item.parent ? "" : "not attached"; letter = String(item.section).charAt(0).toUpperCase();
+  }
+  b.appendChild(makeCube(type, mini ? BLOCK_SIZE.mini : BLOCK_SIZE[type], mini ? "" : letter));
+  const txt = el("div", "block-txt");
+  txt.appendChild(el("div", "block-name", name));
+  if (sub && !mini) txt.appendChild(el("div", "block-sub", sub));
+  b.appendChild(txt);
+  const miss = missingRequired(item);
+  if (miss) { const w = el("span", "block-warn"); w.title = miss + " required field" + (miss === 1 ? "" : "s") + " still empty"; b.appendChild(w); }
+  b.title = type === "common" ? "Double-click to edit" : "Double-click to edit · drag to move · Delete to remove";
+  b.addEventListener("click", (e) => { e.stopPropagation(); selectBlock(id); });
+  b.addEventListener("dblclick", (e) => { e.stopPropagation(); openEditor(id); });
+  b.addEventListener("keydown", (e) => {
+    if (e.target !== b) return;
+    if (e.key === "Enter") { e.preventDefault(); openEditor(id); }
+    else if ((e.key === "Delete" || e.key === "Backspace") && type !== "common") { e.preventDefault(); removeItem(id); }
+  });
+  if (b.draggable) {
+    b.addEventListener("dragstart", (e) => { e.stopPropagation(); drag = { from: "item", id }; e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", name); } catch (x) { /* ignore */ } });
+    b.addEventListener("dragend", () => { drag = null; clearOver(); });
+  }
+  if (type === "node") wireDrop(b, id);
+  if (id === state.sel) b.classList.add("selected");
+  return b;
+}
+
+function nodeBlock(n) {
+  const b = blockEl(n);
+  const kids = state.model.items.filter((a) => a.type === "addon" && a.parent === n.id);
+  if (kids.length) {
+    const row = el("div", "mini-addons");
+    kids.forEach((a) => row.appendChild(blockEl(a, true)));
+    b.appendChild(row);
+  }
+  return b;
+}
+
+function renderCanvas() {
+  const root = $("#canvas");
+  if (!root) return;
+  const m = state.model;
+  root.innerHTML = "";
+  root.appendChild(blockEl("common"));
+
+  const zone = el("div", "dropzone");
+  wireDrop(zone, null);
+  root.appendChild(zone);
+  if (!m.items.length) zone.appendChild(el("p", "empty-state", "Drag a VM, a cluster or an add-on here"));
+
+  m.items.filter((i) => i.type === "cluster").forEach((c) => {
+    const tray = el("div", "tray");
+    wireDrop(tray, c.id);
+    const body = el("div", "tray-body");
+    body.appendChild(blockEl(c));
+    const nodes = el("div", "tray-nodes");
+    m.items.filter((n) => n.type === "node" && n.parent === c.id).forEach((n) => nodes.appendChild(nodeBlock(n)));
+    body.appendChild(nodes);
+    tray.appendChild(body);
+    const ads = el("div", "tray-addons");
+    ads.appendChild(el("span", "dz-label", "Cluster add-ons"));
+    const mine = m.items.filter((a) => a.type === "addon" && a.parent === c.id);
+    mine.forEach((a) => ads.appendChild(blockEl(a)));
+    if (!mine.length) ads.appendChild(el("span", "block-sub", "drop add-ons here"));
+    tray.appendChild(ads);
+    zone.appendChild(tray);
+  });
+
+  const loose = m.items.filter((i) => (i.type === "node" && !i.parent) || (i.type === "addon" && !i.parent));
+  if (loose.length) {
+    const wrap = el("div", "loose");
+    wrap.appendChild(el("span", "dz-label", "Standalone"));
+    const row = el("div", "loose-row");
+    loose.forEach((i) => row.appendChild(i.type === "node" ? nodeBlock(i) : blockEl(i)));
+    wrap.appendChild(row);
+    zone.appendChild(wrap);
+  }
+}
+
+// ---- editor (double-click) ------------------------------------------------------
+// Reuses the schema-driven renderer unchanged: walk()/fieldRow()/instanceBox()
+// build the form, serializeForm()/readWidget() read it back.
+function setWidgetValue(input, val) {
+  if (val === undefined || val === null) return;
+  const s = Array.isArray(val) ? val.join(",") : String(val);
+  if (input.tagName === "SELECT") {
+    if (!Array.from(input.options).some((o) => o.value === s)) { const o = el("option", null, s); o.value = s; input.appendChild(o); }
+    input.dataset.userTouched = "1";
+  }
+  input.value = s;
+}
+
+function readInstance(inst) {
+  const key = inst.querySelector(".inst-key").value.trim();
+  const obj = {};
+  inst.querySelectorAll("[data-field]").forEach((elm) => {
+    const v = readWidget(elm);
+    if (v === undefined || (Array.isArray(v) && !v.length)) return;
+    obj[elm.dataset.field] = v;
+  });
+  return { key, obj };
+}
+
+async function openEditor(id) {
+  selectBlock(id);
+  const m = state.model;
+  const item = id === "common" ? null : m.items.find((i) => i.id === id);
+  if (id !== "common" && !item) return;
   const form = $("#schemaForm");
-  form.innerHTML = "";
-  walk(schema, form, []);
+  let kind, title, desc = "", layers = [];
+  try {
+    const base = await loadBase();   // fresh each time: ISO_IMAGE choices follow the hypervisor
+    const secs = base.sections;
+    form.innerHTML = "";
+    state.commonDefaults = {};
+    Object.keys(m.common).forEach((k) => { if (m.common[k] !== "" && m.common[k] != null) state.commonDefaults[k] = String(m.common[k]); });
+    if (id === "common") {
+      kind = "Lab · defaults"; title = "Common settings"; desc = secs.common.description;
+      walk({ fields: secs.common.fields }, form, ["common"]);
+      form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath({ common: m.common }, JSON.parse(i.dataset.outpath))));
+    } else if (item.type === "node" || item.type === "cluster") {
+      const spec = item.type === "node" ? secs.nodes : secs.kclusters;
+      const hidden = item.type === "node" ? HIDDEN_NODE_FIELDS : HIDDEN_CLUSTER_FIELDS;
+      kind = item.type === "node" ? "VM" : "Kubernetes cluster"; title = item.name; desc = spec.description;
+      const inst = instanceBox(spec.fields.filter((f) => !hidden.has(f.name)), spec.key_label || "name");
+      form.appendChild(inst);
+      inst.querySelector(".inst-key").value = item.name;
+      inst.querySelectorAll("[data-field]").forEach((i) => setWidgetValue(i, item.cfg[i.dataset.field]));
+    } else {
+      const sc = await loadAddonSchema(item.comp);
+      kind = "Add-on"; title = item.section; desc = sc.description || "";
+      layers = (sc.capabilities && sc.capabilities.layers) || [];
+      walk(sc, form, []);
+      const frag = m.addonCfg[item.section] || {};
+      form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
+    }
+  } catch (e) { toast("Load error: " + e.message); return; }
+  state.editing = id;
+  $("#editorKind").textContent = kind;
+  $("#editorTitle").textContent = title;
+  $("#editorDesc").textContent = desc || "";
+  const lay = $("#formLayers");
+  lay.innerHTML = "";
+  layers.forEach((l) => lay.appendChild(el("span", "layer-badge layer-" + l, l)));
+  $("#editorRemove").hidden = id === "common";
+  const dlg = $("#editor");
+  if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute("open", "");
+}
+
+function closeEditor() {
+  const dlg = $("#editor");
+  state.editing = null;
+  if (typeof dlg.close === "function") dlg.close(); else dlg.removeAttribute("open");
+}
+
+function applyEditor() {
+  const id = state.editing;
+  if (!id) return;
+  const m = state.model, form = $("#schemaForm");
+  if (id === "common") {
+    m.common = serializeForm().common || {};
+  } else {
+    const item = m.items.find((i) => i.id === id);
+    if (!item) return closeEditor();
+    if (item.type === "node" || item.type === "cluster") {
+      const r = readInstance(form.querySelector(".instance"));
+      if (!r.key) { toast("A name is required."); return; }
+      if (m.items.some((o) => o !== item && o.type === item.type && o.name === r.key)) { toast("“" + r.key + "” is already used."); return; }
+      item.name = r.key; item.cfg = r.obj;
+    } else {
+      m.addonCfg[item.section] = serializeForm();
+    }
+  }
+  closeEditor();
+  renderCanvas();
+  refreshLab();
 }
 
 /* Recursively render `node` into `parent`, tracking the output-key path. */
@@ -641,20 +1057,9 @@ function switchLabView(view) {
 }
 
 // ---- assemble lab ----------------------------------------------------------
-function addToLab() {
-  const s = state.current;
-  if (!s) return;
-  const frag = serializeForm();
-  if (s.section && Array.isArray(s.fields)) {
-    // flat addon schema -> nest under its section name
-    state.lab[s.section] = frag;
-  } else {
-    Object.assign(state.lab, frag);           // structured schema already carries its keys
-  }
-  refreshLab();
-  toast(`Added “${s.section || s.component}” to lab.json`);
-}
+// state.lab is always compiled from the block model (see compileLab above).
 function refreshLab() {
+  state.lab = compileLab(state.model);
   $("#labPreview").textContent = JSON.stringify(state.lab, null, 2);
   const n = Object.keys(state.lab).length;
   $("#sectionCount").textContent = `${n} section${n === 1 ? "" : "s"}`;
@@ -726,21 +1131,26 @@ async function saveLab() {
 
 // ---- wire up ---------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
-  $("#filter").addEventListener("input", (e) => renderCatalogue(e.target.value));
-  $("#addBtn").addEventListener("click", addToLab);
+  $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);
   $("#refreshImagesBtn").addEventListener("click", refreshImages);
+  $("#editorImages").addEventListener("click", refreshImages);
   $("#viewTabJson").addEventListener("click", () => switchLabView("json"));
   $("#viewTabDiagram").addEventListener("click", () => switchLabView("diagram"));
 
+  // editor dialog
+  $("#editorApply").addEventListener("click", applyEditor);
+  $("#editorCancel").addEventListener("click", closeEditor);
+  $("#editorRemove").addEventListener("click", () => { const id = state.editing; closeEditor(); if (id && id !== "common") removeItem(id); });
+  $("#schemaForm").addEventListener("submit", (e) => { e.preventDefault(); applyEditor(); });
+  $("#editor").addEventListener("close", () => { state.editing = null; });
+  $("#canvas").addEventListener("click", () => selectBlock("common"));
+
   // "Required only" — hides every non-required field via CSS on the form
-  // element itself, so it stays in effect across re-renders (selectComponent/
-  // selectBase only clear the form's children, never the form element's own
-  // class) and across dynamically-added repeat-group instances (nodes/
-  // kclusters "+ add" rows are just more .field-optional/.field-required
-  // descendants of the same #schemaForm). Preference remembered per-browser.
+  // element itself, so it stays in effect across editor opens. Preference
+  // remembered per-browser.
   const requiredOnlyToggle = $("#requiredOnlyToggle");
   let requiredOnly = false;
   try { requiredOnly = localStorage.getItem("labbuilder.requiredOnly") === "1"; } catch (e) { /* ignore */ }
@@ -751,7 +1161,10 @@ window.addEventListener("DOMContentLoaded", () => {
     try { localStorage.setItem("labbuilder.requiredOnly", e.target.checked ? "1" : "0"); } catch (err) { /* ignore */ }
   });
 
+  renderCanvas();
+  refreshLab();
   loadComponents().catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
+  loadBase().then(renderCanvas).catch(() => { /* shown on first edit */ });
   loadStatus();
 });
 
