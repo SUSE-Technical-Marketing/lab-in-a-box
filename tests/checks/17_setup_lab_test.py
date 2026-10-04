@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked unit tests for scripts/setup_lab.py — no live KVM
-# host or Kubernetes cluster is available in this project. Covers:
+# Mocked unit tests for scripts/setup_lab.py. Covers:
 # _merged_env's defaults/config/JSON precedence, the addon-dispatch block
 # (shutil.which + subprocess.run, duplicate-addon skip, missing-installer
 # die()) for both cluster- and VM-level addons, and phase_create_vms's

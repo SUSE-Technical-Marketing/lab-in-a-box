@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # Mocked-subprocess unit tests for libs/lab_creation.py —
-# no live KVM host is available in this project. Covers: ssh_run/ssh_output
-# command shape, the multi-KVM-host resolve/locate/select logic (new in the
-# python port — bash only ever had one hypervisor), load_vm_vars merge
+# SSH and subprocess calls are mocked. Covers: ssh_run/ssh_output
+# command shape, the multi-KVM-host resolve/locate/select logic, load_vm_vars merge
 # order, and validate_lab_definition's preflight checks (with subprocess.run
 # mocked so this runs in a container with no virsh/ping/jq installed). Run
 # from 10_lab_creation_core.sh, in its own container — see tests/run_tests.sh.
@@ -573,7 +572,7 @@ buf = _io.StringIO()
 with _redirect_stdout(buf):
     # Not asserting ok is True here: config_method="" (Ignition) also
     # requires real ignition/combustion template files to exist at
-    # lab_setup_path, a separate, pre-existing check unrelated to this
+    # lab_setup_path, a separate, existing check unrelated to this
     # fix — "/lab" (this test's fixture path) never has them, so this
     # particular lab genuinely fails preflight for that reason regardless.
     # What's under test is specifically that the mismatch gets flagged as

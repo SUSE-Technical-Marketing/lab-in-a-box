@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_nextcloud.py — no real podman/kubectl
-# available in this container. Verifies the podman-mode container invocation
+# Unit tests for scripts/install_nextcloud.py. Verifies the podman-mode container invocation
 # (host networking + APACHE_PORT, credential resolution, delegation to
 # libs/db_common.py for a companion mariadb/postgresql instead of an ad-hoc
 # container, the office/document-server integration, the airgap app-install

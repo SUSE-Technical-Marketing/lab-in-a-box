@@ -1,8 +1,7 @@
 #!/bin/bash
 # Pure-logic unit tests for the hypervisor status snapshot feature
 # (scripts/refresh_hypervisor_status.py + webui/lib/discovery.py's
-# status()/dynamic ISO_IMAGE enum injection) — SSH itself is mocked, no live
-# hypervisor available in this environment. Independent container — see
+# status()/dynamic ISO_IMAGE enum injection) — SSH is mocked. Independent container — see
 # tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit

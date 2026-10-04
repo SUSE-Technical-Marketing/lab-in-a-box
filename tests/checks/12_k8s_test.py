@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked-SSH unit tests for libs/k8s.py — no live K3s/RKE2
-# cluster is available in this project. ssh_run/ssh_output/subprocess.run
+# Mocked-SSH unit tests for libs/k8s.py. ssh_run/ssh_output/subprocess.run
 # and time.sleep are all mocked, and any test that writes local RKE2 config
 # files (write_node_config) runs from a scratch tempdir — tests/checks runs
 # against a read-only mount of the repo (see tests/run_tests.sh), so

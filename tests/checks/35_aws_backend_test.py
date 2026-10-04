@@ -523,7 +523,7 @@ with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
                   iso_image="ami-0123456789abcdef0")
 run_instances_call = next(c for c in calls if "run-instances" in c)
 check("create_vm(): --cpu-options is completely absent when nested_virtualization isn't "
-      "requested — every pre-existing lab is unaffected", "--cpu-options" not in run_instances_call)
+      "requested — every existing lab is unaffected", "--cpu-options" not in run_instances_call)
 
 b8 = backends.AWSBackend("eu-central-1", profile="lab")
 b8._user_data_by_vm["vm1"] = ""

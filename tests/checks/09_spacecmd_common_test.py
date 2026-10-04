@@ -1075,28 +1075,28 @@ check("ensure_ansible_paths: automatically cleans up stale defaults on the contr
 fake = FakeSSH(responses=[("schedulePlaybook", FakeResult(returncode=0, stdout="42\n"))])
 sc.ssh_run = fake
 action_id = sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/srv/pb.yml", "/srv/inv",
-                                          earliest="2026-01-01T00:00:00")
+                                          earliest="2000-01-01T00:00:00")
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: base 5-arg form when no testMode/ansibleArgs given",
-      '["/srv/pb.yml", "/srv/inv", 123, "2026-01-01T00:00:00", ""]' in unwrap(cmd)
+      '["/srv/pb.yml", "/srv/inv", 123, "2000-01-01T00:00:00", ""]' in unwrap(cmd)
       and "ansible.schedulePlaybook" in cmd)
 check("schedule_ansible_playbook: returns the scheduled action id", action_id == "42")
 
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/pb.yml", "/inv",
-                              earliest="2026-01-01T00:00:00", test_mode=True)
+                              earliest="2000-01-01T00:00:00", test_mode=True)
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: test_mode-only -> 6-arg form",
-      '["/pb.yml", "/inv", 123, "2026-01-01T00:00:00", "", true]' in cmd)
+      '["/pb.yml", "/inv", 123, "2000-01-01T00:00:00", "", true]' in cmd)
 
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/pb.yml", "/inv",
-                              earliest="2026-01-01T00:00:00", extra_vars="foo: bar", flush_cache=True)
+                              earliest="2000-01-01T00:00:00", extra_vars="foo: bar", flush_cache=True)
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: extra_vars/flush_cache -> 7-arg form with testMode+ansibleArgs",
-      '["/pb.yml", "/inv", 123, "2026-01-01T00:00:00", "", false, '
+      '["/pb.yml", "/inv", 123, "2000-01-01T00:00:00", "", false, '
       '{"extraVars": "foo: bar", "flushCache": true}]' in cmd)
 
 fake = FakeSSH()
@@ -1111,7 +1111,7 @@ sc.ssh_run = fake
 died = False
 try:
     sc.schedule_ansible_playbook("host1", "mgrctl exec --", 999, "/pb.yml", "/inv",
-                                  earliest="2026-01-01T00:00:00")
+                                  earliest="2000-01-01T00:00:00")
 except SystemExit:
     died = True
 check("schedule_ansible_playbook: server-side failure dies", died)
@@ -4178,14 +4178,14 @@ fake = FakeSSH(responses=[
 ])
 sc.ssh_run = fake
 action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
-                                                     date="2026-10-01T00:00:00")
+                                                     date="2000-01-01T00:00:00")
 check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
 schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
 check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
       "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
       "sol.mydemo.lab" not in unwrap(schedule_cmd))
 check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
-      "2026-10-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
+      "2000-01-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
 
 fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
 sc.ssh_run = fake
@@ -4203,7 +4203,7 @@ fake = FakeSSH(responses=[
 sc.ssh_run = fake
 action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
                                                 tailoring_file_id=3, fetch_remote_resources=True,
-                                                date="2026-10-01T00:00:00")
+                                                date="2000-01-01T00:00:00")
 check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
 custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
 check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
@@ -4220,7 +4220,7 @@ fake = FakeSSH(responses=[
 sc.ssh_run = fake
 sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
                                     "xccdf_org.ssgproject.content_profile_standard",
-                                    date="2026-10-01T00:00:00")
+                                    date="2000-01-01T00:00:00")
 custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
 check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
       "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and

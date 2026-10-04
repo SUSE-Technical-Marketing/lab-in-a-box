@@ -19,7 +19,7 @@
 # CHAIN_FWD in the filter table's FORWARD) are flushed and rebuilt from
 # scratch on every apply_forwarded_ports() call — idempotent by
 # construction (safe to rerun after adding/removing a node's ports) and
-# scoped so this never touches any pre-existing rule outside those two
+# scoped so this never touches any existing rule outside those two
 # chains, matching this project's existing "declarative resync" style
 # (e.g. BIND zone files are rewritten fresh, not incrementally patched).
 

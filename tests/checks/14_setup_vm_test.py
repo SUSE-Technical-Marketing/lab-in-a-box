@@ -2,8 +2,7 @@
 # Mocked unit tests for scripts/setup_vm.py — backends.get_backend() is
 # monkeypatched to return a fake backend recording every call made on it
 # (matching how setup_vm.py now goes through the backend abstraction
-# instead of lab_creation's flat wrapper functions directly), since no live
-# KVM host is available. Verifies provision_vm()'s call ordering (DNS
+# instead of lab_creation's flat wrapper functions directly). Verifies provision_vm()'s call ordering (DNS
 # registered before the VM is created, VM created before the connectivity
 # wait) and the "existing node" refusal — not real provisioning. Run from
 # 14_setup_vm.sh, in its own container — see tests/run_tests.sh.

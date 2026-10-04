@@ -37,7 +37,7 @@ _TEMPLATES = ("kustomization.yaml", "mysql_install.yml", "wordpress_deployment.y
 
 
 def setup_wordpress(hostname, templ_addons_loc, wordpress_cfg):
-    """Delete any pre-existing resources, then render+apply the wordpress manifests. Mirrors setup_wordpress (bash)."""
+    """Delete any existing resources, then render+apply the wordpress manifests. Mirrors setup_wordpress (bash)."""
     # wordpress_ns/wordpress_name are interpolated unquoted into the remote
     # Validated here at runtime, because the --validate block in main() does not call the
     # validators. A value with a shell metacharacter would otherwise reach the remote shell unescaped.

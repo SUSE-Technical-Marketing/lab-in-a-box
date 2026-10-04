@@ -1031,7 +1031,7 @@ class HarvesterBackend(VMBackend):
       - copy_vm_image() does not import an image. The operator imports a VirtualMachineImage named after
         ISO_IMAGE beforehand. The backend exits with a clear error if it is missing, rather than creating
         a VM without a boot disk.
-      - With HARVESTER_NETWORK set in /etc/lab_creation.cfg, create_vm() attaches the VM to a pre-existing
+      - With HARVESTER_NETWORK set in /etc/lab_creation.cfg, create_vm() attaches the VM to an existing
         Multus NetworkAttachmentDefinition ("<namespace>/<name>", or a bare name in HARVESTER_NAMESPACE).
         The VM then gets a LAN-routable IP, which the DNS and SSH conventions need. The backend exits with a
         clear error if the NAD is missing and never creates one. The physical network (which NIC, which
@@ -1054,7 +1054,7 @@ class HarvesterBackend(VMBackend):
         self.namespace = namespace
         self.vm_img_loc = vm_img_loc
         self.lab_setup_path = lab_setup_path
-        # <namespace>/<name> of a pre-existing Multus NetworkAttachmentDefinition
+        # <namespace>/<name> of an existing Multus NetworkAttachmentDefinition
         # (k8s.cni.cncf.io/v1) — see create_vm()'s docstring for why this backend
         # doesn't create one itself. None (the default) preserves the original
         # pod-network behavior — backward compatible, no config change required.

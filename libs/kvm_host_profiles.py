@@ -250,7 +250,7 @@ class _SuseRegisteredProfile(_SuseZypperProfile):
     do_it_all()) after detect_profile() returns an instance, the same
     post-construction-mutation pattern already used for _extra_host_pkgs.
     Not constructor params: detect_profile() has no access to lab.cfg, only
-    the live host's own /etc/os-release.
+    the host's own /etc/os-release.
     """
 
     _products = ()  # set per concrete class
@@ -341,7 +341,7 @@ class SLES16Profile(_SuseRegisteredProfile):
         "bridge-utils", "tcpdump", "sensors", "netcat-openbsd", "gptfdisk",
         # guestfs-tools: same confirmed-on-15 fix as SLES15Profile (see its
         # own comment) — confirmed available under the same name on SLES 16
-        # too, same live host as the rest of this list.
+        # too, same host as the rest of this list.
         "guestfs-tools",
     ]
     unmapped_packages = [

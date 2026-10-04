@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked unit tests for scripts/destroy_vm.py — no live KVM host available;
-# backends.get_backend() is monkeypatched to return a fake backend
+# Mocked unit tests for scripts/destroy_vm.py; backends.get_backend() is monkeypatched to return a fake backend
 # recording every call made on it (matching how destroy_vm.py now goes
 # through the backend abstraction instead of lab_creation's flat wrapper
 # functions directly). Verifies the "existing node" no-op path and the

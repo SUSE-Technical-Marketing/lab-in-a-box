@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Regression tests for live-deployment bugs. SSH and subprocess calls are mocked, so no live host
-# is needed. Run from 18_live_bugfixes.sh, in its own container (see tests/run_tests.sh).
+# Regression tests for live-deployment bugs. SSH and subprocess calls are mocked. Run from 18_live_bugfixes.sh, in its own container (see tests/run_tests.sh).
 import shlex
 import socket
 import subprocess

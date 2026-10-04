@@ -123,7 +123,7 @@ with mock.patch.object(subprocess, "run", side_effect=_run(
     check("configure_bridge deactivates the old connection before adding the slave connection",
           down_idx < slave_idx)
 
-# A device with no pre-existing connection (nothing configured on it yet, or
+# A device with no existing connection (nothing configured on it yet, or
 # nmcli couldn't determine one) must not try to migrate a nonexistent config
 # or deactivate anything by name.
 p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
@@ -131,9 +131,9 @@ with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0}
     p.configure_bridge("eth0", "br0")
     calls = [c[0][0] for c in m.call_args_list]
     bridge_add = next(c for c in calls if c[:5] == ["nmcli", "con", "add", "type", "bridge"])
-    check("configure_bridge with no pre-existing connection creates a plain (DHCP-default) bridge",
+    check("configure_bridge with no existing connection creates a plain (DHCP-default) bridge",
           "ipv4.method" not in bridge_add)
-    check("configure_bridge with no pre-existing connection never calls 'nmcli con down'",
+    check("configure_bridge with no existing connection never calls 'nmcli con down'",
           not any(c[:3] == ["nmcli", "con", "down"] for c in calls))
 
 with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 1, "wickedd": 0})) as m, \

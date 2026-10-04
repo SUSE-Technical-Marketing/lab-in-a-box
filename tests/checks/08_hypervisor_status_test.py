@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Pure-logic unit tests for scripts/refresh_hypervisor_status.py (masking,
-# host/image selection — SSH itself is mocked, no live hypervisor available)
+# host/image selection; SSH is mocked)
 # and webui/lib/discovery.py's status()/dynamic ISO_IMAGE enum injection (a
 # plain temp file, no mocking needed). Run from 08_hypervisor_status.sh, in
 # its own container — see tests/run_tests.sh.

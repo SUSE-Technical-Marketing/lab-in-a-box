@@ -18,7 +18,7 @@
 # the "deepseek" addon.
 #
 # Apertus is a fully-open (weights + training data + training code) LLM from the Swiss AI Initiative
-# (ETH Zurich, EPFL, and the Swiss National Supercomputing Centre), released 2025-09-02 under Apache
+# (ETH Zurich, EPFL, and the Swiss National Supercomputing Centre). Licensed under Apache
 # 2.0. Unlike deepseek/llama/qwen/mistral, it is NOT in Ollama's own officially-curated library — the
 # GGUF build pulled here is a COMMUNITY package (MichelRosselli/apertus on ollama.com), maintained by a
 # third party, not the Apertus team or Ollama itself. The Ollama client must be 0.12.6 or newer for Apertus'

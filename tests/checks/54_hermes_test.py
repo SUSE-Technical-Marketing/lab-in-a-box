@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_hermes.py — no real git/podman/kubectl
-# available in this container. Verifies the env var names against Hermes Agent's docs, the image build command
+# Unit tests for scripts/install_hermes.py. Verifies the env var names against Hermes Agent's docs,
+# the image build command
 # construction, the credential-store-with-plaintext-fallback wiring, and
 # the manifest's real structure. Run from 54_hermes.sh, in its own
 # container — see tests/run_tests.sh.

@@ -2228,7 +2228,7 @@ def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccd
 
     policy_name, scap_content_id (from list_scap_content()) and xccdf_profile_id are required. Every other parameter is optional
     and uses the same field names as the server's ScapPolicyJson. `earliest`, if given, is a string in ISO_LOCAL_DATE_TIME format,
-    for example "2026-10-01T00:00:00". This is a plain JSON string field, unlike the XML-RPC schedule calls, which convert a
+    for example "2000-01-01T00:00:00". This is a plain JSON string field, unlike the XML-RPC schedule calls, which convert a
     top-level ISO-8601 argument. The function returns the numeric policy id. It is not idempotent on its own. Use
     ensure_scap_policies(), which checks for existing policies first.
     """
