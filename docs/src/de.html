@@ -563,48 +563,48 @@ Die Anleitungen 2 und 3 sind <strong>live getestet</strong> — gegen einen echt
 <ol>
 <li><strong>Die Lab-Datei schreiben.</strong> Als <code>rancher-cluster.json</code> speichern (IPs/Netzwerk an die eigene Lab-Domain anpassen):</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "node101.mydemo.lab": {
-         "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
-         "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
-       },
-       "node102.mydemo.lab": {
-         "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
-         "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
-       }
-     },
-     "common": {
-       "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
-       "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
-       "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
-     },
-     "kclusters": {
-       "cluster1": {
-         "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
-         "addons": ["rancher", "longhorn"]
-       }
-     },
-     "rancher": {
-       "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
-       "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
-       "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
-       "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
-     }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
 <ol start="2">
 <li><strong>Bauen:</strong></li>
 </ol>
-<p><code>shell
-   setup_lab.py rancher-cluster.json</code></p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
 <p><code>setup_lab.py</code> prüft die Datei automatisch vorab, bevor irgendetwas anderes passiert — falsche IPs, eine <code>kcluster</code>-Referenz, die nicht existiert, ein fehlendes <code>ISO_IMAGE</code> und ähnliche Fehler werden erkannt und ausgegeben (<code>✗ Preflight FAILED — N error(s)</code>), ohne dass etwas erstellt wird, statt auf halbem Weg zu scheitern. Eine saubere Datei gibt <code>✓ Preflight passed</code> aus und geht direkt zum Bauen über.</p>
 <p>Der Reihe nach passiert Folgendes: beide Knoten im DNS registrieren → beide VMs erstellen (QCOW2-Abbild kopieren, Combustion-Dateien generieren, booten, auf SSH warten) → RKE2 auf <code>node101</code> als Server installieren, dann auf <code>node102</code> als Agent → <code>rancher</code> und <code>longhorn</code> auf dem Management-Knoten des Clusters installieren (<code>mgm_node</code>, standardmäßig der erste Server-Knoten — hier <code>node101</code>). Ein 2-Knoten-Cluster mit Rancher dauert typischerweise 15–25 Minuten; das meiste davon ist RKE2-Bootstrapping und die eigene Helm-Installation von Rancher.</p>
 <ol start="3">
 <li><strong>Prüfen, dass DNS auflöst</strong> (vom eigenen Desktop aus, sobald <a href="#step-5--point-your-client-dns-at-the-automation-vm">dieser auf den DNS der Automatisierungs-VM zeigt</a>):</li>
 </ol>
-<p><code>shell
-   dig +short node101.mydemo.lab rancher.mydemo.lab</code></p>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
 <p>Beide sollten <code>192.168.88.101</code> zurückgeben (der Ingress-Hostname von Rancher ist der Wert von <code>rancher_shorthn</code>, <code>rancher</code>, unter dem <code>mydomain</code> des Clusters).</p>
 <ol start="4">
 <li>
@@ -614,51 +614,51 @@ Die Anleitungen 2 und 3 sind <strong>live getestet</strong> — gegen einen echt
 <p><strong>Iterieren, ohne alles neu zu bauen.</strong> Konfiguration eines Knotens geändert, oder eine VM abgestürzt? Erneut mit <code>--keep</code> ausführen: jede VM, die bereits existiert, zu ihrer definierten IP/MAC passt und per SSH erreichbar ist, bleibt unangetastet; nur das tatsächlich Fehlende oder Defekte wird (neu) erstellt:</p>
 </li>
 </ol>
-<p><code>shell
-   setup_lab.py --keep rancher-cluster.json</code></p>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
 <ol start="6">
 <li><strong>Abbauen</strong>, wenn fertig:</li>
 </ol>
-<p><code>shell
-   destroy_lab.py rancher-cluster.json</code></p>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
 <h3 id="anleitung-2--suse-multi-linux-manager-uyuni-server-mit-registriertem-client">Anleitung 2 — SUSE-Multi-Linux-Manager-(Uyuni)-Server mit registriertem Client</h3>
 <p>Ziel: ein Uyuni-Server mit einem echten Aktivierungsschlüssel, und eine zweite VM, die sich selbst als Salt-verwalteten Client dagegen registriert. <strong>Live end-to-end gegen einen echten Uyuni-Server getestet.</strong></p>
 <ol>
 <li><strong>Die Lab-Datei schreiben</strong> — ein Knoten für den Uyuni-Server, einer für den Client:</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
-       "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
-     },
-     "common": {
-       "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
-       "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
-       "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
-     },
-     "uyuni": {
-       "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
-       "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
-     },
-     "client_registration": {
-       "client_registration_server_type": "uyuni",
-       "client_registration_server": "uyuni.mydemo.lab",
-       "client_registration_activation_key": "1-lab-clients"
-     }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
 <ol start="2">
 <li><strong>Bauen:</strong></li>
 </ol>
-<p><code>shell
-   setup_lab.py uyuni-lab.json</code></p>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
 <p>Add-ons auf VM-Ebene (sowohl <code>uyuni</code> als auch <code>client_registration</code> sind an einen Knoten gebunden, nicht an einen Cluster, da hier kein <code>kclusters</code>-Abschnitt vorhanden ist) laufen, sobald ihr eigener Knoten läuft. <code>install_uyuni</code> startet den Server, wartet, bis er erreichbar ist, und erstellt dann den Aktivierungsschlüssel. <code>install_client_registration</code> bootstrappt anschließend <code>client1</code> dagegen — installiert das Bootstrap-Skript, führt es aus und fragt periodisch ab, bis der Salt-Key des neuen Minions als ausstehend erscheint, und akzeptiert ihn dann.</p>
 <ol start="3">
 <li><strong>Prüfen, dass sich der Client tatsächlich registriert hat.</strong> Per SSH mit dem Uyuni-Server verbinden und direkt nachfragen:</li>
 </ol>
-<p><code>shell
-   ssh uyuni.mydemo.lab
-   mgrctl exec 'spacecmd -- system_list'</code></p>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
 <p><code>client1.mydemo.lab</code> sollte in der Liste erscheinen.</p>
 <ol start="4">
 <li><strong>In der Web-UI anmelden</strong> unter <code>https://uyuni.mydemo.lab</code> mit <code>uyuni_admin</code>/<code>uyuni_password</code>, um dasselbe visuell zu sehen, den Aktivierungsschlüssel zu durchsuchen oder einen Highstate auszuführen.</li>
@@ -670,44 +670,44 @@ Die Anleitungen 2 und 3 sind <strong>live getestet</strong> — gegen einen echt
 <ol>
 <li><strong>In <code>lab.cfg</code></strong> (Schnellstart <a href="#step-3--configure-and-run-the-kvm-node-setup">Schritt 3</a>) setzen:</li>
 </ol>
-<p><code>ini
-   _network_mode="nat"
-   _nat_network_name="labnat"          # gezeigter Standardwert — ein neues virtuelles libvirt-Netzwerk, nicht das echte LAN des Hosts
-   _nat_network_cidr="192.168.150.0/24" # gezeigter Standardwert
-   _nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # gezeigter Standardwert — "&lt;Port auf der ECHTEN IP des HYPERVISORS&gt;:&lt;Port auf der AUTOMATION-VM&gt;/&lt;Protokoll&gt;"</code></p>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # gezeigter Standardwert — ein neues virtuelles libvirt-Netzwerk, nicht das echte LAN des Hosts
+_nat_network_cidr="192.168.150.0/24" # gezeigter Standardwert
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # gezeigter Standardwert — "&lt;Port auf der ECHTEN IP des HYPERVISORS&gt;:&lt;Port auf der AUTOMATION-VM&gt;/&lt;Protokoll&gt;"
+</code></pre>
 <p>Damit werden die Ports 22/80/443 auf der <strong>echten, von außen erreichbaren IP des Hypervisors</strong> (<code>&lt;extern&gt;</code>) auf dieselben Ports auf der <strong>privaten NAT-Adresse der Automation-VM</strong> (<code>&lt;intern&gt;</code>) weitergeleitet — zu diesem Zeitpunkt ist die Automation-VM das Einzige, das in diesem privaten Netzwerk lauscht, „intern" bedeutet hier also immer „auf der Automation-VM". (Schritt 5 weiter unten verwendet dieselbe Syntax <code>&lt;extern&gt;:&lt;intern&gt;/&lt;Protokoll&gt;</code>, um stattdessen an eine <em>Lab</em>-VM weiterzuleiten, sobald eine existiert — dort bedeutet „intern" die private NAT-Adresse dieser VM, nicht die der Automation-VM.)</p>
 <ol start="2">
 <li><strong>Das Setup genau wie gewohnt ausführen:</strong></li>
 </ol>
-<p><code>shell
-   ./setup_kvm_node.py</code></p>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
 <p>Dies definiert das libvirt-Netzwerk <code>labnat</code> (NAT, DHCP/Gateway von libvirt selbst gehandhabt — derselbe Mechanismus wie das eingebaute <code>default</code>-Netzwerk von libvirt, nur unter dem eigenen Namen/CIDR dieses Projekts) statt einer Bridge, erstellt dann die Automatisierungs-VM darauf mit einer statischen IP innerhalb dieses privaten Bereichs, und leitet anschließend die drei obigen Ports per DNAT von der echten IP des Hosts selbst herein.</p>
 <ol start="3">
 <li><strong>Prüfen, dass Netzwerk und Weiterleitungsregeln existieren</strong>, auf dem Hypervisor:</li>
 </ol>
-<p><code>shell
-   virsh net-list                              # labnat: active
-   iptables -t nat -L LAB_PORTFWD -n -v         # DNAT-Regeln zur privaten IP der Automatisierungs-VM
-   iptables -L LAB_PORTFWD_FWD -n -v            # passende ACCEPT-Regeln in der FORWARD-Kette</code></p>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # DNAT-Regeln zur privaten IP der Automatisierungs-VM
+iptables -L LAB_PORTFWD_FWD -n -v            # passende ACCEPT-Regeln in der FORWARD-Kette
+</code></pre>
 <ol start="4">
 <li><strong>Die Automatisierungs-VM von außerhalb des Hypervisors erreichen</strong>, über die echte IP des Hypervisors selbst — nicht über die private <code>192.168.150.x</code>-Adresse der Automatisierungs-VM, die von nirgendwo sonst routbar ist:</li>
 </ol>
-<p><code>shell
-   ssh root@&lt;echte-hypervisor-ip&gt;          # per DNAT zum SSH der Automatisierungs-VM, Port 22</code></p>
+<pre><code class="language-shell">ssh root@&lt;echte-hypervisor-ip&gt;          # per DNAT zum SSH der Automatisierungs-VM, Port 22
+</code></pre>
 <p>Die Ports 80 und 443 werden standardmäßig ebenfalls weitergeleitet (der HTTP-Server für Provisionierungsdateien und, sobald die <a href="#web-ui-lab-builder">Web-UI</a> eingerichtet ist, deren HTTPS-Listener) — auf dieselbe Weise über die echte IP des Hypervisors erreichbar.</p>
 <ol start="5">
 <li><strong>Weiterleitung für eine Lab-VM hinzufügen</strong>, nicht nur für die Automatisierungs-VM selbst: diesem Knoten ein Feld <code>forwarded_ports</code> geben und einmalig den Dienst <code>portforward</code> in <code>common.services</code> aktivieren:</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "app1.mydemo.lab": {
-         "myip": "192.168.150.20",
-         "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
-       }
-     },
-     "common": { "services": ["portforward"], "...": "…Rest von common wie gewohnt" }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…Rest von common wie gewohnt" }
+}
+</code></pre>
 <p><code>setup_lab.py</code>/<code>setup_vm.py</code> leiten diese zwei Ports genauso per DNAT von der echten IP des Hypervisors herein, sobald zum ersten Mal irgendein Knoten im Lab <code>forwarded_ports</code> deklariert.</p>
 <p align="right"><a href="#top">↑ nach oben</a></p>
 

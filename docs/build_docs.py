@@ -146,6 +146,13 @@ main.doc blockquote {
   background: var(--panel); border-radius: 0 8px 8px 0; font-size: 0.95em; color: var(--muted);
 }
 main.doc blockquote p { margin: 0; }
+main.doc aside.callout {
+  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 0 8px 8px 0;
+}
+main.doc aside.callout p { margin: 0; }
+main.doc aside.callout-warning { border-left-color: #c2410c; }
+main.doc aside.callout-important { border-left-color: #7c3aed; }
 main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
 .anchor-top { display: block; height: 0; }
 footer.site {

@@ -123,6 +123,13 @@ main.doc blockquote {
   background: var(--panel); border-radius: 0 8px 8px 0; font-size: 0.95em; color: var(--muted);
 }
 main.doc blockquote p { margin: 0; }
+main.doc aside.callout {
+  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 0 8px 8px 0;
+}
+main.doc aside.callout p { margin: 0; }
+main.doc aside.callout-warning { border-left-color: #c2410c; }
+main.doc aside.callout-important { border-left-color: #7c3aed; }
 main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
 .anchor-top { display: block; height: 0; }
 footer.site {
@@ -345,13 +352,13 @@ to exist — and:</p>
 <ul>
 <li><strong>systemd present</strong>: installs and enables <code>lab-builder.service</code>
   (<code>Type=simple</code>, <code>Restart=always</code>), managed the normal way:
-  <code>bash
-  systemctl {start|stop|restart|status} lab-builder</code></li>
+  <pre><code class="language-bash">systemctl {start|stop|restart|status} lab-builder
+</code></pre></li>
 <li><strong>no systemd</strong>: falls back to a small, init-system-independent control
   script that does the same job with a plain PID file, no unit file, no
   service manager involved:
-  <code>bash
-  lab-builder-ctl {start|stop|restart|status}</code>
+  <pre><code class="language-bash">lab-builder-ctl {start|stop|restart|status}
+</code></pre>
   On a target like this, add <code>lab-builder-ctl start</code> to whatever mechanism
   that system actually uses to run things at boot (there's no single
   detection-and-hook that covers every non-systemd init, so this only

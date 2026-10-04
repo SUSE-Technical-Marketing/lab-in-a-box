@@ -178,13 +178,13 @@ to exist — and:</p>
 <ul>
 <li><strong>systemd present</strong>: installs and enables <code>lab-builder.service</code>
   (<code>Type=simple</code>, <code>Restart=always</code>), managed the normal way:
-  <code>bash
-  systemctl {start|stop|restart|status} lab-builder</code></li>
+  <pre><code class="language-bash">systemctl {start|stop|restart|status} lab-builder
+</code></pre></li>
 <li><strong>no systemd</strong>: falls back to a small, init-system-independent control
   script that does the same job with a plain PID file, no unit file, no
   service manager involved:
-  <code>bash
-  lab-builder-ctl {start|stop|restart|status}</code>
+  <pre><code class="language-bash">lab-builder-ctl {start|stop|restart|status}
+</code></pre>
   On a target like this, add <code>lab-builder-ctl start</code> to whatever mechanism
   that system actually uses to run things at boot (there's no single
   detection-and-hook that covers every non-systemd init, so this only

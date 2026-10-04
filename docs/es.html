@@ -121,6 +121,13 @@ main.doc blockquote {
   background: var(--panel); border-radius: 0 8px 8px 0; font-size: 0.95em; color: var(--muted);
 }
 main.doc blockquote p { margin: 0; }
+main.doc aside.callout {
+  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 0 8px 8px 0;
+}
+main.doc aside.callout p { margin: 0; }
+main.doc aside.callout-warning { border-left-color: #c2410c; }
+main.doc aside.callout-important { border-left-color: #7c3aed; }
 main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
 .anchor-top { display: block; height: 0; }
 footer.site {
@@ -728,48 +735,48 @@ Las guías 2 y 3 están <strong>probadas en vivo</strong> — ejecutadas contra 
 <ol>
 <li><strong>Escribe el archivo del laboratorio.</strong> Guárdalo como <code>rancher-cluster.json</code> (ajusta IPs/red a tu dominio de laboratorio):</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "node101.mydemo.lab": {
-         "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
-         "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
-       },
-       "node102.mydemo.lab": {
-         "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
-         "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
-       }
-     },
-     "common": {
-       "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
-       "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
-       "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
-     },
-     "kclusters": {
-       "cluster1": {
-         "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
-         "addons": ["rancher", "longhorn"]
-       }
-     },
-     "rancher": {
-       "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
-       "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
-       "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
-       "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
-     }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
 <ol start="2">
 <li><strong>Constrúyelo:</strong></li>
 </ol>
-<p><code>shell
-   setup_lab.py rancher-cluster.json</code></p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
 <p><code>setup_lab.py</code> valida el archivo automáticamente antes de hacer nada más — IPs incorrectas, una referencia a <code>kcluster</code> que no existe, un <code>ISO_IMAGE</code> ausente y errores similares se detectan y se imprimen (<code>✗ Preflight FAILED — N error(s)</code>) sin crear nada, en lugar de fallar a mitad de camino. Un archivo correcto imprime <code>✓ Preflight passed</code> y pasa directamente a la construcción.</p>
 <p>En orden, esto: registra ambos nodos en DNS → crea ambas VMs (copia la imagen QCOW2, genera los archivos de Combustion, las arranca, espera a SSH) → instala RKE2 en <code>node101</code> como servidor, luego en <code>node102</code> como agente → instala <code>rancher</code> y <code>longhorn</code> en el nodo de gestión del clúster (<code>mgm_node</code>, por defecto el primer nodo servidor — <code>node101</code> aquí). Un clúster de 2 nodos con Rancher tarda normalmente entre 15 y 25 minutos; la mayor parte es el arranque de RKE2 y la propia instalación Helm de Rancher.</p>
 <ol start="3">
 <li><strong>Verifica que el DNS resuelve</strong> (desde tu propio escritorio, una vez <a href="#step-5--point-your-client-dns-at-the-automation-vm">apuntado al DNS de la VM de automatización</a>):</li>
 </ol>
-<p><code>shell
-   dig +short node101.mydemo.lab rancher.mydemo.lab</code></p>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
 <p>Ambos deberían devolver <code>192.168.88.101</code> (el nombre de host de ingress de Rancher es el valor de <code>rancher_shorthn</code>, <code>rancher</code>, bajo el <code>mydomain</code> del clúster).</p>
 <ol start="4">
 <li>
@@ -779,51 +786,51 @@ Las guías 2 y 3 están <strong>probadas en vivo</strong> — ejecutadas contra 
 <p><strong>Itera sin reconstruir todo.</strong> ¿Cambiaste la configuración de un nodo, o se cayó una VM? Vuelve a ejecutar con <code>--keep</code>: cualquier VM que ya exista, coincida con su IP/MAC definida y sea alcanzable por SSH se deja intacta; solo se (re)crea lo que realmente falta o está roto:</p>
 </li>
 </ol>
-<p><code>shell
-   setup_lab.py --keep rancher-cluster.json</code></p>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
 <ol start="6">
 <li><strong>Destrúyelo</strong> cuando termines:</li>
 </ol>
-<p><code>shell
-   destroy_lab.py rancher-cluster.json</code></p>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
 <h3 id="guía-2--servidor-suse-multi-linux-manager-uyuni-con-un-cliente-registrado">Guía 2 — Servidor SUSE Multi-Linux Manager (Uyuni) con un cliente registrado</h3>
 <p>Objetivo: un servidor Uyuni con una clave de activación real, y una segunda VM que se registra a sí misma como cliente gestionado por Salt frente a él. <strong>Probado en vivo</strong> de principio a fin contra un servidor Uyuni real.</p>
 <ol>
 <li><strong>Escribe el archivo del laboratorio</strong> — un nodo para el servidor Uyuni, otro para el cliente:</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
-       "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
-     },
-     "common": {
-       "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
-       "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
-       "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
-     },
-     "uyuni": {
-       "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
-       "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
-     },
-     "client_registration": {
-       "client_registration_server_type": "uyuni",
-       "client_registration_server": "uyuni.mydemo.lab",
-       "client_registration_activation_key": "1-lab-clients"
-     }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
 <ol start="2">
 <li><strong>Constrúyelo:</strong></li>
 </ol>
-<p><code>shell
-   setup_lab.py uyuni-lab.json</code></p>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
 <p>Los add-ons a nivel de VM (tanto <code>uyuni</code> como <code>client_registration</code> están asociados a un nodo, no a un clúster, ya que aquí no hay sección <code>kclusters</code>) se ejecutan en cuanto su propio nodo está arriba. <code>install_uyuni</code> levanta el servidor, espera a que sea alcanzable y luego crea la clave de activación. <code>install_client_registration</code> a continuación arranca <code>client1</code> frente a él — instala el script de arranque, lo ejecuta y comprueba periódicamente hasta que la clave Salt del nuevo minion aparece como pendiente, momento en el que la acepta.</p>
 <ol start="3">
 <li><strong>Verifica que el cliente se registró de verdad.</strong> Conéctate por SSH al servidor Uyuni y pregúntale directamente:</li>
 </ol>
-<p><code>shell
-   ssh uyuni.mydemo.lab
-   mgrctl exec 'spacecmd -- system_list'</code></p>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
 <p><code>client1.mydemo.lab</code> debería aparecer en la lista.</p>
 <ol start="4">
 <li><strong>Inicia sesión en la interfaz web</strong> en <code>https://uyuni.mydemo.lab</code> con <code>uyuni_admin</code>/<code>uyuni_password</code> para ver lo mismo de forma visual, revisar la clave de activación, o ejecutar un highstate.</li>
@@ -835,44 +842,44 @@ Las guías 2 y 3 están <strong>probadas en vivo</strong> — ejecutadas contra 
 <ol>
 <li><strong>En <code>lab.cfg</code></strong> (<a href="#step-3--configure-and-run-the-kvm-node-setup">Paso 3</a> de Inicio rápido), define:</li>
 </ol>
-<p><code>ini
-   _network_mode="nat"
-   _nat_network_name="labnat"          # valor por defecto mostrado — una nueva red virtual de libvirt, no la LAN real de tu host
-   _nat_network_cidr="192.168.150.0/24" # valor por defecto mostrado
-   _nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # valor por defecto mostrado — "&lt;puerto en la IP REAL del HIPERVISOR&gt;:&lt;puerto en la VM de automatización&gt;/&lt;protocolo&gt;"</code></p>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # valor por defecto mostrado — una nueva red virtual de libvirt, no la LAN real de tu host
+_nat_network_cidr="192.168.150.0/24" # valor por defecto mostrado
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # valor por defecto mostrado — "&lt;puerto en la IP REAL del HIPERVISOR&gt;:&lt;puerto en la VM de automatización&gt;/&lt;protocolo&gt;"
+</code></pre>
 <p>Esto redirige los puertos 22/80/443 de la <strong>IP real y accesible desde el exterior del hipervisor</strong> (<code>&lt;externo&gt;</code>) hacia los mismos puertos en la <strong>dirección NAT privada de la VM de automatización</strong> (<code>&lt;interno&gt;</code>) — en este punto, la VM de automatización es lo único que escucha en esta red privada, así que "interno" siempre significa "en la VM de automatización" aquí. (El paso 5, más abajo, reutiliza esta misma sintaxis <code>&lt;externo&gt;:&lt;interno&gt;/&lt;protocolo&gt;</code> para redirigir hacia una VM del <em>lab</em> en su lugar, una vez que exista — ahí, "interno" pasa a significar la dirección NAT privada de esa VM, no la de la VM de automatización.)</p>
 <ol start="2">
 <li><strong>Ejecuta la configuración exactamente como siempre:</strong></li>
 </ol>
-<p><code>shell
-   ./setup_kvm_node.py</code></p>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
 <p>Esto define la red libvirt <code>labnat</code> (con NAT, DHCP/gateway gestionados por el propio libvirt — el mismo mecanismo que la red <code>default</code> integrada de libvirt, solo que con el nombre/CIDR propios de este proyecto) en lugar de un bridge, luego crea la VM de automatización en ella con una IP estática dentro de ese rango privado, y por último redirige (DNAT) los tres puertos anteriores desde la IP real del propio host.</p>
 <ol start="3">
 <li><strong>Verifica que la red y las reglas de reenvío existen</strong>, en el hipervisor:</li>
 </ol>
-<p><code>shell
-   virsh net-list                              # labnat: active
-   iptables -t nat -L LAB_PORTFWD -n -v         # reglas DNAT hacia la IP privada de la VM de automatización
-   iptables -L LAB_PORTFWD_FWD -n -v            # reglas ACCEPT correspondientes en la cadena FORWARD</code></p>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # reglas DNAT hacia la IP privada de la VM de automatización
+iptables -L LAB_PORTFWD_FWD -n -v            # reglas ACCEPT correspondientes en la cadena FORWARD
+</code></pre>
 <ol start="4">
 <li><strong>Accede a la VM de automatización desde fuera del hipervisor</strong>, usando la IP real del propio hipervisor — no la dirección privada <code>192.168.150.x</code> de la VM de automatización, que no es enrutable desde ningún otro sitio:</li>
 </ol>
-<p><code>shell
-   ssh root@&lt;ip-real-del-hipervisor&gt;          # redirigido (DNAT) al SSH de la VM de automatización, puerto 22</code></p>
+<pre><code class="language-shell">ssh root@&lt;ip-real-del-hipervisor&gt;          # redirigido (DNAT) al SSH de la VM de automatización, puerto 22
+</code></pre>
 <p>Los puertos 80 y 443 también se reenvían por defecto (el servidor HTTP de archivos de aprovisionamiento y, una vez configures la <a href="#web-ui-lab-builder">interfaz web</a>, su listener HTTPS) — accesibles de la misma forma, a través de la IP real del hipervisor.</p>
 <ol start="5">
 <li><strong>Añade reenvío para una VM del laboratorio</strong>, no solo para la propia VM de automatización: dale a ese nodo un campo <code>forwarded_ports</code> y activa una vez el servicio <code>portforward</code>, en <code>common.services</code>:</li>
 </ol>
-<p><code>jsonc
-   {
-     "nodes": {
-       "app1.mydemo.lab": {
-         "myip": "192.168.150.20",
-         "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
-       }
-     },
-     "common": { "services": ["portforward"], "...": "…resto de common como siempre" }
-   }</code></p>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…resto de common como siempre" }
+}
+</code></pre>
 <p><code>setup_lab.py</code>/<code>setup_vm.py</code> reenvían (DNAT) esos dos puertos desde la IP real del hipervisor de la misma forma, la primera vez que cualquier nodo del laboratorio declara <code>forwarded_ports</code>.</p>
 <p align="right"><a href="#top">↑ volver arriba</a></p>
 
