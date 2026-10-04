@@ -14,7 +14,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
 # lab_creation.py/primary.py live in libs/ post-cutover —
-# legacy_bash/libs/ holds the retired pre-cutover forks, not a fallback path.
+# legacy_bash/ is not a fallback path.
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "webui" / "lib"))
 

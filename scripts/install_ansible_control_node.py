@@ -47,7 +47,7 @@
 # ansible_control_nodes (see those install scripts' own schema docs) for the full,
 # real "Setup Ansible Control Node" workflow documentation.suse.com describes.
 
-__version__ = "__LABVERSION__"
+__version__ = "f6cd6bc"
 
 PLUGIN = {
     "name": "ansible_control_node",
@@ -130,13 +130,10 @@ def _write_inventory_env(hostname, server_host, admin_user, admin_pass):
     Writes UYUNI_HOST/USER/PASS/VERIFY_SSL to _INVENTORY_ENV_PATH on the
     control node itself (root-only readable — real credentials) — read by
     the dynamic inventory script's own _load_env_file() as a fallback
-    whenever the process environment doesn't already have them set. Real
-    bug found live 2026-09-18 (see TODO): SMLM's own "Ansible > Schedule
-    Playbook" feature invokes the inventory script via a Salt state
-    running under salt-minion's own process environment, which never
-    inherits anything an operator `export`ed in an interactive shell — the
-    script died every time SMLM itself triggered it, even though it worked
-    fine run by hand with the vars exported first. UYUNI_VERIFY_SSL is
+    whenever the process environment doesn't already have them set. SMLM's "Ansible > Schedule
+    Playbook" feature runs the inventory script through a Salt state under salt-minion's own
+    process environment. That environment does not inherit anything exported in an interactive
+    shell, so the file is the only source of the variables for that path. UYUNI_VERIFY_SSL is
     always written "false" — this project's own labs use a self-signed
     cert, the same reality install_smlm.py itself already works around.
     """

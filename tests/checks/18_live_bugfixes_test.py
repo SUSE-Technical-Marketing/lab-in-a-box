@@ -871,7 +871,7 @@ with tempfile.TemporaryDirectory() as tmp:
 check("install_smlm.main(): no longer raises NameError on its normal (non-flag) path",
       not isinstance(smlm_error, NameError))
 check("install_smlm.main(): actually reaches setup_smlm() (proves it got all the way "
-      "through the previously-crashing segment, not just past an earlier early-return)",
+      "through the segment that crashes without the fix, not just past an earlier early-return)",
       len(smlm_setup_calls) == 1)
 
 

@@ -137,7 +137,7 @@ def _automation_host_reachable(myip, timeout=3):
     actually exists and is running. On the very first bootstrap of the
     first KVM node the automation VM has not been created yet, so this is
     always False there — the DNS step is skipped and do_it_all() behaves
-    exactly as it did before this feature existed.
+    with no DNS step.
     """
     if not myip:
         return False
@@ -276,7 +276,7 @@ def configure_nat_network(name, cidr):
     per-OS-network-stack concern — nmcli vs. wicked), defining a libvirt
     network is a single OS-agnostic `virsh net-define` operation, so keeping
     it flat here avoids conflating the two different kinds of "networking
-    setup" this project now has.
+    setup" this project has.
     """
     existing = subprocess.run(
         ["virsh", "net-info", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

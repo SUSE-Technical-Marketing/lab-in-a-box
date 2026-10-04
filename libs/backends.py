@@ -872,10 +872,8 @@ class LibvirtBackend(VMBackend):
             self._virsh("start", vm_name)
 
         elif config_method == "iso-cloud-init":
-            # Only ever computed an unused _boot_params value (a Harvester
-            # config_url kernel arg) and never actually called virt-install —
-            # a pre-existing incomplete stub, not something introduced by
-            # this port. Left as a no-op.
+            # Computes an unused _boot_params value (a Harvester config_url kernel arg) and never
+            # calls virt-install. This is an incomplete stub, left as a no-op.
             if vcluster == "harvester":
                 pass  # _boot_params = "harvester.install.config_url=http://10.100.0.10/harvester/config-create.yaml"
 

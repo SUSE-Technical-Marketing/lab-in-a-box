@@ -105,9 +105,8 @@ check("run_validate: unreadable file -> exit code 1, not a crash", rc == 1)
 check("run_validate: reports the read failure as an [ERROR]", "[ERROR]" in buf.getvalue())
 
 # ── run_validate: format auto-detection (JSON vs YAML) ──────────────────────
-# Used to hardcode json.loads() directly, bypassing primary's JSON/YAML
-# auto-detection — a .yaml lab file would always be reported as unreadable/
-# unparseable even when valid. Covers the fix (primary.try_load_definition).
+# Validates through primary's JSON/YAML auto-detection (primary.try_load_definition). A .yaml
+# lab file must be accepted when it is valid.
 try:
     import yaml as _yaml_probe  # noqa: F401
     _has_yaml = True
