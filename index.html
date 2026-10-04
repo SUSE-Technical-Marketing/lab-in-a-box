@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lab-in-a-box · lab builder</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16191e" media="(prefers-color-scheme: dark)">
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo logo-light" src="logo-icon.svg" alt="lab-in-a-box">
+      <img class="logo logo-dark" src="logo-icon-dark.svg" alt="" aria-hidden="true">
+      <div>
+        <h1 class="brand-name">lab <span class="in-a">in<span class="sep">·</span>a</span> box · lab builder</h1>
+        <p class="sub">Forms generated live from each component's <code>--schema</code>. Nothing here is hard&#8209;coded.</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button type="button" class="theme-toggle" id="themeToggle" title="Theme: auto (follows your system), light, or dark"><span class="dot"></span><span class="t-label">Auto</span></button>
+      <div class="count-pill" id="countPill" title="Components discovered at runtime">
+        <span id="countNum">…</span> <span class="count-label">components</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- read-only hypervisor status; secrets always shown masked, never
+       partially revealed — see webui/lib/discovery.py's status() -->
+  <section class="panel status-panel" id="statusPanel">
+    <div class="panel-head">
+      <h2>Hypervisor status</h2>
+      <span class="badge" id="statusFreshness"></span>
+      <button id="refreshImagesBtn" class="btn" title="Re-check available images without losing anything you've already filled in">↻ Refresh images</button>
+    </div>
+    <div id="statusBody" class="status-body"><p class="muted">Loading…</p></div>
+  </section>
+
+  <main class="layout">
+    <!-- blocks to drag into the lab: VM, cluster, add-ons (discovered at run time) -->
+    <aside class="panel catalogue">
+      <div class="panel-head">
+        <h2>Blocks</h2>
+        <input id="filter" type="search" placeholder="filter add-ons…" autocomplete="off">
+      </div>
+      <div id="palette" class="palette" aria-live="polite"></div>
+      <p class="src-note" id="srcNote"></p>
+    </aside>
+
+    <!-- the lab: common settings on top, clusters and VMs below -->
+    <section class="panel canvas-area" aria-label="Lab canvas">
+      <div class="panel-head">
+        <h2>Lab</h2>
+        <span class="canvas-hint">Drag blocks in · double-click to edit · Delete removes</span>
+      </div>
+      <div id="canvas" class="canvas"></div>
+    </section>
+
+    <!-- assembled lab -->
+    <aside class="panel lab-area">
+      <div class="panel-head">
+        <h2>lab.json</h2>
+        <span class="badge" id="sectionCount">0 sections</span>
+        <div class="view-tabs" role="tablist" aria-label="lab.json view">
+          <button type="button" class="view-tab active" id="viewTabJson" role="tab" aria-selected="true">JSON</button>
+          <button type="button" class="view-tab" id="viewTabDiagram" role="tab" aria-selected="false">Diagram</button>
+        </div>
+      </div>
+      <pre id="labPreview" class="lab-preview">{}</pre>
+      <div id="labDiagram" class="lab-diagram" hidden>
+        <p class="empty-state" id="diagramEmpty">Add nodes to the lab to see an architecture preview.</p>
+        <div id="diagramCanvas"></div>
+      </div>
+      <div id="validateResult" class="validate-result" hidden></div>
+      <div class="lab-actions">
+        <input id="labName" type="text" value="lab" spellcheck="false" aria-label="lab file name">
+        <button id="validateBtn" class="btn">Validate</button>
+        <button id="downloadBtn" class="btn">Download</button>
+        <button id="saveBtn" class="btn">Save to server</button>
+      </div>
+      <p class="hint">Validation and save run through the project's own Python libraries on the server.</p>
+    </aside>
+  </main>
+
+
+  <!-- editor: the schema-driven form for the double-clicked block -->
+  <dialog id="editor" class="editor" aria-labelledby="editorTitle">
+    <div class="editor-head">
+      <div>
+        <h2 id="editorKind"></h2>
+        <h3 id="editorTitle"></h3>
+      </div>
+      <label class="opt-toggle" title="Hide every field that isn't required, to build a minimal lab faster">
+        <input type="checkbox" id="requiredOnlyToggle"> Required only
+      </label>
+    </div>
+    <p id="editorDesc" class="form-desc"></p>
+    <div id="formLayers" class="ci-layers"></div>
+    <form id="schemaForm" autocomplete="off"></form>
+    <div class="editor-foot">
+      <button type="button" id="editorRemove" class="btn danger">Remove</button>
+      <button type="button" id="editorImages" class="btn" title="Re-check available images without losing what you've typed">↻ Refresh images</button>
+      <span class="spacer"></span>
+      <button type="button" id="editorCancel" class="btn">Cancel</button>
+      <button type="button" id="editorApply" class="btn primary">Apply</button>
+    </div>
+  </dialog>
+
+  <footer class="foot">lab&#8209;in&#8209;a&#8209;box · lab-builder · <code>__LABVERSION__</code></footer>
+
+  <div id="toast" class="toast" hidden></div>
+  <!-- Vendored, not CDN-loaded: this project's automation VM may run on a
+       network-restricted training/demo host with no outbound internet, and
+       the diagram must keep working there. mermaid.js 10.9.1, unmodified —
+       see webui/htdocs/vendor/mermaid.LICENSE.txt (MIT). -->
+  <script src="vendor/mermaid.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
