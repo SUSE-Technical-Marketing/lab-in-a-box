@@ -11,6 +11,8 @@
 
 **lab-in-a-box** builds complete labs from a single JSON or YAML file: the VMs, DNS, Kubernetes clusters and add-ons you describe. The VMs can run on your own KVM hosts, on Harvester, or on any of eight public clouds, and the same file works across them.
 
+**[→ Try lab-builder online](https://rmahique.github.io/lab-in-a-box/index-static.html)** (fully static, no backend required)
+
 Documentation: https://rmahique.github.io/lab-in-a-box/
 
 ## Why lab-in-a-box?
