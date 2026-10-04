@@ -89,16 +89,9 @@ resolved = backends.AWSBackend.resolve(
 check("resolve() picks up optional networking/key fields",
       (resolved.subnet_id, resolved.security_group_id, resolved.key_name) == ("subnet-1", "sg-1", "labkey"))
 
-# ── resolve(): AWS_PROFILE wins outright over leftover raw keys ────────────
-# Confirmed live 2026-09-13: resolve_cloud_account()'s merge only overrides
-# same-named keys, so a cloud_account that sets AWS_PROFILE (to switch to
-# SSO) still had /etc/lab_creation.cfg's own unrelated, stale
-# AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN come through in the same effective
-# config — and the `aws` CLI's own credential chain checks those explicit
-# env vars BEFORE AWS_PROFILE, so a stale/expired key silently defeated a
-# freshly-configured, working SSO profile (RequestExpired even though the
-# profile worked fine when tested directly). resolve() must ignore any
-# access/secret/session-token fields entirely once a profile is set.
+# ── resolve(): AWS_PROFILE wins over leftover raw keys ────────────────────
+# When a profile is set, raw access keys, secrets and session tokens from the shared config are ignored. The aws CLI checks those
+# variables before the profile.
 resolved = backends.AWSBackend.resolve(
     {}, "vm1",
     {"AWS_REGION": "eu-central-1", "AWS_PROFILE": "sso-profile",
@@ -154,7 +147,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on EC2 ─────
 check("list_used_macs() returns empty (EC2 has no MAC concept this backend uses)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): a cloud backend has no MAC concept, so the value is passed through unchanged.
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -228,14 +221,8 @@ def _fake_run(args, **kwargs):
     calls.append(args)
     if "describe-images" in args:
         return _cp(0, stdout=json.dumps({"Images": [{"RootDeviceName": "/dev/sda1"}]}))
-    # Internet-Gateway/route management (added 2026-09-13) runs for every
-    # create_vm() call that has a subnet configured — every test below that
-    # sets subnet_id needs these mocked as "already fine" (an IGW already
-    # attached, the default route already present) so it stays a pure no-op
-    # and doesn't interfere with what these particular tests are actually
-    # asserting. The dedicated Internet-Gateway test section further down
-    # uses its own separate fixture to exercise the real create/attach/
-    # add-route paths.
+    # Internet gateway and route management runs for every create_vm() call with a subnet. The tests here mock it as already in place,
+    # so it stays a no-op. The internet gateway tests further down use their own fixture for the create, attach and route paths.
     if "describe-subnets" in args:
         return _cp(0, stdout=json.dumps({"Subnets": [{"VpcId": "vpc-1"}]}))
     if "describe-internet-gateways" in args:
@@ -296,12 +283,9 @@ check("create_vm() explicitly requests a public IP whenever a subnet is configur
       "--associate-public-ip-address" in run_instances_call)
 
 
-# ── create_vm(): auto-raises vm_dsk_gb to the AMI's own minimum root volume size ──
-# Confirmed live 2026-09-13: ensure_cloud_dns_vm() always requests an 8 GiB root
-# volume regardless of which AMI a given lab actually configures — a real SLES
-# 15 SP7 BYOS AMI's own snapshot needs >= 10 GiB, so run-instances rejected it
-# with InvalidBlockDeviceMapping. Fixed once in create_vm() itself (the one
-# place that already knows the AMI's real minimum), not in every caller.
+# ── create_vm(): vm_dsk_gb is raised to the AMI's minimum root volume size ──
+# The DNS VM requests 8 GiB, but a BYOS AMI can need 10 GiB. create_vm() raises the requested size to the snapshot's minimum, because
+# it is the one place that knows the AMI.
 def _fake_run_with_bdm(min_gb):
     def _run(args, **kwargs):
         if "describe-images" in args:
@@ -334,13 +318,7 @@ check("create_vm(): a requested vm_dsk_gb already BIGGER than the AMI's minimum 
 
 
 # ── create_vm(): security-group access management ───────────────────────────
-# Confirmed live 2026-09-13: a freshly-created AWS node got a real IP/DNS
-# entry but check_ssh_conn() then exhausted its retry limit — the security
-# group had no inbound rule at all for traffic from outside AWS's own
-# network (only a self-referencing member-to-member rule). create_vm() must
-# always ensure SSH from this automation node's own public IP, plus any
-# extra "aws_open_ports" the lab JSON configures (e.g. SMLM's own 443/4505/
-# 4506) — added at the user's own explicit request after diagnosing that bug.
+# create_vm() always allows SSH from this automation node's public IP, and any ports listed in aws_open_ports, for example 443, 4505 and 4506.
 def _fake_run_sg(existing_rules, calls_out):
     def _run(args, **kwargs):
         calls_out.append(args)
@@ -406,10 +384,8 @@ check("create_vm(): aws_open_ports entries support an explicit '<port>/<protocol
       any("69" in c and "udp" in c and "0.0.0.0/0" in c for c in authorize_calls))
 
 
-# ── ensure_ports_open(): VMBackend.ensure_ports_open() override, standalone (no create_vm) ──
-# Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — opens a port for an
-# ALREADY-EXISTING host (e.g. the WireGuard overlay hub named via
-# OVERLAY_HUB_HOST) without creating/touching any specific VM.
+# ── ensure_ports_open(): standalone override, without create_vm() ──────────
+# Opens a port for an existing host, such as the overlay hub named by OVERLAY_HUB_HOST, without creating or changing a VM.
 b_ports = backends.AWSBackend("eu-central-1", profile="lab", security_group_id="sg-1")
 b_ports._cached_public_ip = "198.51.100.7"
 ports_calls = []
@@ -427,11 +403,8 @@ check("VMBackend.ensure_ports_open() base implementation is a documented no-op f
 
 
 # ── get_private_ip() / get_subnet_cidr() / disable_source_dest_check() ──────
-# Added 2026-09-18 for libs/overlay.py's site-gateway model — a site
-# gateway needs its own private IP (so OTHER nodes in the same subnet can
-# route through it) and its subnet's real CIDR (to advertise to the
-# overlay hub), and needs source/dest-check disabled to actually forward
-# traffic that isn't addressed to itself.
+# A site gateway needs its private IP, so that other nodes in its subnet can route through it. It needs its subnet CIDR, which it
+# advertises to the overlay hub. It needs source and destination checking disabled, to forward traffic addressed to other hosts.
 def _fake_run_site(calls_out):
     def _run(args, **kwargs):
         calls_out.append(args)
@@ -528,9 +501,8 @@ check("_own_public_ip(): dies clearly if it can't reach the public-IP-lookup ser
       any("public IP" in m for m in died))
 
 
-# ── cloud_instance_type: explicit override bypasses _pick_instance_type() entirely ──
-# added 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-# ceiling — see _parse_sku_table()'s own docstring and README's Compute backends table.
+# ── cloud_instance_type: explicit override ──
+# The cloud_instance_type setting replaces the built-in table lookup in _pick_instance_type().
 b5 = backends.AWSBackend("eu-central-1", profile="lab")
 b5._user_data_by_vm["vm1"] = ""
 calls = []
@@ -543,9 +515,8 @@ check("create_vm() uses cloud_instance_type verbatim, bypassing _pick_instance_t
       "m5.2xlarge" in run_instances_call and "t3.medium" not in run_instances_call)
 
 
-# ── nested_virtualization: opt-in, OFF by default (existing behavior unaffected) ──
-# added 2026-09-30 — see AWSBackend's own docstring for the full "why" (running this project's
-# real kickstart/Harvester-ISO pipeline on a cloud-provisioned EC2 "hypervisor" node).
+# ── nested_virtualization: opt-in, off by default ───────────────────────────
+# The AWSBackend docstring describes this option. It runs the kickstart and Harvester ISO pipeline on an EC2 hypervisor node.
 b7 = backends.AWSBackend("eu-central-1", profile="lab")
 b7._user_data_by_vm["vm1"] = ""
 calls = []
@@ -651,15 +622,9 @@ check("host_resources() returns a (cpu, mem_mb, disk_mb) tuple that never reads 
       backend.host_resources() == (9999, 999999, 999999))
 
 
-# ── create_vm(): Internet Gateway + default-route management ───────────────
-# Confirmed live 2026-09-13: a real AWS account's VPC had no Internet
-# Gateway attached at all, and its route table had no 0.0.0.0/0 route —
-# every AWS node still got a real public IP (assigned/NAT'd regardless),
-# passed every security-group/NACL/guest-firewall check, yet remained
-# completely unreachable, since packets had no path to arrive by in the
-# first place. Automated at the user's own explicit request ("add it as
-# part of the process of using aws") rather than left as a one-off manual
-# CLI fix.
+# ── create_vm(): internet gateway and default route ──────────────────────────
+# A subnet without an attached internet gateway, or without a default route, gives a node that cannot be reached, even with a public IP.
+# create_vm() attaches the gateway and adds the route when they are missing.
 def _fake_run_igw(vpc_igws, route_tables, calls_out, created_igw_id="igw-new1"):
     def _run(args, **kwargs):
         calls_out.append(args)
@@ -738,15 +703,9 @@ check("create_vm(): no subnet configured at all -> never touches Internet Gatewa
               for call in igw_calls for c in call))
 
 
-# ── _find_instance(): a duplicate Name tag must not fool the lookup right ──
-# after create_vm() ────────────────────────────────────────────────────────
-# Confirmed live 2026-09-13: EC2 Name tags aren't unique. setup_vm.py (unlike
-# setup_lab.py's own full run) doesn't destroy a pre-existing same-named
-# instance first, so create_vm() can find itself with TWO instances tagged
-# Name=vm1 — an old one and the one it just made. Before this fix, _find_
-# instance()'s tag-only lookup returned "the first" match with no ordering
-# guarantee, and create_vm()'s own post-create get_ip() poll silently
-# returned the WRONG (old) instance's IP.
+# ── _find_instance(): a duplicate Name tag does not return the wrong instance ──
+# Name tags are not unique in EC2. _find_instance() prefers the instance ID cached by create_vm(), so the wait for the new instance's
+# IP uses the right one.
 b_dup = backends.AWSBackend("eu-central-1", profile="lab")
 b_dup._user_data_by_vm["vm1"] = ""
 dup_calls = []
