@@ -1,378 +1,42 @@
 """
-spacecmd_common.py — shared spacecmd/mgr-sync activation-key + channel-sync
-helpers for SMLM (install_smlm.py, Kubernetes deployment, kubectl exec) and
-Uyuni (install_uyuni.py, single-VM podman deployment via mgradm, mgrctl
-exec) — same underlying server tooling (SUSE Multi-Linux Manager/Uyuni server), reached
-through a different exec wrapper depending on how each product is deployed
-in this project. Callers pass that wrapper as `exec_prefix` (e.g.
-"kubectl exec -n {ns} deploy/uyuni -c uyuni --" or "mgrctl exec --").
+Shared spacecmd and mgr-sync helpers for SUSE Multi-Linux Manager (SMLM) and Uyuni servers.
 
-Command syntax verified against live documentation.suse.com/multi-linux-manager
-and uyuni-project.org docs (2026-08-27, current SMLM 5.0/5.1/5.2 and Uyuni
-2024.08-2026.08). NOT live-tested against a real server — no SMLM/Uyuni
-instance is available in this project to test against (same constraint as
-the rest of this migration). Specific caveats from that research, flagged
-inline below:
-  - activationkey_details' exit code on a missing key is undocumented, so
-    existence is checked by grepping activationkey_list's output instead.
-  - mgr-sync's plural "add channels <label1> <label2>" form (already used,
-    unrelated to this module, by install_uyuni.py's existing uyuni_channels
-    handling) could not be confirmed against current docs — this module
-    deliberately uses the singular, one-channel-per-call form instead
-    (confirmed from uyuni-project.org's own examples).
-  - AppStream selection (ensure_appstreams, added 2026-08-27): verified
-    directly against Uyuni's Java source (ActivationKeyHandler.java,
-    ActivationKeyManager.java, commit 44859e6), not just docs — spacecmd has
-    no native subcommand for this, only the generic 'api' passthrough calling
-    activationkey.addAppStreams/removeAppStreams. There is no list/get API
-    for currently-enabled AppStreams (confirmed absent from source), and
-    addAppStreams is NOT idempotent server-side: re-adding an already-enabled
-    module faults with XML-RPC code -309 ("duplicateStream"), message
-    "App stream '<name>' already exists in the activation key." — that exact
-    message substring is what this module checks for instead of pre-listing.
-    Confirmed present with an identical signature in SMLM 5.1 as well as
-    Uyuni (corrects an earlier assumption in TODO that SMLM lacked this).
-  - Package assignment (activation_key_packages/ensure_activation_key_packages,
-    added 2026-08-27): corrects a DIFFERENT earlier mistake in this project's
-    own research — a prior pass concluded "no activationkey_* command for
-    package profile" was found, but that had searched for the wrong term.
-    The real, spacecmd-NATIVE mechanism is activationkey_addpackages/
-    activationkey_removepackages/activationkey_listpackages (wrapping
-    activationkey.addPackages/removePackages/getDetails' packages array),
-    confirmed by reading ActivationKeyHandler.java and spacecmd's own
-    activationkey.py directly. "Package profile" is unrelated Uyuni
-    terminology for a completely different feature —
-    system.createPackageProfile/comparePackageProfile — a saved snapshot of
-    an already-REGISTERED system's installed packages for later diffing,
-    nothing to do with activation keys. Since activationkey_listpackages
-    gives a reliable list to diff against (unlike AppStreams above, which
-    has no list API at all), this is genuinely idempotent — not a
-    fault-string heuristic — and, like ensure_appstreams, runs
-    unconditionally rather than only at key-creation time. Name-only: the
-    underlying API struct supports an optional per-package 'arch' field,
-    but spacecmd's own CLI wrapper never surfaces it, so neither does this
-    module.
-  - Config channels (ensure_config_channels and friends, added 2026-08-27):
-    verified directly against spacecmd's own source
-    (spacecmd/src/spacecmd/configchannel.py, GitHub master), since the
-    published Uyuni/SMLM 5.1 doc pages both lag behind it (missing the
-    'normal'/'state' -t/--type flag on configchannel_create and the
-    configchannel_listgroups subcommand entirely — neither is documented on
-    either site as of this check). File content is passed to
-    configchannel_addfile/configchannel_updateinitsls via a LOCAL file path
-    (-f), not inline text or stdin, so this module stages content to a
-    remote temp file first (cat > via input_text, same idiom as
-    ensure_spacecmd_config), then removes it. There's no dedicated
-    channel-existence or single-file-diff command; existence is checked by
-    grepping configchannel_list's output (same idiom as
-    activation_key_exists), and file-level idempotency by looking for a
-    locally-computed sha256 substring in configchannel_filedetails' output
-    (a heuristic — a trailing-newline/encoding mismatch would just cause a
-    harmless redundant push, not corruption). Salt "state" channels are
-    fully wrapped by the same configchannel_* commands (only the type
-    differs) — no separate Salt file_roots/SSH mechanism is needed. Directly
-    associating a channel with an already-registered system
-    (system_addconfigchannels et al.) is deliberately NOT covered here —
-    that's client-targeting and belongs with the separate, not-yet-designed
-    client-registration addon; this module only manages channels/content on
-    the server itself, same scope as the rest of this file.
-  - Organizations (ensure_orgs and friends, added 2026-08-27): verified
-    directly against spacecmd's org.py source (GitHub master) plus the
-    org/org.trusts/channel.access XML-RPC API references. The single fact
-    that drives this design: org-scoping in spacecmd is 100% a function of
-    WHICH USER a session is authenticated as — grepped do_login() and every
-    other module in spacecmd's source, there is no -o/--org flag or
-    session-switch command anywhere. Activation keys and config channels are
-    hard-partitioned per org (confirmed in the activationkey.create API doc:
-    a key named "foo" becomes literally "100-foo" for org 100), so once
-    ensure_spacecmd_config() re-authenticates as a given org's own admin,
-    the existing ensure_activation_key/ensure_config_channels/
-    ensure_appstreams functions work completely unchanged, scoped
-    automatically by whichever session is active — no new provisioning
-    logic needed for org-scoped keys/channels, only session-switching around
-    the existing calls. Software channels are different: shared storage,
-    access-gated per org via org.trusts (org_addtrust) PLUS the owning org
-    marking the channel 'protected'/'public' via channel.access.setOrgSharing
-    — which has no spacecmd subcommand at all, only the generic 'api'
-    passthrough (confirmed absent from source). org_list prints one org name
-    per line with no header, so existence is checked by an exact-line match
-    (stricter than the substring checks used for activation
-    keys/channels above, since org names are shorter and more collision-prone).
-    Trust's bidirectionality is inferred from the docs' own phrasing
-    ("establishing trust... allow them to share content between them"), not
-    independently re-verified — there is no live server to test either
-    direction against. channel.access.getOrgSharing's exact output shape
-    wasn't in the fetched docs either, so ensure_channel_sharing's
-    idempotency check is a substring-match heuristic, same spirit as the
-    AppStream fault-string check above.
-  - RBAC / custom "User Access Groups" (ensure_access_groups and friends,
-    added 2026-08-27): verified directly against AccessHandler.java (GitHub
-    master) and spacecmd's actual source-tree file listing, not just docs.
-    Confirmed this is a genuinely separate 'access' XML-RPC namespace from
-    'user' (a custom group is an AccessGroup, not a user attribute), and
-    that spacecmd has NO 'access.py' module at all — zero native
-    access_* subcommands exist, so every operation here (createRole,
-    grantAccess, listRoles, listPermissions) goes through the generic 'api'
-    passthrough, same as AppStreams/channel-sharing above. The older, fixed
-    roles (org_admin, channel_admin, etc.) remain a separate, pre-existing
-    mechanism unaffected by this: user_addrole/user_removerole/user_details
-    are real spacecmd-native subcommands, confirmed present in
-    spacecmd/src/spacecmd/user.py, and this module reuses them as-is to
-    attach a user to a custom group's label too, since a created access
-    group becomes an ordinary role label server-side once it exists — no
-    separate "add user to access group" API exists or is needed. Deliberate
-    CORRECTION (2026-09-15, confirmed live against a real SMLM 5.2 server):
-    the original research here missed that spacecmd DOES have a native
-    user_create subcommand (spacecmd/src/spacecmd/user.py) — `spacecmd --
-    help`'s two-column output lists it, easy to miss by eye, and the
-    earlier docs-only research pass didn't catch it. ensure_users()/
-    ensure_user() below now create user accounts directly, so a group's
-    `users` list no longer requires the account to already exist
-    elsewhere. grantAccess's own
-    idempotency on a repeat call for an already-granted namespace wasn't
-    confirmed, so ensure_access_group_permissions checks
-    access.listPermissions first rather than assuming a repeat call is a
-    safe no-op — same "check first" caution used throughout this module
-    wherever idempotency wasn't independently confirmed. Feature confirmed
-    present (API-only) since Uyuni 2025.05 and SMLM 5.1; a 2026.01 Web UI
-    was added on top of the SAME API — no method-signature change to track.
-  - Ansible integration (ensure_ansible_paths/schedule_ansible_playbook and
-    friends, added 2026-08-27): verified directly against
-    AnsibleHandler.java (GitHub master) and, again, a direct listing of
-    spacecmd's source tree — no 'ansible.py' module exists there either
-    (confirmed by a direct 404 on the raw file URL), so every ansible.*
-    operation goes through the generic 'api' passthrough, same as RBAC
-    above. Confirmed from the handler itself that this is
-    ORCHESTRATION-ONLY, not a content-push model like config channels:
-    there is no method anywhere to upload/write playbook or inventory
-    content — only discoverPlaybooks/fetchPlaybookContents/introspectInventory
-    (all read-only) and createAnsiblePath/schedulePlaybook. A "control node"
-    is a pre-existing REGISTERED system with the "Ansible Control Node"
-    add-on entitlement already enabled; playbook/inventory files already
-    live on its filesystem, managed out-of-band (e.g. git) — this module
-    has no way to enable that entitlement itself" — CORRECTED 2026-09-18: that
-    claim was itself unconfirmed prior research that never independently verified
-    system.addEntitlements against the real entitlement label. Ground-truthed this
-    time directly against Uyuni's own Java source (java/core/.../domain/entitlement/
-    AnsibleControlNodeEntitlement.java + EntitlementManager.ANSIBLE_CONTROL_NODE_ENTITLED
-    = "ansible_control_node"), not guessed — see ensure_ansible_control_node() below,
-    which enables it via exactly that. Playbook/inventory FILE CONTENT still lives on
-    the control node's own filesystem, managed out-of-band (e.g. git) — enabling the
-    entitlement only makes the server recognise the system as a valid control node
-    target for the functions below, it does not and cannot create file content there.
-    createAnsiblePath/schedulePlaybook both need the control
-    node's NUMERIC Uyuni system ID (not a hostname) — no name-to-ID
-    resolution is provided here; stacking another unverified guess on top
-    of an already-multi-step feature wasn't worth it, so the JSON just
-    takes the ID directly (findable via 'spacecmd system_list' or the Web
-    UI). schedulePlaybook needs an XML-RPC dateTime argument
-    ("earliestOccurrence") — confirmed by reading spacecmd's
-    parse_api_args/datetime_parser_lst source directly that the 'api'
-    passthrough auto-converts any top-level ISO-8601-looking string
-    argument into a real Python datetime before the XML-RPC call, which the
-    stock (unmodified) xmlrpclib marshaller then sends as a proper
-    dateTime.iso8601 — no manual DateTime construction needed on our end.
-    Deliberately NOT wired into the automatic install flow the way every
-    other ensure_* function in this module is: scheduling a playbook is a
-    one-shot action (each call creates a brand-new scheduled run, there is
-    nothing to check for idempotency against), so silently re-triggering it
-    on every re-run of setup_lab.py would be a real hazard if the playbook
-    itself isn't idempotent — see the install script's --run-ansible-playbooks
-    flag instead of the normal automatic ensure_* wiring. Status/output of a
-    scheduled run IS available through spacecmd-native commands
-    (schedule_details/schedule_getoutput — the 'schedule' namespace, unlike
-    'ansible', is fully wrapped natively), reused as-is by
-    ansible_playbook_status(). Confirmed present in SMLM since 5.1; the
-    2026.01 "playbook variables in the Web UI" release note is UI-only —
-    confirmed via commit history that the underlying extraVars API field
-    predates it (added 2025-03), so there was no signature change to track.
-  - Content Lifecycle Management / CLM (ensure_content_projects and
-    friends, added 2026-08-27): verified directly against
-    ContentManagementHandler.java (GitHub master) plus ContentManager.java,
-    FilterCriteria.java, ProjectSource.java and EnvironmentTarget.java for
-    the underlying semantics — not docs prose alone, which turned out to be
-    ambiguous about promoteProject's direction (see below). Same pattern as
-    RBAC/Ansible: the 'contentmanagement' namespace has ZERO native spacecmd
-    subcommands (confirmed absent from spacecmd's source tree) — every
-    operation goes through the generic 'api' passthrough. Confirmed only
-    "software" is a valid Source type in current source (config-channel
-    sources were in CLM's original design but no such ProjectSource subclass
-    was ever built) — no scoping loss from supporting only software-channel
-    sources. createProject/createFilter/createEnvironment/attachSource all
-    THROW on a duplicate rather than being upsert-safe, so idempotency needs
-    an explicit lookup-first for each, same as everywhere else in this
-    module — done via listProjects/listProjectSources/listProjectEnvironments
-    substring checks (deliberately NOT lookupProject/lookupEnvironment's own
-    fault/exit-code behavior on a miss, which — exactly like
-    activationkey_details earlier in this file — was not confirmed, so the
-    same list+grep idiom is used instead). FILTERS are a genuine gap: there
-    is no lookup-by-name API for them, only by numeric ID, and that ID is
-    only ever returned by createFilter itself. ensure_content_filter works
-    around this in two ways, both flagged explicitly as heuristics: (1)
-    idempotency is checked at the PROJECT level — does this project's
-    listProjectFilters output already mention this filter name — rather
-    than a true global existence check; (2) when creating fresh, the new
-    filter's numeric id is extracted by regexing createFilter's raw printed
-    return struct (spacecmd's passthrough prints the unmarshalled Python
-    object — most likely 'id': 123 dict-repr style; the exact print format
-    was NOT independently confirmed). If that extraction fails,
-    ensure_content_filter dies with the literal manual 'spacecmd api'
-    command to run instead of silently giving up. promoteProject(project,
-    envLabel) — confirmed directly in ContentManager.java, NOT from the
-    (ambiguous) admin-guide prose — takes the environment being promoted
-    FROM, not the destination; it looks up envLabel then calls
-    getNextEnvironmentOpt(). Build/promote are async with NO action id (an
-    internal JVM message queue, not a Taskomatic action — the 'schedule'
-    namespace used for Ansible's status polling doesn't apply here);
-    progress is polled via lookupEnvironment's own "status" field
-    (new/building/generating_repodata/built/failed), same regex-extraction
-    caveat as the filter id above. Like Ansible's schedulePlaybook, build/
-    promote are deliberately NOT wired into the automatic install flow —
-    each call triggers real background work with no dedup to check against,
-    so re-running setup_lab.py would otherwise silently re-trigger rebuilds/
-    re-promotions — see the install scripts' --run-clm-actions flag instead.
-    Confirmed present in SMLM (core, not optional); confirmed (not just
-    repeated from the TODO) that spawalk-manage-channel-lifecycle's removal
-    is stated explicitly in SMLM 5.2's OWN release notes, though upstream
-    Uyuni's public notes as of this research only say "deprecated" (2025.05)
-    — flagged as a real, checked distinction, not an assumption.
-  - SCAP / CVE auditing (ensure_scap_scan/list_systems_by_patch_status and
-    friends, added 2026-08-27): a genuinely DIFFERENT situation from
-    RBAC/Ansible/CLM above — spacecmd/src/spacecmd/scap.py DOES exist and
-    DOES wrap 4 native commands (scap_schedulexccdfscan/scap_listxccdfscans/
-    scap_getxccdfscandetails/scap_getxccdfscanruleresults), confirmed by
-    reading it directly. But that only covers the LEGACY, pre-staged-file
-    XCCDF/OVAL scan model (system.scap.scheduleXccdfScan et al.) —
-    orchestration-only, same control-node-content idiom as Ansible
-    integration: the XCCDF document (and OpenSCAP/SCAP-Security-Guide
-    packages) must already be installed on the TARGET system, this module
-    pushes nothing. SMLM 5.2 also introduced a "centralized policies /
-    automated remediation" layer bolted onto the SAME system.scap namespace
-    (listPolicies/listScapContent/listTailoringFiles/
-    scheduleBetaXccdfScanCustom/scheduleBetaXccdfScanWithPolicy),
-    explicitly Technology Preview/Beta, with ZERO spacecmd coverage (no
-    compliance.py/policy.py module exists either). An initial pass judged
-    this too unverified to build against; a later correction (2026-09-25,
-    see list_images_by_patch_status()'s own docstring below) confirmed all
-    5 methods DO exist, directly against the shipped server's Java source.
-    5 thin example wrapper functions (list_scap_content/list_scap_policies/
-    list_scap_tailoring_files/schedule_beta_xccdf_scan_with_policy/
-    schedule_beta_xccdf_scan_custom, added 2026-09-30, ground-truthed
-    directly against the real API reference pages) now wrap that surface —
-    see their own docstrings just above the "dev/QA/prod environment
-    topology" section further down. Still NOT wired into the automatic
-    install flow, and still requiring beta features enabled by hand in the
-    acting user's own Web UI account preferences (no XML-RPC toggle exists
-    for that), and content/policies/tailoring files can only be uploaded
-    through the Web UI (no create* API exists) — so this doesn't close the
-    "no SCAP policies/content defined" gap by itself, it only gives a way
-    to discover and trigger scans against whatever's already been uploaded
-    there by hand. There is also no built-in dedup for
-    scheduleXccdfScan, so ensure_scap_scan() checks scap_listxccdfscans'
-    raw output for the target xccdf_path first (a heuristic — it matches on
-    path only, not path+profile, since listXccdfScans doesn't surface the
-    profile without a further per-scan getXccdfScanDetails round trip).
-    Deliberately NOT wired into the automatic install flow — scheduling a
-    scan is one-shot, real work — see the install scripts' --run-scap-scans
-    flag instead, same reasoning as Ansible/CLM. CVE/OVAL auditing
-    (audit.listSystemsByPatchStatus) is a SEPARATE, unrelated mechanism from
-    either SCAP path above — confirmed absent from spacecmd entirely (no
-    audit.py; errata.py's CVE-related commands only look up published
-    ERRATA, an older channel-metadata-based mechanism, not the OVAL-based
-    per-system patch-status audit) — so it goes through the generic 'api'
-    passthrough. It's a pure read-only query with nothing to schedule and no
-    idempotency concern. Confirmed (matches the TODO exactly): CVE/OVAL
-    audit was Technology Preview in SMLM 5.1, fully supported since 5.2.
-  - dev/QA/prod environment topology (ensure_environments and friends,
-    added 2026-08-27): a THIN COMPOSITION layer, not a new Uyuni concept —
-    confirmed by research that Uyuni has no first-class "environment" or
-    "release" object tying system groups, activation keys, CLM environments,
-    and tags together; the only REAL native links found are
-    activation-key<->system-group (activationkey.addServerGroups,
-    spacecmd-native as activationkey_addgroups/listgroups/removegroups) and
-    activation-key<->CLM-environment (indirect, via base-channel selection —
-    no direct field). "Releases" specifically: confirmed NO release.*
-    namespace exists anywhere in Uyuni's API — the CLM environment chain
-    already built above (ensure_content_projects) IS the real mechanism,
-    Uyuni just never calls it that. System groups (ensure_system_group and
-    friends) are spacecmd-native via the systemgroup namespace
-    (group_create/group_addsystems/group_listsystems/etc., confirmed by
-    reading spacecmd/src/spacecmd/group.py directly). "Tags" have no
-    first-class object either (confirmed: no tag.*/system.tag* namespace
-    anywhere in the full API index) — the two real mechanisms are group
-    membership (already covered) and system.custominfo key/value pairs,
-    confirmed spacecmd-native via custominfo_createkey (org-level key
-    definition, required before any value can be set) plus
-    system_addcustomvalue (per-system value — this one lives in system.py,
-    not custominfo.py, despite being conceptually the same feature).
-    system_addcustomvalue is treated as safely upsert-able without a
-    pre-check: system_updatecustomvalue is documented as a literal alias of
-    the same call, implying setCustomValues itself doesn't distinguish
-    create-vs-update — an inference, not independently confirmed against a
-    live server. Multiple named activation keys (one per environment) are
-    supported via a new ensure_activation_keys() list-orchestrator reusing
-    ensure_activation_key/ensure_appstreams/ensure_activation_key_packages
-    verbatim per list entry — the exact same reuse trick ensure_orgs()
-    already uses for org-scoped keys, just applied to a plain list instead
-    of one-key-per-org. ensure_activation_key_groups() generalizes the
-    package-assignment pattern (genuinely idempotent, called
-    unconditionally) to system-group linkage too, alongside
-    ensure_activation_key's own pre-existing creation-time-only 'groups'
-    follow-up (same field, harmless to have both). Patching schedules:
-    confirmed THREE distinct real mechanisms exist —
-    recurring.highstate/recurring.custom (cron-based, targets a group
-    directly by NUMERIC id), maintenance.* (a gate on already-scheduled
-    actions, not a scheduler itself, and only assignable to system IDs, not
-    groups, at the API level), and systemgroup.scheduleApplyErrataToActive
-    (one-shot "patch this group now"). Only the first is implemented here
-    (ensure_recurring_schedule via the generic 'api' passthrough — no
-    recurring.py exists in spacecmd's source tree); maintenance.* and
-    scheduleApplyErrataToActive are DELIBERATELY DEFERRED — the former
-    needs group-to-system-ID resolution plus ical calendar handling, the
-    latter needs an unconfirmed errata-ID format, and stacking more
-    unverified specifics on top of an already-multi-part feature wasn't
-    worth it this round. group_id_for()'s numeric-id resolution (needed
-    because recurring.* takes an id, not a name, unlike systemgroup.* which
-    takes names throughout) is a heuristic regex against
-    'group_details'' human-readable output, whose exact display format
-    wasn't independently confirmed — an explicit 'group_id' override in the
-    JSON is always available as a fallback, same precedent as Ansible
-    integration's control_node_id. Recurring-action idempotency (does
-    creating the same schedule twice fault, upsert, or duplicate?) was
-    never confirmed by research — no list/exists method was found for
-    recurring actions — so, like Ansible/CLM/SCAP scheduling,
-    ensure_recurring_schedule is deliberately NOT wired into the automatic
-    install flow; see the install scripts' --run-recurring-schedules flag
-    (run_environment_schedules) instead. Everything else in this feature
-    (system groups, activation-key/group linking, custom-info tags) IS
-    idempotent and automatic, same as the rest of this module.
-  - Client registration (ensure_client_registered and friends, added
-    2026-08-28): for install_client_registration.py, a NEW VM-level addon
-    (not install_smlm.py/install_uyuni.py, which install the SERVER) that
-    registers some OTHER host as a Salt client of an existing Uyuni/SMLM
-    server. Confirmed via live doc research (uyuni-project.org and
-    documentation.suse.com/multi-linux-manager 5.1/5.2, 2026-08-28): the
-    registration mechanism itself is identical across Uyuni and every SMLM
-    version — `ACTIVATION_KEYS="<key>" curl -Sks
-    https://<server>/pub/bootstrap/bootstrap.sh | /bin/bash` on the client,
-    with REACTIVATION_KEY as the only other commonly-used override. Bootstrap
-    alone is NOT sufficient: the minion's key lands in a "pending" state and
-    is never auto-accepted by that flow (confirmed — auto-accept exists only
-    via a separate, server-side autosign_grains file this project doesn't
-    set up) — actually registering the client needs saltkey.accept, and
-    there is no native spacecmd subcommand for the saltkey namespace at all
-    (confirmed against the spacecmd command reference index — activationkey,
-    system, group, etc. all appear there, saltkey does not), so this is
-    reached the same way as Ansible/RBAC/CLM above: the generic 'api'
-    passthrough, calling saltkey.pendingList/acceptedList/accept directly.
-    Minion ID is assumed to equal the client's own FQDN (this project's
-    convention for every VM already) — Salt's default when no minion_id
-    file is pre-seeded, not independently verified against every possible
-    base image. The "ensure the server has what registration needs"
-    half of the TODO needed zero new code: ensure_activation_key/
-    ensure_channels_synced (existing) work unchanged against a new
-    client_registration_* field prefix, exactly like every other
-    prefix-parameterized function in this module. NOT live-tested.
+The same server tooling is reached through an exec wrapper that depends on how the server is
+deployed: install_smlm.py (Kubernetes) and install_uyuni.py (podman, via mgradm) pass their own
+wrapper as `exec_prefix`, for example "kubectl exec -n {ns} deploy/uyuni -c uyuni --" or
+"mgrctl exec --".
+
+Commands use the spacecmd native subcommands where they exist. Namespaces without a spacecmd
+module (ansible, access, contentmanagement, saltkey, audit, and the extra system.scap calls) go
+through the generic `spacecmd api` passthrough, which calls the XML-RPC method directly.
+
+Idempotency: the ensure_* functions look up the current state first and only create what is
+missing. Where the server has no list or lookup call, the check matches on the command's output
+text, and the docstring of each function states the match used. ensure_appstreams detects an
+already-enabled module from the server's duplicate-stream fault text.
+
+One-shot actions are never run by the automatic install flow, because each call starts real work
+with no duplicate check. These are: scheduling an Ansible playbook, CLM build and promote, SCAP
+scans, and recurring schedules. Each has its own function here and a flag in the install scripts
+(--run-ansible-playbooks, --run-clm-actions, --run-scap-scans, --run-recurring-schedules).
+
+Feature areas:
+  - Activation keys: the key itself, its packages, system-group links and AppStreams.
+  - Software and configuration channels, including channel sharing between organizations.
+  - Organizations: session scope follows the authenticated user, so once a session is for an
+    organization's admin, the existing ensure_* functions apply to that organization.
+  - Custom access groups (RBAC) and user accounts.
+  - Ansible control nodes: the Ansible Control Node entitlement is enabled on a registered system,
+    and playbooks and inventories stay on that system's filesystem, managed outside this module.
+  - Content Lifecycle Management: projects, filters, environments and sources, with software
+    channels only.
+  - SCAP audits (the legacy XCCDF scan path and the SMLM 5.2 beta policy calls) and CVE/OVAL
+    patch-status queries.
+  - Environment topology: system groups, activation-key-to-group links, custom-info tags, and
+    recurring highstate or custom schedules, which the install flow runs only when asked to.
+  - Client registration: registers an existing host as a Salt minion. It runs the bootstrap script
+    with an activation key, then accepts the pending minion key through the saltkey API. The minion
+    ID is the client's FQDN.
 """
 # Part of lab-in-a-box
 # Author/s: Raul Mahiques
@@ -393,65 +57,20 @@ from lab_creation import ssh_run, scp_to, die, warn, error
 
 def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
     """
-    Runs one independent config-provisioning step from install_smlm.py's/
-    install_uyuni.py's own setup_*() orchestration block (each a call to one
-    of this module's ensure_* functions) and reports+continues on failure
-    instead of letting it silently abort every OTHER, unrelated step queued
-    after it in that same block.
+    Run one config-provisioning step from install_smlm.py's or install_uyuni.py's setup orchestration, and report a
+    failure without stopping the remaining steps.
 
-    Real bug found live 2026-09-23 (solar-system-lab.json, sol.mydemo.lab):
-    every step in that block ran as a bare, unguarded call, so a single
-    die() (an uncaught SystemExit — see die()'s own docstring) anywhere
-    unwound all the way out of the whole orchestration function, abandoning
-    every step listed after it in source order. Confirmed live:
-    ensure_ansible_control_node()'s own _system_id() lookup died with "no
-    system named 'charon.mydemo.lab' found on the server" — a real,
-    expected race, since client_registration's own background retry
-    workers (see install_client_registration.py) finish independently of
-    when this orchestration step runs, and simply hadn't gotten to charon
-    yet. That one die(), for a feature (Ansible control node) with nothing
-    to do with organizations or users, silently took out every step after
-    it too — including ensure_orgs(), which is what actually creates the
-    lab's "edge" organization and its 28 users. The run reported no error
-    at all for the missing org/users; the only visible error pointed at an
-    entirely different feature, several steps earlier.
+    A die() raised by one step (an uncaught SystemExit) would otherwise unwind out of the whole orchestration function and
+    skip every step after it. This function catches it and reports through lab_creation.error(), so unrelated steps still
+    run. Steps keep their source order, so a step that depends on an earlier failed step reports its own error.
 
-    die() elsewhere still means exactly what it always has — this only
-    catches it at this one orchestration boundary, converting it to
-    lab_creation.error() (report but continue, the project's own existing
-    idiom for "this one thing failed, keep going") so one step's failure
-    can never again silently swallow unrelated steps queued after it.
-    Downstream ordering dependencies (e.g. distributions before kickstart
-    profiles, system groups before activation keys) are unaffected — steps
-    still run in the same order, so a step that itself depends on an
-    earlier one that failed will fail too, but with its OWN clear error
-    naming what it needed, not silence.
+    retries and retry_delay: some steps depend on state that another process is still producing, for example a client that
+    background workers have not registered yet. With retries > 1 the step is retried up to `retries` times, sleeping
+    `retry_delay` seconds between attempts, before the failure is reported. The default is no retry, so a real configuration
+    error is reported at once.
 
-    retries/retry_delay (added 2026-09-23): some steps depend on state a
-    DIFFERENT, independently-progressing part of this project's automation
-    is still working on — e.g. ensure_ansible_control_node()/
-    ensure_ansible_paths() need their target system to already be a
-    registered client, but install_client_registration.py's own background
-    retry workers register clients on their own schedule, completely
-    decoupled from when this orchestration runs (the exact real incident
-    documented above). A single immediate failure there is often just a
-    race, not a real problem. When the caller knows a step has a real
-    cross-dependency like this, it passes retries > 1: this function
-    retries up to `retries` times, sleeping `retry_delay` seconds between
-    attempts, before finally giving up and reporting via error(). Default
-    is retries=1 (no retry) — most steps here have no such cross-dependency,
-    and a real config mistake (a typo'd channel name, a missing required
-    field) should still be reported immediately rather than delayed.
-
-    This is bounded and synchronous by design, not an infinite background
-    watcher like ensure_channel_sync_monitor(): a dependency that takes
-    much longer than retries*retry_delay to resolve (e.g. a client that is
-    still hours away from finishing its own channel sync, per
-    install_client_registration.py's own multi-hour warning) still needs a
-    later config run to pick it up. That's still strictly better than the
-    previous behavior (never picked up at all, ever, without the bug above
-    even being visible) — see run_provisioning_step's error() message for
-    what a still-failing step after retries looks like.
+    The wait is bounded. A dependency that takes longer than retries * retry_delay seconds is picked up by a later
+    configuration run.
     """
     last_err = None
     for attempt in range(1, retries + 1):
@@ -472,53 +91,17 @@ def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwarg
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
     """
-    Run `remote_cmd` on the server reached via `exec_prefix`, over SSH to
-    `hostname`. exec_prefix is one of two shapes, and they are NOT
-    interchangeable string prefixes:
+    Run `remote_cmd` on the server reached through `exec_prefix`, over SSH to `hostname`. The two exec_prefix shapes
+    are not interchangeable:
 
-    - kubectl (SMLM): "kubectl exec -n {ns} deploy/uyuni -c uyuni --" — `--`
-      is kubectl's real "rest is a verbatim argv for the container" marker,
-      so flat concatenation (exec_prefix + " " + remote_cmd, then the whole
-      thing shipped as ONE ssh argv element) works correctly: the remote
-      login shell's own word-splitting of the combined string reconstructs
-      exactly the argv kubectl passes through.
+      - kubectl (SMLM), e.g. "kubectl exec -n {ns} deploy/uyuni -c uyuni --". The `--` marks the rest as a literal argv for
+        the container, so the command is appended as a plain string.
+      - mgrctl (Uyuni), e.g. "mgrctl exec --". mgrctl takes the whole remote command as one quoted argument, so remote_cmd is
+        re-quoted as a single argument. Otherwise the outer shell splits multi-token commands, and some parts run on the host
+        instead of in the container.
 
-    - mgrctl (Uyuni): confirmed live (2026-08-28, disposable VM on
-      nuc6.mydemo.lab) that `mgrctl exec` does NOT work this way despite
-      this module having assumed "mgrctl exec --" was an equivalent
-      ---terminated argv prefix since it was first introduced. mgrctl's own
-      usage is `mgrctl exec '[command-to-run --with-args]'` — the ENTIRE
-      remote command as ONE quoted string argument. Flat concatenation
-      silently corrupts any remote_cmd with more than one shell token: the
-      outer ssh-invoked login shell strips remote_cmd's own quoting before
-      mgrctl ever sees argv, so e.g. `sh -c 'a && b'` arrives at mgrctl as
-      five separate arguments (sh, -c, a, &&, b) instead of the two (sh,
-      -c, "a && b") mgrctl's single-string design expects — `sh -c`'s
-      script becomes just the bare first word ("a"), and "&& b" ends up
-      running as a SEPARATE command on the remote host's own shell,
-      outside the container entirely. Confirmed fix: re-quote the whole
-      remote_cmd as mgrctl's one true argument (`mgrctl exec '<remote_cmd>'`)
-      instead of relying on the outer shell's own word-splitting to
-      reconstruct it.
-
-    A second, separate confirmed-live bug (2026-08-28): NEITHER `mgrctl
-    exec` NOR `kubectl exec` forward stdin to the container by default —
-    each needs its own explicit flag (`-i`/`--interactive` for mgrctl,
-    `-i`/`--stdin` for kubectl). Every caller here that pipes `input_text`
-    — starting with ensure_spacecmd_config itself, writing spacecmd's own
-    ~/.spacecmd/config — was silently writing into a container process that
-    was never actually reading its stdin, producing a 0-byte file instead
-    of a real error (confirmed live: found ~/.spacecmd/config sitting at
-    0 bytes on a freshly-installed server). This went unnoticed through
-    every 2026-08-27 feature increment because manual same-session
-    `spacecmd -u/-p` testing during development left a valid CACHED SESSION
-    behind that masked the missing config file entirely on servers tested
-    that way — it only surfaced once a feature (config channels) ran
-    against a server that had never been manually spacecmd-logged-into by
-    hand first, and spacecmd fell back to an interactive password prompt
-    with no TTY to answer it. `_run()` now adds the needed stdin flag
-    automatically whenever `input_text` is given, for either exec_prefix
-    shape — every caller is fixed at once, same as the quoting fix above.
+    Neither mgrctl exec nor kubectl exec forwards stdin by default. When input_text is given, the matching flag is added
+    (-i for mgrctl, -i or --stdin for kubectl), so the input reaches the container process.
     """
     prefix = exec_prefix.strip()
     needs_stdin = bool(kwargs.get("input_text"))
@@ -534,21 +117,9 @@ def _run(hostname, exec_prefix, remote_cmd, **kwargs):
 
 def _fault_check(r):
     """
-    spacecmd's own CLI frequently exits 0 even when the underlying XML-RPC
-    call it made actually failed server-side — confirmed live 2026-09-25:
-    `recurring.highstate.create` with a plain 5-field cron string ("0 2 * *
-    *", standard Unix cron — the real API requires 6-field Quartz syntax,
-    see ensure_recurring_schedule's cron_expr docs) printed
-    "ERROR: <Fault 2800: ...'Invalid Quartz expression provided.'>" to
-    stderr while the process still returned 0. Every caller downstream of
-    _spacecmd()/_api_call() only ever checks `r.returncode != 0` before
-    die()-ing, so this silently defeated that check across the board — the
-    create call above then went on to print "Created recurring highstate
-    schedule ..." as if it had actually succeeded, and a subsequent
-    recurring.listByEntity confirmed live that nothing had actually been
-    created. Normalizing here, in the two shared passthrough helpers, means
-    every one of this file's ~140 call sites through them is covered at
-    once, without touching each one individually.
+    Normalise a failed XML-RPC call to a non-zero exit code. spacecmd can exit 0 even when the server rejected the call,
+    and then prints the fault to stderr, for example "ERROR: <Fault 2800: ...>". The shared passthrough helpers check for that
+    output and report a failure, so every caller that checks the return code sees it.
     """
     if r.returncode == 0 and "ERROR: <Fault" in ((r.stdout or "") + (r.stderr or "")):
         r.returncode = 1
@@ -561,32 +132,12 @@ def _spacecmd(hostname, exec_prefix, args):
 
 def ensure_spacecmd_config(hostname, exec_prefix, username, password):
     """
-    Writes ~/.spacecmd/config (mode 700 dir / 600 file) inside the server
-    container/host so every subsequent spacecmd call authenticates without a
-    prompt and without a password ever appearing in argv/`ps` output — see
-    documentation.suse.com/multi-linux-manager/5.1/docs/reference/spacecmd/configuring-spacecmd.html
-    (verified 2026-08-27). Idempotent: overwrites unconditionally on every
+    Write ~/.spacecmd/config (directory mode 700, file mode 600) inside the server container or host, so spacecmd
+    calls authenticate without a prompt and the password never appears in argv or ps output. The file is overwritten on every
     call, so a changed admin password never leaves a stale cached credential.
 
-    `server` is always written as "localhost", never the caller's externally
-    routable FQDN — confirmed live (2026-08-28) as a real bug: every one of
-    ensure_config_channels/ensure_org*/ensure_access_groups/
-    ensure_content_projects/ensure_activation_key/ensure_environments
-    previously ran with `server=<the VM's own FQDN>` written into this file
-    (both install_uyuni.py's mgrctl-exec path and install_smlm.py's
-    kubectl-exec path passed their own hostname/smlm_fqdn straight through),
-    and every one of those feature calls failed with "Failed to connect to
-    http://<fqdn>/rpc/api" — `exec_prefix` always drops the caller INSIDE the
-    very container/pod running the Uyuni server itself (that's what mgrctl
-    exec / kubectl exec do), and from in there, connecting back out to the
-    host's own externally-routed hostname/IP over HTTP does not work (no
-    hairpin NAT back through the container network to itself — confirmed via
-    `curl http://<fqdn>/rpc/api` returning connection-failed from inside the
-    container while `curl http://localhost/rpc/api` succeeded immediately).
-    Since spacecmd always runs alongside the server it's configuring here,
-    "localhost" is the only value that was ever going to work, for either
-    deployment shape — there was no legitimate use for a caller-supplied
-    value in the first place.
+    `server` is always written as "localhost". The command runs inside the server's own container, and that container cannot
+    reach the externally routed hostname over HTTP. localhost is the one address that works for both deployment shapes.
     """
     config_text = "[spacecmd]\nserver=localhost\nusername={}\npassword={}\n".format(username, password)
     cmd = ("sh -c 'mkdir -p ~/.spacecmd && chmod 700 ~/.spacecmd && "
@@ -598,11 +149,8 @@ def ensure_spacecmd_config(hostname, exec_prefix, username, password):
 
 def activation_key_exists(hostname, exec_prefix, key_name):
     """
-    Whether `key_name` already appears in `spacecmd activationkey_list`'s
-    output. Deliberately not using activationkey_details' exit code —
-    undocumented behavior on a missing key per live doc research
-    (2026-08-27); grepping the list output is the only behavior actually
-    confirmed from a source.
+    Return True if `key_name` appears in the output of `spacecmd activationkey_list`. The list output is the only existence
+    check used, because the exit code of activationkey_details for a missing key is not documented.
     """
     r = _spacecmd(hostname, exec_prefix, "activationkey_list")
     return key_name in (r.stdout or "")
@@ -610,23 +158,10 @@ def activation_key_exists(hostname, exec_prefix, key_name):
 
 def resolve_activation_key_name(hostname, exec_prefix, key_name):
     """
-    Resolves a caller-given activation key name to the name Uyuni actually
-    stored it under. Confirmed live 2026-08-28: activationkey_create's -n
-    flag does NOT use the given name verbatim — Uyuni always auto-prepends
-    the current org's numeric id (e.g. "-n dev-key" is stored as
-    "1-dev-key"), and this happens even when the given name already LOOKED
-    pre-prefixed ("-n 1-dev-key" was stored as "1-1-dev-key", not
-    "1-dev-key"). activation_key_exists()'s substring-match check tolerates
-    this silently (the given name is always a substring of the real one),
-    so key creation/existence checks never surfaced this — but every
-    EXACT-match follow-up command (activationkey_addgroups,
-    activationkey_addpackages, activationkey.addAppStreams, etc.) needs the
-    real name, and fails outright ("Activation Key [...] Not Found!")
-    against the caller's original, un-resolved value. Matches the first
-    `activationkey_list` line that IS `key_name` or ends with
-    "-" + key_name; falls back to `key_name` unchanged if no line matches
-    (e.g. called before the key exists at all — the caller's own
-    activation_key_exists()/creation-error handling covers that case).
+    Return the name the server stored for the key given as `key_name`. The server prefixes the current organization's
+    numeric ID, so "dev-key" is stored as "1-dev-key". Commands that match the name exactly need the stored name. The function
+    returns the first activationkey_list line that equals key_name or ends with "-" + key_name. It returns key_name unchanged
+    when nothing matches, for example before the key exists.
     """
     r = _spacecmd(hostname, exec_prefix, "activationkey_list")
     lines = [line.strip() for line in (r.stdout or "").splitlines() if line.strip()]
@@ -640,15 +175,10 @@ def resolve_activation_key_name(hostname, exec_prefix, key_name):
 
 def ensure_activation_key(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently create the activation key described by
-    <prefix>_activation_key* config keys (prefix is "smlm" or "uyuni"), then
-    apply whatever follow-up commands the optional fields need. Per live doc
-    research (2026-08-27): spacecmd's activationkey_create only accepts
-    name/description/base-channel/universal-default/entitlements at creation
-    time — child channels, config channels/deployment, groups, and contact
-    method are each a separate activationkey_* call, applied here in that
-    order. No-op if <prefix>_activation_key isn't set in cfg. Requires
-    ensure_spacecmd_config() to have been called first. NOT live-tested.
+    Idempotently create the activation key described by the <prefix>_activation_key* config keys, where prefix is "smlm"
+    or "uyuni". Creation accepts only the name, description, base channel, universal default and entitlements. The optional
+    follow-ups are applied after it, each as a separate spacecmd call: child channels, config channels and deployment, groups,
+    and contact method. Does nothing if <prefix>_activation_key is not set. ensure_spacecmd_config() must run first.
     """
     def k(suffix):
         return cfg.get("{}_activation_key{}".format(prefix, suffix))
@@ -728,17 +258,11 @@ def ensure_activation_key(hostname, exec_prefix, cfg, prefix):
 
 def ensure_appstreams(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently enable each "module:stream" pair listed in
-    <prefix>_activation_key_appstreams (space-separated) on
-    <prefix>_activation_key, via spacecmd's generic 'api' passthrough calling
-    activationkey.addAppStreams (spacecmd has no dedicated subcommand for
-    this — see module docstring). No-op if either the key or the appstreams
-    field is unset. Unlike ensure_activation_key's other follow-ups, this is
-    called unconditionally (not only at key-creation time): since there's no
-    list API to pre-check against, idempotency comes from treating the
-    server's own "already exists in the activation key" fault as success,
-    which makes it safe to call on an already-existing key too — e.g. to add
-    AppStreams on a later run without recreating the key. NOT live-tested.
+    Idempotently enable each "module:stream" pair in <prefix>_activation_key_appstreams (space-separated) on
+    <prefix>_activation_key, through the generic 'api' passthrough calling activationkey.addAppStreams. The server has no list
+    call for enabled AppStreams. A module that is already enabled fails with the duplicate-stream fault, and that failure counts
+    as success. The function can therefore run on every configuration pass, including on a key that already exists. Does
+    nothing if either field is unset.
     """
     key_name = cfg.get("{}_activation_key".format(prefix))
     spec = cfg.get("{}_activation_key_appstreams".format(prefix)) or ""
@@ -781,22 +305,10 @@ def activation_key_packages(hostname, exec_prefix, key_name):
 
 def ensure_activation_key_packages(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently ensures every package name listed in
-    <prefix>_activation_key_packages (space-separated) is present on
-    <prefix>_activation_key, via spacecmd's native activationkey_addpackages
-    (wraps activationkey.addPackages — confirmed a real, spacecmd-native
-    mechanism, correcting an earlier research note in this project that
-    conflated it with the unrelated system.createPackageProfile/
-    comparePackageProfile mechanism, which snapshots an already-REGISTERED
-    system's installed packages for later comparison and has nothing to do
-    with activation keys). Unlike ensure_activation_key's OTHER follow-ups
-    (child channels, config channels, groups — creation-time only), this is
-    called unconditionally, like ensure_appstreams, since
-    activationkey_listpackages gives a reliable way to check what's already
-    there — diffs against the current list and only adds what's missing, so
-    packages can be added to an already-existing key on a later run too.
-    Name-only, no arch-qualification (see activation_key_packages). No-op
-    if either the key or the packages field is unset. NOT live-tested.
+    Idempotently ensure every package in <prefix>_activation_key_packages (space-separated) is on <prefix>_activation_key,
+    through activationkey_addpackages. The current list from activationkey_listpackages is compared, and only the missing
+    packages are added. Names only; architecture qualifiers are not supported. Unlike the creation-time follow-ups, this runs
+    on every configuration pass. Does nothing if either field is unset.
     """
     key_name = cfg.get("{}_activation_key".format(prefix))
     spec = (cfg.get("{}_activation_key_packages".format(prefix)) or "").split()
@@ -820,13 +332,10 @@ def ensure_activation_key_packages(hostname, exec_prefix, cfg, prefix):
 
 def ensure_channels_synced(hostname, exec_prefix, channels):
     """
-    For each channel label in `channels`, trigger 'mgr-sync add channel
-    <label>' if it isn't already listed in 'spacecmd softwarechannel_list' —
-    one channel per invocation (see module docstring for why not the plural
-    form). No-op if `channels` is empty. Requires ensure_spacecmd_config() to
-    have been called first (mgr-sync itself needs SCC credentials already
-    configured at install time, not spacecmd's — this only affects the
-    softwarechannel_list existence check). NOT live-tested.
+    Trigger 'mgr-sync add channel <label>' for each label in `channels` that is not already in the output of
+    'spacecmd softwarechannel_list'. One channel is added per invocation. Does nothing for an empty list. mgr-sync uses SCC
+    credentials, which are configured at install time and are separate from spacecmd's. ensure_spacecmd_config() must run
+    first.
     """
     if not channels:
         return
@@ -842,23 +351,10 @@ def ensure_channels_synced(hostname, exec_prefix, channels):
 
 def pending_channels(hostname, exec_prefix, channels):
     """
-    A single, non-blocking check: returns the SUBSET of `channels` that are
-    NOT YET fully synced (empty set = every one of them is genuinely
-    ready). Reuses the exact readiness signal already ground-truthed in
-    install_smlm.py's own ensure_channel_sync_monitor() (its systemd-timer
-    script): a channel is ready when its own reposync log
-    (/var/log/rhn/reposync/<label>.log, inside the server container) ends
-    with "Sync completed." — the same detection that monitor already uses
-    to decide whether a channel needs a re-triggered sync. Uses the SAME
-    exec_prefix convention as the rest of this module (mgrctl exec /
-    kubectl exec), so this works against both podman- and Kubernetes-
-    deployed servers without needing a separate `podman exec uyuni-server`
-    path.
-
-    Factored out of wait_for_channels_synced() 2026-09-21 so a caller can
-    make a one-shot readiness decision (e.g. "is it safe to register
-    synchronously, or should this hand off to a background retry instead")
-    without committing to a blocking poll loop.
+    Return the subset of `channels` that have not finished syncing. An empty set means every channel is ready. A channel is
+    ready when its reposync log, /var/log/rhn/reposync/<label>.log inside the server container, ends with "Sync completed.".
+    This is the same signal the channel sync monitor in install_smlm.py uses. The check runs through the module's exec_prefix,
+    so it works for both podman and Kubernetes deployments. Callers use it for a one-shot decision, without a blocking wait.
     """
     pending = set()
     for ch in channels:
@@ -873,25 +369,14 @@ def pending_channels(hostname, exec_prefix, channels):
 
 def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll_interval=30):
     """
-    Blocks until every channel label in `channels` shows a genuinely
-    COMPLETED reposync (see pending_channels()) — not merely "exists",
-    which is all ensure_channels_synced() checks before returning (it only
-    triggers a sync if missing, it never waits for one already in flight
-    to finish).
+    Block until every label in `channels` has a completed reposync, as reported by pending_channels(). ensure_channels_synced()
+    only checks that the channels exist and starts missing syncs. It does not wait for a sync that is already running.
 
-    Added 2026-09-21 per explicit user requirement: registration scripts
-    must wait for channels (and the activation key referencing them) to be
-    genuinely available before registering a client against them — a
-    client bootstrapped against an activation key whose channels are still
-    mid-sync can end up with an incomplete/broken subscription. This
-    project's own TODO documents an extensive, real history of exactly
-    this class of channel-sync race (REAL BUGS #10/#12/#13).
+    Registering a client against an activation key whose channels are still syncing can leave the client with an incomplete
+    subscription, so registration waits here first.
 
-    `timeout=None` waits forever, no deadline — used by a background retry
-    worker (see install_client_registration.py's own use of this) that is
-    deliberately never meant to give up. Any other value dies, listing
-    whichever channels are still not ready, once that many seconds have
-    elapsed without all of them completing. No-op if `channels` is empty.
+    timeout=None waits without a deadline, which a background retry worker relies on. Any other value dies after that many
+    seconds, listing the channels that are still pending. An empty list is a no-op.
     """
     if not channels:
         return
@@ -935,11 +420,8 @@ def config_channel_exists(hostname, exec_prefix, label):
 
 def ensure_config_channel_exists(hostname, exec_prefix, label, name, desc, chan_type="normal"):
     """
-    Idempotently create a config channel. NOTE: -t/--type ('normal' or
-    'state') is implemented in spacecmd's source but undocumented on both
-    the Uyuni and SMLM 5.1 doc pages as of the 2026-08-27 research behind
-    this module — verify with 'spacecmd help configchannel_create' on the
-    actual target before relying on this in production.
+    Idempotently create a config channel. The -t/--type option accepts 'normal' or 'state'. The Uyuni and SMLM 5.1 documentation
+    does not list that option, so check 'spacecmd help configchannel_create' on the target before relying on it.
     """
     if config_channel_exists(hostname, exec_prefix, label):
         print("  Config channel '{}' already exists — leaving it alone".format(label))
@@ -954,14 +436,9 @@ def ensure_config_channel_exists(hostname, exec_prefix, label, name, desc, chan_
 def ensure_config_file(hostname, exec_prefix, label, path, content,
                         owner=None, group=None, mode=None, binary=False):
     """
-    Idempotently ensure `path` exists with `content` inside config channel
-    `label`, via configchannel_addfile (createOrUpdatePath under the hood,
-    so "add" and "update" are the same call). Content is staged to a remote
-    temp file first since spacecmd's -f flag reads a local file path, not
-    inline text/stdin. Idempotency is a heuristic: skips the push if a
-    locally-computed sha256 of `content` already appears in
-    configchannel_filedetails' output for that path — there's no dedicated
-    single-file diff command. NOT live-tested.
+    Idempotently ensure `path` exists with `content` in config channel `label`, through configchannel_addfile, which creates or
+    updates the path. spacecmd's -f option reads a local file, so the content is first staged to a remote temporary file. The
+    push is skipped when the sha256 of `content` already appears in the configchannel_filedetails output for that path.
     """
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     details = _spacecmd(hostname, exec_prefix, "configchannel_filedetails {} {}".format(
@@ -995,10 +472,8 @@ def ensure_config_file(hostname, exec_prefix, label, path, content,
 
 def ensure_init_sls(hostname, exec_prefix, label, content):
     """
-    Same idea as ensure_config_file but for a state channel's init.sls,
-    which spacecmd manages via a dedicated command
-    (configchannel_updateinitsls) rather than configchannel_addfile — its
-    path is always /init.sls server-side. NOT live-tested.
+    The same as ensure_config_file, for a state channel's init.sls. spacecmd manages that file with
+    configchannel_updateinitsls, and its path on the server is always /init.sls.
     """
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     details = _spacecmd(hostname, exec_prefix, "configchannel_filedetails {} /init.sls".format(shlex.quote(label)))
@@ -1021,13 +496,10 @@ def ensure_init_sls(hostname, exec_prefix, label, content):
 
 def ensure_config_channels(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_config_channels: a list of
-    {label, name, description, type, files: [{path, content, owner, group,
-    mode, binary}], init_sls} dicts. `type` defaults to "normal"; "state"
-    channels use `init_sls` instead of (or alongside) `files` for content
-    besides the auxiliary files under them. No-op if the field is unset or
-    empty. Requires ensure_spacecmd_config() to have been called first.
-    NOT live-tested.
+    Create the config channels listed in <prefix>_config_channels. Each entry is a dict with label, name, description, type,
+    files (path, content, owner, group, mode, binary) and init_sls. type defaults to "normal". A "state" channel takes its
+    init.sls from init_sls, and its other files are handled the same way. Does nothing if the field is unset or empty.
+    ensure_spacecmd_config() must run first.
     """
     channels = cfg.get("{}_config_channels".format(prefix)) or []
     for chan in channels:
@@ -1056,39 +528,26 @@ def ensure_config_channels(hostname, exec_prefix, cfg, prefix):
 
 
 def distribution_exists(hostname, exec_prefix, name):
-    """Whether `name` appears as an exact line in `spacecmd distribution_list`'s
-    output (one name per line, no header, confirmed live 2026-09-16)."""
+    """
+    Return True if `name` is an exact line in the output of `spacecmd distribution_list`, which prints one name per line with
+    no header.
+    """
     r = _spacecmd(hostname, exec_prefix, "distribution_list")
     return name in [line.strip() for line in (r.stdout or "").splitlines()]
 
 
 def ensure_distribution(hostname, exec_prefix, dist):
     """
-    Idempotently create one autoinstall tree ("Kickstart Distribution" in
-    the Web UI) via spacecmd's native distribution_create, from one entry
-    of <prefix>_distributions: {"name", "path", "base_channel",
-    "install_type"}. `path` is a directory ALREADY PRESENT ON THE SERVER'S
-    OWN FILESYSTEM containing a real, extracted product installer tree
-    (confirmed live: distribution_create itself validates this — it dies
-    with "The initrd could not be found at the specified location:
-    <path>/boot/x86_64/loader/initrd" if the tree isn't really there) —
-    this module has no way to create or upload that tree itself; mirror an
-    ISO's own extracted layout (e.g. via `mount -o loop`) onto that path
-    out of band first. `install_type` is one of the labels
-    distribution_create's own --help lists (e.g. "sles15generic",
-    "sles16generic", "rhel_9", "generic_rpm" — run `distribution_create
-    --help` on the server for the exact current set, since it changes with
-    each SMLM/Uyuni release).
+    Idempotently create one autoinstall tree (the "Kickstart Distribution" in the Web UI) with distribution_create, from one
+    entry in <prefix>_distributions: {"name", "path", "base_channel", "install_type"}. `path` must be a directory on the server
+    that already holds an extracted installer tree, because distribution_create checks for the initrd and fails if the tree is
+    missing. This function does not create or upload that tree: mirror the ISO's contents to the path first, for example with a
+    loop mount. install_type is one of the labels that `distribution_create --help` lists on the server. That list changes
+    between releases.
 
-    warn()s and returns (does NOT die) on a creation failure — confirmed
-    live 2026-09-16 that a missing install tree is an ordinary, expected
-    real-world state (media populated out of band, on its own schedule),
-    not a config mistake, and unlike a die() here would otherwise abort
-    every orchestration step that runs after ensure_distributions() in the
-    caller — users/access-groups/orgs/image-stores included, none of which
-    have anything to do with kickstart. A kickstart profile referencing a
-    distribution that failed this way is skipped the same way, with its
-    own clear warning — see ensure_kickstart_profile().
+    A failed creation is reported as a warning, and the function then returns normally. A missing tree is an ordinary state
+    while media is staged outside this project. Dying here would stop the unrelated steps that follow in the caller. A kickstart
+    profile that refers to a distribution that failed is skipped with its own warning (see ensure_kickstart_profile()).
     """
     name = dist.get("name")
     if not name:
@@ -1120,17 +579,19 @@ def ensure_distributions(hostname, exec_prefix, cfg, prefix):
 
 
 def kickstart_exists(hostname, exec_prefix, name):
-    """Whether `name` appears as an exact line in `spacecmd kickstart_list`'s
-    output (one label per line, no header, confirmed live 2026-09-16)."""
+    """
+    Return True if `name` is an exact line in the output of `spacecmd kickstart_list`, which prints one label per line with no
+    header.
+    """
     r = _spacecmd(hostname, exec_prefix, "kickstart_list")
     return name in [line.strip() for line in (r.stdout or "").splitlines()]
 
 
 def kickstart_variables(hostname, exec_prefix, name):
-    """Returns {key: value} of a kickstart profile's current custom
-    variables, via spacecmd's native kickstart_listvariables (one
-    "key = value" line per entry, confirmed live 2026-09-16 — a profile
-    always carries at least "org = <id>" even with none of its own set)."""
+    """
+    Return the current custom variables of a kickstart profile as {key: value}, from kickstart_listvariables. Each line is
+    "key = value". A profile always has at least "org = <id>", even with no variables of its own set.
+    """
     r = _spacecmd(hostname, exec_prefix, "kickstart_listvariables {}".format(shlex.quote(name)))
     result = {}
     for line in (r.stdout or "").splitlines():
@@ -1142,22 +603,15 @@ def kickstart_variables(hostname, exec_prefix, name):
 
 def ensure_kickstart_profile(hostname, exec_prefix, ks):
     """
-    Idempotently create the kickstart profile described by one entry of
-    <prefix>_kickstart_profiles: {"name", "distribution", "root_password",
-    "virt_type": "none" (default) | "para_host" | "qemu" | "xenfv" |
-    "xenpv", "variables": {"key": "value", ...}, "activation_keys": [...],
-    "child_channels": [...]}. `distribution` is a NAME REFERENCE into
-    <prefix>_distributions (define it there, not inline here) — spacecmd's
-    own kickstart_create requires it to already exist. root_password is
-    only used at creation time (spacecmd hashes it server-side into the
-    profile's own "Advanced Options" — confirmed live: kickstart_details
-    shows a real $5$... sha256 hash, never the plaintext back), so a
-    repeat run against an already-existing profile can't detect or fix a
-    changed password — delete and recreate the profile if it needs to
-    change. variables/activation_keys are applied idempotently on every
-    run via kickstart_addvariable/kickstart_addactivationkeys, diffed
-    against kickstart_listvariables/kickstart_listactivationkeys first, so
-    a repeat run never re-adds an already-present one.
+    Idempotently create the kickstart profile described by one entry of <prefix>_kickstart_profiles: {"name",
+    "distribution", "root_password", "virt_type": "none" (default), "para_host", "qemu", "xenfv" or "xenpv", "variables":
+    {"key": "value", ...}, "activation_keys": [...] and "child_channels": [...]}.
+
+    `distribution` is a name reference into <prefix>_distributions, which must be defined there. kickstart_create requires the
+    distribution to exist. root_password is used only at creation. The server stores a hash, so a repeat run cannot detect or
+    change the password. Delete and recreate the profile to change it. variables and activation_keys are applied on every run
+    with kickstart_addvariable and kickstart_addactivationkeys, after diffing against the current lists, so an existing entry is
+    never added twice.
     """
     name = ks.get("name")
     if not name:
@@ -1237,13 +691,10 @@ def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
 
 def snippet_file_path(hostname, exec_prefix, name):
     """
-    Real absolute path Uyuni stores a Kickstart Snippet's content at —
-    parsed from spacecmd's own snippet_details "File:" line. Confirmed
-    live this varies by org id (e.g.
-    /var/lib/cobbler/snippets/spacewalk/1/<name> for the default org) so it
-    cannot be hardcoded/guessed. Returns None if the snippet doesn't exist
-    (snippet_details prints "WARNING: <name> is not a valid snippet" and
-    exits non-zero, confirmed live).
+    Return the absolute path where Uyuni stores a Kickstart Snippet's content, parsed from the "File:" line of
+    snippet_details. The path depends on the organization ID, for example /var/lib/cobbler/snippets/spacewalk/1/<name> for the
+    default organization, so it cannot be computed. Returns None if the snippet does not exist. snippet_details then prints a
+    warning and exits non-zero.
     """
     r = _spacecmd(hostname, exec_prefix, "snippet_details {}".format(shlex.quote(name)))
     if r.returncode != 0:
@@ -1257,25 +708,14 @@ def snippet_file_path(hostname, exec_prefix, name):
 
 def ensure_snippet(hostname, exec_prefix, name, content):
     """
-    Idempotently creates/updates a real Uyuni "Kickstart Snippet" — a
-    reusable, named text fragment a kickstart/AutoYaST profile includes via
-    the real $SNIPPET('spacewalk/<org>/<name>') macro (confirmed live:
-    exactly what snippet_details' own "Macro:" line shows once created).
+    Idempotently create or update a Kickstart Snippet, a reusable named text fragment. A kickstart or AutoYaST profile
+    includes it through the $SNIPPET('spacewalk/<org>/<name>') macro, which is the "Macro:" line in snippet_details.
 
-    spacecmd's native snippet_create is interactive (prints the file
-    content back and asks "Is this ok [y/N]:", confirmed live — no -y/
-    --yes flag exists, "ERROR: unrecognized arguments: -y"). Content is
-    staged to a remote temp file first (its own -f flag reads a local file
-    path, not inline text) via _stage_remote_file, same idiom as
-    ensure_config_file, with "y\\n" fed on stdin to confirm. Confirmed live
-    that re-running snippet_create against an EXISTING name cleanly
-    overwrites its content (no error, no separate "update" command needed
-    — spacecmd has none; confirmed absent via the same "no help" probing
-    used elsewhere in this module for scap_schedulexccdfscan et al.).
+    snippet_create is interactive. It prints the content and asks for confirmation, and it has no -y option. The content is
+    staged to a remote temporary file, because the -f option reads a local path, and "y" is fed on stdin to confirm. Running
+    snippet_create on an existing name overwrites its content. spacecmd has no separate update command.
 
-    Idempotency: reads the snippet's own real file content (via
-    snippet_file_path) and skips the create+confirm round trip entirely
-    when it already matches `content`.
+    The content currently at snippet_file_path() is compared with `content`, and the create step is skipped when they match.
     """
     existing_path = snippet_file_path(hostname, exec_prefix, name)
     if existing_path:
@@ -1329,9 +769,10 @@ def ensure_snippets(hostname, exec_prefix, cfg, prefix):
 # int) on success.
 
 def image_store_exists(hostname, exec_prefix, label):
-    """Whether `label` appears among image.store.listImageStores' real
-    JSON output (confirmed live: a server always has at least one,
-    "SUSE Manager OS Image Store", auto-created out of the box)."""
+    """
+    Return True if `label` is among the stores that image.store.listImageStores returns. A server always has at least one
+    store, "SUSE Manager OS Image Store", which is created by default.
+    """
     r = _api_call(hostname, exec_prefix, "image.store.listImageStores", [])
     try:
         stores = json.loads(r.stdout or "[]")
@@ -1342,16 +783,10 @@ def image_store_exists(hostname, exec_prefix, label):
 
 def ensure_image_store(hostname, exec_prefix, store):
     """
-    Idempotently create one image store (Images -> Stores in the Web UI)
-    via image.store.create, from one entry of <prefix>_image_stores:
-    {"label", "uri", "type": "registry" | "os_image", "username",
-    "password"}. `type` must be one of the labels the server's own
-    image.store.listImageStoreTypes returns (confirmed live: "registry" and
-    "os_image" on a stock SMLM 5.2 server — re-check on other versions,
-    this module can't enumerate them without a live call). credentials are
-    optional — omit username/password for a public registry (e.g.
-    registry.suse.com, confirmed live: no credentials needed for SUSE's
-    own public images).
+    Idempotently create one image store (Images, then Stores, in the Web UI) with image.store.create, from one entry of
+    <prefix>_image_stores: {"label", "uri", "type": "registry" or "os_image", "username", "password"}. type must be a label
+    that image.store.listImageStoreTypes returns on the server, and that list can change between releases. username and
+    password are optional. Omit them for a public registry, such as registry.suse.com.
     """
     label = store.get("label")
     if not label:
@@ -1393,21 +828,15 @@ def image_profile_exists(hostname, exec_prefix, label):
 
 def ensure_image_profile(hostname, exec_prefix, profile):
     """
-    Idempotently create one image profile (build instructions — Images ->
-    Profiles in the Web UI) via image.profile.create, from one entry of
-    <prefix>_image_profiles: {"label", "type": "dockerfile" | "kiwi",
-    "store", "path", "activation_key"}. `store` is a NAME REFERENCE into
-    <prefix>_image_stores above (define it there, not inline here) —
-    confirmed live this doesn't validate the store exists at creation time,
-    but a later build against a nonexistent store would obviously fail, so
-    this module still treats it as required. `path` is a Dockerfile/Kiwi
-    source location — for a git-hosted Dockerfile,
-    "https://github.com/USER/project.git#branch:folder" (confirmed live
-    against the official docs' own example format); for Kiwi, a local
-    filesystem path or similarly git-hosted location. `activation_key`
-    determines which software channels the build/import has access to —
-    the official docs describe this as mandatory for both container and
-    OS image profiles.
+    Idempotently create one image profile (build instructions: Images, then Profiles in the Web UI) with
+    image.profile.create, from one entry of <prefix>_image_profiles: {"label", "type": "dockerfile" or "kiwi", "store", "path",
+    "activation_key"}.
+
+    store is a name reference into <prefix>_image_stores, which must be defined there. The server does not check it at
+    creation, but a build against a missing store fails, so the field is required here. path is the Dockerfile or Kiwi source.
+    A git-hosted Dockerfile uses the form "https://github.com/USER/project.git#branch:folder". A Kiwi source can be a local
+    path or a similar git location. activation_key sets which software channels the build or import can use. Both container
+    and OS image profiles require it.
     """
     label = profile.get("label")
     if not label:
@@ -1439,27 +868,17 @@ def ensure_image_profiles(hostname, exec_prefix, cfg, prefix):
 def import_container_image(hostname, exec_prefix, name, version, build_host_id, store_label,
                             activation_key=""):
     """
-    Schedules a container image import/inspection via
-    image.importContainerImage — NOT idempotent (each call schedules a
-    brand-new action, confirmed by the method's own "schedules ... action"
-    semantics, same reasoning as every other explicit-trigger operation in
-    this module — run_ansible_playbooks/run_clm_actions/run_scap_scans).
-    `build_host_id` is the NUMERIC Uyuni system ID of an already-registered
-    system with the "Container Build Host" entitlement enabled (this
-    module has no way to enable that entitlement itself — see
-    system_addentitlement in the Web UI or via spacecmd directly) —
-    findable via 'spacecmd system_list'. Returns the scheduled action's
-    numeric id on success; dies with the real server error otherwise
-    (e.g. a build host lacking the required entitlement).
+    Schedule a container image import and inspection with image.importContainerImage. Each call schedules a new action,
+    so the call is not idempotent. For that reason the automatic install flow does not run it, like the other explicit actions
+    in this module.
 
-    Real bug found live 2026-09-25 (first time --import-images was ever
-    actually triggered against a real server): the 6th positional arg is
-    earliestOccurrence (a real Date, confirmed against ImageInfoHandler.
-    importContainerImage's own Java signature) — passing a literal None
-    for it crashes with "cannot marshal None unless allow_none is
-    enabled" (the underlying transport is XML-RPC, which refuses null
-    values). Now sends "now" in UTC, same convention already used by
-    ensure_image_build() elsewhere in this module.
+    build_host_id is the numeric ID of a registered system that has the "Container Build Host" entitlement enabled. This
+    module does not enable that entitlement. Do it in the Web UI or with spacecmd system_addentitlement. Find the ID with
+    'spacecmd system_list'. The function returns the numeric ID of the scheduled action, and dies with the server's error
+    otherwise, for example when the build host lacks the entitlement.
+
+    The sixth positional argument is earliestOccurrence, a date. Passing None fails, because XML-RPC cannot send null. The
+    call therefore sends "now" in UTC, as ensure_image_build() does.
     """
     earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     r = _api_call(hostname, exec_prefix, "image.importContainerImage",
@@ -1497,11 +916,9 @@ def import_images(hostname, exec_prefix, cfg, prefix):
 
 def monitoring_status(hostname, exec_prefix):
     """
-    Returns the server's own bundled-exporter status as a dict via
-    admin.monitoring.getStatus, confirmed live 2026-09-16:
-    {"node": "enabled"|"disabled", "tomcat": ..., "postgres": ...,
-    "taskomatic": ..., "self_monitoring": ...} — a stock server starts with
-    every key "disabled". Takes no arguments.
+    Return the server's bundled exporter status as a dict from admin.monitoring.getStatus. The keys are node, tomcat,
+    postgres, taskomatic and self_monitoring, and each value is "enabled" or "disabled". A new server reports every key as
+    "disabled". Takes no arguments.
     """
     r = _api_call(hostname, exec_prefix, "admin.monitoring.getStatus", [])
     try:
@@ -1513,36 +930,19 @@ def monitoring_status(hostname, exec_prefix):
 
 def ensure_monitoring(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently enables the server's own bundled Prometheus exporters
-    (node/tomcat/postgres/taskomatic/self_monitoring) via
-    admin.monitoring.enable, gated by <prefix>_monitoring_enabled (a plain
-    "true"/truthy flag — enable takes no arguments of its own, confirmed
-    live against AdminMonitoringHandler.java: it's a pure on/off toggle for
-    exporters already bundled in the image, NOT a "point at an external
-    Prometheus" call — Uyuni's own monitoring model is pull-based, a
-    separate Prometheus scrapes THIS server's exposed exporter ports, it
-    never pushes to one). No-op if the flag is falsy or unset, or if
-    monitoring_status() already shows "node": "enabled" (checked as the
-    representative key — confirmed live all five flip together on one
-    enable() call).
+    Idempotently enable the server's bundled Prometheus exporters (node, tomcat, postgres, taskomatic and
+    self_monitoring) with admin.monitoring.enable. The call is gated by <prefix>_monitoring_enabled, a truthy flag. enable
+    takes no arguments. It switches on exporters that the image already includes. Uyuni's monitoring is pull-based: an
+    external Prometheus scrapes this server's exporter ports, and nothing is pushed to Prometheus. The function does nothing if
+    the flag is false or unset, or if monitoring_status() already reports node as enabled.
 
-    Per the official docs (documentation.suse.com/suma/5.2 Monitoring
-    guide, confirmed live 2026-09-16 restart actually starts the exporter
-    listeners — getStatus alone doesn't): a fresh enable() needs Tomcat AND
-    Taskomatic restarted before the exporters actually start listening.
-    Restarts them ONLY on the transition from disabled to enabled (an
-    already-enabled server is left running, same "don't disrupt what's
-    already healthy" reasoning as run_install_with_pg_hba_guard elsewhere
-    in this project) — via a plain `systemctl restart` through the same
-    exec_prefix, not spacecmd (there's no spacecmd-native way to restart a
-    server-side service).
+    After a fresh enable, Tomcat and Taskomatic must be restarted before the exporters listen. The restart happens only on the
+    change from disabled to enabled, so an already-enabled server is not disturbed. It runs systemctl through exec_prefix,
+    because spacecmd has no restart command.
 
-    Real exporter ports, confirmed live against the same docs page (open
-    these on the server's firewall/security group for a REMOTE Prometheus
-    to reach it): node 9100, postgres 9187, tomcat JMX 5556, taskomatic JMX
-    5557, taskomatic direct 9800, plus the message-queue job at
-    "<server>:80/rhn/metrics" (no separate port — it's Apache/the existing
-    web port with a different metrics path).
+    Exporter ports to open on the server's firewall or security group for a remote Prometheus: node 9100, postgres 9187,
+    Tomcat JMX 5556, Taskomatic JMX 5557 and Taskomatic direct 9800. The message-queue job uses "<server>:80/rhn/metrics",
+    which is the existing web port.
     """
     if not (cfg.get("{}_monitoring_enabled".format(prefix)) in ("true", True)):
         return
@@ -1577,11 +977,9 @@ def org_exists(hostname, exec_prefix, org_name):
 
 def ensure_org(hostname, exec_prefix, org):
     """
-    Idempotently create the organization described by one entry of
-    <prefix>_orgs. Must be called under the DEFAULT admin's already-
-    authenticated spacecmd session (via ensure_spacecmd_config) — org
-    creation itself is not org-scoped; it's the org.create API call made by
-    whatever session is already logged in. NOT live-tested.
+    Idempotently create the organization described by one entry of <prefix>_orgs. Call it from the default
+    administrator's session, which ensure_spacecmd_config() sets up. Organization creation is not scoped to an organization:
+    org.create runs under whichever session is logged in.
     """
     name = org.get("name")
     if not name:
@@ -1614,13 +1012,10 @@ def ensure_org(hostname, exec_prefix, org):
 
 def ensure_org_trust(hostname, exec_prefix, org_a, org_b):
     """
-    Idempotently establish trust between org_a and org_b via org_addtrust,
-    skipping if org_listtrusts already lists org_b for org_a. NOTE: trust
-    alone does not make a channel visible across orgs — the channel's
-    owning org must also mark it shared via ensure_channel_sharing(). Must
-    be called under a session with rights to both orgs (the default admin,
-    typically) — see module docstring for what's confirmed vs. inferred
-    about trust's bidirectionality. NOT live-tested.
+    Idempotently establish trust between org_a and org_b with org_addtrust. The call is skipped if org_listtrusts already
+    lists org_b for org_a. Trust alone does not make a channel visible to another organization. The owning organization must
+    also share the channel, through ensure_channel_sharing(). Call it from a session that has rights in both organizations,
+    normally the default administrator's.
     """
     existing = _spacecmd(hostname, exec_prefix, "org_listtrusts {}".format(shlex.quote(org_a))).stdout or ""
     if org_b in existing:
@@ -1634,15 +1029,10 @@ def ensure_org_trust(hostname, exec_prefix, org_a, org_b):
 
 def ensure_channel_sharing(hostname, exec_prefix, channel_label, access="protected"):
     """
-    Marks a software channel's org-sharing level via the raw
-    channel.access.setOrgSharing XML-RPC method — no spacecmd subcommand
-    exists for this (confirmed absent from source, 2026-08-27 research).
-    access must be "public", "private", or "protected" ("protected" =
-    visible to trusted orgs only). Idempotent via
-    channel.access.getOrgSharing, though its exact output shape wasn't
-    confirmed from docs — this is a substring-match heuristic, same spirit
-    as ensure_appstreams' fault-string check. Must be called under a
-    session belonging to the channel's OWNING org. NOT live-tested.
+    Set a software channel's sharing level with channel.access.setOrgSharing, which has no spacecmd subcommand. access is
+    "public", "private" or "protected". "protected" means visible to trusted organizations only. The current level is read with
+    channel.access.getOrgSharing, and the check is a substring match on its output, because that output's format is not
+    documented. Call it from a session that belongs to the channel's owning organization.
     """
     if access not in ("public", "private", "protected"):
         die("invalid channel access level '{}': expected public, private, or protected".format(access))
@@ -1661,33 +1051,21 @@ def ensure_channel_sharing(hostname, exec_prefix, channel_label, access="protect
 
 def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_admin_pass):
     """
-    Orchestrates <prefix>_orgs: a list of org dicts, each carrying
-    {name, admin_user, admin_pass, admin_email, admin_first_name,
-    admin_last_name, prefix, pam, trust_with: [...], share_channels: [...],
-    share_channels_access}, PLUS whatever <prefix>_activation_key*/
-    <prefix>_config_channels/<prefix>_access_groups/<prefix>_system_groups/
-    <prefix>_users keys that org itself needs — reusing the exact same
-    field names as the top-level config, since once this function
-    re-authenticates as that org's own admin, ensure_activation_key/
-    ensure_config_channels/ensure_appstreams/ensure_access_groups/
-    ensure_system_groups/ensure_users work completely unchanged
-    (org-scoping is entirely a function of which session is active — see
-    module docstring). For each
-    org, in list order (so a later org can trust_with an earlier one):
-      1. re-authenticate as the DEFAULT admin, then create the org if it
-         doesn't exist yet
-      2. establish any requested trust_with relationships (still under the
-         default admin)
-      3. re-authenticate as THIS org's own admin and run its
-         share_channels/config-channels/activation-key/appstreams/
-         access-groups provisioning, scoped automatically to this org
-    Restores the default admin session before returning, so nothing
-    downstream is left authenticated as the last org processed. No-op if
-    <prefix>_orgs is unset or empty. If an org entry has no admin_user/
-    admin_pass (e.g. it already exists and this run only needs its
-    trust_with/share_channels applied, not its own activation
-    key/config channels re-provisioned), step 3 is skipped entirely for
-    that org. NOT live-tested.
+    Orchestrate <prefix>_orgs, a list of organization dicts. Each dict has name, admin_user, admin_pass, admin_email,
+    admin_first_name, admin_last_name, prefix, pam, trust_with, share_channels and share_channels_access. A dict can also carry
+    the <prefix>_activation_key*, <prefix>_config_channels, <prefix>_access_groups, <prefix>_system_groups and <prefix>_users
+    keys that the organization needs, using the same field names as the top-level configuration. Once the session is the
+    organization's own administrator, the existing ensure_* functions apply to it unchanged.
+
+    For each organization, in list order (so a later organization can trust an earlier one):
+      1. Authenticate as the default administrator, and create the organization if it does not exist.
+      2. Establish each trust_with relationship, still as the default administrator.
+      3. Authenticate as the organization's own administrator, and provision its share_channels, config channels, activation
+         keys, AppStreams and access groups. These are scoped to that organization automatically.
+
+    The default administrator's session is restored before the function returns, so later steps do not run as the last
+    organization. An entry without admin_user and admin_pass skips step 3. Use that for an organization that already exists and
+    needs only its trusts and shared channels applied. The function does nothing if <prefix>_orgs is unset or empty.
     """
     orgs = cfg.get("{}_orgs".format(prefix)) or []
     if not orgs:
@@ -1731,13 +1109,9 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
 
 def access_group_exists(hostname, exec_prefix, label):
     """
-    Whether `label` appears in access.listRoles' raw output. There is no
-    spacecmd subcommand for the 'access' namespace at all (confirmed absent
-    from spacecmd's source tree, 2026-08-27 research) — every access_*
-    operation in this module goes through the generic 'api' passthrough.
-    Substring match, same heuristic as the AppStream/channel-sharing checks
-    above, since the passthrough's raw print format for a list of
-    AccessGroup structs wasn't confirmed from docs.
+    Return True if `label` appears in the output of access.listRoles. The access namespace has no spacecmd subcommand, so the
+    call goes through the generic 'api' passthrough. The check is a substring match, because the printed format of the
+    AccessGroup list is not documented.
     """
     r = _api_call(hostname, exec_prefix, "access.listRoles", [])
     return label in (r.stdout or "")
@@ -1745,10 +1119,8 @@ def access_group_exists(hostname, exec_prefix, label):
 
 def ensure_access_group(hostname, exec_prefix, label, description, permissions_from=None):
     """
-    Idempotently create a custom RBAC access group ("User Access Group") via
-    access.createRole. `permissions_from` (optional list of existing role
-    labels to copy permissions from) matches createRole's optional third
-    argument. NOT live-tested.
+    Idempotently create a custom RBAC access group ("User Access Group") with access.createRole. permissions_from, an optional
+    list of existing role labels, supplies the permissions to copy, as createRole's third argument does.
     """
     if access_group_exists(hostname, exec_prefix, label):
         print("  Access group '{}' already exists — leaving it alone".format(label))
@@ -1771,13 +1143,10 @@ def access_group_has_namespace(hostname, exec_prefix, label, namespace):
 
 def ensure_access_group_permissions(hostname, exec_prefix, label, permissions):
     """
-    Grants each not-yet-present namespace in `permissions` (a list of
-    {"namespace": "...", "mode": "R"|"W"}, mode optional) to access group
-    `label` via a single access.grantAccess call. Checks
-    access_group_has_namespace() first and skips already-granted ones,
-    since grantAccess's own idempotency on a repeat call for the same
-    namespace wasn't confirmed by research. No-op if every namespace is
-    already granted or `permissions` is empty. NOT live-tested.
+    Grant each namespace in `permissions` that the group does not already have. `permissions` is a list of
+    {"namespace": ..., "mode": "R" or "W"}, with mode optional. The missing namespaces are granted with one access.grantAccess
+    call. access_group_has_namespace() is checked first, because repeating grantAccess for an already-granted namespace is not
+    documented as safe. The function does nothing if every namespace is already granted or the list is empty.
     """
     to_grant = []
     modes = []
@@ -1816,29 +1185,14 @@ def user_has_role(hostname, exec_prefix, username, role):
 
 def ensure_user_role(hostname, exec_prefix, username, role):
     """
-    Idempotently attach `role` to an ALREADY-EXISTING user via spacecmd's
-    native user_addrole. Does not create the user — a missing username is
-    reported the same way as any other user_addrole failure (see below).
+    Attach `role` to a user that already exists, with user_addrole. This function does not create the user. A missing
+    username fails the same way any other user_addrole error does.
 
-    CONFIRMED LIVE 2026-09-15 against a real SMLM 5.2 server, contradicting
-    this module's own earlier assumption: user.addRole (user_addrole)
-    ONLY accepts the fixed/builtin role labels (activation_key_admin,
-    channel_admin, config_admin, image_admin, org_admin, regular_user,
-    satellite_admin, system_group_admin) — a custom access group's own
-    label is REJECTED outright ("Role with the label [X] cannot be
-    assigned/revoked from the user"), and this is unconditional: even the
-    default satellite_admin session gets the identical rejection, not just
-    a less-privileged org admin. The real XML-RPC method for attaching a
-    user to a custom Access Group was not found among the reasonable
-    candidates probed live (access.setUserAccessGroups/addUserAccessGroup/
-    setUsers/grantAccessGroup, user.setAccessGroups/addAssignedRoles — all
-    404 "Could not find method"), so ensure_access_groups()'s own `users`
-    field is currently UNIMPLEMENTABLE via any spacecmd/XML-RPC call this
-    module could locate — warn(), don't die(), so a lab with a mix of
-    builtin-role and custom-group user assignments still gets the builtin
-    ones applied and every other orchestration step still runs. Attach
-    users to a custom access group by hand via the Web UI until the real
-    API is found.
+    user_addrole accepts only the fixed built-in roles: activation_key_admin, channel_admin, config_admin, image_admin, org_admin,
+    regular_user, satellite_admin and system_group_admin. A custom access group's label is rejected with "Role with the label
+    [X] cannot be assigned/revoked from the user", even for the default satellite_admin session. No XML-RPC method was found
+    that attaches a user to a custom access group, so ensure_access_groups() cannot attach users to one. It warns instead of
+    failing, so the built-in roles in the same configuration are still applied.
     """
     if user_has_role(hostname, exec_prefix, username, role):
         print("  User '{}' already has role '{}' — leaving it alone".format(username, role))
@@ -1855,10 +1209,8 @@ def ensure_user_role(hostname, exec_prefix, username, role):
 
 def user_exists(hostname, exec_prefix, username):
     """
-    Whether `username` already appears as an exact line in `spacecmd
-    user_list`'s output (one username per line, no header, confirmed live
-    2026-09-15 — same shape as org_list). Exact match, same reasoning as
-    org_exists.
+    Return True if `username` is an exact line in the output of `spacecmd user_list`, which prints one name per line with no
+    header. The match is exact, as in org_exists.
     """
     r = _spacecmd(hostname, exec_prefix, "user_list")
     return username in [line.strip() for line in (r.stdout or "").splitlines()]
@@ -1866,25 +1218,14 @@ def user_exists(hostname, exec_prefix, username):
 
 def ensure_user(hostname, exec_prefix, user):
     """
-    Idempotently create the user account described by one entry of
-    <prefix>_users, via spacecmd's native user_create (confirmed live
-    2026-09-15 against a real SMLM 5.2 server — see this module's own
-    top-of-file notes on ensure_access_groups for the research correction).
-    Builtin roles (fixed labels from `spacecmd user_listavailableroles`:
-    activation_key_admin, channel_admin, config_admin, image_admin,
-    org_admin, regular_user, satellite_admin, system_group_admin — confirmed
-    live against the same server) are applied via `roles`, reusing
-    ensure_user_role() so a repeat run never re-grants an already-held role.
+    Idempotently create the user account described by one entry of <prefix>_users, with user_create. Built-in roles (the
+    fixed labels that `spacecmd user_listavailableroles` lists) are applied through `roles`, using ensure_user_role(). A repeat
+    run does not grant a role the user already has.
 
-    A custom access group's own label is an ordinary role label too once the
-    group exists, BUT ensure_users() runs BEFORE ensure_access_groups() at
-    every call site in this module (an access group's own `users` list needs
-    the account to already exist) — so a custom label put in `roles` here
-    would try to attach a role that doesn't exist yet and fail. Grant custom
-    labels the other way instead: list the username in that access group's
-    own `users` field, which runs in the correct order already. Reserve
-    `roles` here for the fixed builtin labels, which have no such ordering
-    dependency.
+    A custom access group's label becomes a role label once the group exists. ensure_users() runs before
+    ensure_access_groups() at every call site, so a custom label in `roles` would fail, because that role does not exist yet.
+    Put a user in a custom group's own users list instead, which runs in the right order. Use `roles` only for the built-in
+    labels, which have no ordering dependency.
     """
     username = user.get("username")
     if not username:
@@ -1932,25 +1273,13 @@ def ensure_users(hostname, exec_prefix, cfg, prefix):
 
 def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_access_groups: a list of {label, description,
-    permissions_from: [...], permissions: [{namespace, mode}], users: [...]}
-    dicts. Each entry: create the access group (or skip if it exists), grant
-    its requested namespaces, then TRY to attach it as a role to every
-    already-existing username in `users` via ensure_user_role. No-op if
-    <prefix>_access_groups is unset or empty. Called both at the top level
-    (default-org users) and per-org from ensure_orgs (org-scoped users) —
-    the 'access' namespace is reached through the same session-is-org-
-    scoping mechanism as everything else in this module.
+    Orchestrate <prefix>_access_groups, a list of {label, description, permissions_from, permissions: [{namespace, mode}],
+    users} dicts. Each entry creates the group if it is missing, grants its namespaces, and then tries to attach it to each
+    existing username in `users` through ensure_user_role(). The function does nothing if the field is unset or empty. It runs
+    at the top level, for default-organization users, and per organization from ensure_orgs().
 
-    Group creation and permission-granting are confirmed live (2026-09-15,
-    real SMLM 5.2 server) and work correctly. The `users` attachment step is
-    ALSO confirmed live — and confirmed BROKEN: see ensure_user_role()'s own
-    docstring for the real, reproducible API rejection this hits for every
-    custom label, regardless of caller privilege. That call now warns
-    instead of dying, so this orchestrator still finishes (and every other
-    <prefix>_access_groups entry, plus every step after it in the caller's
-    own orchestration, still runs) even though `users` currently has no
-    working effect.
+    Creating groups and granting permissions work. The users attachment does not work, because the server rejects custom labels
+    in user_addrole (see ensure_user_role()). That call warns, so the rest of the configuration still runs.
     """
     groups = cfg.get("{}_access_groups".format(prefix)) or []
     for group in groups:
@@ -1968,35 +1297,17 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
 
 def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_ansible_control_nodes: a list of {system} dicts.
-    Enables the real "Ansible Control Node" add-on entitlement on each
-    (system.addEntitlements, label "ansible_control_node" — ground-truthed
-    2026-09-18 directly against Uyuni's own Java source, see module
-    docstring's own correction above), then schedules a highstate apply
-    (system.scheduleApplyHighstate) so the real 'ansible' package actually
-    gets installed there — the documented real workflow is literally "check
-    the box, then Apply Highstate" (documentation.suse.com/multi-linux-
-    manager's own "Setup Ansible Control Node" guide), so this mirrors it
-    exactly rather than guessing that the entitlement alone is enough.
+    Orchestrate <prefix>_ansible_control_nodes, a list of {system} dicts. For each system, it enables the "Ansible
+    Control Node" add-on entitlement with system.addEntitlements, using the label "ansible_control_node". Then it schedules a
+    highstate apply with system.scheduleApplyHighstate, which installs the ansible package on the system.
 
-    Idempotent, safe to call on every run (unlike schedule_ansible_playbook
-    below): addEntitlements' own real API description says an entitlement
-    the server already has is "quietly ignored", and re-applying a
-    highstate is itself idempotent salt-side — this is NOT scheduling a
-    one-shot custom action the way a playbook run is. No-op if the field is
-    unset or empty. Uses _system_id() to resolve the numeric sid these
-    calls need from a hostname, same as ensure_grafana_formula().
+    The call is idempotent and safe on every configuration pass. addEntitlements ignores an entitlement the system already has,
+    and a repeated highstate is idempotent on the Salt side. The function does nothing if the field is unset or empty. The
+    numeric system ID comes from _system_id(), as in ensure_grafana_formula().
 
-    Only enables the entitlement + triggers the package install — it does
-    NOT create the playbook/inventory FILE CONTENT itself (see module
-    docstring: no method exists anywhere to push that), and does NOT set
-    up SSH keys from the control node to any managed target (the real
-    docs' own "Establishing Communication with Ansible Nodes" step) — both
-    genuinely need real file content, handled by this project's own
-    install_ansible_control_node.py addon instead, which SSHes directly to
-    the control node (a VM-provisioning concern, not a spacecmd/API one).
-    NOT live-tested (no server available in this project's dev/CI
-    environment).
+    This function only enables the entitlement and triggers the package install. It does not create the playbook or inventory
+    files, which live on the control node and are managed outside this module. It also does not set up SSH keys from the
+    control node to managed targets. install_ansible_control_node.py does both, over SSH to the control node.
     """
     entries = cfg.get("{}_ansible_control_nodes".format(prefix)) or []
     for entry in entries:
@@ -2022,39 +1333,19 @@ def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
 
 def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_image_build_hosts: a list of {system} dicts.
-    Enables the real "Container Build Host" add-on entitlement on each
-    (system.addEntitlements, label "container_build_host" — ground-truthed
-    2026-09-24 directly against Uyuni's own Java source,
-    EntitlementManager.CONTAINER_BUILD_HOST_ENTITLED — a genuinely
-    DIFFERENT real entitlement from "osimage_build_host", which is the
-    older Kiwi-based OS-image build path, not this one), then schedules a
-    highstate apply (system.scheduleApplyHighstate) so the real container
-    build tooling actually gets installed there — confirmed live via
-    documentation.suse.com/multi-linux-manager's own "Image Building and
-    Management" guide, whose real documented procedure is literally
-    "enable Container Build Host, then Apply Highstate" (the exact same
-    two-step shape as ensure_ansible_control_node(), which this mirrors).
+    Orchestrate <prefix>_image_build_hosts, a list of {system} dicts. For each system, it enables the "Container Build Host"
+    add-on entitlement with system.addEntitlements, using the label "container_build_host". This entitlement is separate from
+    "osimage_build_host", which belongs to the Kiwi-based OS-image build path. Then it schedules a highstate apply with
+    system.scheduleApplyHighstate, which installs the container build tooling on the system. The two steps match
+    ensure_ansible_control_node().
 
-    This is the missing piece smlm_image_imports' own JSON doc has flagged
-    since it was added: an image import's build_host_id needs a system
-    that ALREADY has this entitlement — this function is what actually
-    grants it, so a lab that also sets this field can go from "image
-    import fails, entitlement missing" to a working build host in one
-    additional list entry, with no manual Web UI/system_addentitlement
-    step required.
+    An image import's build_host_id must name a system that has this entitlement. This function grants it, so a single list entry
+    gives a working build host, with no manual step.
 
-    Idempotent, safe to call on every run — same reasoning as
-    ensure_ansible_control_node(): addEntitlements' own real API
-    description says an already-held entitlement is "quietly ignored",
-    and re-applying a highstate is itself idempotent salt-side. No-op if
-    the field is unset or empty. Does NOT itself verify the target
-    system's software channels include the required Containers module
-    (confirmed live real prerequisite, per the docs) — that's expected to
-    already be satisfied by the system's own activation key/channel setup
-    elsewhere in this same JSON (matching every other add-on entitlement
-    function in this module, none of which validate channel prerequisites
-    either).
+    The call is idempotent and safe on every configuration pass, for the same reasons as ensure_ansible_control_node(). The
+    function does nothing if the field is unset or empty. It does not check that the system's software channels include the
+    Containers module. That prerequisite is expected to come from the system's own activation key and channel setup, as for the
+    other entitlement functions in this module.
     """
     entries = cfg.get("{}_image_build_hosts".format(prefix)) or []
     for entry in entries:
@@ -2080,90 +1371,40 @@ def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
 
 def ensure_mcp_server(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_mcp_server: a single dict deploying the real,
-    third-party Uyuni MCP (Model Context Protocol) Server
-    (github.com/uyuni-project/mcp-server-uyuni) against this SMLM/Uyuni
-    instance — lets an MCP-compliant AI client (Claude Desktop, Gemini
-    CLI, etc.) inspect/manage it via natural language. Ground-truthed
-    2026-09-24 directly against that project's own README — every env var
-    name/default below is verbatim from it, not guessed.
+    Orchestrate <prefix>_mcp_server, a single dict that deploys the Uyuni MCP (Model Context Protocol) server from
+    github.com/uyuni-project/mcp-server-uyuni against this server. An MCP-compliant AI client, such as Claude Desktop or Gemini
+    CLI, can then inspect and manage the server. The environment variable names and defaults match that project's README.
 
-    Deployed as its own standalone podman container, SIBLING to (not
-    inside) the uyuni-server container: it talks to Uyuni over the normal
-    external HTTPS API, the same way any other API client would, so it
-    needs no access to exec_prefix's target at all — exec_prefix is
-    accepted only for call-shape consistency with every other rps()-driven
-    ensure_* step, unused otherwise.
+    It runs as a standalone podman container next to the uyuni-server container, not inside it. The server talks to Uyuni over the
+    external HTTPS API, so it needs no access to exec_prefix. exec_prefix is accepted only so the call shape matches the other
+    ensure_* steps.
 
-    Runs with `--network=host`, NOT podman's default bridge network.
-    Confirmed live (2026-09-24, sol.mydemo.lab): a bridge-networked sibling
-    container inherits this project's own real /etc/hosts self-reference
-    (podman copies the host's /etc/hosts into new containers by default) —
-    "127.0.0.1 sol.mydemo.lab" resolves, inside that container's OWN
-    network namespace, to the container itself, not the host, so
-    UYUNI_SERVER=https://sol.mydemo.lab failed with "All connection
-    attempts failed" even though the exact same hostname/URL works fine
-    from the host itself. This is the identical class of container-network
-    -isolation gotcha this project's own mcp/mcp_server.py was already
-    de-containerized for (see that module's own docstring) — --network=host
-    makes this container's networking behave exactly like any other
-    process on the host, sidestepping the whole problem rather than
-    working around one hostname at a time. Because of this, UYUNI_MCP_HOST
-    is bound to 127.0.0.1 directly (real host loopback now, not a
-    container's own) instead of using a podman -p port mapping — the two
-    are mutually exclusive with host networking, but achieve the identical
-    "not reachable off-host by default" effect.
+    The container runs with --network=host. With podman's default bridge network, the copy of the host's /etc/hosts that the
+    container inherits maps the server's FQDN to 127.0.0.1, which resolves to the container itself. Host networking makes the
+    container behave like any other process on the host. For the same reason, UYUNI_MCP_HOST is bound to 127.0.0.1 directly, not
+    with a -p port mapping, which host networking does not allow. The effect is the same: the server is not reachable from other
+    hosts by default.
 
-    Only supports <prefix>_deployment == "podman" for now — the only mode
-    this module can SSH straight to a host with a container engine already
-    on it for. A "kubernetes"-deployed SMLM would need a real Deployment/
-    Service manifest instead, not yet implemented; this warns and no-ops
-    rather than guessing at one.
+    Only <prefix>_deployment == "podman" is supported. A Kubernetes deployment would need a Deployment and Service manifest, which
+    this function does not write. In that case it warns and does nothing.
 
-    Deliberately bound to 127.0.0.1 only, not 0.0.0.0 — this server holds
-    real Uyuni admin/write credentials (UYUNI_MCP_WRITE_TOOLS_ENABLED can
-    enable state-changing calls) and, per its own README's security
-    section, runs unauthenticated in HTTP mode (no UYUNI_AUTH_SERVER/OAuth
-    configured here). Reaching it from off-host is left to an explicit SSH
-    tunnel/port-forward the operator sets up, same trust model as e.g.
-    Kubernetes' own `kubectl port-forward`, rather than this module opening
-    it to the whole network by default.
+    It binds to 127.0.0.1 only. The server holds Uyuni credentials and can enable state-changing calls through
+    UYUNI_MCP_WRITE_TOOLS_ENABLED. In HTTP mode it runs without authentication unless UYUNI_AUTH_SERVER or OAuth is configured,
+    and this function configures neither. Reach it from another host through an explicit SSH tunnel or port forward.
 
-    Config keys under <prefix>_mcp_server (all optional except the dict's
-    own presence, which is what enables this):
-      "version"              : image tag, e.g. "v0.2.1" — default "latest"
-      "port"                  : 127.0.0.1 port to listen on (host-networked,
-                                so this IS the real listening port, no
-                                separate internal/external split) — default
-                                8090
-      "user" / "password"    : Uyuni credentials the MCP server uses for
-                                its own API calls — default to
-                                <prefix>_admin_user/<prefix>_admin_pass
-                                (the same account ensure_spacecmd_config
-                                already uses). The real README's own
-                                "Principle of Least Privilege" section
-                                recommends a dedicated low-privilege
-                                account instead — this module does not
-                                create one itself.
-      "write_tools_enabled"  : bool, default False — maps directly to
-                                UYUNI_MCP_WRITE_TOOLS_ENABLED; real
-                                upstream default is also False
-                                (read-only: inspect/list tools only, no
-                                schedule/add/remove actions).
-      "ssl_verify"            : bool, default False — this server's own
-                                embedded cert is self-signed (matches every
-                                other curl -k/unverified-context call
-                                already in this module), so verification
-                                defaults off here too (UYUNI_MCP_SSL_VERIFY).
+    Config keys under <prefix>_mcp_server. All are optional, and the dict's presence enables the feature:
+      "version"              image tag, e.g. "v0.2.1". Default "latest".
+      "port"                 port on 127.0.0.1 to listen on. Default 8090.
+      "user" / "password"    Uyuni credentials for the server's API calls. Default to <prefix>_admin_user and <prefix>_admin_pass,
+                             the account ensure_spacecmd_config() already uses. The upstream README recommends a dedicated
+                             low-privilege account, which this function does not create.
+      "write_tools_enabled"  bool, default False. Maps to UYUNI_MCP_WRITE_TOOLS_ENABLED. With False the server exposes only
+                             read tools: inspect and list.
+      "ssl_verify"           bool, default False. Maps to UYUNI_MCP_SSL_VERIFY. The server's certificate is self-signed.
 
-    Idempotent: (re)writes the env file and (re)creates the container on
-    every call — matches this project's own "helm upgrade --install"/
-    PXEService.enable() convention of always converging to the current
-    config rather than a stale "already exists — leave alone" no-op, since
-    a changed password/version/port here should actually take effect.
-    Credentials are written to a root-only (0600) env file on the remote
-    host and passed to podman via --env-file, never -e/argv — the latter
-    would leak into `podman inspect`/`ps` output.
+    The function always rewrites the environment file and recreates the container, so a changed password, version or port takes
+    effect. Credentials go into a root-only (0600) env file on the remote host, passed to podman with --env-file. They are never
+    passed with -e or on the command line, where podman inspect and ps would show them.
     """
     field = "{}_mcp_server".format(prefix)
     if cfg.get(field) is None:
@@ -2244,13 +1485,10 @@ def ansible_path_exists(hostname, exec_prefix, control_node_id, path):
 
 def ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path):
     """
-    Idempotently register `path` (a directory on the control node's own
-    filesystem — this does NOT create or upload anything there) as an
-    ansible.AnsiblePath of `path_type` ("inventory" or "playbook") for
-    control-node system `control_node_id`. The control node must already be
-    a registered system with the "Ansible Control Node" add-on entitlement
-    enabled — this module has no way to enable that itself (see module
-    docstring). NOT live-tested.
+    Idempotently register `path` as an ansible.AnsiblePath of `path_type` ("inventory" or "playbook") for control-node
+    system `control_node_id`. `path` is a directory on the control node's own filesystem. This function does not create or
+    upload anything there. The control node must already be a registered system with the "Ansible Control Node" entitlement,
+    which ensure_ansible_control_node() enables.
     """
     if path_type not in ("inventory", "playbook"):
         die("invalid ansible path type '{}': expected 'inventory' or 'playbook'".format(path_type))
@@ -2268,19 +1506,8 @@ def ensure_ansible_path(hostname, exec_prefix, control_node_id, path_type, path)
 
 def remove_ansible_path(hostname, exec_prefix, path_id):
     """
-    Removes a single Ansible path by its numeric id —
-    ansible.removeAnsiblePath(sessionKey, pathId) -> int (1 on success),
-    ground-truthed 2026-09-18 directly against AnsibleHandler.java
-    (java/core/src/main/java/com/redhat/rhn/frontend/xmlrpc/ansible/
-    AnsibleHandler.java — "@return 1 on success", throws
-    EntityNotExistsFaultException if pathId doesn't exist/isn't
-    accessible). CORRECTS this module's own earlier (2026-08-27) research
-    note claiming the confirmed ansible.* method set was only
-    discoverPlaybooks/fetchPlaybookContents/introspectInventory (read-only)
-    plus createAnsiblePath/schedulePlaybook — that survey was itself
-    incomplete: it missed lookupAnsiblePathById, updateAnsiblePath, AND
-    this one, none of which needed guessing, all three sitting in the
-    exact same handler file already fetched for the original research.
+    Remove one Ansible path by its numeric id, with ansible.removeAnsiblePath(sessionKey, pathId). It returns 1 on success.
+    The server raises an error if the path does not exist or is not accessible.
     """
     r = _api_call(hostname, exec_prefix, "ansible.removeAnsiblePath", [path_id])
     if r.returncode != 0:
@@ -2302,17 +1529,12 @@ _STALE_DEFAULT_ANSIBLE_PATHS = {("/etc/ansible/hosts", "inventory"), ("/etc/ansi
 
 def remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id):
     """
-    Removes SMLM/Uyuni's own auto-created default Ansible paths (see
-    _STALE_DEFAULT_ANSIBLE_PATHS) from `control_node_id` if present.
-    Idempotent — a no-op if neither default is currently registered (e.g.
-    a second run, or a server version that doesn't auto-create them).
+    Remove the default Ansible paths that the server creates automatically (see _STALE_DEFAULT_ANSIBLE_PATHS) from
+    `control_node_id`, when they are present. The function is idempotent. It does nothing if neither default is registered, as on
+    a repeat run or on a server version that does not create them.
 
-    ansible.listAnsiblePaths' raw output was ASSUMED to need
-    substring-matching rather than real parsing when ansible_path_exists()
-    was first written (2026-08-27) — reconfirmed live 2026-09-18 that it
-    is, in fact, valid JSON (`spacecmd api`'s own passthrough prints it
-    that way for this method), so this function parses it properly rather
-    than repeating that older, more defensive assumption.
+    ansible.listAnsiblePaths returns valid JSON through spacecmd's api passthrough, so the output is parsed rather than searched
+    as text.
     """
     r = _api_call(hostname, exec_prefix, "ansible.listAnsiblePaths", [control_node_id])
     if r.returncode != 0:
@@ -2333,31 +1555,16 @@ def remove_stale_default_ansible_paths(hostname, exec_prefix, control_node_id):
 
 def ensure_ansible_paths(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_ansible_paths: a list of {control_node_id | system,
-    type, path} dicts. Idempotent, safe to call on every run — unlike
-    schedule_ansible_playbook below, which is NOT (see module docstring for
-    why the two are treated differently). No-op if the field is unset or
-    empty.
+    Orchestrate <prefix>_ansible_paths, a list of {control_node_id | system, type, path} dicts. The function is idempotent
+    and safe on every configuration pass. It does nothing if the field is unset or empty.
 
-    Each entry names its control node EITHER way: 'control_node_id' (the
-    raw numeric Uyuni system ID, the original — and still supported —
-    shape), or 'system' (a hostname, resolved via _system_id() — added
-    2026-09-18, same helper ensure_ansible_control_node()/
-    ensure_grafana_formula() already use live-verified). 'system' is the
-    friendlier option: a numeric id is fragile in a static lab-JSON file
-    (it's only known after the system is actually registered, and isn't
-    guaranteed stable across a re-registration) — the original "no
-    name-to-ID resolution is provided here" limitation this function's own
-    history notes was written before _system_id() existed to solve exactly
-    this. Live-verified 2026-09-18: registered charon.mydemo.lab's own
-    example playbook directory + dynamic inventory script this way against
-    the real sol.mydemo.lab server.
+    Each entry names its control node in one of two ways. control_node_id is the numeric Uyuni system ID. system is a hostname,
+    resolved through _system_id(). A numeric ID is known only after the system is registered and may change if the system is
+    re-registered, so system is the preferred form in a lab JSON file.
 
-    ALSO removes SMLM/Uyuni's own stale auto-created default paths (see
-    remove_stale_default_ansible_paths()) on every control node this
-    touches — added 2026-09-18 after a real, user-reported failure: SMLM's
-    own "Schedule Playbook" flow picked one of those broken defaults
-    instead of the real path registered here, and failed confusingly.
+    The function also removes the server's default Ansible paths from every control node it touches (see
+    remove_stale_default_ansible_paths()). SMLM's Schedule Playbook flow otherwise selects one of those defaults, which can be
+    broken, instead of the path registered here.
     """
     paths = cfg.get("{}_ansible_paths".format(prefix)) or []
     touched_control_nodes = set()
@@ -2384,19 +1591,14 @@ def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_p
                                earliest=None, action_chain_label="", test_mode=False,
                                extra_vars=None, flush_cache=False):
     """
-    Schedules an Ansible playbook run via ansible.schedulePlaybook (no
-    spacecmd subcommand exists for the 'ansible' namespace at all — see
-    module docstring). `earliest` is an ISO-8601 string (default: the
-    current UTC time, i.e. "run as soon as possible") — spacecmd's own
-    'api' passthrough argument parser auto-converts a top-level
-    ISO-8601-looking string into a real datetime before the XML-RPC call,
-    confirmed by reading its source directly; no manual DateTime
-    construction is needed here. Returns the scheduled action id (a string)
-    on success — pass it to ansible_playbook_status() to check on the run
-    later. NOT IDEMPOTENT: each call schedules a brand-new run, so this is
-    meant to be invoked once per intended run (see the install scripts'
-    --run-ansible-playbooks flag), never as part of the normal automatic
-    ensure_* flow. NOT live-tested.
+    Schedule an Ansible playbook run with ansible.schedulePlaybook. There is no spacecmd subcommand for the 'ansible'
+    namespace, so the call goes through the api passthrough. `earliest` is an ISO-8601 string. The default is the current UTC
+    time, meaning "run as soon as possible". The passthrough converts an ISO-8601 string argument to a datetime, so no manual
+    conversion is needed. The function returns the scheduled action id as a string. Pass it to ansible_playbook_status() to check
+    on the run.
+
+    Each call schedules a new run, so the call is not idempotent. Invoke it once per intended run, through the install scripts'
+    --run-ansible-playbooks flag. Do not place it in the automatic ensure_* flow.
     """
     earliest = earliest or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     args = [playbook_path, inventory_path, control_node_id, earliest, action_chain_label or ""]
@@ -2423,11 +1625,9 @@ def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_p
 
 def ansible_playbook_status(hostname, exec_prefix, action_id):
     """
-    Returns (details, output) — the raw text of spacecmd's native (not
-    passthrough) schedule_details/schedule_getoutput commands for a
-    previously scheduled action id. The 'schedule' namespace, unlike
-    'ansible', IS wrapped natively by spacecmd. Read-only; callers decide
-    what to do with the text. NOT live-tested.
+    Return (details, output): the text of spacecmd's schedule_details and schedule_getoutput commands for a scheduled action id.
+    These are native spacecmd commands, unlike the ansible namespace. The function is read-only, and callers decide what to do
+    with the text.
     """
     details = _spacecmd(hostname, exec_prefix, "schedule_details {}".format(shlex.quote(str(action_id))))
     output = _spacecmd(hostname, exec_prefix, "schedule_getoutput {}".format(shlex.quote(str(action_id))))
@@ -2435,38 +1635,18 @@ def ansible_playbook_status(hostname, exec_prefix, action_id):
 
 
 def _api_call(hostname, exec_prefix, method, args):
-    """Shared helper: JSON-encodes `args` and runs it through spacecmd's
-    generic 'api' passthrough against `method` (e.g.
-    "contentmanagement.createProject"). Every ansible.*/access.*/
-    contentmanagement.*/saltkey.* call in this module goes through this
-    same passthrough, since none of those namespaces have a native spacecmd
-    subcommand — see module docstring.
+    """
+    Shared helper: JSON-encode `args` and call `method`, for example "contentmanagement.createProject", through spacecmd's
+    generic 'api' passthrough. The ansible, access, contentmanagement and saltkey namespaces have no native spacecmd subcommands,
+    so their calls all go through this helper.
 
-    `args` is always the caller's plain list of positional args beyond the
-    (auto-injected) session key — [] for a zero-arg method, [x] for a
-    one-arg method, [x, y] for two, etc. Confirmed live (2026-08-28, real
-    saltkey.accept(sessionKey, minionId) call): spacecmd's `-A` JSON is NOT
-    "the positional args, spread" — it's passed through as ONE value bound
-    directly to the method's next parameter. For a one-arg method this
-    means the JSON must be that single value on its own (`-A
-    "minionId-string"`), NOT a one-element array (`-A '["minionId-string"]'`
-    binds the whole list as the arg, which is a different value the server
-    then reports as not found — confirmed by the exact "[[value]]"-nested
-    error text a wrapped list produces). This is special-cased ONLY for the
-    confirmed len(args) == 1 case; 0-arg (confirmed: plain `[]` works,
-    e.g. saltkey.pendingList) case is left as-is.
+    `args` is the caller's list of positional arguments after the session key: [] for a method with no arguments, [x] for one
+    argument, [x, y] for two, and so on. spacecmd's -A option takes a single JSON value that is bound to the method's next
+    parameter. It does not spread a list into positional arguments. For a method with one argument, the JSON must be that value
+    on its own, for example -A "minionId", not a one-element array. A zero-argument method takes [].
 
-    A second bug, confirmed live 2026-08-28 (channel.access.setOrgSharing,
-    a genuine 2-arg call): the command string built here was missing the
-    `--` separator `_spacecmd()` already correctly uses before its own
-    subcommand — `spacecmd api -A ... method` is rejected outright by
-    spacecmd's own argument parser ("unrecognized arguments: -A [...]
-    method"), reproduced identically for BOTH a 1-arg and a 2-arg call once
-    tested directly; `spacecmd -- api -A ... method` (with `--`) works for
-    both. This means every previous "2+-arg calls are genuinely unverified"
-    caveat here was moot — the command never had a chance to reach the
-    argument-shape question at all before this fix, regardless of arg
-    count. Fixed by adding `--` before `api`, matching `_spacecmd()`.
+    The command is built as `spacecmd -- api -A ... method`. The `--` separator is required, as in _spacecmd(). Without it the
+    argument parser rejects -A.
     """
     args_json = json.dumps(args[0] if len(args) == 1 else args)
     return _fault_check(_run(hostname, exec_prefix, "spacecmd -- api -A {} {}".format(shlex.quote(args_json), method),
@@ -2483,8 +1663,9 @@ def content_project_exists(hostname, exec_prefix, label):
 
 
 def ensure_content_project(hostname, exec_prefix, label, name, description):
-    """Idempotently create a CLM project via contentmanagement.createProject.
-    NOT live-tested."""
+    """
+    Idempotently create a CLM project with contentmanagement.createProject.
+    """
     if content_project_exists(hostname, exec_prefix, label):
         print("  Content project '{}' already exists — leaving it alone".format(label))
         return
@@ -2503,10 +1684,8 @@ def content_source_exists(hostname, exec_prefix, project_label, source_label):
 
 def ensure_content_source(hostname, exec_prefix, project_label, source_label):
     """
-    Idempotently attach `source_label` (a software channel label — "software"
-    is the only Source type that exists in current source, despite CLM's
-    original design mentioning others) to CLM project `project_label` via
-    contentmanagement.attachSource. NOT live-tested.
+    Idempotently attach `source_label` to CLM project `project_label` with contentmanagement.attachSource. The label is a
+    software channel label. "software" is the only Source type in the current source.
     """
     if content_source_exists(hostname, exec_prefix, project_label, source_label):
         print("  Content project '{}' already has source '{}' — leaving it alone".format(
@@ -2522,19 +1701,15 @@ def ensure_content_source(hostname, exec_prefix, project_label, source_label):
 
 def ensure_content_filter(hostname, exec_prefix, project_label, filt):
     """
-    Idempotently create-and-attach a filter (a
-    {"name", "rule": "allow"|"deny", "entity_type": "package"|"erratum"|
-    "module"|"ptf", "matcher", "field", "value"} dict) to CLM project
-    `project_label`. Filters have NO lookup-by-name API (only by numeric
-    id, which only createFilter's own return value ever gives you) — so
-    this checks idempotency at the PROJECT level (does
-    contentmanagement.listProjectFilters(project_label) already mention
-    this filter's name), not a true global existence check, and extracts
-    the freshly-created filter's id by regexing createFilter's raw printed
-    return struct (a heuristic — the exact print format of a struct through
-    spacecmd's 'api' passthrough was not independently confirmed). If that
-    extraction fails, dies with the literal manual command to run instead
-    of silently leaving the filter unattached. NOT live-tested.
+    Idempotently create a filter and attach it to CLM project `project_label`. The filter is a dict with name, rule ("allow"
+    or "deny"), entity_type ("package", "erratum", "module" or "ptf"), matcher, field and value.
+
+    A filter has no lookup-by-name API. It can be looked up only by its numeric id, and only createFilter returns that id. The
+    idempotency check is therefore made at the project level: the function looks for the filter's name in the output of
+    contentmanagement.listProjectFilters for the project. It is not a global existence check. The new filter's numeric id is taken
+    from createFilter's printed return value with a regular expression, because the printed format of a struct through the api
+    passthrough is not documented. If the id cannot be extracted, the function dies with the spacecmd api command to run by hand,
+    so the filter is never left unattached without a message.
     """
     name = filt.get("name")
     rule = filt.get("rule")
@@ -2581,29 +1756,14 @@ def content_environment_exists(hostname, exec_prefix, project_label, env_label):
 
 def ensure_content_environments(hostname, exec_prefix, project_label, environments):
     """
-    Idempotently creates the ordered lifecycle chain described by
-    `environments` — each entry either a plain label string (name/description
-    default to the label) or a {"label", "name", "description"} dict — via
-    one contentmanagement.createEnvironment call per stage, threading each
-    stage's predecessorLabel from the PREVIOUS entry in the list ("" for
-    the first stage). No-op if `environments` is empty.
+    Idempotently create the ordered lifecycle chain described by `environments`. Each entry is either a label string, where
+    name and description default to the label, or a {"label", "name", "description"} dict. Each stage is created with one
+    contentmanagement.createEnvironment call. Each stage's predecessorLabel is the label of the previous entry, and the first stage
+    gets "". The function does nothing if `environments` is empty.
 
-    Bug fixed here, confirmed live 2026-08-28: `predecessor` was never
-    advanced past the first iteration — every stage after the first was
-    created with predecessorLabel="" instead of the previous stage's
-    label, silently building a set of disconnected "first" environments
-    rather than the intended chain.
-
-    Separately confirmed live: creating (or building) any environment can
-    get stuck in "building" forever if the server's own async align worker
-    has already wedged itself from an earlier build in the same server
-    session — this is independent of which API call triggers it (a
-    confirmed-live A/B test that initially looked like "the Web UI's REST
-    endpoint works, this XML-RPC call doesn't" turned out to be confounded
-    by call order; a clean-queue retest showed this exact XML-RPC call
-    completing normally). See build_content_project's docstring and
-    MIGRATION_TODO.md's "chasing the CLM stuck-build bug" writeups for the
-    full account — flagged as a likely upstream bug, not fixed here.
+    A creation or build can stay in "building" indefinitely if the server's asynchronous align worker is already stuck from an
+    earlier build in the same server session. This is not specific to any API call, so the wait in
+    wait_for_content_environment() can time out. See build_content_project().
     """
     predecessor = ""
     for env in environments or []:
@@ -2632,15 +1792,9 @@ def ensure_content_environments(hostname, exec_prefix, project_label, environmen
 
 def ensure_content_projects(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_content_projects: a list of {label, name,
-    description, sources: [...], filters: [...], environments: [...]}
-    dicts — see module docstring for the CLM data model and its known
-    gaps (filters especially). No-op if the field is unset or empty. This
-    only defines the project/sources/filters/environment chain — it does
-    NOT build or promote anything (see run_content_lifecycle_actions /
-    the install scripts' --run-clm-actions flag for that, deliberately
-    kept separate since those are one-shot, non-idempotent actions).
-    NOT live-tested.
+    Orchestrate <prefix>_content_projects, a list of {label, name, description, sources: [...], filters: [...], environments:
+    [...]} dicts. The function does nothing if the field is unset or empty. It only defines the projects, sources, filters and
+    environments. Builds and promotions are run separately, through the install scripts' --run-clm-actions flag.
     """
     projects = cfg.get("{}_content_projects".format(prefix)) or []
     for proj in projects:
@@ -2660,31 +1814,14 @@ def ensure_content_projects(hostname, exec_prefix, cfg, prefix):
 
 def build_content_project(hostname, exec_prefix, project_label, message=None):
     """
-    Triggers a build of CLM project `project_label` via
-    contentmanagement.buildProject — populates its first environment's
-    channels from its sources+filters. Async: returns immediately, the real
-    work continues server-side (see content_environment_status/
-    wait_for_content_environment to poll it). NOT IDEMPOTENT: each call
-    triggers a fresh build — see module docstring for why this is not part
-    of the automatic ensure_* flow.
+    Trigger a build of CLM project `project_label` with contentmanagement.buildProject. The build populates the first
+    environment's channels from the project's sources and filters. It is asynchronous: the call returns at once, and the work
+    continues on the server. Poll it with content_environment_status() or wait_for_content_environment(). Each call starts a new
+    build, so the call is not idempotent, and the automatic install flow does not run it.
 
-    Confirmed live 2026-08-28: this XML-RPC path and the Web UI's own REST
-    endpoint (POST .../projects/{label}/build) call the exact same
-    underlying Java method (ContentManager.buildProject(label, message,
-    async=true, user)) — an initial controlled A/B test seemed to show the
-    REST path succeeding while this one hung forever, but a clean-queue
-    retest disproved that: with the server's async message queue freshly
-    cleared (systemctl restart uyuni-server), THIS SAME XML-RPC call
-    completed normally in ~1 minute. The original "REST works, XML-RPC
-    doesn't" result was confounded by call ORDER, not the API surface — the
-    real symptom (see MIGRATION_TODO.md's "chasing the CLM stuck-build bug"
-    writeups for the fuller account) is that the server's async align
-    worker can get itself
-    wedged after a small number of builds, and once wedged, EVERY
-    subsequent CLM build/environment-creation hangs in "building" forever
-    regardless of which API triggered it — only a service restart has been
-    confirmed to clear it. Not root-caused further than that; flagged as a
-    likely upstream bug, not something fixable from here.
+    The asynchronous align worker on the server can become stuck after a few builds. Once it is stuck, every later build or
+    environment creation stays in "building", whichever API call started it. A server restart is the only confirmed recovery.
+    The cause is not identified, and it is likely an upstream bug.
     """
     args = [project_label, message] if message else [project_label]
     r = _api_call(hostname, exec_prefix, "contentmanagement.buildProject", args)
@@ -2713,11 +1850,8 @@ def promote_content_project(hostname, exec_prefix, project_label, from_env):
 
 def content_environment_status(hostname, exec_prefix, project_label, env_label):
     """
-    Returns the environment's status field ("new"/"building"/
-    "generating_repodata"/"built"/"failed") by regexing
-    contentmanagement.lookupEnvironment's raw printed return struct — same
-    print-format heuristic/caveat as ensure_content_filter's id extraction.
-    Returns None if the status couldn't be parsed. NOT live-tested.
+    Return the environment's status field ("new", "building", "generating_repodata", "built" or "failed"), read from the
+    raw output of contentmanagement.lookupEnvironment with a regular expression. Returns None if the status cannot be parsed.
     """
     r = _api_call(hostname, exec_prefix, "contentmanagement.lookupEnvironment", [project_label, env_label])
     if r.returncode != 0:
@@ -2730,22 +1864,11 @@ def wait_for_content_environment(hostname, exec_prefix, project_label, env_label
                                   target_statuses=("built", "failed"), timeout=1800, interval=15,
                                   die_on_timeout=True):
     """
-    Polls content_environment_status() every `interval` seconds until it
-    reaches one of `target_statuses` (default: "built" or "failed" — i.e.
-    "done, either way"), or times out after `timeout` seconds. Returns the
-    terminal status string on success.
+    Poll content_environment_status() every `interval` seconds until the status is one of `target_statuses`, by default
+    "built" or "failed". Returns the final status string. The function gives up after `timeout` seconds.
 
-    `die_on_timeout` (default True, matching this function's original
-    behavior): on timeout, die() with a clear message. Pass False to
-    instead return the last-seen status (possibly None, if the very first
-    poll never returned one) so a caller can decide what to do — e.g.
-    install_uyuni.py's CLM restart-and-retry wrapper, which needs to catch
-    a timeout itself to attempt recovery rather than have the whole
-    process die outright (see that wrapper's docstring, and this module's
-    build_content_project docstring, for why: Uyuni's own async CLM align
-    worker can get itself wedged after a small number of builds,
-    confirmed live 2026-08-28 round 4, and a server restart is the only
-    confirmed mitigation).
+    die_on_timeout defaults to True and dies with a clear message on timeout. With False it returns the last status seen, which
+    may be None, so the caller can recover. install_uyuni.py's CLM retry wrapper uses that to restart the server and try again.
     """
     waited = 0
     status = None
@@ -2763,14 +1886,9 @@ def wait_for_content_environment(hostname, exec_prefix, project_label, env_label
 
 def run_content_lifecycle_actions(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_content_lifecycle_actions: a list of
-    {"project", "action": "build"|"promote", "message" (build only),
-    "from_env" (promote only), "wait": bool, "wait_env", "wait_timeout"}
-    dicts, run in order. NOT idempotent (see build_content_project/
-    promote_content_project) — meant to be invoked via the install scripts'
-    --run-clm-actions flag, never as part of the automatic ensure_* flow.
-    NOT live-tested (build/promote themselves have been — see their own
-    docstrings — but not through this specific orchestration wrapper).
+    Orchestrate <prefix>_content_lifecycle_actions: a list of {"project", "action": "build" or "promote", "message" (build
+    only), "from_env" (promote only), "wait": bool, "wait_env", "wait_timeout"} dicts, run in order. The actions are not
+    idempotent. The install scripts run them through the --run-clm-actions flag, and not through the automatic ensure_* flow.
     """
     actions = cfg.get("{}_content_lifecycle_actions".format(prefix)) or []
     for a in actions:
@@ -2811,23 +1929,13 @@ def scap_scan_exists(hostname, exec_prefix, system, xccdf_path):
 
 def ensure_openscap_prerequisites(system, xccdf_path):
     """
-    Idempotently installs the OpenSCAP scanner + SUSE's own
-    scap-security-guide content package directly on `system` (a real SSH
-    target, unrelated to exec_prefix's own SMLM-server target — same
-    "reach a different real host directly" shape as ensure_mcp_server's
-    own keycloak_host, generalized to a lab client here) via zypper.
-    Confirmed live 2026-09-25: neither package was actually installed on
-    any of this project's own SLES15 SP7 lab nodes despite
-    ensure_scap_scan's own docstring assuming they'd already be there —
-    this closes that real, previously-manual-only gap so scheduling a scan
-    via install_smlm.py is fully self-contained, no separate manual step.
-    Returns True if `xccdf_path` exists on `system` afterwards (verified,
-    not assumed — scap-security-guide's own real content path varies by
-    product/version, so this locates it via `rpm -ql scap-security-guide`
-    rather than hardcoding one), False (with a warn(), not die() — a
-    scan against a missing profile is a client-side scheduling problem to
-    surface via its own real error, not a reason to abort the whole
-    install_smlm.py run) otherwise.
+    Install the OpenSCAP scanner and SUSE's scap-security-guide content package on `system` with zypper, through SSH to the
+    system directly. The system is a lab client, not the server behind exec_prefix.
+
+    Returns True if `xccdf_path` exists on `system` afterwards. The path is located with `rpm -ql scap-security-guide`, because the
+    content path depends on the product and version. If the path is missing, the function returns False and warns, rather than
+    dying. A scan against a missing profile is a scheduling problem to report through its own error, and it should not stop the
+    whole install_smlm.py run.
     """
     r = ssh_run(system, "test -f {}".format(shlex.quote(xccdf_path)), check=False)
     if r.returncode == 0:
@@ -2852,17 +1960,10 @@ def ensure_openscap_prerequisites(system, xccdf_path):
 
 def ensure_scap_scan(hostname, exec_prefix, system, xccdf_path, profile=None):
     """
-    Heuristically-idempotently schedules a legacy XCCDF/OpenSCAP scan via
-    spacecmd's native scap_schedulexccdfscan. `xccdf_path` (and the
-    OpenSCAP scanner + SCAP Security Guide content) is ensured present on
-    `system` first, via ensure_openscap_prerequisites() — this used to be
-    orchestration-only ("must already exist", pushing nothing there), but
-    that assumption was confirmed WRONG live 2026-09-25 (see that
-    function's own docstring); a scan scheduled against a path that
-    genuinely doesn't exist and never will is not a useful reproducible
-    example. Skips scheduling (but still ensures prerequisites) if
-    scap_scan_exists() already sees a scan against the same path for this
-    system.
+    Schedule a legacy XCCDF OpenSCAP scan with spacecmd's native scap_schedulexccdfscan. Before scheduling,
+    ensure_openscap_prerequisites() installs the scanner and the content on `system`, so the path exists. Scheduling is skipped,
+    though the prerequisites are still ensured, when scap_scan_exists() already finds a scan against the same path for this
+    system. The check matches the path only, not the profile.
     """
     ensure_openscap_prerequisites(system, xccdf_path)
     if scap_scan_exists(hostname, exec_prefix, system, xccdf_path):
@@ -2895,15 +1996,10 @@ def scap_scan_rule_results(hostname, exec_prefix, xid):
 
 def run_scap_scans(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_scap_scans: a list of {system|group, xccdf_path,
-    profile} dicts, run in order via ensure_scap_scan. Exactly one of
-    `system`/`group` per entry — `group` (added 2026-09-25) fans out to
-    every member of that system group via list_group_systems(), so one
-    entry can schedule the same scan across a whole group at once. NOT
-    part of the automatic ensure_* flow — meant to be invoked via the
-    install scripts' --run-scap-scans flag, same reasoning as Ansible/CLM
-    (scheduling a scan is one-shot, real work). No-op if the field is
-    unset or empty. NOT live-tested.
+    Orchestrate <prefix>_scap_scans: a list of {system or group, xccdf_path, profile} dicts, run in order through
+    ensure_scap_scan(). Give exactly one of `system` or `group`. A group expands to every member of that system group through
+    list_group_systems(), so one entry can scan a whole group. The scans are one-shot work, so the automatic install flow does
+    not run them. Use the install scripts' --run-scap-scans flag. The function does nothing if the field is unset or empty.
     """
     scans = cfg.get("{}_scap_scans".format(prefix)) or []
     for s in scans:
@@ -2926,15 +2022,10 @@ def run_scap_scans(hostname, exec_prefix, cfg, prefix):
 
 def list_systems_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labels=None):
     """
-    Returns the raw text of audit.listSystemsByPatchStatus(cveId[,
-    statusLabels]) — no spacecmd subcommand exists for the 'audit'
-    namespace at all (confirmed absent from source: no audit.py module, and
-    errata.py's CVE-related commands only look up published errata, a
-    different mechanism — see module docstring), so this goes through the
-    generic 'api' passthrough. Pure read-only query: nothing to schedule,
-    no idempotency concern. `patch_status_labels`, if given, is a list of
-    labels from {"AFFECTED_PATCH_INAPPLICABLE", "AFFECTED_PATCH_APPLICABLE",
-    "NOT_AFFECTED", "PATCHED"} to filter by. NOT live-tested.
+    Return the raw output of audit.listSystemsByPatchStatus(cveId[, statusLabels]). spacecmd has no subcommand for the audit
+    namespace, so the call goes through the api passthrough. It is a read-only query, with nothing to schedule and no idempotency
+    concern. `patch_status_labels`, if given, is a list of labels from {"AFFECTED_PATCH_INAPPLICABLE",
+    "AFFECTED_PATCH_APPLICABLE", "NOT_AFFECTED", "PATCHED"} to filter by.
     """
     args = [cve_id, list(patch_status_labels)] if patch_status_labels else [cve_id]
     r = _api_call(hostname, exec_prefix, "audit.listSystemsByPatchStatus", args)
@@ -2945,48 +2036,15 @@ def list_systems_by_patch_status(hostname, exec_prefix, cve_id, patch_status_lab
 
 def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labels=None):
     """
-    Returns the raw text of audit.listImagesByPatchStatus(cveId[,
-    statusLabels]) — the CVE-audit-adjacent counterpart of
-    list_systems_by_patch_status() above, for container/OS IMAGES rather
-    than registered systems. Real, confirmed method (documentation.suse.com/
-    multi-linux-manager's own API reference, 'audit' namespace — ground-
-    truthed 2026-09-18 directly against the real API docs: the ENTIRE
-    'audit' namespace has exactly two methods, listSystemsByPatchStatus
-    and this one.
+    Return the raw output of audit.listImagesByPatchStatus(cveId[, statusLabels]). This is the counterpart of
+    list_systems_by_patch_status() for container and OS images, not registered systems. The audit namespace has these two
+    methods only. It is read-only, and it takes the same optional `patch_status_labels` filter.
 
-    CORRECTION (2026-09-25): an earlier version of this docstring claimed
-    the separate Beta "policy-based" system.scap.* surface (listPolicies/
-    listScapContent/listTailoringFiles/scheduleBetaXccdfScanCustom/
-    scheduleBetaXccdfScanWithPolicy) didn't exist at all, based only on the
-    PUBLIC documentation.suse.com API reference page. That was wrong — all
-    5 of those methods DO exist in SystemScapHandler.java, confirmed by
-    fetching the exact installed server's own matching tag
-    (spacewalk-java-5.2.19-0, via `rpm -q spacewalk-java` on sol.mydemo.lab
-    + the matching uyuni-project/uyuni git tag — NOT master, which is
-    bleeding-edge/unreleased and a real, separate version-skew risk any
-    fetch from it carries). The public doc page had simply not caught up
-    with the shipped code. What IS still confirmed true, from that same
-    source: listScapContent/listPolicies/listTailoringFiles are READ-ONLY
-    (no create* counterpart anywhere in the handler) — SCAP content/policy/
-    tailoring-file catalog OBJECTS can only be uploaded via the web UI, not
-    this API, and scheduleBetaXccdfScan{Custom,WithPolicy} additionally
-    require the acting user to have beta features enabled in their own
-    account preferences (validateBetaFeatureEnabled(), no XML-RPC toggle
-    found for that setting either). This module's own
-    scap_scan_*/ensure_scap_scan/run_scap_scans functions (below) use the
-    older, always-available system.scap.scheduleXccdfScan (real XCCDF
-    files on the target's filesystem, no content-object/beta-flag
-    dependency) — the practical, working path for this project.
-
-    Same 'api' passthrough as its sibling (no spacecmd subcommand for
-    'audit' at all), same read-only/no-idempotency-concern shape, same
-    optional `patch_status_labels` filter (one or more of
-    {"AFFECTED_PATCH_INAPPLICABLE", "AFFECTED_PATCH_APPLICABLE",
-    "NOT_AFFECTED", "PATCHED"}). NOT live-tested (no server available in
-    this project's dev/CI environment with the 'cve-server-channels'
-    taskomatic job's own pre-generated data the real API depends on —
-    same caveat the official docs state for both methods in this
-    namespace).
+    The SMLM 5.2 beta policy methods in the system.scap namespace (listPolicies, listScapContent, listTailoringFiles,
+    scheduleBetaXccdfScanCustom and scheduleBetaXccdfScanWithPolicy) exist on the server. Their catalog objects can only be
+    uploaded through the Web UI, and the beta scan calls need beta features enabled in the acting user's account preferences.
+    This module uses the older system.scap.scheduleXccdfScan instead, which reads XCCDF files already on the target system and
+    needs no catalog objects or beta flag.
     """
     args = [cve_id, list(patch_status_labels)] if patch_status_labels else [cve_id]
     r = _api_call(hostname, exec_prefix, "audit.listImagesByPatchStatus", args)
@@ -3184,20 +2242,11 @@ _SCAP_WEB_COOKIE_JAR = "/tmp/lab-in-a-box-scap-session.jar"
 
 def scap_web_login(hostname, exec_prefix, user, password):
     """
-    Logs into the real Web UI (not spacecmd/the XML-RPC session key) via
-    POST /rhn/manager/api/login — needed because SCAP policy creation has
-    no XML-RPC method at all (see the correction comment just above).
-    Executed via curl FROM INSIDE the same pod/container spacecmd itself
-    execs into (same exec_prefix, via _run()) — that pod's own web server
-    is reachable at https://localhost from there, the same assumption
-    every other addon's own internal HTTP readiness check already makes
-    (e.g. install_gitlab.py's/install_nextcloud.py's own status-page curl
-    checks). The session cookie is written to a cookie jar FILE inside the
-    container (survives across separate exec invocations into the same
-    running pod, unlike anything held in this Python process' own memory)
-    and reused by create_scap_policy() below. Dies on a failed login — a
-    wrong password here is a real, actionable configuration error. NOT
-    live-tested.
+    Log into the Web UI with POST /rhn/manager/api/login, and store the session cookie in a cookie jar inside the container.
+    SCAP policy creation has no XML-RPC method, so it needs this session. The login runs with curl inside the same container that
+    spacecmd execs into, through _run(), where the web server is reachable at https://localhost. The cookie jar is a file in the
+    container, so it survives across separate exec calls, and create_scap_policy() reuses it. The function dies if the login
+    fails, since a wrong password is a configuration error.
     """
     login_json = json.dumps({"login": user, "password": password})
     cmd = ("curl -sk -c {jar} -o /dev/null -w '%{{http_code}}' "
@@ -3229,24 +2278,14 @@ def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccd
                        description=None, earliest=None, tailoring_file=None, tailoring_profile_id=None,
                        oval_files=None, advanced_args=None, fetch_remote_resources=False):
     """
-    Creates a new SCAP policy via POST
-    /rhn/manager/api/audit/scap/policy/create — the real, only mechanism
-    that exists for this (see this section's own correction comment
-    above). Requires scap_web_login() to have been called first on this
-    same hostname/exec_prefix (reuses its cookie jar). `policy_name`,
-    `scap_content_id` (from list_scap_content()) and `xccdf_profile_id`
-    are the real required fields (ScapAuditController.java's own
-    validatePolicyFields() — confirmed, quoted from source, not guessed);
-    every other parameter is optional and mirrors ScapPolicyJson.java's
-    own real field names 1:1. `earliest`, if given, must already be an
-    ISO_LOCAL_DATE_TIME-formatted string (e.g. "2026-10-01T00:00:00") —
-    unlike this module's XML-RPC schedule_* functions, this is a plain
-    JSON string field parsed by Java's own DateTimeFormatter.
-    ISO_LOCAL_DATE_TIME, NOT the auto-converted top-level ISO-8601 XML-RPC
-    mechanism those rely on. Returns the real numeric policy id. NOT
-    IDEMPOTENT on its own — see ensure_scap_policies() below for the
-    idempotent orchestrator, and scap_policy_exists() for the check this
-    doesn't do itself. NOT live-tested.
+    Create a SCAP policy with POST /rhn/manager/api/audit/scap/policy/create. This is the only mechanism for it. Call
+    scap_web_login() first on the same host and exec_prefix, so the cookie jar exists.
+
+    policy_name, scap_content_id (from list_scap_content()) and xccdf_profile_id are required. Every other parameter is optional
+    and uses the same field names as the server's ScapPolicyJson. `earliest`, if given, is a string in ISO_LOCAL_DATE_TIME format,
+    for example "2026-10-01T00:00:00". This is a plain JSON string field, unlike the XML-RPC schedule calls, which convert a
+    top-level ISO-8601 argument. The function returns the numeric policy id. It is not idempotent on its own. Use
+    ensure_scap_policies(), which checks for existing policies first.
     """
     body = {"policyName": policy_name, "scapContentId": int(scap_content_id), "xccdfProfileId": xccdf_profile_id}
     if description:
@@ -3286,20 +2325,14 @@ def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccd
 
 def ensure_scap_policies(hostname, exec_prefix, cfg, prefix, admin_user, admin_pass):
     """
-    Orchestrates <prefix>_scap_policies: a list of dicts, each with real
-    ScapPolicyJson-shaped keys (policy_name/scap_content_id/
-    xccdf_profile_id required; description/earliest/tailoring_file/
-    tailoring_profile_id/oval_files/advanced_args/fetch_remote_resources
-    optional — same names as create_scap_policy()'s own parameters).
-    Idempotent: logs in once via scap_web_login() using `admin_user`/
-    `admin_pass` (the caller's own resolved admin account — same explicit
-    pass-through shape as ensure_orgs()'s own default_admin_user/
-    default_admin_pass, since install_smlm.py's and install_uyuni.py's own
-    admin-credential JSON field names differ: smlm_admin_user/
-    smlm_admin_pass vs. uyuni_admin/uyuni_password — no single
-    "<prefix>_admin_user" guess works for both), lists existing policies
-    once, then creates only the ones not already present by name. No-op
-    if the field is unset or empty. NOT live-tested.
+    Orchestrate <prefix>_scap_policies: a list of dicts with the ScapPolicyJson keys. policy_name, scap_content_id and
+    xccdf_profile_id are required. description, earliest, tailoring_file, tailoring_profile_id, oval_files, advanced_args and
+    fetch_remote_resources are optional, and they match create_scap_policy()'s parameters.
+
+    The function is idempotent. It logs in once with scap_web_login(), using `admin_user` and `admin_pass` from the caller, which
+    are the admin account the caller resolved. The config key names differ between install_smlm.py and install_uyuni.py, so the
+    caller passes them explicitly. It lists the existing policies once, and creates only the policies that are not present by
+    name. The function does nothing if the field is unset or empty.
     """
     policies = cfg.get("{}_scap_policies".format(prefix)) or []
     if not policies:
@@ -3334,13 +2367,9 @@ def ensure_scap_policies(hostname, exec_prefix, cfg, prefix, admin_user, admin_p
 
 def ensure_activation_keys(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_activation_keys: a list of dicts, each using the
-    exact same <prefix>_activation_key* field names as the top-level
-    single-key fields (reused as-is, one call per list entry) — lets a lab
-    define multiple named activation keys (e.g. one per dev/qa/prod
-    environment) without needing a separate org per key, the same reuse
-    trick ensure_orgs() already uses for org-scoped keys. No-op if the
-    field is unset or empty. NOT live-tested.
+    Orchestrate <prefix>_activation_keys: a list of dicts. Each uses the same <prefix>_activation_key* field names as the
+    top-level single-key fields, and each entry is applied with one call. A lab can define several named activation keys, one per
+    environment for example, in one organization. The function does nothing if the field is unset or empty.
     """
     keys = cfg.get("{}_activation_keys".format(prefix)) or []
     for key_cfg in keys:
@@ -3363,32 +2392,13 @@ def activation_key_child_channels(hostname, exec_prefix, key_name):
 
 def ensure_activation_key_child_channels(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently ensures every child channel listed in
-    <prefix>_activation_key_child_channels is linked to
-    <prefix>_activation_key, via spacecmd's native
-    activationkey_addchildchannels. Same shape as
-    ensure_activation_key_groups: a real list API exists
-    (activationkey_listchildchannels), so this is genuinely idempotent and
-    called unconditionally (not just at key-creation time) — generalizing
-    that same pattern from groups to child channels.
+    Idempotently link every child channel in <prefix>_activation_key_child_channels to <prefix>_activation_key, with
+    activationkey_addchildchannels. The current list comes from activationkey_listchildchannels, so the call is idempotent. It runs
+    on every configuration pass, not only when the key is created.
 
-    This is the real fix for a gap found live 2026-09-15: ensure_
-    activation_key()'s own child-channel linking only ever runs at
-    CREATION time — an already-existing key (the normal case on every run
-    after the first) skips it entirely, so a lab JSON edit adding/
-    correcting child_channels for an existing activation key silently had
-    no effect at all until now. Confirmed live: several of solar-system-
-    lab.json's own activation keys (leap16, rhel9, debian13,
-    debian13arm64, oraclelinux9, amazonlinux2, amazonlinux2023) had NO
-    Client Tools channel linked whatsoever — not a creation-time-only gap,
-    a total, silent absence — because they were created once, early, with
-    an empty child_channels field, and every later JSON fix to add the
-    right channel never got applied since the key already existed.
-
-    No-op if either the key or the child-channels field is unset. Calling
-    this alongside ensure_activation_key's own creation-time linking is
-    harmless — it just finds nothing new to add if that path already
-    handled it.
+    ensure_activation_key() links child channels only when it creates the key. A key that already exists therefore never gets a
+    child channel added from a later edit of the lab JSON. This function closes that gap. The function does nothing if the key or
+    the child-channels field is unset. It is harmless alongside the creation-time linking.
     """
     key_name = cfg.get("{}_activation_key".format(prefix))
     spec = (cfg.get("{}_activation_key_child_channels".format(prefix)) or "").split()
@@ -3427,19 +2437,10 @@ def activation_key_groups(hostname, exec_prefix, key_name):
 
 def ensure_activation_key_groups(hostname, exec_prefix, cfg, prefix):
     """
-    Idempotently ensures every system group name listed in
-    <prefix>_activation_key_groups (space-separated) is linked to
-    <prefix>_activation_key, via spacecmd's native activationkey_addgroups.
-    Same shape as ensure_activation_key_packages: a real list API exists
-    (activationkey_listgroups), so this is genuinely idempotent and called
-    unconditionally (not just at key-creation time) — generalizing that
-    same pattern from packages to groups. This is a separate,
-    independently-callable function from ensure_activation_key's own
-    creation-time-only 'groups' follow-up (which reads the SAME field, but
-    only applies it when the key is newly created) — calling both is
-    harmless, since this one just finds nothing new to add if the other
-    already handled it. No-op if either the key or the groups field is
-    unset. NOT live-tested.
+    Idempotently link every system group in <prefix>_activation_key_groups (space-separated) to <prefix>_activation_key,
+    with activationkey_addgroups. The current list comes from activationkey_listgroups, so the call is idempotent. It runs on
+    every configuration pass, like ensure_activation_key_packages(). ensure_activation_key() applies the same field only when it
+    creates the key, so calling both is harmless. The function does nothing if the key or the groups field is unset.
     """
     key_name = cfg.get("{}_activation_key".format(prefix))
     spec = (cfg.get("{}_activation_key_groups".format(prefix)) or "").split()
@@ -3468,8 +2469,9 @@ def group_exists(hostname, exec_prefix, name):
 
 
 def ensure_system_group(hostname, exec_prefix, name, description=None):
-    """Idempotently create a system group via spacecmd's native
-    group_create. NOT live-tested."""
+    """
+    Idempotently create a system group with group_create.
+    """
     if group_exists(hostname, exec_prefix, name):
         print("  System group '{}' already exists — leaving it alone".format(name))
         return
@@ -3493,22 +2495,12 @@ def group_has_system(hostname, exec_prefix, group_name, system):
 
 def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     """
-    Idempotently ensures every system name in `systems` is a member of
-    `group_name`, via spacecmd's native group_addsystems — adds only the
-    ones not already listed by group_listsystems. No-op if `systems` is
-    empty.
+    Idempotently ensure every system name in `systems` is a member of `group_name`, with group_addsystems. Only the names not
+    already listed by group_listsystems are added. The function does nothing if `systems` is empty.
 
-    Confirmed live 2026-09-15: group_addsystems silently skips any name in
-    the list that isn't (yet) a real registered system, AS LONG AS at least
-    one other name in the same call IS real — but if EVERY name in one call
-    is invalid, it fails outright instead (exit 1, empty stderr). A
-    `systems` list built from a lab's own node hostnames routinely contains
-    names not registered yet (client_registration pending or intentionally
-    never a client, e.g. the server's own hostname in a "star"-type group)
-    — self-healing once they do register, exactly like
-    ensure_activation_key_child_channels' own not-yet-synced-channel case.
-    warn(), don't die(), so one not-yet-ready group doesn't abort every
-    other orchestration step after it.
+    group_addsystems skips any name that is not a registered system, as long as at least one name in the same call is valid. If
+    every name is invalid, the call fails. A lab's hostname list often contains systems that are not registered yet, so the
+    failure is reported as a warning rather than a fatal error. Once those systems register, a later run adds them.
     """
     if not systems:
         return
@@ -3528,9 +2520,8 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
 
 def ensure_system_groups(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_system_groups: a list of {name, description,
-    systems: [...]} dicts. Idempotent, safe to call on every run. No-op if
-    the field is unset or empty. NOT live-tested.
+    Orchestrate <prefix>_system_groups, a list of {name, description, systems: [...]} dicts. The function is idempotent and
+    safe on every configuration pass. It does nothing if the field is unset or empty.
     """
     groups = cfg.get("{}_system_groups".format(prefix)) or []
     for g in groups:
@@ -3549,9 +2540,8 @@ def custom_info_key_exists(hostname, exec_prefix, name):
 
 def ensure_custom_info_key(hostname, exec_prefix, name, description=None):
     """
-    Idempotently define an org-level custom info key via spacecmd's native
-    custominfo_createkey — a value can't be set for a key on any system
-    until the key itself is defined this way first. NOT live-tested.
+    Idempotently define an organization-level custom info key with custominfo_createkey. A value cannot be set for a key on any
+    system until the key is defined.
     """
     if custom_info_key_exists(hostname, exec_prefix, name):
         print("  Custom info key '{}' already exists — leaving it alone".format(name))
@@ -3564,8 +2554,10 @@ def ensure_custom_info_key(hostname, exec_prefix, name, description=None):
 
 
 def ensure_custom_info_keys(hostname, exec_prefix, cfg, prefix):
-    """Orchestrates <prefix>_custom_info_keys: a list of {name,
-    description} dicts. No-op if unset/empty. NOT live-tested."""
+    """
+    Orchestrate <prefix>_custom_info_keys, a list of {name, description} dicts. The function does nothing if the field is unset
+    or empty.
+    """
     keys = cfg.get("{}_custom_info_keys".format(prefix)) or []
     for k in keys:
         name = k.get("name")
@@ -3576,14 +2568,9 @@ def ensure_custom_info_keys(hostname, exec_prefix, cfg, prefix):
 
 def ensure_system_tag(hostname, exec_prefix, system, key, value):
     """
-    Sets a custom-info key=value pair ("tag" — Uyuni has no first-class tag
-    object, see module docstring) on `system` via spacecmd's native
-    system_addcustomvalue. Treated as safely upsert-able without a
-    pre-check: system_updatecustomvalue is documented as a literal alias of
-    the same underlying call, implying setCustomValues itself doesn't
-    distinguish create-vs-update — an inference, not independently
-    confirmed. The key must already be defined (see ensure_custom_info_key)
-    or this fails. NOT live-tested.
+    Set a custom-info key=value pair on `system` with system_addcustomvalue. Uyuni has no tag object, so a tag is a custom-info
+    value. The call is treated as an upsert, without a pre-check: system_updatecustomvalue is an alias for the same underlying
+    call. The key must already be defined with ensure_custom_info_key(), or the call fails.
     """
     r = _spacecmd(hostname, exec_prefix, "system_addcustomvalue {} {} {}".format(
         shlex.quote(key), shlex.quote(value), shlex.quote(system)))
@@ -3595,8 +2582,8 @@ def ensure_system_tag(hostname, exec_prefix, system, key, value):
 
 def ensure_system_tags(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_system_tags: a list of {system, tags: {key:
-    value, ...}} dicts. No-op if unset/empty. NOT live-tested.
+    Orchestrate <prefix>_system_tags, a list of {system, tags: {key: value, ...}} dicts. The function does nothing if the field
+    is unset or empty.
     """
     entries = cfg.get("{}_system_tags".format(prefix)) or []
     for entry in entries:
@@ -3627,44 +2614,21 @@ def group_id_for(hostname, exec_prefix, group_name):
 def ensure_recurring_schedule(hostname, exec_prefix, entity_type, entity_id, cron_expr,
                                name, schedule_type="highstate", states=None, test=None, extra=None):
     """
-    Creates a recurring action (Salt highstate, or an arbitrary ordered
-    list of Salt states) via recurring.highstate.create /
-    recurring.custom.create — neither is wrapped by spacecmd (confirmed
-    absent: no recurring.py in spacecmd's source tree), so this goes
-    through the generic 'api' passthrough. `entity_type` is
-    "minion"|"group"|"org" and `entity_id` its NUMERIC id (see
-    group_id_for() for resolving a system group's id). `schedule_type`
-    selects "highstate" (Salt highstate only) or "custom" (the `states`
-    list, required in that case).
+    Create a recurring action with recurring.highstate.create or recurring.custom.create. spacecmd does not wrap these calls, so
+    they go through the api passthrough. `entity_type` is "minion", "group" or "org", and `entity_id` is its numeric id;
+    group_id_for() resolves a system group's id. `schedule_type` is "highstate" for a Salt highstate, or "custom" for an ordered
+    `states` list, which is required in that case.
 
-    `name` is REQUIRED — ground-truthed 2026-09-25 directly against
-    RecurringHighstateHandler.java's own apidoc (`actionProps.name`, listed
-    without an "(optional)" marker, unlike `test`), correcting an earlier
-    version of this function that omitted it entirely and would have died
-    on every real call. `test`, if given, maps to the real optional
-    boolean `test` prop (dry-run mode). `extra`, if given, is merged into
-    the actionProps struct as-is, for anything else the real API accepts
-    that this signature doesn't name explicitly.
+    `name` is required, and the action fails without it. `test`, if given, maps to the optional dry-run boolean. `extra` is merged
+    into the action properties as given, for other options the API accepts.
 
-    `cron_expr` MUST be a 6-or-7-field Quartz cron expression (seconds
-    minutes hours day-of-month month day-of-week [year]), NOT a standard
-    5-field Unix cron string — confirmed live 2026-09-25 the real API
-    rejects the latter outright ("Invalid Quartz expression provided.").
-    Quartz also requires exactly one of day-of-month/day-of-week to be `?`
-    when the other is a concrete value or list (both may be `*` together).
-    Examples: "0 0 2 * * ?" (daily at 02:00), "0 0 3 ? * MON" (weekly,
-    Monday at 03:00).
+    `cron_expr` must be a Quartz cron expression with 6 or 7 fields: seconds, minutes, hours, day of month, month, day of week,
+    and optionally year. A standard 5-field Unix cron string is rejected. One of day of month and day of week must be "?" when the
+    other has a value. Examples: "0 0 2 * * ?" runs daily at 02:00, and "0 0 3 ? * MON" runs every Monday at 03:00.
 
-    IDEMPOTENT as of the same research pass: recurring.listByEntity(type,
-    id) (RecurringActionHandler.java) IS a real, confirmed listing method
-    — an earlier version of this docstring wrongly claimed none existed.
-    Skips creation if an action with this exact `name` already exists for
-    this entity_type/entity_id. Relies on _api_call's fault_check (see
-    _fault_check's own docstring) to actually catch a failed create call —
-    confirmed live 2026-09-25 that without it, a bad cron_expr's server-side
-    rejection was silently swallowed (spacecmd exits 0 even after printing
-    the Fault) and this function printed "Created ..." for a schedule that
-    was never actually created at all.
+    The function is idempotent. recurring.listByEntity lists the existing actions for the entity, and creation is skipped when an
+    action with the same name exists. The call relies on _fault_check() to report a rejected create. spacecmd exits with 0 even
+    when the server returns a fault.
     """
     if schedule_type not in ("highstate", "custom"):
         die("invalid recurring schedule type '{}': expected 'highstate' or 'custom'".format(schedule_type))
@@ -3793,13 +2757,9 @@ def _system_id(hostname, exec_prefix, target_system):
 
 def virtual_host_manager_exists(hostname, exec_prefix, label):
     """
-    Whether `label` appears in virtualhostmanager.listVirtualHostManagers'
-    raw output. Same substring-match heuristic used throughout this module
-    wherever the raw print format of a struct/list wasn't independently
-    confirmed from docs (VirtualHostManagerSerializer's exact JSON shape
-    wasn't ground-truthed) — every real VHM this project creates gets a
-    label unlikely to collide with an unrelated substring. NOT live-tested
-    (no server available in this project's dev/CI environment).
+    Return True if `label` appears in the raw output of virtualhostmanager.listVirtualHostManagers. The check is a substring
+    match, because the printed format of the list is not documented. The labels this project creates are specific enough that a
+    substring match is safe.
     """
     r = _api_call(hostname, exec_prefix, "virtualhostmanager.listVirtualHostManagers", [])
     return r.returncode == 0 and label in (r.stdout or "")
@@ -3807,24 +2767,15 @@ def virtual_host_manager_exists(hostname, exec_prefix, label):
 
 def ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm):
     """
-    Idempotently creates one Amazon EC2 Virtual Host Manager from one entry
-    of <prefix>_virtual_host_managers: {label, access_key_id,
-    secret_access_key, region, zone}. See this module's own section
-    docstring above for where these 4 real parameter names and the real
-    "AmazonEC2" moduleName come from. access_key_id/secret_access_key are
-    real, long-lived AWS credentials — a temporary SSO/STS session (the kind
-    this project's own AWSBackend cloud-account mechanism normally uses for
-    VM provisioning, see libs/backends.py) would expire and silently break
-    the gatherer's own periodic polling, so this deliberately does NOT
-    reuse that same resolve_cloud_account() path; see
-    ensure_virtual_host_managers()'s own docstring for how credentials
-    actually get here. die()s on a real API failure — VirtualHostManager.create
-    itself refuses a duplicate label, so an existing VHM is detected and
-    skipped BEFORE that call is even made, same idiom as every other
-    ensure_*_exists() check in this module. NOT live-tested (no server
-    available in this project's dev/CI environment; no real long-lived AWS
-    key was available to test against, see the JSON doc comment on
-    smlm_virtual_host_managers).
+    Idempotently create one Amazon EC2 Virtual Host Manager from one entry of <prefix>_virtual_host_managers: {label,
+    access_key_id, secret_access_key, region, zone}. The module name is "AmazonEC2", and these four fields are its parameters.
+
+    access_key_id and secret_access_key must be long-lived AWS credentials. A temporary SSO or STS session would expire and stop the
+    gatherer's periodic polling. For that reason this function does not use the cloud-account resolution that the VM backends use.
+    ensure_virtual_host_managers() shows how the credentials reach this function.
+
+    VirtualHostManager.create refuses a duplicate label, so an existing manager is detected first and skipped. The function dies
+    on any other API failure.
     """
     label = vhm.get("label")
     if not label:
@@ -3855,35 +2806,15 @@ def ensure_virtual_host_manager_aws(hostname, exec_prefix, vhm):
 
 def ensure_virtual_host_manager_libvirt(hostname, exec_prefix, vhm):
     """
-    Idempotently creates one Libvirt Virtual Host Manager from one entry of
-    <prefix>_virtual_host_managers: {label, uri, sasl_username,
-    sasl_password}. `uri`/sasl_username/sasl_password are the real,
-    confirmed parameter names for the real gatherer module (ground-truthed
-    2026-09-25 directly against virtual-host-gatherer's own
-    gatherer/modules/Libvirt.py source, DEFAULT_PARAMETERS =
-    {"uri", "sasl_username", "sasl_password"} — the module appends
-    "?no_tty=1" to `uri` itself, so pass a bare libvirt URI here, e.g.
-    "qemu+ssh://root@nuc6.mydemo.lab/system" for password-less SSH-key
-    auth, same auth this whole project already relies on for every other
-    call to that host). moduleName is "Libvirt" — same "the real class
-    name, verbatim" convention already confirmed for "AmazonEC2".
+    Idempotently create one Libvirt Virtual Host Manager from one entry of <prefix>_virtual_host_managers: {label, uri,
+    sasl_username, sasl_password}. The module name is "Libvirt", and uri, sasl_username and sasl_password are its parameters.
 
-    sasl_username/sasl_password ARE required by the server despite being
-    functionally unused for qemu+ssh:// auth — confirmed live 2026-09-25,
-    correcting an earlier version of this function that omitted them
-    entirely when unset (to dodge a real but DIFFERENT bug, "cannot marshal
-    None unless allow_none is enabled" for a bare None): the real gate is
-    VirtualHostManagerFactory.isConfigurationValid(), which requires EVERY
-    parameter key the "Libvirt" gatherer module declares (uri,
-    sasl_username, sasl_password) to be present AND a non-empty string, or
-    the create call fails with "Parameter validation failed." — a fault
-    that (before _fault_check existed) spacecmd's own CLI exited 0 for,
-    letting this function print "Created ..." for a VHM that was never
-    actually created at all. Sends real caller-supplied values if given,
-    else a placeholder non-empty string (the SASL fields are simply never
-    read by the module for a qemu+ssh:// URI, confirmed by the module's own
-    source only using them when the URI scheme is a SASL-authenticating
-    one).
+    The gatherer appends "?no_tty=1" to the URI itself, so pass a bare libvirt URI, for example
+    "qemu+ssh://root@nuc6.mydemo.lab/system". That form uses SSH key authentication, as the rest of this project does.
+
+    The server requires every parameter of the module to be present and non-empty, even sasl_username and sasl_password, which a
+    qemu+ssh:// URI does not use. When a value is not supplied, the function sends a placeholder non-empty string. The gatherer
+    reads the SASL fields only for SASL-authenticating URI schemes.
     """
     label = vhm.get("label")
     if not label:
@@ -3938,59 +2869,23 @@ def ensure_virtual_host_managers(hostname, exec_prefix, cfg, prefix):
 
 def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_grafana_formulas: applies SMLM/Uyuni's own
-    built-in "grafana" Salt formula (SUSE's own bundled monitoring-
-    dashboard formula — see github.com/SUSE/salt-formulas/tree/master/
-    grafana-formula, ground-truthed directly against its real
-    metadata/form.yml and .spec file, 2026-09-18, NOT guessed) to a
-    target system. Distinct from this project's own standalone
-    install_prometheus.py/install_grafana.py addons (podman containers,
-    no Salt/formula involved at all) — this is SMLM's own turnkey
-    mechanism: the formula installs and configures Grafana itself on the
-    target system, wires up a Prometheus datasource, and (if reportdb is
-    enabled) auto-provisions a read-only reportdb Postgres user plus the
-    formula's own ready-made dashboards, no separate dashboard-building
-    work needed.
+    Orchestrate <prefix>_grafana_formulas, which apply SUSE's grafana Salt formula to a target system through the server's
+    built-in formula support. The formula installs and configures Grafana on the target. It adds a Prometheus data source, and when
+    reportdb is enabled it creates a read-only reportdb Postgres user and the formula's own dashboards.
 
-    No native spacecmd subcommand exists for the formula.* namespace at
-    all (confirmed absent from spacecmd's own command list) — goes
-    through the generic 'api' passthrough, same as ansible.*/access.*/
-    contentmanagement.* elsewhere in this module. Two real API calls per
-    entry: formula.setFormulasOfServer (assigns/enables the formula) then
-    formula.setSystemFormulaData (configures it) — both confirmed real,
-    exact signatures via documentation.suse.com/multi-linux-manager's own
-    API reference (system.html/formula.html), not spacecmd docs (which
-    don't cover this namespace). Idempotent: re-running with the same
-    config re-applies the same formula/data, which the real API already
-    treats as a plain overwrite (no create-vs-update distinction to get
-    wrong here, unlike e.g. activation-key AppStreams).
+    This is separate from the standalone install_grafana.py and install_prometheus.py addons, which run podman containers and use
+    no Salt formula. spacecmd has no subcommand for the formula namespace, so the calls go through the api passthrough. Each entry
+    makes two calls: formula.setFormulasOfServer, which enables the formula, and formula.setSystemFormulaData, which configures it.
+    Repeating the same configuration overwrites the data with the same values, so the call is safe to repeat.
 
-    Each <prefix>_grafana_formulas entry:
-      {system, admin_user, admin_pass, prometheus: [{key, url, user,
-       password}, ...], reportdb, is_hub, dashboards: {uyuni,
-       uyuni_clients, postgresql, apache}}
-    Only "system" is required — every other field mirrors a real
-    grafana-formula pillar key with that formula's own real default
-    (admin_user/admin_pass: "admin"; prometheus: a single entry pointing
-    at http://localhost:9090 if omitted; reportdb/is_hub: False;
-    dashboards.*: True for uyuni/uyuni_clients/postgresql/apache — the
-    formula's own real defaults, confirmed via its form.yml, not this
-    project's own guess). The formula's own Kubernetes/SAP dashboard
-    toggles (default False, niche) are deliberately not exposed here to
-    keep this field surface reasonable — they stay at the formula's own
-    off-by-default value; extend this function if a lab genuinely needs
-    them.
+    Each entry is {system, admin_user, admin_pass, prometheus: [{key, url, user, password}, ...], reportdb, is_hub, dashboards:
+    {uyuni, uyuni_clients, postgresql, apache}}. Only "system" is required. Missing fields take the formula's own defaults:
+    admin_user and admin_pass are "admin", prometheus points at http://localhost:9090, reportdb and is_hub are False, and the
+    dashboards uyuni, uyuni_clients, postgresql and apache are True. The formula's Kubernetes and SAP dashboard toggles are left at
+    their default of False.
 
-    Prerequisite the real docs state explicitly and this function does
-    NOT check for (no listFormulas-vs-required-package distinction was
-    researched): Grafana is not available on SMLM Proxy, and the target
-    system needs a monitoring add-on subscription plus Prometheus already
-    installed — a real API error from the server itself is what surfaces
-    if either isn't true, not a pre-flight guess here.
-
-    Ground-truthed via direct research (not live-tested against a real
-    server — none available with a monitoring-entitled client in this
-    project's dev/CI environment).
+    The target needs a monitoring add-on subscription, and Prometheus must already be installed on it. Grafana is not available on
+    SMLM Proxy. The function does not check these conditions. The server's error reports a missing one.
     """
     entries = cfg.get("{}_grafana_formulas".format(prefix)) or []
     for entry in entries:
@@ -4036,22 +2931,16 @@ def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
 
 def ensure_environments(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_environments — a THIN COMPOSITION layer, not a
-    new Uyuni concept (see module docstring: no native "environment" or
-    "release" object exists to build on). Each entry:
-      {label, system_group, activation_key, custom_info_tags: {k: v},
-       recurring_schedule: {...}}
-    `system_group` and `activation_key` are NAME REFERENCES to entries
-    already defined elsewhere (<prefix>_system_groups,
-    <prefix>_activation_keys or the top-level singular
-    <prefix>_activation_key) — this function does NOT create them, only
-    links an already-existing group to an already-existing key (via
-    ensure_activation_key_groups) and applies any custom_info_tags to every
-    system currently in that group. Idempotent, safe to call on every run.
-    `recurring_schedule`, if present, is deliberately NOT applied here —
-    see run_environment_schedules() and the install scripts'
-    --run-recurring-schedules flag, since recurring-action idempotency was
-    never confirmed. No-op if the field is unset or empty. NOT live-tested.
+    Orchestrate <prefix>_environments, a composition of the other features. Each entry is {label, system_group,
+    activation_key, custom_info_tags: {k: v}, recurring_schedule: {...}}.
+
+    `system_group` and `activation_key` are name references to entries defined elsewhere, in <prefix>_system_groups and
+    <prefix>_activation_keys, or in the single top-level <prefix>_activation_key. The function does not create them. It links the
+    existing group to the existing key with ensure_activation_key_groups(), and it applies custom_info_tags to every system in the
+    group. The function is idempotent.
+
+    recurring_schedule is not applied here. run_environment_schedules() applies it, through the install scripts'
+    --run-recurring-schedules flag. The function does nothing if the field is unset or empty.
     """
     environments = cfg.get("{}_environments".format(prefix)) or []
     for env in environments:
@@ -4078,17 +2967,11 @@ def ensure_environments(hostname, exec_prefix, cfg, prefix):
 
 def run_environment_schedules(hostname, exec_prefix, cfg, prefix):
     """
-    Explicit trigger (see the install scripts' --run-recurring-schedules
-    flag) for every <prefix>_environments entry's recurring_schedule:
-    resolves that environment's system_group to a numeric group id
-    (group_id_for() — a heuristic; an entry can instead give 'group_id'
-    directly under recurring_schedule to skip resolution) and calls
-    ensure_recurring_schedule(), which IS idempotent as of 2026-09-25 (see
-    its own docstring — an earlier version of THIS docstring's "NOT
-    idempotent" claim was based on that now-corrected belief). `name`
-    defaults to "<environment label>-recurring-schedule" if not given
-    explicitly under recurring_schedule. No-op if <prefix>_environments is
-    unset/empty or no entry has a recurring_schedule. NOT live-tested.
+    Apply the recurring_schedule of every <prefix>_environments entry. The install scripts run this through the
+    --run-recurring-schedules flag. Each entry's system_group is resolved to a numeric group id with group_id_for(). An entry can
+    set 'group_id' under recurring_schedule to skip that resolution. Each schedule is then created by ensure_recurring_schedule().
+    `name` defaults to "<environment label>-recurring-schedule". The function does nothing if <prefix>_environments is unset or
+    empty, or if no entry has a recurring_schedule.
     """
     environments = cfg.get("{}_environments".format(prefix)) or []
     for env in environments:
@@ -4144,13 +3027,10 @@ def saltkey_accept(hostname, exec_prefix, minion_id):
 
 def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
     """
-    Exact NVR-EA string (e.g. "openssl-1.0.2k-19.el7:1.x86_64") for
-    `pkg_name` in `channel`, from spacecmd's native
-    softwarechannel_listallpackages (one NVR-EA per line, no header).
-    Matches the leading package name only (before the first '-' that starts
-    a version number) — good enough for the specific known names this is
-    used for (wget/openssl/openssl-libs), not a general NVR parser. Returns
-    None if not found in this channel.
+    Return the exact NVR-EA string for `pkg_name` in `channel`, as in "openssl-1.0.2k-19.el7:1.x86_64". The package list is
+    read from softwarechannel_listallpackages, which prints one NVR-EA per line. The match uses the package name only, up to the
+    first '-' that starts a version number. This is enough for the few package names the module uses, and it is not a general NVR
+    parser. Returns None if the package is not in the channel.
     """
     r = _spacecmd(hostname, exec_prefix, "softwarechannel_listallpackages {}".format(shlex.quote(channel)))
     prefix = pkg_name + "-"
@@ -4163,20 +3043,13 @@ def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
 
 def _stage_channel_package_on_client(hostname, exec_prefix, channel, pkg_name, client_hostname, dest_dir):
     """
-    Finds `pkg_name`'s real RPM in the server's own content-addressed
-    package store (/var/spacewalk/packages/...) and copies it onto
-    client_hostname via base64 over two separate SSH connections — never
-    HTTP(S), so this works even when the CLIENT's own TLS stack can't reach
-    the server at all (see ensure_client_registered()'s own docstring on
-    the real incident this exists for). The server side is reached via
-    exec_prefix like everywhere else in this module (podman/mgrctl or
-    kubectl — works for either SMLM deployment mode); the client side is a
-    plain ssh_run, same as the rest of client bootstrapping.
+    Copy the RPM for `pkg_name` from the server's package store onto client_hostname, and return the path on the client. The
+    RPM is found under /var/spacewalk/packages/ on the server, and it is copied as base64 over two separate SSH connections. No
+    HTTP or HTTPS request is made, so the copy works when the client cannot reach the server's TLS endpoint. The server side uses
+    exec_prefix, which works for both the podman and the Kubernetes deployment. The client side is a plain SSH command.
 
-    Returns the path of the staged .rpm on the CLIENT, or None if the
-    package isn't in `channel`, or its file couldn't be located/copied.
-    NOT live-tested for the kubectl/Kubernetes deployment mode (only the
-    podman/mgrctl deployment mode was available to verify against).
+    Returns None if the package is not in `channel`, or if its file cannot be located or copied. The Kubernetes deployment mode has
+    not been exercised.
     """
     nvr = _channel_package_nvr(hostname, exec_prefix, channel, pkg_name)
     if not nvr:
@@ -4207,43 +3080,19 @@ def _stage_channel_package_on_client(hostname, exec_prefix, channel, pkg_name, c
 def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fqdn, script_name,
                                 env, base_channel):
     """
-    Recovery path for a client whose curl can't negotiate TLS with this
-    server at all (see ensure_client_registered()'s own docstring — real
-    incident, confirmed live 2026-09-23, CentOS 7's ancient NSS-linked curl
-    against this server's modern TLS-1.2-only policy). Entirely client-side
-    — no server/SMLM change:
+    Fallback for a client whose curl cannot negotiate TLS with this server. Some older distributions ship a curl that cannot
+    use the server's TLS 1.2-only policy. The fallback changes only the client:
 
-    1. Ensure `wget` is present on the client (staged from `base_channel`
-       via _stage_channel_package_on_client if missing) — confirmed live
-       that GNU Wget on this kind of box links the system OpenSSL, never
-       NSS, and negotiates the exact same endpoint fine. bootstrap.sh
-       itself already prefers wget over curl when both exist (confirmed by
-       reading its own fetched source), so once present, its OWN internal
-       fetches (repo checks, file downloads) start working too — not just
-       this function's one initial script fetch.
-    2. Run bootstrap via wget instead of curl.
-    3. If package installation still fails (yum's own downloader — pycurl,
-       confirmed live to link the SAME broken NSS libcurl regardless of
-       wget being present, so wget alone does NOT fix yum) AND the failure
-       is specifically an unresolved OpenSSL dependency (confirmed live:
-       venv-salt-minion's own RPM needs OPENSSL_1.0.2 symbols an ancient
-       pre-installed openssl-libs, e.g. 1.0.1e on a stock CentOS 7 image,
-       doesn't provide) — stage openssl + openssl-libs from base_channel
-       and install them locally via `rpm -Uvh --force` (upgrading both
-       together in one transaction, since installing openssl-libs alone
-       conflicts with the still-installed older openssl package needing
-       it at its old exact version), then retry the bootstrap once more.
-       yum's own downloader is NOT fixed by this — it works around it by
-       making sure whatever yum would have installed is already present,
-       so bootstrap.sh's own "is X installed?" check skips straight past
-       the broken yum step.
+    1. It ensures wget is installed on the client, staging it from `base_channel` through
+       _stage_channel_package_on_client() when it is missing. GNU Wget uses the system OpenSSL and negotiates the server's TLS. The
+       bootstrap script prefers wget when both are present, so its own fetches also succeed.
+    2. It runs the bootstrap through wget instead of curl.
+    3. If package installation still fails, and the cause is an unresolved OpenSSL dependency (the salt minion package needs
+       OPENSSL_1.0.2 symbols that an old openssl-libs does not provide), it stages openssl and openssl-libs from `base_channel`. It
+       installs them with rpm -Uvh --force, in one transaction, and then retries the bootstrap once. yum's own downloader still uses
+       the old libcurl, so the upgraded packages are installed first. The bootstrap then skips that yum step.
 
-    Live-verified end to end 2026-09-23 against a real CentOS 7 node
-    (luna.mydemo.lab / solar-system-lab.json): this exact sequence took it
-    from "curl can't even fetch the script" to a fully registered salt
-    minion, with zero changes to the server. Bounded to ONE openssl-repair
-    attempt — if that's not the actual blocker on some other distro, this
-    gives up and reports the real bootstrap.sh output rather than looping.
+    The OpenSSL repair is attempted once. If it does not resolve the failure, the function reports the bootstrap output and stops.
     """
     have_wget = ssh_run(client_hostname, "command -v wget", check=False).returncode == 0
     if not have_wget:
@@ -4295,24 +3144,15 @@ def _try_wget_legacy_bootstrap(hostname, exec_prefix, client_hostname, server_fq
 
 def _ensure_client_can_resolve_server(client_hostname, server_fqdn, server_ip=None):
     """
-    Pushes a static /etc/hosts entry for server_fqdn onto client_hostname —
-    see ensure_client_registered()'s own docstring for the real, confirmed-
-    live incident (saturn.mydemo.lab/neptune.mydemo.lab, both AWS EC2, on
-    a completely different network/DNS than this lab) this exists for.
+    Push a static /etc/hosts entry for server_fqdn onto client_hostname. A client on a different network, such as an AWS VPC,
+    may not be able to resolve the server's FQDN through its own DNS.
 
-    Resolves server_fqdn via THIS function's own (Python-level, local)
-    socket.gethostbyname — this always runs on the automation node, which
-    has working DNS for this lab regardless of what the CLIENT can reach —
-    then idempotently appends "<ip> <fqdn>" to the client's /etc/hosts if
-    not already present. A no-op (silently) if server_fqdn can't be
-    resolved locally either — nothing this function can do about that, and
-    the real bootstrap attempt right after this will fail with its own
-    clear error instead.
+    The address is resolved on the automation node with socket.gethostbyname, because the automation node always has working DNS for
+    the lab. The line "<ip> <fqdn>" is appended to the client's /etc/hosts only if it is not already there. If the FQDN cannot be
+    resolved on the automation node either, the function does nothing, and the bootstrap then reports the resolution error.
 
-    server_ip (optional) is pinned as given instead of resolving server_fqdn
-    here — for labs where that name means something different on the
-    automation node than on the client's own network (e.g. several copies of
-    one lab on a host, each answering to the same server name).
+    server_ip, if given, is used as the address instead of resolving server_fqdn. Use it when the name means something different on
+    the automation node than on the client's network.
     """
     if not server_ip:
         try:
