@@ -103,8 +103,8 @@ function configure_image() {
     _msg="Mount image for configuration" show_nicer_messages
     guestmount -i --rw -a /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 /mnt/
     # guestmount only mounts the guest's own filesystem — it does NOT bind
-    # /proc, /sys, /dev the way a real chroot jail needs. Confirmed live
-    # 2026-09-01: without /proc, `chroot /mnt/ zypper install NetworkManager`
+    # /proc, /sys, /dev the way a real chroot jail needs. Without /proc,
+    # `chroot /mnt/ zypper install NetworkManager`
     # (install_packages() below) fails outright ("Warning: No repositories
     # defined. Operating only with the installed resolvables." / "Failed to
     # disable: Input/output error." on the systemctl calls) — NetworkManager
@@ -173,14 +173,10 @@ function configure_ssh() {
 
 function install_lab_scripts() {
     _msg="Clone repository" show_nicer_messages
-    # Clone to a real (non-FUSE) path first, then copy in — confirmed live
-    # 2026-09-01 on openSUSE Leap 16.0 (git 2.51.0): cloning DIRECTLY onto
-    # /mnt (guestmount's FUSE mount) fails deterministically with
-    # "update_ref failed ... trying to write ref 'refs/heads/main' with
-    # nonexistent object <sha>" — the same clone to a normal path succeeds
-    # immediately with that exact commit fully valid, so this is a git/FUSE
-    # ref-write incompatibility, not a network or repo problem. Leap 15.6's
-    # older git apparently tolerated this; 16.0's doesn't.
+    # Clone to a real (non-FUSE) path first, then copy in. Cloning directly onto /mnt (guestmount's
+    # FUSE mount) fails on openSUSE Leap 16.0 with "update_ref failed ... trying to write ref
+    # 'refs/heads/main' with nonexistent object <sha>". The same clone to a normal path succeeds, so
+    # the failure is a git/FUSE ref-write incompatibility.
     rm -rf /tmp/lab-in-a-box-clone
     git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /tmp/lab-in-a-box-clone
     rm -rf /mnt/var/tmp/lab-in-a-box
@@ -188,12 +184,10 @@ function install_lab_scripts() {
     rm -rf /tmp/lab-in-a-box-clone
     export _scripts_path=/var/tmp/lab-in-a-box/
     _msg="Run install_automation_node_scripts.sh" show_nicer_messages
-    # install_automation_node_scripts.sh uses paths relative to ITS OWN repo
-    # root (templates/addons/*, scripts/install_*, ...) — it must run with
-    # that directory as cwd, not wherever this script's own caller happens
-    # to be (confirmed live 2026-09-01: without the cd, every relative copy
-    # in it fails with "cannot stat", non-fatal but silently skipping every
-    # addon template/script it's supposed to install).
+    # install_automation_node_scripts.sh uses paths relative to its own repo root
+    # (templates/addons/*, scripts/install_*, ...), so it must run with that directory as cwd.
+    # Otherwise every relative copy fails with "cannot stat", which is non-fatal and silently skips
+    # the addon templates and scripts.
     chroot /mnt/ bash -c "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh"
 }
 
@@ -322,11 +316,9 @@ EOF
 
 # ── Leap 16 exception ────────────────────────────────────────────────────
 #
-# guestmount's FUSE layer is broken specifically on openSUSE Leap 16.0 as a
-# lab-host — confirmed live 2026-09-01: guestfish (libguestfs's native RPC
-# interface, no FUSE involved) reads the exact same qcow2 cleanly on the
-# exact same host where guestmount's `ls` hits "Input/output error"
-# reading a real, populated directory (/etc/zypp/repos.d — 14 files).
+# On openSUSE Leap 16.0 as a lab-host, guestmount's FUSE layer fails: `ls` of a populated
+# directory (/etc/zypp/repos.d) returns "Input/output error". guestfish (libguestfs's native RPC
+# interface, no FUSE involved) reads the same qcow2 without error.
 # libguestfs's own verbose trace shows its internal readdir/stat/xattr
 # calls all succeeding; the failure is specifically in guestmount's FUSE
 # reply layer. No older, compatible fuse3/libfuse3-3 build is available via
@@ -368,9 +360,8 @@ function configure_and_prepare_image_via_guestfish() {
     _stage="$(mktemp -d)"
 
     # Static IP via wicked ifcfg, not a NetworkManager .nmconnection — this
-    # image's pristine default network stack is wicked (confirmed live
-    # 2026-09-01 via console screenshot: "wicked AutoIPv4/DHCPv4/DHCPv6
-    # supplicant service" at boot), and NetworkManager isn't installed at
+    # image's default network stack is wicked (the boot console shows "wicked AutoIPv4/DHCPv4/DHCPv6
+    # supplicant service"), and NetworkManager isn't installed at
     # this point at all (that install itself needs internet — see below).
     # Same wicked ifcfg shape configure_bridge() already uses elsewhere in
     # this project for the exact same reason.
@@ -508,10 +499,8 @@ HELMSCRIPT
 
         # zypper install / service enable / running install_automation_node_
         # scripts.sh all need internet or already-installed packages this
-        # image doesn't ship — confirmed live 2026-09-01 that guestfish's
-        # own --network appliance interface never gets a usable IP
-        # (up, no DHCP lease, `getent hosts` fails), unlike a REAL booted
-        # VM's own network stack. Deferred to
+        # image does not ship. guestfish's own --network appliance interface never gets a usable IP
+        # (up, no DHCP lease, `getent hosts` fails), unlike a booted VM's own network stack. Deferred to
         # finish_automation_vm_setup_over_ssh(), run once wait_for_vm()
         # confirms the VM is actually up and reachable at ${_myip} — plain
         # SSH against a normally-booted host, no libguestfs involved at
@@ -600,29 +589,20 @@ function unmount_image() {
     for _d in dev sys proc; do
         mountpoint -q "/mnt/${_d}" && umount "/mnt/${_d}"
     done
-    # Confirmed live 2026-09-01: ssh-keygen (configure_ssh(), chrooted into
-    # /mnt) can leave an orphaned gpg-agent/scdaemon behind with its cwd
-    # still inside /mnt, holding the FUSE mount busy — guestunmount then
-    # fails ("Device or resource busy"), the qcow2 stays FUSE-mounted, and
-    # the subsequent virt-install fails outright ("Failed to get 'write'
-    # lock — Is another process using the image?"), so the automation VM
-    # never boots at all. Kill anything still holding /mnt open before
-    # attempting the real unmount, rather than let a single leftover
-    # process silently break the rest of the flow.
+    # ssh-keygen (configure_ssh(), chrooted into /mnt) can leave an orphaned gpg-agent or scdaemon
+    # with its cwd inside /mnt. That keeps the FUSE mount busy, so guestunmount fails ("Device or
+    # resource busy") and the following virt-install fails ("Failed to get 'write' lock"). Kill any
+    # process still holding /mnt open before the unmount.
     if command -v lsof &>/dev/null; then
         lsof +D /mnt 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill -9
         sleep 1
     fi
     guestunmount /mnt
     trap - EXIT
-    # guestunmount returning success only means the FUSE mountpoint is gone —
-    # libguestfs's own internal helper VM (what actually backs read/write
-    # access to the qcow2) can still be a moment behind releasing its own
-    # lock on the underlying file. Confirmed live 2026-09-01: create_vm()'s
-    # virt-install, run immediately after, intermittently failed with
-    # "Failed to get 'write' lock — Is another process using the image?"
-    # even though nothing was left holding /mnt itself by then. Poll briefly
-    # rather than a single fixed sleep, so the common case isn't slowed down.
+    # guestunmount returning success only means the FUSE mountpoint is gone. libguestfs's internal
+    # helper VM, which backs read/write access to the qcow2, can still hold its lock on the file for a
+    # moment. virt-install run immediately after can then fail with "Failed to get 'write' lock".
+    # Poll briefly for the lock to release, so the common case is not slowed down.
     local _qcow="/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2"
     if command -v lsof &>/dev/null; then
         for _i in 1 2 3 4 5 6 7 8 9 10; do
@@ -649,13 +629,12 @@ function vm_network_arg() {
 function create_vm() {
     _msg="Create virtual machine" show_nicer_messages
     # lab.cfg's _automation_graphics — default stays "spice" (unchanged behavior),
-    # but it's a config knob now, not hardcoded: spice depends on QEMU having been
+    # Spice graphics are a config knob, not hardcoded. Spice depends on QEMU having been
     # built with spice support, which isn't guaranteed on a minimal host install
-    # (confirmed live 2026-08-30: virt-install failed outright with "spice graphics
-    # are not supported with this QEMU" on an openSUSE Leap Minimal-VM Cloud host,
-    # since libvirt-daemon-qemu's spice UI packages are only a weak zypper
-    # Recommends there) — set _automation_graphics=none in lab.cfg on a host like
-    # that instead of installing the extra spice packages.
+    # On an openSUSE Leap Minimal-VM host, the QEMU build may lack spice support, and virt-install then
+    # fails with "spice graphics are not supported with this QEMU". libvirt-daemon-qemu's spice UI packages
+    # are only a weak zypper Recommends there. Set _automation_graphics=none in lab.cfg on such a host
+    # instead of installing the extra spice packages.
     virt-install --connect ${_qemu_addr} \
         --name "${AUTOMATION_HOSTNAME}" \
         --autostart \

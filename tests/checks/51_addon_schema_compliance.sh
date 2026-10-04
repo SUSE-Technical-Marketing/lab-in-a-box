@@ -1,14 +1,9 @@
 #!/bin/bash
 # Every scripts/install_<addon>*.py must correctly handle --schema/--version
-# (addon_common.handle_common_args, called as the first line of main()) —
-# confirmed live 2026-09-17 that install_prometheus.py/install_grafana.py
-# had never wired this up at all: `install_prometheus --schema` crashed with
-# "ERROR: Lab definition file '--schema' not found" instead of printing the
-# schema, since main() went straight to treating argv[1] as a lab.json path.
-# Nothing caught this before a real user did — 22_addon_common_schema_test.py
-# only exercises addon_common.print_schema() against a synthetic fixture, not
-# any real install_<addon> script's own main(). This test closes that gap for
-# every current AND future addon script, not just the two that broke.
+# (addon_common.handle_common_args, called as the first line of main()).
+# 22_addon_common_schema_test.py exercises addon_common.print_schema() against a synthetic
+# fixture only. This test runs each real install_<addon> script's own main(), so it covers
+# every current and future addon script.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
