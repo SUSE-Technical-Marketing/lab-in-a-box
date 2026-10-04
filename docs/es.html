@@ -53,6 +53,7 @@ a:hover { text-decoration-thickness: 2px; }
 }
 .lockup { display: block; height: 40px; width: auto; }
 .lockup--dark { display: none; }
+.opening-text h1 .lockup { display: inline-block; height: 3rem; vertical-align: middle; }
 html[data-theme="dark"] .lockup--light { display: none; }
 html[data-theme="dark"] .lockup--dark { display: block; }
 @media (prefers-color-scheme: dark) {
@@ -164,7 +165,7 @@ footer.site {
 <section class="opening">
 <div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
-<h1>lab-in-a-box · Español</h1>
+<h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Español</h1>
 <p class="lead"><strong>lab-in-a-box</strong> crea laboratorios completos a partir de un único archivo JSON o YAML: las VMs, el DNS, los clústeres de Kubernetes y los add-ons que describes. Las VMs pueden ejecutarse en tus propios hosts KVM, en Harvester o en cualquiera de ocho nubes públicas, y el mismo archivo funciona en todas ellas.</p>
 <p class="hint">Drag the cube to rotate it.</p>
 </div>

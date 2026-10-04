@@ -55,6 +55,7 @@ a:hover { text-decoration-thickness: 2px; }
 }
 .lockup { display: block; height: 40px; width: auto; }
 .lockup--dark { display: none; }
+.opening-text h1 .lockup { display: inline-block; height: 3rem; vertical-align: middle; }
 html[data-theme="dark"] .lockup--light { display: none; }
 html[data-theme="dark"] .lockup--dark { display: block; }
 @media (prefers-color-scheme: dark) {
@@ -166,7 +167,7 @@ footer.site {
 <section class="opening">
 <div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
-<h1>lab-in-a-box · Web UI</h1>
+<h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Web UI</h1>
 <p class="lead">A web interface that builds lab definitions (<code>lab.json</code>) by <strong>introspecting the
 project's own Python libraries at run time</strong>. It lists every installable
 component, and when you pick one it renders a form from that component's schema.
