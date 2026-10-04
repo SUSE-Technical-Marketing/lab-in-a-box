@@ -33,10 +33,28 @@ def load_base_schema():
     return {}
 
 
+def get_version():
+    """Get version from git or return a placeholder."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
 def build():
     """Build static cube canvas webui."""
     schemas = load_schemas()
     base_schema = load_base_schema()
+    version = get_version()
 
     # Read original index.html (the cube canvas)
     index_path = Path(__file__).parent.parent / "webui" / "htdocs" / "index.html"
@@ -67,11 +85,23 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 
     html = html[:head_end] + schema_inject + html[head_end:]
 
+    # Replace __LABVERSION__ with actual version
+    html = html.replace("__LABVERSION__", version)
+
     # Find where to inject API overrides (after app.js loads, before closing </body>)
     body_end = html.rfind("</body>")
 
     api_override = """
   <script>
+// Static mode CSS: hide server-dependent buttons
+const style = document.createElement('style');
+style.textContent = `
+  button[onclick*="validate"], button[onclick*="save"] { display: none !important; }
+  .actions { opacity: 1; }
+  .actions .btn.disabled { opacity: 0.5; cursor: not-allowed; }
+`;
+document.head.appendChild(style);
+
 // Override API functions for static mode
 const originalApiGet = window.apiGet;
 window.apiGet = async function(action, params = {}) {

@@ -285,6 +285,7 @@ def base_lab_schema():
                 ],
             },
             "kclusters": {
+                "title": "Kubernetes Clusters",
                 "description": "Map of cluster name to Kubernetes cluster configuration",
                 "repeatable": True,
                 "key_label": "cluster name",
