@@ -11,9 +11,10 @@ def extract_addon_schemas():
     scripts_dir = Path(__file__).parent
     schemas = {}
     addon_list = []
+    infrastructure_addons = []
 
-    # Addons that are infrastructure/internal, not user-facing
-    skip_addons = {"pxe"}
+    # Addons that are infrastructure/internal services, shown in separate section
+    infrastructure = {"coredns", "ds389", "mariadb", "postgresql", "harbor", "gitlab", "argocd", "smlm_proxy"}
 
     # Find all install_*.py scripts
     addon_scripts = sorted(scripts_dir.glob("install_*.py"))
@@ -22,11 +23,6 @@ def extract_addon_schemas():
 
     for script_path in addon_scripts:
         addon_name = script_path.stem.replace("install_", "")
-
-        # Skip internal infrastructure addons
-        if addon_name in skip_addons:
-            print(f"  ⊘ {addon_name}: infrastructure only", file=sys.stderr)
-            continue
 
         try:
             result = subprocess.run(
@@ -40,8 +36,13 @@ def extract_addon_schemas():
                 schema = json.loads(result.stdout)
                 addon = schema.get("addon", addon_name)
                 schemas[addon] = schema
-                addon_list.append(addon)
-                print(f"  ✓ {addon}", file=sys.stderr)
+
+                if addon_name in infrastructure:
+                    infrastructure_addons.append(addon)
+                    print(f"  ✓ {addon} (infrastructure)", file=sys.stderr)
+                else:
+                    addon_list.append(addon)
+                    print(f"  ✓ {addon}", file=sys.stderr)
             else:
                 print(f"  ✗ {addon_name}: no schema", file=sys.stderr)
         except Exception as e:
@@ -51,6 +52,7 @@ def extract_addon_schemas():
         "version": "1.0",
         "generated": True,
         "addons": addon_list,
+        "infrastructure_addons": infrastructure_addons,
         "schemas": schemas
     }
 

@@ -106,27 +106,34 @@ document.head.appendChild(style);
 const originalApiGet = window.apiGet;
 window.apiGet = async function(action, params = {}) {
   if (action === 'components') {
+    const buildComponent = (name) => {
+      const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
+      const fields = schema.fields || [];
+      const countFields = (arr) => {
+        if (!Array.isArray(arr)) return 0;
+        return arr.reduce((n, f) => {
+          if (f && typeof f === 'object' && f.name && f.type) return n + 1;
+          if (f && f.fields) return n + countFields(f.fields);
+          return n;
+        }, 0);
+      };
+      return {
+        name,
+        title: schema.title || name,
+        description: schema.description || '',
+        field_count: countFields(fields),
+        layers: (schema.capabilities && schema.capabilities.layers) || []
+      };
+    };
+
+    const regular = (window.EMBEDDED_SCHEMAS.addons || []).map(buildComponent);
+    const infrastructure = (window.EMBEDDED_SCHEMAS.infrastructure_addons || []).map(buildComponent);
+
     return {
-      components: window.EMBEDDED_SCHEMAS.addons.map(name => {
-        const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
-        const fields = schema.fields || [];
-        const countFields = (arr) => {
-          if (!Array.isArray(arr)) return 0;
-          return arr.reduce((n, f) => {
-            if (f && typeof f === 'object' && f.name && f.type) return n + 1;
-            if (f && f.fields) return n + countFields(f.fields);
-            return n;
-          }, 0);
-        };
-        return {
-          name,
-          title: schema.title || name,
-          description: schema.description || '',
-          field_count: countFields(fields),
-          layers: (schema.capabilities && schema.capabilities.layers) || []
-        };
-      }),
-      count: window.EMBEDDED_SCHEMAS.addons.length,
+      components: regular,
+      infrastructure: infrastructure,
+      count: regular.length,
+      infrastructure_count: infrastructure.length,
       scripts_dir: 'embedded'
     };
   }
