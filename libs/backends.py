@@ -250,29 +250,19 @@ class VMBackend(object):
 
     def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, **kwargs):
         """
-        Return value contract, added 2026-09-09 (found live-testing AWSBackend — see TODO): a
-        cloud backend (one whose real IP is only known after the provider's own DHCP assigns it —
-        Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) returns the real, reachable
-        IP address it just assigned, as a string, once the instance is confirmed running — polling
-        the provider's own API/CLI if the create call's own response doesn't already carry it.
-        LibvirtBackend/HarvesterBackend return None unchanged (the caller already has a correct,
-        static `myip` from the lab JSON for those — nothing to report back). setup_vm.py's
-        provision_vm() uses this return value, when not None, in place of the JSON's own `myip`
-        for DNS registration — see its own comments for why this order matters (a cloud node's
-        DNS entry cannot be written before the node exists and the provider has assigned it a
-        real address, unlike the static-IP libvirt/Harvester case).
+        Create the VM. Cloud backends return the real, reachable IP address assigned to it, as a string, once the
+        instance is running. They poll the provider's API or CLI when the create call does not return the address.
+        LibvirtBackend and HarvesterBackend return None, because the caller already has a static `myip` from the lab
+        JSON. setup_vm.py's provision_vm() uses a non-None return value in place of `myip` for DNS registration.
         """
         raise NotImplementedError
 
     def get_ip(self, vm_name):
         """
-        Return the real IP address of an EXISTING instance named vm_name, or None if it doesn't
-        exist or (for LibvirtBackend/HarvesterBackend, which never call this) isn't implemented.
-        Added 2026-09-09 alongside create_vm()'s own return-IP contract above — used by
-        ensure_cloud_dns_vm() (backends.py) to find a previously-created cloud DNS VM's address
-        again on a later run, without recreating it. Only implemented by the cloud backends;
-        LibvirtBackend/HarvesterBackend raise NotImplementedError (they have no reason to be
-        called this way — their nodes' addresses are always the static, already-known `myip`).
+        Return the real IP address of the existing instance named vm_name, or None if it does not exist. Only cloud
+        backends implement this. ensure_cloud_dns_vm() uses it to find an existing cloud DNS VM's address on a later run
+        without recreating the VM. LibvirtBackend and HarvesterBackend raise NotImplementedError, because their addresses
+        are the static `myip` from the lab JSON.
         """
         raise NotImplementedError
 
@@ -290,10 +280,8 @@ class VMBackend(object):
 
     def vm_state(self, vm_name):
         """
-        Power state of an existing VM, in the provider's own words (e.g.
-        "running", "stopped"), or "not found". Added 2026-09-30 for
-        scripts/vm_power.py; backends that don't implement it raise
-        NotImplementedError and vm_power.py reports "unsupported".
+        Power state of an existing VM, in the provider's own words (e.g. "running", "stopped"), or "not found".
+        Backends that do not implement it raise NotImplementedError, and scripts/vm_power.py reports "unsupported".
         """
         raise NotImplementedError
 
@@ -307,11 +295,10 @@ class VMBackend(object):
 
     def open_vm_ports(self, vm_name, ports):
         """
-        Make `ports` (a lab-JSON open_ports list: "443", "69/udp", ...; tcp by
-        default) reachable from anywhere on an existing VM. Best effort and
-        idempotent; added 2026-09-30. Default: nothing to do for this backend
-        (libvirt has no firewall of its own; the host forwards ports) — cloud
-        backends override it with their own firewall/security-group mechanism.
+        Make `ports` (a lab-JSON open_ports list such as "443" or "69/udp"; tcp by default) reachable from anywhere
+        on an existing VM. The operation is best effort and idempotent. The default does nothing, because libvirt has no
+        firewall of its own and the host forwards ports. Cloud backends override it with their own firewall or
+        security-group mechanism.
         """
         log("- open_ports: nothing to open on the '{}' backend".format(type(self).__name__))
 
@@ -332,65 +319,43 @@ class VMBackend(object):
 
     def ensure_ports_open(self, open_ports):
         """
-        Best-effort: opens `open_ports` (same shape as create_vm()'s own
-        open_ports kwarg — e.g. ["51820/udp"], default protocol tcp) for
-        this account's compute, independent of creating any particular VM.
-        Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — the overlay
-        hub can be an ALREADY-EXISTING host (OVERLAY_HUB_HOST), which never
-        goes through create_vm()'s own open_ports handling, so the caller
-        needs a standalone way to still get the port opened automatically
-        for a real cloud backend.
+        Best effort: open `open_ports` (same shape as create_vm()'s open_ports argument, e.g. ["51820/udp"], tcp by
+        default) for this account's compute, without creating a VM. Used when the overlay hub is an existing host
+        (OVERLAY_HUB_HOST), which never goes through create_vm().
 
-        No-op by default (matches every backend's existing "absorbed by
-        **kwargs, ignored" stance on open_ports elsewhere) — only
-        AWSBackend overrides this today, delegating to its own
+        No-op by default, like the other backends that ignore open_ports. Only AWSBackend overrides this, delegating to
         _ensure_security_group_access().
         """
         pass
 
     def get_private_ip(self, vm_name):
         """
-        Returns the real PRIVATE/internal IP of an existing instance named
-        vm_name, or None. Added 2026-09-18 for overlay.py's site-gateway
-        routing — another node in the SAME site/subnet routes through its
-        local gateway via this address, never the gateway's public IP
-        (irrelevant for same-subnet traffic, and may not even exist).
+        Return the private (internal) IP of the existing instance named vm_name, or None. The overlay's site-gateway
+        routing uses it: another node in the same site reaches the gateway through this address, not the public IP.
 
-        No-op (returns None) by default; only AWSBackend overrides this
-        today — matches every other cloud-only addition's "AWS got it
-        first" pattern elsewhere in this file.
+        No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
 
     def get_subnet_cidr(self):
         """
-        Returns this account's own configured subnet's real CIDR block
-        (e.g. "172.31.0.0/20"), or None if this backend has no such
-        concept or isn't configured with one. Added 2026-09-18 for
-        overlay.py — a site gateway advertises this to the hub as the real,
-        routable subnet other sites should reach it through, instead of a
-        synthetic overlay-only address.
+        Return this account's configured subnet CIDR (e.g. "172.31.0.0/20"), or None if the backend has no such concept
+        or is not configured with one. A site gateway advertises this CIDR to the overlay hub as the routable subnet that
+        other sites reach it through.
 
-        No-op (returns None) by default; only AWSBackend overrides this
-        today.
+        No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
 
     def disable_source_dest_check(self, vm_name):
         """
-        Best-effort: disables this instance's "source/destination check"
-        (a cloud-provider-level packet filter that drops any packet not
-        addressed TO or FROM the instance's own IP — independent of, and
-        enforced BELOW, the guest's own net.ipv4.ip_forward=1) so it can
-        actually forward traffic for other nodes in its site. Added
-        2026-09-18 for overlay.py's site gateways — without this, a site
-        gateway's ip_forward=1 has no effect at all on a cloud backend that
-        enforces this check; packets are silently dropped before ever
-        reaching the guest kernel.
+        Best effort: disable the instance's source/destination check. This is a cloud-provider packet filter that drops
+        any packet not addressed to or from the instance's own IP, and it runs below the guest's net.ipv4.ip_forward. A
+        gateway that forwards traffic for other nodes needs the check disabled, or the packets are dropped before they
+        reach the guest kernel.
 
-        No-op by default; only AWSBackend overrides this today (EC2's own
-        SourceDestCheck attribute). No known equivalent implemented yet for
-        the other 7 cloud backends.
+        No-op by default. Only AWSBackend overrides it, using EC2's SourceDestCheck attribute. No equivalent is implemented
+        for the other cloud backends.
         """
         pass
 
@@ -543,42 +508,14 @@ class LibvirtBackend(VMBackend):
 
     def reboot_vm(self, vm_name):
         """
-        Reboot a VM. Prefers a direct, guest-side reboot over anything
-        virsh/ACPI-mediated, because BOTH are confirmed live (2026-08-28, on
-        two separate disposable nuc6.mydemo.lab VMs) to be unreliable in
-        this nested-virt environment in ways that matter:
+        Reboot a VM. A guest-side reboot is preferred over virsh or ACPI, because in this nested-virt environment
+        `virsh reset` can boot back into an older transactional-update snapshot, and ACPI signals often do not reach the
+        guest in time.
 
-        - `virsh reset` (the original, immediate fallback here) silently
-          loses a just-installed transactional-update snapshot:
-          `transactional-update pkg install` returns and correctly marks
-          the new snapshot as default (confirmed via its own log: "New
-          default snapshot is #N"), but `reset` — the hardware RESET line,
-          equivalent to the physical reset button, not a guest- or
-          qemu-mediated shutdown — can still boot back into the OLD
-          snapshot. A plain guest-side `sync` first (an earlier attempted
-          fix) does NOT prevent this — reproduced the bug again with it
-          already in place.
-        - A first fix escalated through ACPI `reboot` then ACPI `shutdown`
-          before ever falling back to `reset`, on the theory that the
-          guest's own clean shutdown sequence avoids whatever `reset`
-          skips. Confirmed live that this HELPS (never loses a snapshot)
-          but ACPI signals routinely never reach the guest in time at all
-          in this environment — `virsh reboot` AND `virsh shutdown` each
-          failed to produce a lifecycle event within 120s on the very same
-          VM, still falling through to `reset` far more often than not.
-
-        What actually works, confirmed live: a plain `ssh vm "reboot"` —
-        bypassing ACPI-signal-forwarding through qemu entirely by running
-        the reboot command directly in the guest's own init system —
-        completed in ~15s on a VM where the ACPI path had just failed
-        twice in a row. So: if the guest is currently reachable over SSH,
-        reboot it that way and return immediately — the broken-pipe/
-        connection-reset this causes is the expected, successful outcome,
-        not a failure to check for (callers already poll for the guest
-        coming back via check_ssh_conn(), same as every other reboot path
-        here). Only fall back to the virsh-mediated ACPI/reset escalation
-        below when the guest ISN'T reachable over SSH to begin with (there
-        is no other way to intervene in that case).
+        If the guest is reachable over SSH, the method runs `reboot` inside the guest and returns at once. The resulting
+        broken pipe or connection reset is the expected outcome. Callers poll for the guest to come back with
+        check_ssh_conn(). The virsh-mediated ACPI and reset sequence is used only when the guest is not reachable over SSH,
+        since there is no other way to intervene in that case.
         """
         try:
             probe = socket.create_connection((vm_name, 22), timeout=3)
@@ -623,29 +560,16 @@ class LibvirtBackend(VMBackend):
 
     def delete_vm(self, vm_name):
         """
-        Remove a VM and all its storage from the hypervisor. Two calls, in
-        this order:
-          1. destroy (force power-off if running; no-op/fails harmlessly if
-             already stopped — `destroy` never removes the domain's
-             definition, only its running state)
-          2. undefine --nvram --remove-all-storage (the one call that
-             actually deletes disk images and the NVRAM/UEFI vars file, now
-             guaranteed to still find the domain defined since step 1 never
-             removes that definition)
+        Remove a VM and all its storage from the hypervisor, in two calls:
 
-        NOTE: an earlier version of this method (and bash's own delete_vm,
-        libs/lab_creation.bash:1131-1137 — a pre-existing bug, faithfully
-        ported, not introduced by this port) called a bare `undefine
-        --nvram` (no --remove-all-storage) BEFORE `destroy`. That plain
-        undefine succeeds regardless of whether the domain is running,
-        removing its definition — so by the time the real
-        `--remove-all-storage` undefine ran, the domain was already gone
-        ("domain not found") and the disk image was silently never removed.
-        Confirmed live on a disposable test VM (nuc6.mydemo.lab, 2026-08-28):
-        the qcow2 file was left behind twice, cleaned up manually. Fixed by
-        dropping the redundant/harmful first undefine entirely — `destroy`
-        alone is enough to ensure a running domain is stopped before the one
-        real undefine call removes both the definition and its storage.
+          1. destroy: force power-off if the domain is running. It does not remove the definition, so calling it on a
+             stopped domain is harmless.
+          2. undefine --nvram --remove-all-storage: deletes the disk images and the NVRAM/UEFI vars file, and removes the
+             definition.
+
+        The definition must still exist when step 2 runs. An undefine issued before destroy would remove the definition
+        while the domain is running, and the later --remove-all-storage call would then fail with "domain not found" and
+        leave the disk image behind.
         """
         log("Deleting VM '{}'".format(vm_name))
         self._virsh("destroy", vm_name,
@@ -732,38 +656,24 @@ class LibvirtBackend(VMBackend):
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
     ):
         """
-        Create a VM on a KVM hypervisor via virt-install, covering all 6
-        config_method branches:
+        Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
 
             ""              → Ignition + Combustion (SLE Micro default)
-            "install_iso"   → full OS install from installer ISO: autoyast/
-                               kickstart/preseed (via --location/--extra-args,
-                               blocks with --wait -1) or Ubuntu autoinstall (via
-                               --cdrom + a seed CDROM built with mkisofs, also
-                               --wait -1)
-            "iso-cloud-init"→ NOTE: an incomplete stub inherited from bash —
-                               this branch only computes an unused _boot_params
-                               value and creates no VM at all. Preserved as a
-                               no-op rather than guessing at the missing logic.
-            "virt_customize"→ image already fully configured by
-                               prepare_virt_customize_for_vm(); boot it directly
-            "cloud-init"    → cloud-init ISO attached as a cdrom, then a 3-minute
-                               wait, optional salt state apply, eject, reboot
+            "install_iso"   → full OS install from an installer ISO: autoyast, kickstart or preseed (via --location and
+                              --extra-args, blocks with --wait -1), or Ubuntu autoinstall (via --cdrom and a seed CDROM
+                              built with mkisofs, also --wait -1)
+            "iso-cloud-init"→ a stub: this branch computes an unused _boot_params value and creates no VM
+            "virt_customize"→ the image is already configured by prepare_virt_customize_for_vm(); boot it directly
+            "cloud-init"    → cloud-init ISO attached as a cdrom, then a 3-minute wait, optional salt state apply,
+                              eject, reboot
 
-        extra_disks entries look like "/dev/sdb,bus=scsi" or "UUID=xxx,bus=sata"
-        (a path or a UUID= reference, with an optional per-disk bus override).
+        extra_disks entries look like "/dev/sdb,bus=scsi" or "UUID=xxx,bus=sata": a path or UUID= reference, with an
+        optional per-disk bus override.
 
-        vm_machine overrides virt-install's own machine-type default
-        (currently "q35" — chosen by virt-install/libosinfo, not something
-        this project has ever set explicitly). Confirmed live 2026-09-02: a
-        2015-era CentOS 7 GenericCloud image (kernel 3.10.0-229) hangs in a
-        dracut emergency shell under q35 ("Not all disks have been found" —
-        its virtio-blk root disk never appears in time under Q35's PCIe
-        topology), on a completely unmodified clone of the source image, so
-        this is a genuine old-guest/chipset incompatibility, not anything
-        config_method-specific. The identical disk boots straight through
-        with `--machine pc` (the legacy i440fx chipset). Left empty by
-        default — unchanged behavior for every image that already works.
+        vm_machine overrides the machine type. The default is q35, chosen by virt-install and libosinfo. Some old guests
+        do not boot under q35: a 2015-era CentOS 7 GenericCloud image stops in a dracut emergency shell, because its
+        virtio-blk root disk does not appear in time under the PCIe topology. Setting `--machine pc` (the legacy i440fx
+        chipset) boots the same disk. The field is empty by default, so images that already boot are unchanged.
         """
         vm_img_loc = self.vm_img_loc
         remote_host = self.remote_host
@@ -1081,21 +991,13 @@ class LibvirtBackend(VMBackend):
 
     def host_resources(self):
         """
-        Query free vCPUs, free memory (MiB), and free disk (MiB) on
-        self.vm_img_loc for this backend's host, over SSH. Raises
-        RuntimeError/ValueError on any query failure — the caller (typically
-        select_kvm_host) treats that host as disqualified rather than letting
-        the whole selection blow up.
+        Return free vCPUs, free memory (MiB) and free disk (MiB) on self.vm_img_loc for this backend's host, over SSH.
+        Raises RuntimeError or ValueError on any query failure. The caller, typically select_kvm_host, treats that host as
+        disqualified instead of failing the whole selection.
 
-        virsh runs LOCALLY on `host` itself (qemu:///system), not via
-        self.virt_srv's qemu+ssh:// URI — we're already executing remotely
-        on that exact host via ssh_output, so reconnecting via
-        qemu+ssh://root@{host} from within that same host is a redundant
-        loopback SSH hop whose host key (for "localhost"/"::1" from that
-        host's own perspective) is never pre-accepted, and hangs
-        indefinitely waiting for interactive confirmation when run
-        unattended — confirmed as a real bug (2026-08-27) via the identical
-        pattern in scripts/refresh_hypervisor_status.py.
+        virsh runs locally on `host` (qemu:///system), not through self.virt_srv's qemu+ssh:// URI. The command already runs
+        on that host over SSH, and a second SSH hop back to the same host would wait for an unaccepted host key when run
+        unattended.
         """
         host = self.remote_host
         vm_img_loc = self.vm_img_loc
@@ -1352,10 +1254,8 @@ class HarvesterBackend(VMBackend):
             vm_network = {"name": "default", "pod": {}}
 
         secret_name = "{}-cloudinit".format(vm_name)
-        # "bridge" is the correct KubeVirt interface binding for BOTH pod and
-        # multus network types — only the networks[] entry above (pod vs.
-        # multus) actually changes which one a VM gets. Confirmed against
-        # Harvester's own documented VLAN-network VM example.
+        # "bridge" is the KubeVirt interface binding for both pod and Multus networks. Only the
+        # networks[] entry above (pod or multus) decides which network the VM gets.
         interface = {"name": "default", "bridge": {}}
         if mymac:
             interface["macAddress"] = mymac
@@ -1565,10 +1465,10 @@ class HetznerBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        public_net.ipv4.ip field is confirmed against Hetzner's own published API docs. Returns
-        None if the server doesn't exist or has no public IPv4 assigned (e.g. an IPv4-less
-        server, or one still initializing)."""
+        """
+        Return the public IPv4 address of the server named vm_name, from public_net.ipv4.ip. Returns None if the server
+        does not exist, or has no public IPv4 assigned yet (an IPv4-less server, or one still initializing).
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -1872,20 +1772,12 @@ class AWSBackend(VMBackend):
 
     def _find_instance(self, vm_name):
         """
-        Returns the non-terminated instance tagged Name=<vm_name>, or None.
+        Return the non-terminated instance tagged Name=<vm_name>, or None.
 
-        Prefers the exact InstanceId create_vm() cached for this vm_name (set the
-        moment `run-instances` returns) over the tag-based lookup below — confirmed
-        live 2026-09-13 that the tag lookup alone is genuinely ambiguous: `Name` tags
-        are NOT unique in EC2, and a caller that creates a new VM while an old
-        same-named instance still exists (e.g. setup_vm.py run directly against a
-        single node, which — unlike setup_lab.py's own full run — does not destroy
-        an existing same-named VM first) gets back "the first" of two matches with
-        no ordering guarantee, silently returning the WRONG instance's IP for DNS
-        registration right after successfully creating the right one. The tag-based
-        fallback below still covers every other caller (vm_exists, delete_vm, a
-        freshly-constructed backend instance with nothing cached) where no such
-        ambiguity is expected in normal operation.
+        If create_vm() has cached the InstanceId for this vm_name, that exact instance is returned. The cache is checked
+        first because Name tags are not unique in EC2: a tag lookup can return a different instance with the same name, such
+        as an older instance that still exists. Every other caller (vm_exists, delete_vm, a newly constructed backend with
+        nothing cached) uses the tag lookup below.
         """
         cached_id = self._instance_id_by_vm.get(vm_name)
         if cached_id:
@@ -1925,10 +1817,11 @@ class AWSBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """Real, live-verified 2026-09-09: prefers the public IP (reachable from outside the
-        VPC — this project's own SSH-based access model needs that), falls back to the private
-        IP if no public one is assigned (e.g. no AWS_SUBNET_ID with auto-assign-public-IP set).
-        Returns None if the instance doesn't exist yet or has no IP yet (still Pending)."""
+        """
+        Return the public IP of the instance named vm_name. Falls back to the private IP when no public IP is assigned,
+        for example without AWS_SUBNET_ID and with auto-assign of public IPs disabled. Returns None if the instance does not
+        exist yet or has no IP (still pending).
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -2040,22 +1933,9 @@ class AWSBackend(VMBackend):
 
     def _own_public_ip(self):
         """
-        This automation node's own current public IP, as AWS itself would see
-        it — cached on first call (a single setup_lab.py run creates many VMs
-        but this host's own outbound IP doesn't change mid-run). Needed to
-        scope the SSH-access security-group rule tightly (see
-        _ensure_security_group_access()) rather than opening port 22 to the
-        whole internet.
-
-        Confirmed live 2026-09-13: one of three real, stacked causes behind
-        a genuinely confusing failure — a freshly-created AWS node got a
-        real IP and DNS entry, but check_ssh_conn() then exhausted its
-        retry limit waiting for it to come online. This piece: the security
-        group had no inbound rule at all for traffic from outside AWS's own
-        network (only a self-referencing rule letting its OWN members talk
-        to each other). Necessary, but NOT sufficient on its own — see
-        _ensure_internet_gateway()'s own docstring for the other, deeper
-        cause found only after this fix alone didn't resolve it.
+        Return this automation node's own public IP, as AWS sees it. The result is cached on the first call, because a
+        single setup_lab.py run creates many VMs and the host's outbound address does not change during it. The address
+        scopes the SSH rule in _ensure_security_group_access(), so port 22 is not opened to the whole internet.
         """
         if self._cached_public_ip is None:
             try:
@@ -2068,19 +1948,13 @@ class AWSBackend(VMBackend):
 
     def _ensure_security_group_access(self, open_ports):
         """
-        Ensures self.security_group_id allows: (1) SSH from this automation
-        node's own public IP — unconditional, every AWS VM needs this to
-        ever become reachable (see _own_public_ip()'s own docstring for the
-        real bug this fixes) — and (2) each port in `open_ports` (a lab-JSON
-        "aws_open_ports" list, e.g. ["443", "4505", "4506"] or ["69/udp"];
-        default protocol is tcp) from anywhere (0.0.0.0/0) — for
-        genuinely-public-facing service ports (e.g. SMLM's own web UI/salt
-        ports), unlike the deliberately-narrow SSH rule above.
+        Ensure self.security_group_id allows: (1) SSH from this automation node's public IP, always, since every AWS VM
+        needs it to be reachable (see _own_public_ip()); and (2) each port in `open_ports` (the lab-JSON aws_open_ports list,
+        e.g. ["443", "4505", "4506"] or ["69/udp"]; tcp by default) from anywhere, 0.0.0.0/0. The second group is for
+        public-facing service ports.
 
-        Never removes/revokes an existing rule — only adds whatever's
-        missing — so nothing a user configured by hand outside this project
-        is ever silently undone. No-op entirely if no security group is
-        configured at all (nothing to manage).
+        Rules are only added, never removed or revoked, so rules configured by hand outside this project are kept. The method
+        does nothing if no security group is configured.
         """
         if not self.security_group_id:
             return
@@ -2154,33 +2028,14 @@ class AWSBackend(VMBackend):
 
     def _ensure_internet_gateway(self):
         """
-        Ensures self.subnet_id's VPC actually has a route to the internet at
-        all — creating and attaching an Internet Gateway, and adding the
-        route table's 0.0.0.0/0 route, if either is missing. No-op if
-        self.subnet_id isn't set, or if a working IGW route already exists
-        (checked first — never creates a second IGW/route needlessly).
+        Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and
+        add the route table's 0.0.0.0/0 route. The method does nothing if self.subnet_id is not set or a working IGW route
+        already exists, so a second IGW is never created.
 
-        Confirmed live 2026-09-13: the DEEPER of two stacked real causes
-        behind an AWS node getting a real public IP and passing every
-        health/security check, yet remaining completely unreachable —
-        _ensure_security_group_access()'s own fix (opening SSH in the
-        security group) was necessary but NOT sufficient on its own. Ruled
-        out, in order, before finding this: the security group itself
-        (fixed, but didn't resolve it), the subnet's Network ACL (already
-        correct — default allow-all), a guest-side firewall (firewalld
-        wasn't even installed on the AMI in question), and only then — via
-        `describe-route-tables` — this: the route table had no `0.0.0.0/0`
-        route to any Internet Gateway at all, and `describe-internet-
-        gateways` showed none attached to the VPC in the first place. A
-        public IP is still assigned and NAT'd at the IGW layer regardless of
-        whether one exists, so every symptom (real IP, DNS correct, cloud-
-        init/sshd both healthy per the instance's own console output, but a
-        silent full connection timeout — not "refused" — from outside) is
-        explained by this alone; security groups/NACLs never even get
-        evaluated if the packets have no route to arrive by in the first
-        place. Automated here (rather than a one-off manual CLI fix) at the
-        user's own explicit request: "add it as part of the process of
-        using aws."
+        A VPC without an attached Internet Gateway gives an instance a public IP that cannot be reached. The address is
+        assigned, but no route exists for traffic to arrive by, and the symptom is a silent timeout from outside. Security
+        groups and network ACLs are not evaluated in that case. This method adds the route, and
+        _ensure_security_group_access() opens the ports. Both are needed.
         """
         if not self.subnet_id:
             return
@@ -2411,10 +2266,11 @@ class GCPBackend(VMBackend):
 
     @staticmethod
     def _normalize_custom_shape(vm_cpu, vm_mem_mb):
-        """Rounds a requested (vCPU, memory) pair to GCE's own custom-machine-type constraints:
-        memory in exact 256MB multiples, an even vCPU count above 1. Rounds UP in both cases
-        (never under-provisions relative to what was actually requested) rather than dying on
-        every lab JSON that wasn't originally sized with GCP's own rules in mind."""
+        """
+        Round a requested (vCPU, memory) pair to GCE's custom machine-type constraints: memory in exact 256 MB multiples,
+        and an even vCPU count above 1. Both values are rounded up, so the VM is never smaller than requested. Lab JSON
+        values that do not follow GCP's rules are accepted.
+        """
         cpu = int(vm_cpu)
         if cpu > 1 and cpu % 2 != 0:
             cpu += 1
@@ -2427,11 +2283,10 @@ class GCPBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        networkInterfaces[].accessConfigs[].natIP field (the external/public IP) is confirmed
-        against GCE's own documented instance resource shape; falls back to the internal
-        networkIP if no external IP was assigned (e.g. no external-IP access config on the NIC).
-        Returns None if the instance doesn't exist or has no IP yet."""
+        """
+        Return the external (public) IP of the instance, from networkInterfaces[].accessConfigs[].natIP. Falls back to the
+        internal networkIP when the NIC has no external IP. Returns None if the instance does not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -2504,8 +2359,10 @@ class GCPBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """One firewall rule per VM (lab-<vm>), allowing `ports` from anywhere to instances
-        carrying the same-named network tag, which is then added to the VM. NOT live-verified."""
+        """
+        Create one firewall rule per VM (lab-<vm>), allowing `ports` from anywhere to instances carrying the network tag of
+        the same name. The tag is added to the VM.
+        """
         if not ports:
             return
         name = _gce_name(vm_name.split(".")[0])
@@ -2706,11 +2563,11 @@ class AlibabaBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        PublicIpAddress.IpAddress list (confirmed against Alibaba Cloud's own documented
-        DescribeInstances response shape) is preferred; falls back to the VPC private IP
-        (VpcAttributes.PrivateIpAddress.IpAddress) if no public IP was assigned. Returns None if
-        the instance doesn't exist or has no IP yet."""
+        """
+        Return the public IP of the instance, from PublicIpAddress.IpAddress in DescribeInstances. Falls back to the VPC
+        private IP (VpcAttributes.PrivateIpAddress.IpAddress) when no public IP is assigned. Returns None if the instance does
+        not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -2786,8 +2643,10 @@ class AlibabaBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """Ingress rules from anywhere on the configured ALIBABA_SECURITY_GROUP_ID (shared by
-        the lab's instances). A rule that already exists is fine. NOT live-verified."""
+        """
+        Add ingress rules from anywhere to ALIBABA_SECURITY_GROUP_ID, which is shared by the lab's instances. Rules that
+        already exist are left alone.
+        """
         for port, proto in parse_open_ports(ports):
             try:
                 self._aliyun("AuthorizeSecurityGroup", "--SecurityGroupId", self.security_group_id,
@@ -2816,11 +2675,11 @@ class AlibabaBackend(VMBackend):
                 "Alibaba Cloud ImageId".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
-        """Stashes this VM's already-generated cloud-init user-data, Base64-encoded (Alibaba
-        Cloud's own API requires this — confirmed against its current documentation, unlike AWS/
-        GCP which both accept raw text), for create_vm() to send at launch time. Matches every
-        other backend's call-order assumption: this always runs before create_vm(), see
-        setup_vm.py's provision_vm()."""
+        """
+        Store this VM's generated cloud-init user-data, Base64-encoded, for create_vm() to send at launch. Alibaba Cloud's
+        API requires Base64, while AWS and GCP accept raw text. This runs before create_vm(), as in setup_vm.py's
+        provision_vm().
+        """
         self._require_cloud_init(config_method, vm_name)
         base = Path(self.lab_setup_path) / "cloud-init"
         userdata_path = base / "{}_user-data".format(vm_name)
@@ -2968,10 +2827,10 @@ class ScalewayBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        public_ip.address field is Scaleway's own long-documented server-resource shape. Returns
-        None if the server doesn't exist or has no public IP assigned yet (e.g. still booting, or
-        a private-network-only server)."""
+        """
+        Return the public IP of the server, from public_ip.address. Returns None if the server does not exist or has no
+        public IP yet, for example while booting, or on a private-network-only server.
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -3218,11 +3077,11 @@ class UpCloudBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        server resource's ip_addresses.ip_address list, filtered for access="public", is
-        UpCloud's own documented shape; falls back to the first "private" address if no public
-        one is present (e.g. a server on a private-network-only plan). Returns None if the
-        server doesn't exist or has no IP addresses reported yet."""
+        """
+        Return the server's IP address, preferring the public address from ip_addresses.ip_address (access="public"). Falls
+        back to the first "private" address, for example on a private-network-only plan. Returns None if the server does not
+        exist or reports no IP addresses yet.
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -3366,10 +3225,8 @@ class UpCloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # UpCloud's own create-server response does carry the assigned IP addresses inline in
-        # practice, but a get_ip() poll is used regardless rather than parsing that response
-        # shape separately — matches AWSBackend's own defensive stance, and this class's own
-        # top-level docstring already flags UpCloud specifics as its weakest-verified area.
+        # UpCloud's create-server response may carry the assigned IP addresses inline, but get_ip() polls
+        # regardless, so the response shape is not parsed separately, matching AWSBackend.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -3441,8 +3298,10 @@ class OVHcloudBackend(VMBackend):
                    endpoint=endpoint, vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
     def _server_timestamp(self):
-        """OVH's own unauthenticated clock-sync endpoint — used to build the signature's
-        timestamp, per OVH's own official SDKs, so a drifted local clock doesn't fail auth."""
+        """
+        Return the current time from OVH's unauthenticated /auth/time endpoint. The signature timestamp comes from OVH's
+        server, as in OVH's SDKs, so a drifted local clock does not break authentication.
+        """
         req = urllib.request.Request("{}/auth/time".format(self.endpoint), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -3503,12 +3362,10 @@ class OVHcloudBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring, which
-        already flags this whole backend as the least-verified in the file) — the instance
-        resource's ipAddresses list, each entry shaped {"ip":..., "type": "public"/"private",
-        "version": 4}, is OVHcloud's own documented Public Cloud instance shape; prefers an IPv4
-        public address, falls back to any private one. Returns None if the instance doesn't
-        exist or has no IP yet."""
+        """
+        Return an IPv4 public address from the instance's ipAddresses list (entries shaped {"ip": ..., "type": "public" or
+        "private", "version": 4}). Falls back to a private address. Returns None if the instance does not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -3740,10 +3597,11 @@ class ExoscaleBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        instance-list entry's own "public-ip" field is `exo`'s own current CLI JSON output
-        convention. Returns None if the instance doesn't exist or has no public IP yet (e.g. a
-        private-network-only instance, or still starting)."""
+        """
+        Return the public IP from the instance-list entry's "public-ip" field, as printed by exo's JSON output. Returns None
+        if the instance does not exist or has no public IP yet, for example a private-network-only instance or one still
+        starting.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -3809,9 +3667,10 @@ class ExoscaleBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """A per-VM security group (lab-<vm>) with one ingress rule per port from anywhere,
-        attached to the instance — Exoscale's default security group lets nothing in. Rules or
-        an attachment that already exist are fine. NOT live-verified."""
+        """
+        Create a per-VM security group (lab-<vm>) with one ingress rule per port from anywhere, and attach it to the
+        instance. Exoscale's default security group allows no inbound traffic. Existing rules or attachments are left alone.
+        """
         if not ports:
             return
         name = _gce_name(vm_name.split(".")[0])
@@ -4077,24 +3936,15 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
 def _resolve_account_name(definition, config, vm_name):
     """
-    The cloud_account name that applies to `vm_name`: an explicit
-    "cloud_account" field (node, then common) if set, else — added
-    2026-09-12 — auto-discovered from whatever credentials files actually
-    exist, so an encrypted account for the same provider isn't silently
-    ignored just because the lab JSON never named it explicitly (the
-    encrypted-credentials feature's whole point). Auto-discovery only
-    engages when the node's own "backend" field (independent of any
-    account — see effective_backend_name()'s own fallback chain) already
-    names an actual CLOUD backend; a libvirt/harvester node never triggers
-    a credentials-directory scan.
+    Return the cloud_account name that applies to `vm_name`. An explicit "cloud_account" field (node, then common) is used
+    if set. Otherwise auto-discovery checks the credentials files for a matching account, so an encrypted account is used
+    even when the lab JSON does not name it. Auto-discovery runs only when the node's own "backend" field names a cloud
+    backend. A libvirt or harvester node never scans the credentials directory.
 
-    Returns "" if no account applies (today's behaviour: read
-    lab_creation.cfg directly) — never None, so every caller can keep
-    treating "falsy" as "no account" as before.
+    Returns "" when no account applies, in which case lab_creation.cfg is read directly. Never returns None.
 
-    Dies if auto-discovery finds more than one credentials file for that
-    provider — genuinely ambiguous, must be resolved with an explicit
-    "cloud_account" rather than guessed.
+    Dies if auto-discovery finds more than one credentials file for the provider. The ambiguity must be resolved with an
+    explicit "cloud_account".
     """
     node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
     common_cfg = definition.get("common", {}) or {}
@@ -4197,18 +4047,13 @@ def get_backend(definition, config, vm_name, for_existing=False, vm_img_loc=None
 
 def get_backend_for_account(account_name, config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
     """
-    Resolves a backend purely from a named cloud account, independent of
-    any specific lab node — added 2026-09-18 for overlay.ensure_overlay_hub()
-    (the overlay hub lives in its OWN designated account, via
-    OVERLAY_HUB_ACCOUNT, which may differ from — or not even appear in —
-    any lab node's own backend/cloud_account).
+    Resolve a backend from a named cloud account, independent of any lab node. overlay.ensure_overlay_hub() uses it,
+    because the hub lives in its own account (OVERLAY_HUB_ACCOUNT), which may differ from any lab node's backend or
+    cloud_account.
 
-    Mirrors get_backend() minus the per-node backend/cloud_account
-    resolution. Safe because every backend_cls.resolve() classmethod only
-    ever reads from `config` (the account's own merged config) and uses
-    `vm_name` for error messages — never `definition` itself (confirmed by
-    inspection across all 8 cloud backends) — so a synthetic single-node
-    definition is fine here.
+    Mirrors get_backend() without the per-node backend and cloud_account resolution. A synthetic single-node definition is
+    enough, because each backend's resolve() classmethod reads only the account's merged config and uses vm_name for error
+    messages.
     """
     acct = primary.load_cloud_account(account_name, config=config)
     cloudtype = acct.get("CLOUDTYPE", "")
