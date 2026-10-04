@@ -117,8 +117,8 @@ check("ensure_fusermount_compat is a no-op when fusermount3 isn't installed eith
       "(nothing to link to — package installation's own job, not this function's)",
       _run_ensure_fusermount_compat(fusermount_exists=False, fusermount3_exists=False) == [])
 check("ensure_fusermount_compat symlinks fusermount -> fusermount3 when only fusermount3 exists "
-      "(confirmed live 2026-08-30: openSUSE Leap ships no \"fuse\" v2 package at all, and "
-      "guestunmount hardcodes the legacy \"fusermount\" name regardless)",
+      "(openSUSE Leap ships no \"fuse\" v2 package, and guestunmount hardcodes the legacy "
+      "\"fusermount\" name regardless)",
       _run_ensure_fusermount_compat(fusermount_exists=False, fusermount3_exists=True) ==
       [("/usr/bin/fusermount", "/usr/bin/fusermount3")])
 

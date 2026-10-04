@@ -237,9 +237,8 @@ check("handle_common_args: returns None (no exit) for an addon-specific argument
 
 
 # ── require_k8s_name(): runtime guard for values interpolated unquoted into
-# remote kubectl/shell commands (found in code review 2026-09-05 across
-# several install_<addon>.py scripts — Validator.vns()'s own format check
-# is never actually invoked by the real deploy pipeline, so this runs at
+# remote kubectl/shell commands. Validator.vns()'s format check is not invoked by the
+# deploy pipeline, so this runs at
 # the point of use instead) ──────────────────────────────────────────────
 check("require_k8s_name: a valid lowercase-alphanumeric-plus-hyphens value passes through unchanged",
       ac.require_k8s_name({"ns": "my-ns1"}, "ns", "default") == "my-ns1")

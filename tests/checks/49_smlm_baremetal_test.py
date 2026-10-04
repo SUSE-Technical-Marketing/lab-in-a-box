@@ -146,9 +146,9 @@ check("setup_smlm_podman: registers the free containers module (needed as a prer
       any(c == "SUSEConnect -p sle-module-containers/15.7/x86_64" for c in calls))
 check("setup_smlm_podman: registers the SMLM extension module via SUSEConnect -p ... -r (both, per real docs)",
       any(c == "SUSEConnect -p SUSE-Manager-Server/5.2/x86_64 -r REGCODE123" for c in calls))
-check("setup_smlm_podman: the containers module is registered BEFORE the SMLM extension module — "
-      "confirmed live 2026-09-13: SCC's own server rejects the SMLM module (422, 'requires... "
-      "Containers Module... to be activated first') if attempted in the other order",
+check("setup_smlm_podman: the containers module is registered BEFORE the SMLM extension module "
+      "(SCC rejects the SMLM module with 422, 'requires... Containers Module... to be activated first', "
+      "if attempted in the other order)",
       calls.index("SUSEConnect -p sle-module-containers/15.7/x86_64")
       < calls.index("SUSEConnect -p SUSE-Manager-Server/5.2/x86_64 -r REGCODE123"))
 check("setup_smlm_podman: logs into registry.suse.com when smlm_scc_user/password are set",
@@ -231,8 +231,8 @@ check("setup_smlm_podman: activation keys present -> registers SCC organization 
       "mgr-sync, forwarding stdin via mgrctl's -i flag",
       any(c == "mgrctl exec -i -- mgr-sync add credentials" for c in calls_keys))
 check("setup_smlm_podman: mgr-sync credentials command is fed the LOCAL admin login/password "
-      "first, then the SCC user/password/password-confirmation — confirmed live 2026-09-14 "
-      "that `mgr-sync add credentials` actually prompts for all five, in that order (a local "
+      "first, then the SCC user/password/password-confirmation, in the order that "
+      "`mgr-sync add credentials` prompts for them (a local "
       "admin Login/Password pair, then SCC \"User to add:\"/\"Password to add:\"/\"Confirm "
       "password:\"); feeding only 2 or 4 lines (both earlier guesses) left a later prompt "
       "waiting forever and the call died silently",
@@ -350,7 +350,7 @@ check("channel-sync-monitor script triggers at most one channel per run (exits "
 # spacecmd_() captures stderr and fails loudly on a real error. A discarded stderr hides errors such as a stale session, and the
 # monitor then reports an empty channel list.
 check("channel-sync-monitor script no longer blindly discards spacecmd's own stderr — "
-      "that's what let a real auth failure masquerade as 'no channels' for 6.5 hours live",
+      "that's what let a real auth failure masquerade as 'no channels'",
       monitor_script_call is not None and "2>/dev/null" not in monitor_script_call.split("spacecmd_()")[1][:200])
 
 # ensure_bootstrap_repo_monitor is deployed with the channel-sync monitor. mgr-create-bootstrap-repo --auto never retries a
@@ -374,8 +374,8 @@ check("setup_smlm_podman: enables and starts the bootstrap-repo-monitor timer (n
 # available in the test container for the check to mean anything.
 _bash_check = subprocess.run(["bash", "-n", "-c", ism._BOOTSTRAP_REPO_MONITOR_SCRIPT],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-check("_BOOTSTRAP_REPO_MONITOR_SCRIPT: valid bash syntax (bash -n) — a real apostrophe-inside-"
-      "${{var:-default}} bug broke this live 2026-09-23: {}".format(_bash_check.stderr.strip()),
+check("_BOOTSTRAP_REPO_MONITOR_SCRIPT: valid bash syntax (bash -n), with no apostrophe inside "
+      "${{var:-default}}: {}".format(_bash_check.stderr.strip()),
       _bash_check.returncode == 0)
 
 check("bootstrap-repo-monitor script explicitly builds/retries a distribution via --create "

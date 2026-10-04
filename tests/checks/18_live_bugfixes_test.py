@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Regression tests for bugs found by smoke tests on disposable VMs. SSH and subprocess calls are mocked, so no live host
+# Regression tests for live-deployment bugs. SSH and subprocess calls are mocked, so no live host
 # is needed. Run from 18_live_bugfixes.sh, in its own container (see tests/run_tests.sh).
 import shlex
 import socket
@@ -339,16 +339,13 @@ check("create_vm (kickstart): --boot carries the resolved boot_flag (matches VM_
       "--boot" in install_call and install_call[install_call.index("--boot") + 1] == "uefi")
 check("create_vm (kickstart): --extra-args still carries the real inst.ks= URL",
       "inst.ks=" in install_call[install_call.index("--extra-args") + 1])
-check("create_vm (kickstart): --extra-args carries inst.text — confirmed live 2026-09-17 "
-      "that without it, RHEL10's own Anaconda silently tries to start its default "
-      "graphical/WebUI path in a --noautoconsole environment and hangs forever with "
-      "zero further disk/network activity, no error at all",
+check("create_vm (kickstart): --extra-args carries inst.text "
+      "(without it, Anaconda starts its default graphical/WebUI path in a --noautoconsole "
+      "environment and hangs with zero further disk/network activity, and no error)",
       "inst.text" in install_call[install_call.index("--extra-args") + 1])
-check("create_vm (kickstart): --extra-args carries TERM=vt100 — confirmed live 2026-09-17, "
-      "with hard evidence (real disk writes/CPU time appearing only after manually "
-      "sending one arbitrary keystroke to the guest's serial console): Anaconda's "
-      "newt/slang text UI queries the terminal's capabilities on startup and blocks "
-      "forever waiting for a reply nothing is attached (--noautoconsole) to ever send",
+check("create_vm (kickstart): --extra-args carries TERM=vt100 "
+      "(Anaconda's newt/slang text UI queries the terminal's capabilities on startup and blocks "
+      "waiting for a reply that nothing attached with --noautoconsole ever sends)",
       "TERM=vt100" in install_call[install_call.index("--extra-args") + 1])
 
 

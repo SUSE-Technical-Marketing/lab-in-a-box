@@ -244,16 +244,15 @@ with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
     returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init",
                                 iso_image="ami-0123456789abcdef0")
 
-check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-      "contract — see VMBackend.create_vm()'s own docstring)", returned_ip == "203.0.113.10")
+check("create_vm() returns the real IP once the instance is confirmed running "
+      "(see VMBackend.create_vm()'s docstring)", returned_ip == "203.0.113.10")
 
 run_instances_call = next(c for c in calls if "run-instances" in c)
 check("create_vm() looks up the AMI's real root device name before building block-device-mappings",
       any("describe-images" in c for c in calls))
 check("create_vm() picks a real instance type", "t3.medium" in run_instances_call)
-check("create_vm() uses --count, NOT the old --min-count/--max-count pair (real bug found "
-      "live-testing 2026-09-09 — this project's own installed aws CLI rejects the old pair "
-      "outright, see TODO)",
+check("create_vm() uses --count, NOT the old --min-count/--max-count pair (the installed aws CLI "
+      "rejects the old pair)",
       "--count" in run_instances_call and "1" in run_instances_call
       and "--min-count" not in run_instances_call and "--max-count" not in run_instances_call)
 check("create_vm() uses the real root device name from describe-images, not a hardcoded default",
@@ -277,9 +276,8 @@ with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
 run_instances_call = next(c for c in calls if "run-instances" in c)
 check("create_vm() includes subnet/security-group/key-name when configured",
       "subnet-1" in run_instances_call and "sg-1" in run_instances_call and "labkey" in run_instances_call)
-check("create_vm() explicitly requests a public IP whenever a subnet is configured (real bug "
-      "found live-testing 2026-09-09: a subnet with MapPublicIpOnLaunch=false, a common "
-      "real-world default, otherwise leaves the instance unreachable — see TODO)",
+check("create_vm() explicitly requests a public IP whenever a subnet is configured "
+      "(a subnet with MapPublicIpOnLaunch=false, a common default, otherwise leaves the instance unreachable)",
       "--associate-public-ip-address" in run_instances_call)
 
 
@@ -724,7 +722,7 @@ def _fake_run_dup_name_tag(args, **kwargs):
             return _cp(0, stdout=json.dumps({"Reservations": [
                 {"Instances": [{"InstanceId": "i-new", "PublicIpAddress": "198.51.100.99"}]}]}))
         # The old, ambiguous tag-only lookup: BOTH instances match, old one first —
-        # exactly the ordering that returned the wrong IP live.
+        # the ordering a tag-only lookup would get wrong.
         return _cp(0, stdout=json.dumps({"Reservations": [{"Instances": [
             {"InstanceId": "i-old", "PublicIpAddress": "203.0.113.1"},
             {"InstanceId": "i-new", "PublicIpAddress": "198.51.100.99"},

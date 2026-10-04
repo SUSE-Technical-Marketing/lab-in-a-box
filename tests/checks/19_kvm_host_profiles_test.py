@@ -33,8 +33,7 @@ check("opensuse-leap 15.6 resolves to the Leap 15 profile", isinstance(p, khp.Op
 check("Leap 15 profile keeps the full package list (kubevirt-virtctl etc. included)",
       "kubevirt-virtctl" in p.packages and not p.unmapped_packages)
 check("Leap 15 profile installs fuse3 (guestmount/guestunmount's own fusermount3 "
-      "dependency — confirmed live 2026-08-30 missing on a Minimal-VM Cloud host, "
-      "see the packages list's own comment)",
+      "dependency; it is missing on a Minimal-VM Cloud host, see the packages list's own comment)",
       "fuse3" in p.packages)
 
 p = _profile_for({"ID": "opensuse-leap", "VERSION_ID": "16.0"})

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-# Unit tests for libs/services.py's PXEService "ipxe-uefi" mode (new,
-# 2026-08-30) — the two-stage UEFI netboot support added for Harvester's
-# PXE install path (see scripts/setup_harvester_cluster.py). No podman/root
+# Unit tests for libs/services.py's PXEService "ipxe-uefi" mode: the two-stage UEFI netboot
+# support for Harvester's PXE install path (see scripts/setup_harvester_cluster.py). No podman/root
 # needed: _dnsmasq_conf() is a pure function, and configure()'s only I/O
 # (ipxe.efi fetch, file writes) is mocked/redirected to a tempdir.
 # Run from 29_pxe_ipxe_uefi.sh, in its own container — see tests/run_tests.sh.
@@ -47,10 +46,8 @@ check("ipxe-uefi mode with no nodes emits no per-host lines",
       "dhcp-host=" not in conf)
 
 # ── _dnsmasq_conf(): "proxy" DHCP mode needs a real network address, NOT an
-#    interface name — confirmed live 2026-08-30 that "dhcp-range=br0,proxy"
-#    (the pre-existing, never-before-tested bug) makes dnsmasq refuse to
-#    start outright ("bad dhcp-range at line N"), silently taking the whole
-#    PXE service down.
+#    interface name. "dhcp-range=br0,proxy" makes dnsmasq refuse to start outright
+#    ("bad dhcp-range at line N"), which takes the whole PXE service down.
 try:
     services._dnsmasq_conf({"pxe_dhcp_mode": "proxy"}, "/tftpboot")
     check("proxy mode without pxe_dhcp_proxy_subnet dies clearly", False)
@@ -63,13 +60,10 @@ check("proxy mode with pxe_dhcp_proxy_subnet emits a real network address, not t
 check("proxy mode never emits the old broken bridge-name form",
       "dhcp-range=br0,proxy" not in conf)
 
-# ── _dnsmasq_conf(): proxy mode needs pxe-service, NOT dhcp-boot — confirmed
-#    live 2026-08-30 via dnsmasq's own --log-dhcp output: it correctly
-#    recognized a real client's PXE vendor class yet never sent a single
-#    reply, because a proxyDHCP reply's boot info only ever goes out
-#    through pxe-service's vendor-encapsulated options, never dhcp-boot's
-#    plain next-server/filename fields. Silent no-op, not a startup error —
-#    much harder to catch than the dhcp-range bug above.
+# ── _dnsmasq_conf(): proxy mode needs pxe-service, NOT dhcp-boot.
+#    A proxyDHCP reply carries its boot info only in pxe-service's vendor-encapsulated options,
+#    never in dhcp-boot's plain next-server/filename fields. Using dhcp-boot is a silent no-op:
+#    dnsmasq starts, recognizes the client's PXE vendor class and sends no reply.
 conf = services._dnsmasq_conf(
     {"pxe_mode": "pxelinux", "pxe_dhcp_mode": "proxy", "pxe_dhcp_proxy_subnet": "192.168.88.0"}, "/tftpboot")
 check("pxelinux+proxy emits pxe-service (x86PC), not dhcp-boot",
@@ -168,9 +162,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("configure() in pxelinux mode still writes a pxelinux.cfg entry",
           (Path(svc.tftp_root) / "pxelinux.cfg" / "01-52-54-00-ab-cd-e1").exists())
 
-# ── _pxe_quadlet_unit(): NET_ADMIN/NET_RAW granted (confirmed live 2026-08-30
-#    that dnsmasq refuses to start at all without them — "process is missing
-#    required capability NET_ADMIN") ─────────────────────────────────────────
+# ── _pxe_quadlet_unit(): NET_ADMIN/NET_RAW granted (dnsmasq refuses to start without
+#    them: "process is missing required capability NET_ADMIN") ─────────────────────────────────────────
 unit = services._pxe_quadlet_unit("/tftpboot", "/dnsmasq.conf")
 check("PXE Quadlet unit grants NET_ADMIN", "AddCapability=NET_ADMIN" in unit)
 check("PXE Quadlet unit grants NET_RAW", "AddCapability=NET_RAW" in unit)

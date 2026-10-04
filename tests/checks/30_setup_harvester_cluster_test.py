@@ -103,8 +103,8 @@ with tempfile.TemporaryDirectory() as tmp:
           "  - ssh-rsa AAAAtest key1" in config_text and "  - ssh-rsa AAAAtest key2" in config_text)
     check("rendered create config still requires iso_url even under PXE (real Harvester requirement)",
           "iso_url: http://10.0.0.1/lab_creation/harvester/v1.7.1/harvester-v1.7.1-amd64.iso" in config_text)
-    check("rendered create config includes dns_nameservers — confirmed live 2026-08-30 that Harvester's "
-          "own installer refuses to proceed without it for a static-IP management_interface "
+    check("rendered create config includes dns_nameservers, which Harvester's "
+          "installer requires for a static-IP management_interface "
           "('Invalid configuration: DNS servers are required for static IP address')",
           "dns_nameservers:" in config_text
           and "  - 192.168.88.73" in config_text and "  - 192.168.88.1" in config_text)
@@ -282,9 +282,8 @@ binary, remote_host, virt_srv, args = captured_calls[0]
 check("_create_netboot_vm invokes virt-install (not virsh)", binary == "virt-install")
 check("_create_netboot_vm passes the configured hypervisor as remote_host", remote_host == "hv1.mydemo.lab")
 boot_arg = args[args.index("--boot") + 1]
-check("_create_netboot_vm's --boot flag selects the plain (non-secure-boot) OVMF loader/nvram — "
-      "confirmed live 2026-08-30 that virt-install's bare 'uefi' shorthand auto-selected the "
-      "SECURE BOOT OVMF variant, which silently blocks loading an unsigned ipxe.efi ('Access Denied')",
+check("_create_netboot_vm's --boot flag selects the plain (non-secure-boot) OVMF loader/nvram "
+      "(virt-install's bare 'uefi' shorthand picks the SECURE BOOT variant, which blocks an unsigned ipxe.efi)",
       "--boot" in args and boot_arg.startswith("uefi,loader=")
       and "ovmf-x86_64-code.bin" in boot_arg and "ovmf-x86_64-vars.bin" in boot_arg
       and "ovmf-x86_64-ms-" not in boot_arg)
@@ -292,10 +291,8 @@ disk_arg = next(a for a in args if "path=" in a)
 net_arg = next(a for a in args if "mac.address=" in a)
 check("_create_netboot_vm's disk has boot.order=1 (avoids the ISO path's reboot-loop bug)",
       "boot.order=1" in disk_arg)
-check("_create_netboot_vm's network device has boot.order=2 — confirmed live 2026-08-30 that "
-      "giving the disk a boot.order without also giving the network device one produces a domain "
-      "with no usable network boot entry at all (per-device boot.order excludes any device "
-      "without one, silently dropping --boot's hd,network device-order tokens)",
+check("_create_netboot_vm's network device has boot.order=2 (a disk boot.order without one on the "
+      "network device leaves the domain with no usable network boot entry)",
       "boot.order=2" in net_arg)
 check("_create_netboot_vm creates a blank disk (no --import, no source OS image)",
       "--import" not in args)
@@ -348,9 +345,8 @@ with tempfile.TemporaryDirectory() as tmp:
     dest = shc._fetch_harvester_kubeconfig(kubeconfig_cfg, _CREATE_NODE)
     check("_fetch_harvester_kubeconfig connects to the create node's own IP",
           ssh_calls[0][0] == "192.168.88.143")
-    check("_fetch_harvester_kubeconfig reads the standard RKE2 kubeconfig path via sudo — "
-          "live-tested 2026-09-04: 'rancher' has NOPASSWD:ALL sudo but can't read this "
-          "root-owned 0600 file directly, a plain (no-sudo) `cat` got 'Permission denied'",
+    check("_fetch_harvester_kubeconfig reads the standard RKE2 kubeconfig path via sudo, "
+          "since the root-owned 0600 file cannot be read without it",
           ssh_calls[0][1] == "sudo cat /etc/rancher/rke2/rke2.yaml")
     check("_fetch_harvester_kubeconfig connects as Harvester's default 'rancher' user, not root",
           ssh_calls[0][2] == "rancher")

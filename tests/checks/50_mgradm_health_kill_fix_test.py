@@ -58,10 +58,8 @@ check("gives real retries/start-period headroom",
 check("PODMAN_EXTRA_ARGS is the exact env var mgradm's ExecStart line splices in",
       "PODMAN_EXTRA_ARGS=" in out)
 check("raises the container's open-file ulimit as high as the host's own kernel ceiling "
-      "allows (podman 4.9.5 rejects Docker's 'unlimited' magic string outright — confirmed "
-      "live) — real outage found live 2026-09-22: Tomcat's default 8192 nofile limit was "
-      "fully saturated under real concurrent load (14 nodes' worth of client_registration "
-      "at once), failing every further connection with 'Too many open files'",
+      "allows (podman 4.9.5 rejects Docker's 'unlimited' magic string), since the default 8192 "
+      "nofile limit is saturated under concurrent load and fails connections with 'Too many open files'",
       "--ulimit nofile=1048576:1048576" in out)
 check("reloads systemd so the drop-in actually takes effect",
       "systemctl daemon-reload" in out)
@@ -82,8 +80,7 @@ check("uyuni-db's override uses the exact same relaxed policy as uyuni-server's"
       "--health-on-failure=none" in out_db and "--health-retries=10" in out_db
       and "--health-start-period=180s" in out_db)
 check("uyuni-db also gets the raised open-file ulimit (applied via the same shared "
-      "function/override point, even though only uyuni-server has been observed hitting "
-      "this live so far)",
+      "function/override point)",
       "--ulimit nofile=1048576:1048576" in out_db)
 
 # ── _raise_in_container_service_fd_limits: services inside the container ──────
@@ -188,7 +185,7 @@ check("ensure_server_container_active applies the health-kill-policy fix itself 
       "(both install_uyuni.py and install_smlm.py get it for free)",
       "custom.conf" in out2 and "daemon-reload" in out2)
 check("ensure_server_container_active ALSO relaxes uyuni-db's own copy of the same "
-      "policy, not just uyuni-server's — this is what actually bit live",
+      "policy, not just uyuni-server's",
       "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out2)
 check("the fix is applied before the is-active poll starts",
       out2.index("daemon-reload") < out2.index("systemctl is-active uyuni-server.service"))
@@ -233,8 +230,7 @@ check("restarts the service once so the freshly-patched PODMAN_EXTRA_ARGS actual
 check("the health-kill patch happens before mgradm install is confirmed finished",
       out3.index("daemon-reload") < out3.rindex("test -f"))
 check("run_install_with_pg_hba_guard ALSO relaxes uyuni-db's own health-kill policy, "
-      "as soon as pg_isready succeeds — this is the container that actually got killed "
-      "live, not uyuni-server",
+      "as soon as pg_isready succeeds",
       "/etc/systemd/system/uyuni-db.service.d/custom.conf" in out3)
 check("does NOT restart uyuni-db here — it's mid-bootstrap (schema/org/admin creation "
       "happens via exec calls against it right after) and a restart now would risk the "
