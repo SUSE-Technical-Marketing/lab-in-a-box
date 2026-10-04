@@ -1,31 +1,19 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box — deliver a completed lab onto a USB stick, so it can
-# be handed off and run standalone on other hardware.
+# Part of lab-in-a-box. Delivers a completed lab onto a USB stick, so it can run standalone on other hardware.
 #
-# Design: create one ordinary VM (the "lab-host VM") via this project's
-# existing VM-creation pipeline, bootstrap it with the SAME already-tested
-# NAT-mode automation-VM flow this project already ships
-# (setup_kvm_node.py + setup_lab_automation.sh, _network_mode=nat) — no new
-# bootstrap logic at all — then run the lab's own setup_lab.py, unchanged,
-# ON that nested automation VM against a copy of the lab definition whose
-# node addresses have been remapped into the internal NAT range (in memory
-# only — see libs/lab_usb.py). Shutting the lab-host VM down leaves its own
-# disk (raw format, not this project's usual QCOW2 — see
-# backends.LibvirtBackend.create_vm's disk_format param) as a complete,
-# self-contained, bootable image of the whole lab.
+# Design: one ordinary VM, the lab-host VM, is created with the normal VM pipeline and bootstrapped with the NAT-mode automation
+# VM flow (setup_kvm_node.py and setup_lab_automation.sh, _network_mode=nat). The lab's own setup_lab.py then runs unchanged on
+# that nested automation VM. The lab definition is copied with its node addresses moved into the internal NAT range, in memory
+# only (see libs/lab_usb.py). When the lab-host VM is shut down, its raw disk is a complete, bootable image of the whole lab.
 #
-# See /root/.claude/plans/wiggly-zooming-pretzel.md for the full design
-# write-up and TODO (repo root) for the task breakdown this implements.
+# The design and the task breakdown are described in the repo TODO.
 #
 # Usage:
 #   build_lab_usb.py <lab.json> [--build-only]
 #
-# --build-only stops once the lab-host VM's own raw disk is a complete,
-# shut-down, ready-to-copy appliance image, and prints its path instead of
-# writing it to a real USB device. This is the only mode a live test can
-# meaningfully run in (there is no real USB hardware to test the final `dd`
-# against) — real-device selection/confirmation/write/grow (TODO task 4)
-# is not yet implemented; pass --build-only until it is.
+# --build-only stops when the lab-host VM's raw disk is a complete, shut-down image, and prints its path. It does not write to a
+# USB device. Writing to a real device (selection, confirmation, dd and growing the partition) is not implemented yet, so pass
+# --build-only until it is.
 __version__ = "6be996d"
 
 import ipaddress
@@ -48,45 +36,22 @@ from lab_creation import (  # noqa: E402
     _generate_unused_mac, purge_known_host,
 )
 
-# Registration-free base OS for the lab-host VM specifically — it's meant to
-# be handed off and booted standalone on hardware nobody has SCC credentials
-# for, unlike every other node this project creates (which default to SLE
-# Micro). cloud-init is what makes the DHCP path clean (see
-# templates/cloud-init.template_network-config-dhcp and
-# lab_creation.prepare_cloud_init's dhcp-when-myip-is-empty branch).
-# Regular openSUSE Leap (not "Micro") — confirmed live 2026-08-31: Leap
-# Micro's transactional/immutable root breaks virt-customize's own
-# internal logging (it writes to /tmp/builder.log inside the guest, which
-# is genuinely read-only there even offline) AND ships an interactive
-# jeos-firstboot wizard that blocks headless boot. Regular Leap has neither
-# problem — an ordinary writable RPM-based root, no jeos-firstboot at all —
-# and is a better fit anyway: the lab-host VM just needs to be a normal
-# functional Linux host, not an immutable appliance in its own right.
-#
-# Switched from 15.6 to 16.0 2026-09-01: 15.6 hit an unresolved, intermittent
-# bug where the lab-host VM's own root filesystem reverted to its pristine
-# first-boot Btrfs snapshot after some reboot in the bootstrap flow (see
-# TODO's "LIVE TEST STATUS" / project_usb_delivery_live_test_2026-09-01.md) —
-# trying a different Leap release to see if it's 15.6-image-specific. Note
-# the filename shape genuinely differs from 15.x: no "openSUSE-" prefix,
-# "Cloud" build variant (not "kvm-and-xen") — confirmed against
-# download.opensuse.org/distribution/leap/16.0/appliances/, not guessed.
+# The lab-host VM uses openSUSE Leap 16.0 Cloud, not Leap Micro. Leap Micro has an immutable root, so virt-customize cannot write
+# its log in the guest, and it ships an interactive first-boot wizard that blocks a headless boot. The lab-host VM is a normal
+# writable Linux host. Every other node in this project defaults to SLE Micro, which needs SCC credentials.
+# cloud-init makes the DHCP path work (templates/cloud-init.template_network-config-dhcp, and the DHCP branch of
+# lab_creation.prepare_cloud_init).
+# The 16.0 filename has no openSUSE- prefix, and it uses the Cloud variant rather than kvm-and-xen.
 _DEFAULT_LAB_HOST_ISO_IMAGE = "Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2"
 _DEFAULT_LAB_HOST_OS_VARIANT = "opensuse16.0"
 
-# CPU/RAM/disk headroom added on top of the lab's own totals (total_lab_resources)
-# for the lab-host VM's own bare-OS overhead AND the nested automation VM it
-# bootstraps (which needs real resources of its own — RKE2/K3s installs,
-# webui, etc. all run there too) — NOT just the host OS by itself.
+# Headroom is added to the lab's totals (total_lab_resources) for the lab-host VM's own OS and for the nested automation VM.
+# The nested VM runs the Kubernetes installs and the web UI, so it needs real resources of its own.
 _CPU_OVERHEAD = 4
 _MEM_OVERHEAD_MIB = 8192
 _DISK_OVERHEAD_GIB = 80
 
-# The nested automation VM's own static IP inside the internal NAT network —
-# matches this session's own NAT+port-forwarding feature's convention (the
-# automation VM gets a static IP under NAT mode, same as under bridge mode;
-# only the network it's static WITHIN differs). Host 2 (host 1 is the NAT
-# network's own gateway).
+# The nested automation VM has a static IP inside the internal NAT network. The address is host 2, because host 1 is the gateway.
 _NESTED_AUTOMATION_IP = "192.168.150.2"
 _NAT_NETWORK_NAME = "labnat"
 _NAT_NETWORK_CIDR = "192.168.150.0/24"
@@ -94,21 +59,12 @@ _NAT_NETWORK_CIDR = "192.168.150.0/24"
 
 def _find_repo_root():
     """
-    Locate the full lab-in-a-box git checkout — needed to copy
-    setup_demo_server/+libs/ onto the lab-host VM and to rsync the whole
-    tree onto the nested automation VM. Unlike every other script here,
-    this one needs sibling directories install_automation_node_scripts.sh
-    never deploys individually (only scripts/libs/templates/cgi-bin get
-    copied to their own fixed locations) — it can't assume "two
-    directories up from wherever I'm running" the way a merely-relocatable
-    script could.
+    Locate the lab-in-a-box git checkout. The checkout is needed to copy setup_demo_server/ and libs/ to the lab-host VM, and to
+    rsync the whole tree to the nested automation VM.
 
-    Confirmed live 2026-09-05: running the INSTALLED copy
-    (/usr/local/bin/build_lab_usb.py, the normal way every OTHER script in
-    this project is meant to be invoked) breaks that old assumption
-    outright — Path(__file__).resolve().parent.parent resolves to
-    /usr/local, which has no setup_demo_server/ at all, and rsync died
-    with "No such file or directory".
+    install_automation_node_scripts.sh deploys scripts one by one, so the sibling directories are not next to an installed copy.
+    An installed copy in /usr/local/bin resolves its parent directories to /usr/local, which has no setup_demo_server/ directory.
+    The function therefore cannot rely on a fixed relative path.
     """
     result = subprocess.run(
         ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--show-toplevel"],
@@ -187,23 +143,13 @@ def create_lab_host_vm(definition, config, defaults, host_name):
 
 def discover_lab_host_ip(host_name, remote_host, virt_srv, mymac, bridge, retry_limit=30, retry_interval=10):
     """
-    The lab-host VM gets a DHCP lease, not a known-in-advance static IP —
-    unlike every other node this project creates. Primary mechanism:
-    `virsh domifaddr --source agent` — confirmed live 2026-08-31 that
-    qemu-guest-agent IS pre-installed and running by default on the
-    regular openSUSE Leap 15.6 "Cloud" image this VM uses (unlike the
-    openSUSE Leap MICRO image tried first, which has neither
-    qemu-guest-agent nor a writable /tmp for virt-customize — see
-    _DEFAULT_LAB_HOST_ISO_IMAGE's own comment for why Leap Micro was
-    dropped entirely, not just worked around).
+    Find the IP address of the lab-host VM. The VM gets a DHCP lease rather than a known static address.
 
-    Fallback if the agent never responds (e.g. a different base image is
-    configured later without checking this): the hypervisor's own ARP/
-    neighbor table, prodded with a broadcast ping — confirmed live this
-    is NOT reliable by itself (many modern guests ignore broadcast ICMP by
-    default; DHCP negotiation traffic alone did not reliably populate the
-    hypervisor's neighbor cache for the lease to show up there either), so
-    it's a best-effort fallback, not the primary mechanism.
+    The primary method is `virsh domifaddr --source agent`, which needs qemu-guest-agent. The openSUSE Leap 15.6 Cloud image ships
+    it and starts it by default. The Leap Micro image is not used, because it has no usable guest agent.
+
+    The fallback reads the hypervisor's ARP table after a broadcast ping. Many guests ignore broadcast ICMP, and DHCP traffic does
+    not always fill the neighbour cache. The fallback is therefore best effort, not the primary method.
     """
     log("Waiting for the lab-host VM's DHCP-assigned IP (via the QEMU guest agent)…")
     for _ in range(retry_limit):
@@ -240,39 +186,18 @@ def discover_lab_host_ip(host_name, remote_host, virt_srv, mymac, bridge, retry_
 
 def bootstrap_lab_host_vm(lab_host_ip, defaults):
     """
-    Turns the freshly-booted lab-host VM into a KVM/libvirt host running a
-    nested, NAT-mode automation VM — reusing setup_kvm_node.py +
-    setup_lab_automation.sh completely unchanged (this project's own
-    already-tested "automation VM under NAT" flow — see README's Walkthrough
-    3), just configured to run one level deeper than usual. Nothing new to
-    verify here beyond "does the copy + remote invocation work" — the
-    bootstrap logic itself already has its own live-tested track record.
+    Turn the freshly booted lab-host VM into a KVM host that runs a nested automation VM in NAT mode. The function reuses
+    setup_kvm_node.py and setup_lab_automation.sh unchanged. This is the NAT-mode automation VM flow, one level deeper than usual.
+    Beyond checking that the copy and the remote invocation work, the bootstrap logic needs no new verification.
     """
-    # install_demo_server_scripts.sh only CHECKS for python3.11 and dies if
-    # it's missing — it doesn't install it (confirmed live 2026-08-31: this
-    # project's documented "tested images" — SLE Micro, openSUSE Leap
-    # Micro — apparently ship it already; the plain openSUSE Leap 15.6
-    # Cloud image this VM uses does not). Installing it explicitly here
-    # rather than assuming a specific base image's own package set.
+    # install_demo_server_scripts.sh only checks for python3.11, and it does not install it. The Leap 15.6 Cloud image does not ship
+    # it, so the package is installed here.
     #
-    # `nc` is a second, similar gap: setup_kvm_node.py's own `-y`-only path
-    # (main(), no target host) deliberately probes reachability of the
-    # literal string "-y" via `nc -z -w 5 -y 22` expecting it to just report
-    # "unreachable" so it falls through to the real do_it_all() branch — a
-    # legitimate design, but it dies with an uncaught FileNotFoundError
-    # instead when `nc` itself isn't installed (confirmed live 2026-08-31 on
-    # this same Cloud image). Not a bug worth patching in setup_kvm_node.py
-    # itself — just another missing base-image prerequisite, same as
-    # python311 above.
+    # nc is also missing from that image. setup_kvm_node.py probes the host with nc when it runs without a target, and it fails
+    # with an uncaught FileNotFoundError when nc is not installed. The package is installed here, as python311 is.
     log("Installing python3.11 + nc (prerequisites setup_kvm_node.py itself only checks for, doesn't install)")
-    # openSUSE Leap 16.0 dropped the versioned `python311` package entirely —
-    # confirmed live 2026-09-01: its system `python3` IS 3.13, no separate
-    # 3.11 package exists or is needed, "zypper install python311" just
-    # fails with "No provider of 'python311' found". setup_kvm_node.py itself
-    # is hardcoded to invoke `python3.11` specifically though (matching every
-    # other place this project pins 3.11), so rather than special-case the
-    # invocation, symlink python3.11 -> the system python3 here whenever the
-    # real package isn't available but python3 itself is already new enough.
+    # Leap 16.0 has no python311 package. Its system python3 is 3.13. setup_kvm_node.py calls python3.11 by name, so a symlink
+    # python3.11 to python3 is created when the package is missing and python3 is new enough.
     r = ssh_run(lab_host_ip, "zypper --gpg-auto-import-keys install -y python311", check=False)
     if r.returncode != 0:
         ssh_run(
@@ -283,16 +208,9 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
         )
     ssh_run(lab_host_ip, "zypper --gpg-auto-import-keys install -y netcat-openbsd")
 
-    # openSUSE Leap 15.6 Cloud ships kernel-default-base — a stripped kernel
-    # package with no KVM modules at all (confirmed live 2026-08-31: no
-    # kvm_intel/kvm_amd under /lib/modules, /dev/kvm never appears, so every
-    # nested VM this lab-host creates would fall back to pure QEMU emulation
-    # instead of KVM acceleration). kernel-default-base conflicts with the
-    # real kernel-default package, hence the forced resolution + reboot.
-    # Skipped once /dev/kvm already exists (a re-run against an
-    # already-fixed lab-host VM) — rebooting unconditionally on every retry
-    # is wasted time at best and, confirmed live 2026-08-31, a source of
-    # real flakiness (an SSH command landing mid-reboot dies with rc=255).
+    # A Leap Cloud image may ship kernel-default-base, a kernel without KVM modules. /dev/kvm is then missing, and nested VMs would
+    # use QEMU emulation. The real kernel-default package replaces it, and a reboot follows. The step is skipped once /dev/kvm
+    # exists, because a reboot on every run is slow and can break an SSH command that is running at the time.
     has_kvm = ssh_run(lab_host_ip, "test -e /dev/kvm", check=False).returncode == 0
     if not has_kvm:
         log("Installing kernel-default (kernel-default-base ships no KVM modules) and rebooting")
@@ -319,29 +237,17 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
         if r.returncode != 0:
             die("failed to rsync {}/ to the lab-host VM".format(src))
 
-    # A hand-rolled minimal lab.cfg silently omits whatever variable
-    # setup_lab_automation.sh happens to need (confirmed live 2026-08-31:
-    # missing _qemu_addr alone breaks virt-install with
-    # "--connect: expected one argument", and ROOT_SSH_PUB_KEY is needed too
-    # — setup_kvm_node.py's main() loads ONLY lab.cfg, with no fallback to
-    # lab.cfg.template's own defaults for anything it omits). Instead, start
-    # from the real, complete lab.cfg.template already sitting in
-    # setup_demo_server/ and override just the handful of keys this flow
-    # actually needs to change.
+    # setup_lab_automation.sh and setup_kvm_node.py load lab.cfg only, with no defaults. A minimal lab.cfg misses required variables,
+    # such as _qemu_addr and ROOT_SSH_PUB_KEY. The complete lab.cfg.template from setup_demo_server/ is therefore used, and only the
+    # keys this flow changes are overridden.
     template_path = repo_root / "setup_demo_server" / "lab.cfg.template"
     local_pubkey = Path("/root/.ssh/id_rsa.pub")
     if not local_pubkey.is_file():
         die("no local {} found — needed to seed the lab-host VM's "
             "ROOT_SSH_PUB_KEY".format(local_pubkey))
-    # setup_lab_automation.sh uses _mygw/_mydns/_mynet/_mynetrev directly,
-    # unconditionally — it has no NAT-mode-aware derivation of its own
-    # (confirmed live 2026-08-31: leaving lab.cfg.template's bridge-mode
-    # defaults, 192.168.8.0/24, in place while _myip pointed into the NAT
-    # range produced a VM with a static IP but a gateway/DNS on a network it
-    # was never attached to — it never became reachable). configure_nat_network()
-    # always puts libvirt's own gateway/DNS forwarder at the NAT range's
-    # first host address, so derive all four from the same CIDR this flow
-    # already uses for the network itself.
+    # setup_lab_automation.sh uses _mygw, _mydns, _mynet and _mynetrev directly, with no NAT-aware derivation. configure_nat_network()
+    # gives the NAT range's first host address to the libvirt gateway and DNS forwarder, so all four values are derived from the
+    # same CIDR as the network itself.
     _nat_net = ipaddress.ip_network(_NAT_NETWORK_CIDR, strict=False)
     _nat_gateway = str(list(_nat_net.hosts())[0])
     overrides = {
@@ -359,19 +265,9 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
             "/var/lib/libvirt/images/sources/openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2",
         ),
         "ROOT_SSH_PUB_KEY": "'{}'".format(local_pubkey.read_text().strip()),
-        # lab.cfg.template's own default ("spice") needs QEMU built with
-        # spice support — confirmed live 2026-08-31, same failure the
-        # template's own comment already documents for a minimal-install
-        # host: "unsupported configuration: spice graphics are not
-        # supported with this QEMU". "none" looked like the obvious
-        # alternative but is actively wrong here: confirmed live 2026-08-31
-        # via `virsh domstats --cpu-total` (pegged near 100% indefinitely,
-        # the VM never reachable) vs. a `virsh screenshot` A/B test — with
-        # --graphics=none this specific openSUSE-Leap-15.6 kvm-and-xen
-        # appliance image spins in a boot-time busy-loop and never brings
-        # networking up at all; with any real graphics device attached it
-        # boots cleanly and comes up on the network within a minute. "vnc"
-        # needs no spice packages and doesn't require an actual viewer.
+        # The template's default graphics type, spice, needs QEMU built with spice support, which a minimal host does not have. none
+        # does not work either: with --graphics=none the openSUSE appliance image busy-loops during boot and never brings up its
+        # network. A real graphics device lets it boot. vnc needs no extra packages.
         "_automation_graphics": "\"vnc\"",
     }
     lab_cfg_lines = []
@@ -507,15 +403,8 @@ def main():
     bridge = config.get("NETWORK", "bridge=br0").split("=", 1)[-1]
     lab_host_ip = discover_lab_host_ip(host_name, remote_host, virt_srv, mymac, bridge)
     log("Lab-host VM reachable at {}".format(lab_host_ip))
-    # The lab-host VM gets a DHCP-assigned address, not a known-in-advance
-    # static one — unlike every other node this project creates, this can't
-    # be purged up front at VM-creation time. Confirmed live 2026-09-05: a
-    # stale known_hosts entry from whatever OTHER VM previously held this
-    # exact DHCP lease made the very first ssh_run() below fail outright
-    # ("REMOTE HOST IDENTIFICATION HAS CHANGED"), even though the lab-host
-    # VM itself was genuinely up and answering correctly — same class of bug
-    # already fixed for setup_lab.py/destroy_lab.py/setup_harvester_cluster.py
-    # (see purge_known_host()'s own docstring).
+    # The lab-host VM gets a DHCP address, which can belong to another VM's old known_hosts entry. The entry is purged before the
+    # first ssh_run(), as purge_known_host() does for other nodes.
     purge_known_host(lab_host_ip, host_name)
     check_ssh_conn(lab_host_ip)
 
