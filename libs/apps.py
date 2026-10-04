@@ -3,26 +3,21 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 """
-libs/apps.py — plugin capability registry for install_<addon> scripts.
+libs/apps.py: the plugin registry for install_<addon> scripts.
 
-Every scripts/install_<addon>.py declares a module-level PLUGIN dict:
+Each scripts/install_<addon>.py declares a module-level PLUGIN dict:
 
     PLUGIN = {
         "name": "mariadb",
-        "targets": ["container"],              # subset of "container"/"vm"/"baremetal"
-                                                 # (libs/targets.py — WHERE it may be placed)
-        "layers": ["kubernetes"],               # subset of libs/layers.py's LAYER_* — HOW it
-                                                 # can be installed; descriptive only, doesn't
-                                                 # gate validation the way "targets" does
+        "targets": ["container"],               # subset of "container", "vm", "baremetal": where it may be placed (libs/targets.py)
+        "layers": ["kubernetes"],               # subset of libs/layers.py's LAYER_*: how it can be installed (descriptive only)
         "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
-        "aux_services": [],                     # names from the (future) services registry
+        "aux_services": [],                     # names from the services registry
     }
 
-load_plugin() imports the addon script as a module (without running its
-main()) and returns that dict, falling back to a conservative default for
-any addon script found in PATH that hasn't been given a PLUGIN yet — so an
-addon nobody has classified still validates exactly as before this model
-existed, rather than breaking.
+load_plugin() imports the addon script as a module, without running its main(), and returns the dict. A script without a PLUGIN
+dict, or one that fails to import, falls back to a conservative default. That default still validates the addon as it did before
+the registry existed.
 """
 
 import importlib.util
@@ -46,18 +41,11 @@ _cache = {}
 
 def load_plugin_from_path(path, name=None):
     """
-    Return the PLUGIN dict for the addon script at `path` (an explicit
-    filesystem path, not a PATH lookup — see load_plugin() below for the
-    PATH-based variant every CLI call site actually uses). This is what a
-    dev-mode caller needs: scripts/install_<x>.py isn't on
-    $PATH in a repo checkout, so shutil.which()-based lookup can't find it,
-    which webui/lib/discovery.py otherwise runs into every time. Returns a
-    copy of DEFAULT_PLUGIN (with "name" filled in) if the file doesn't exist
-    or has no PLUGIN dict of its own — matches load_plugin()'s same
-    graceful fallback, including for a non-Python addon script that raises
-    on import (install_ds389 was the last real example of this until it
-    was ported 2026-09-21; the fallback path itself stays, for whatever
-    addon is next to arrive mid-port or genuinely broken).
+    Return the PLUGIN dict for the addon script at `path`, an explicit filesystem path. load_plugin() uses a PATH lookup instead, and
+    every CLI call site uses that. In a development checkout the scripts are not on PATH, so webui/lib/discovery.py calls this function.
+
+    Returns a copy of DEFAULT_PLUGIN, with "name" filled in, when the file does not exist, has no PLUGIN dict, or raises on import. This
+    is the same fallback as load_plugin().
     """
     plugin = dict(DEFAULT_PLUGIN, name=name)
     if not path or not os.path.isfile(str(path)):
@@ -76,11 +64,8 @@ def load_plugin_from_path(path, name=None):
         if found:
             plugin = found
     except Exception:
-        # Any import-time failure (missing dependency, syntax error in an
-        # addon under development, a bash script that isn't valid Python at
-        # all — install_ds389 was the standing example of this until it was
-        # ported 2026-09-21) falls back to the default rather than breaking
-        # validation/orchestration/discovery over one script.
+        # An import failure, such as a missing dependency, a syntax error or a script that is not valid Python, falls back to the
+        # default. One broken script then does not stop validation, orchestration or discovery.
         pass
     return plugin
 
@@ -106,16 +91,12 @@ def load_plugin(name):
 
 def addon_entry_name(entry):
     """
-    The addon name from one addons[] list entry. An entry is either a plain
-    "<addon>" string (today's shape, unchanged — the addon runs with only
-    its shared top-level config section), or a single-key
-    {"<addon>": {...fields...}} mapping for a node that needs its own
-    per-node override of that addon's config (added 2026-09-11 — e.g. a lab
-    registering many different OSes against one Uyuni/SMLM server, each
-    node needing its own client_registration_activation_key). Every
-    consumer of an addons[] list (collect_addon_names below, k8s.
-    addon_nodes(), k8s.addon_node_config(), setup_lab.py's phase_vm_addons)
-    goes through this one function so they can never disagree on the shape.
+    Return the addon name from one addons[] entry. An entry is either a plain "<addon>" string, where the addon uses only the
+    shared top-level config, or a single-key {"<addon>": {...}} mapping. The mapping gives one node its own override of that addon's
+    config. For example, several nodes can register against one server, each with its own activation key.
+
+    Every consumer of an addons[] list uses this function, so they agree on the shape. These are collect_addon_names(),
+    k8s.addon_nodes(), k8s.addon_node_config() and phase_vm_addons() in setup_lab.py.
     """
     if isinstance(entry, dict):
         if len(entry) != 1:
