@@ -1,48 +1,29 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install a standalone Prometheus server as a
-# podman container directly on the target host (no Kubernetes involved) —
-# built 2026-09-16 at the user's explicit request for an "external"
-# Prometheus to scrape an smlm addon's own bundled exporters
-# (smlm_monitoring_enabled, see install_smlm.py's own schema docs).
+# Part of lab-in-a-box. Installs a standalone Prometheus server as a podman container on the target host, with no Kubernetes.
+# It scrapes the exporters of an smlm server that has smlm_monitoring_enabled set (see install_smlm.py).
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Reference: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+# References: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
 #            https://documentation.suse.com/suma/5.2/en/docs/administration/monitoring.html
-#            (exact exporter ports/scrape-config shape confirmed live 2026-09-16 against a real
-#            SMLM 5.2 server — see this file's own _smlm_scrape_job() docstring)
 #
 # ─── JSON section: "prometheus" ─────────────────────────────────────────────
 #
 # OPTIONAL
-#   prometheus_version         : container image tag                (default: "latest")
-#   prometheus_image           : full image reference                (default:
-#                                 "docker.io/prom/prometheus" — the standard upstream image;
-#                                 there is no SUSE-branded Prometheus image, per SUSE's own docs
-#                                 above, which document configuring a THIRD-PARTY Prometheus
-#                                 against SMLM's bundled exporters rather than shipping one)
-#   prometheus_port            : port Prometheus listens on directly (host networking, no
-#                                 container port-publish layer — see setup_prometheus()'s own
-#                                 comment on why)                     (default: "9090")
-#   prometheus_retention       : --storage.tsdb.retention.time value  (default: "15d")
-#   prometheus_scrape_smlm     : FQDN of an smlm-addon server (with smlm_monitoring_enabled:
-#                                 "true") to auto-generate a scrape job for — every port
-#                                 documentation.suse.com/suma/5.2's own Monitoring guide lists
-#                                 (9100 node, 9187 postgres, 5556 tomcat JMX, 5557 taskomatic JMX,
-#                                 9800 taskomatic direct), plus the message-queue job at
-#                                 "<host>:80" with metrics_path "/rhn/metrics" — confirmed live
-#                                 2026-09-16, see _smlm_scrape_job() below for the exact shape.
-#   prometheus_scrape_configs  : [{"job_name": "...", "targets": ["host:port", ...],
-#                                  "metrics_path": "/metrics"}, ...]   # extra jobs, appended
-#                                 after the auto-generated smlm one (if any)
+#   prometheus_version         : container image tag (default "latest")
+#   prometheus_image           : full image reference (default "docker.io/prom/prometheus"). There is no SUSE-branded image. The SUSE
+#                                guide configures a third-party Prometheus against the smlm exporters.
+#   prometheus_port            : port Prometheus listens on, with host networking (default "9090")
+#   prometheus_retention       : --storage.tsdb.retention.time value (default "15d")
+#   prometheus_scrape_smlm     : FQDN of an smlm server with smlm_monitoring_enabled set. A scrape job is generated for its exporter
+#                                ports 9100, 9187, 5556, 5557 and 9800, plus the message-queue job at <host>:80 with the metrics path /rhn/metrics.
+#   prometheus_scrape_configs  : [{"job_name": "...", "targets": ["host:port", ...], "metrics_path": "/metrics"}]. Extra jobs, added
+#                                after the generated smlm job, if any.
 #
-# Target node(s): any node listing "prometheus" in its own addons[] list — same
-# dispatch shape as install_smlm.py's own "podman" deployment mode (k8s.addon_nodes()).
-# Reachable remotely on prometheus_port — the NODE ITSELF needs that port open (this addon
-# does not manage firewalls/security groups; see the node's own aws_open_ports for AWS-backed
-# nodes, matching the existing pattern create_vm() already established for smlm's own ports).
+# Target node(s): any node listing "prometheus" in addons[], as for the podman deployment of install_smlm.py.
+# The node must have prometheus_port open. This addon does not manage firewalls or security groups. For AWS nodes, add the port to aws_open_ports.
 
-__version__ = "__LABVERSION__"
+__version__ = "94a91ec"
 
 PLUGIN = {
     "name": "prometheus",
@@ -70,9 +51,8 @@ def _validate(v):
     v.vver("prometheus")
 
 
-# Real ports confirmed live 2026-09-16 against documentation.suse.com/suma/5.2's own Monitoring
-# guide and a real enabled server: name -> port. The message-queue job (Apache/existing web port,
-# metrics path /rhn/metrics, not a dedicated port) is handled separately below.
+# Exporter ports: node 9100, postgres 9187, tomcat JMX 5556, taskomatic JMX 5557 and taskomatic direct 9800. The message-queue job uses
+# the web port and the path /rhn/metrics, and it is handled separately.
 _SMLM_EXPORTER_PORTS = {
     "node": 9100,
     "postgres": 9187,
@@ -84,10 +64,8 @@ _SMLM_EXPORTER_PORTS = {
 
 def _smlm_scrape_job(smlm_host):
     """
-    Builds the two scrape_configs entries documentation.suse.com/suma/5.2's own example
-    prometheus.yml shows for one smlm server with monitoring enabled: one job with every bundled
-    exporter's own port, and a second for the message-queue metrics served on the existing web
-    port at path /rhn/metrics (not a separate port at all — confirmed live).
+    Build the two scrape_configs entries for one smlm server with monitoring enabled. One job covers the bundled exporter ports. A
+    second job scrapes the message-queue metrics, which the existing web port serves at /rhn/metrics.
     """
     return [
         {
@@ -152,17 +130,9 @@ def setup_prometheus(hostname, cfg):
 
     print("- Deploying the Prometheus container (port {})".format(port))
     ssh_run(hostname, "podman rm -f prometheus 2>/dev/null", check=False)
-    # --network host, not -p {port}:9090: confirmed live 2026-09-16 that bridge
-    # networking's own container DNS/hosts resolves the SAME hostname a scrape
-    # target uses (e.g. the smlm server's own FQDN) to 127.0.0.1 — the
-    # container's OWN loopback, not the real host — silently breaking every
-    # scrape ("wget: can't connect to remote host (127.0.0.1): Connection
-    # refused" from inside the container, even though the exact same URL
-    # curled fine from the host's own shell). Host networking makes hostname
-    # resolution behave identically to the host itself, and doubles as the
-    # simplest way to make this "available remotely" — no NAT/port-publish
-    # layer at all, the container just binds directly to the host's own
-    # network stack, matching whatever port it's told to listen on.
+    # The container uses --network host, not a -p port mapping. With bridge networking, the container resolves a scrape target's
+    # hostname to its own loopback address, so scrapes fail. Host networking resolves names as the host does, and the container listens
+    # on the host's own network stack.
     ssh_run(hostname,
             "podman run -d --name prometheus --restart=always --network host "
             "-v /etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z "
