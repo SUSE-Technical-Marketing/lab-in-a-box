@@ -74,7 +74,7 @@
 #   nextcloud_extra_values    : a dict of extra key=value pairs for helm upgrade --install, for anything this addon has no field for.
 #
 
-__version__ = "96819c8"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "nextcloud",
