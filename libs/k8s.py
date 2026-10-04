@@ -94,16 +94,11 @@ def add_kclu_dns(definition, clu_name, clu_type, mydomain, remote_dns_servers=No
 
 # ── Kubernetes distribution interface ───────────────────────────────────────
 #
-# Phase 5: rke2/k3s used to be two independent function pairs
-# (setup_rke2/setup_k3s) dispatched by an if/elif in setup_lab.py. K8sDistro
-# replaces that dispatch with a registry (get_distro) so a new distribution
-# slots in without touching the orchestrator. clu_ctx is the plain dict
-# load_kclu_vars() already returns — no new dataclass.
+# K8sDistro is the interface for each Kubernetes distribution. get_distro() returns the implementation by name, so a new
+# distribution needs no change in the orchestrator. clu_ctx is the dict that load_kclu_vars() returns.
 #
-# setup_k3s()/setup_rke2() remain below as thin wrappers with their original
-# signatures for any external caller; _write_rke2_config had no caller
-# outside this file (grepped the whole repo) so it was folded into
-# RKE2Distro.write_node_config() without a back-compat wrapper.
+# setup_k3s() and setup_rke2() remain as thin wrappers with their original signatures. The RKE2 node config is written by
+# RKE2Distro.write_node_config().
 
 class K8sDistro(object):
     """Interface a Kubernetes distribution implements."""
@@ -158,10 +153,8 @@ class K3sDistro(K8sDistro):
 
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
-            # clu_rel/clu_name/mydomain are all free-text lab.json values
-            # with no format validation, piped straight into this remote
-            # shell command — found in code review 2026-09-05, same class
-            # of bug already fixed elsewhere this session.
+            # clu_rel, clu_name and mydomain are free text from the lab JSON, with no validation. They are shell-quoted before they
+            # reach the remote command.
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
@@ -169,20 +162,9 @@ class K3sDistro(K8sDistro):
                 "sh -s - server --tls-san {}.{}".format(
                     shlex.quote(clu_rel), shlex.quote(clu_name), shlex.quote(mydomain))
             )
-            # Confirmed live 2026-09-04: k3s's own install.sh does not
-            # reliably leave the service running — on this project's own
-            # default SL-Micro image (a transactional-update/immutable-root
-            # OS), a pending "please reboot your machine" flag left over
-            # from installing k3s's own package dependencies made install.sh
-            # skip its start step entirely, silently (`systemctl enable`
-            # succeeded, `systemctl start` was simply never called — no
-            # error, no warning, just an enabled-but-inactive unit). The
-            # service starts fine immediately with no reboot actually
-            # needed. RKE2Distro._install() below already never relies on
-            # its own vendor script for this (always an explicit
-            # `systemctl enable --now` afterward) — mirrored here so K3s
-            # gets the same guarantee instead of trusting get.k3s.io's
-            # script to have started it.
+            # The k3s install script can leave the service enabled but not started, on an immutable-root image with a pending reboot
+            # flag. The service starts without a reboot. The distribution therefore runs an explicit systemctl enable --now afterwards,
+            # as RKE2Distro does, and does not rely on the vendor script to start it.
             ssh_run(hostname, "systemctl enable --now k3s")
             token = ssh_output(hostname, "cat /var/lib/rancher/k3s/server/node-token")
             return token, hostname
@@ -272,13 +254,8 @@ class RKE2Distro(K8sDistro):
         ssh_run(hostname, "mkdir -p /var/lib/rancher/{0} /etc/rancher/{0}".format(clu_type))
 
         log("  Installing RKE2 on '{}'".format(hostname))
-        # install_method/clu_rel are free-text lab.json values with no
-        # format validation, piped straight into this remote shell
-        # command — found in code review 2026-09-05, same class of bug
-        # already fixed elsewhere this session. clu_type/node_type are
-        # both fixed literals (self.name / the "server"/"agent" the
-        # caller passes explicitly), never raw config, so they don't
-        # need it.
+        # install_method and clu_rel are free text from the lab JSON, so they are shell-quoted. clu_type and node_type are fixed
+        # literals, so they are not quoted.
         ssh_run(
             hostname,
             "curl -sfL https://get.{clu_type}.io | "
@@ -365,10 +342,8 @@ def setup_rke2(
 
 def first_server_node(definition):
     """
-    Return (vm_name, ssh_cmd) for the first server node found in the definition,
-    or None if no server node exists (mirrors on_first_server).
-
-    A node is treated as a server when INSTALL_RKE2_TYPE is "server" or absent.
+    Return (vm_name, ssh_cmd) for the first server node in the definition, or None if there is none. This matches on_first_server.
+    A node is a server when INSTALL_RKE2_TYPE is "server" or absent.
     """
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if node_cfg.get("INSTALL_RKE2_TYPE", "") in ("server", ""):

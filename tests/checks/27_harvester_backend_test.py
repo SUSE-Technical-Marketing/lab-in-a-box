@@ -134,7 +134,7 @@ with mock.patch.object(subprocess, "run", side_effect=_run_side_effect) as m:
           dv["metadata"]["annotations"]["harvesterhci.io/imageId"] == "default/sle-micro")
     check("create_vm's DataVolume uses the image's own storageClassName",
           dv["spec"]["pvc"]["storageClassName"] == "longhorn-image-abcde")
-    # Regression test for a real bug found live 2026-08-29: source.pvc (clone
+    # Regression test: source.pvc (clone
     # from the image's own backing PVC) failed outright against a real
     # Harvester v1.7.1 cluster — no such PVC exists at all there (this
     # version backs images via Longhorn's own BackingImage feature instead,
@@ -143,7 +143,7 @@ with mock.patch.object(subprocess, "run", side_effect=_run_side_effect) as m:
           dv["spec"]["source"] == {"blank": {}})
     domain = manifest["spec"]["template"]["spec"]["domain"]
     check("create_vm sets both resources.requests.memory and resources.limits.memory "
-          "(KubeVirt rejects requests alone: confirmed live 2026-08-29)",
+          "(KubeVirt rejects requests alone)",
           domain["resources"]["requests"]["memory"] == "4096Mi"
           and domain["resources"]["limits"]["memory"] == "4096Mi")
     iface = domain["devices"]["interfaces"][0]
@@ -154,8 +154,8 @@ with mock.patch.object(subprocess, "run", side_effect=_run_side_effect) as m:
     cloudinit_vol = next(v for v in manifest["spec"]["template"]["spec"]["volumes"] if v["name"] == "cloudinitdisk")
     check("create_vm's cloudinitdisk volume sets secretRef for userdata",
           cloudinit_vol["cloudInitNoCloud"]["secretRef"] == {"name": "vm1-cloudinit"})
-    check("create_vm's cloudinitdisk volume ALSO sets networkDataSecretRef — confirmed live "
-          "2026-08-30 that KubeVirt reads networkdata from this separate field, not from "
+    check("create_vm's cloudinitdisk volume ALSO sets networkDataSecretRef, since KubeVirt reads "
+          "networkdata from this separate field, not from "
           "secretRef's own \"networkdata\" key: without it, cloud-init never sees the custom "
           "network-config at all and silently falls back to DHCP for every interface",
           cloudinit_vol["cloudInitNoCloud"].get("networkDataSecretRef") == {"name": "vm1-cloudinit"})

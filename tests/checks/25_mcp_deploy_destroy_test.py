@@ -144,7 +144,7 @@ with _cfg_patch, p1, p2, p3, \
 
 
 # ── _run_mutation: die()'s SystemExit is contained, not left to propagate ────
-# Regression test for a real bug found live (2026-08-29): SystemExit isn't a
+# Regression test: SystemExit isn't a
 # subclass of Exception, so it passed straight through the MCP framework's
 # own error handling and crashed the whole ASGI server on a single expected
 # failure (e.g. a normal die() deep in setup_lab.py's call chain) — not just

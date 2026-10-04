@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-# Regression tests for bugs live disposable-VM smoke testing on
-# nuc6.mydemo.lab surfaced during the python_migration cutover (2026-08-28),
-# fixed in the same session. No live host needed here — SSH/subprocess are
-# mocked. Run from 18_live_bugfixes.sh, in its own container — see
-# tests/run_tests.sh.
+# Regression tests for live-deployment bugs. SSH and subprocess calls are mocked. Run from 18_live_bugfixes.sh, in its own container (see tests/run_tests.sh).
 import shlex
 import socket
 import subprocess
@@ -88,10 +84,8 @@ class FakeSSH:
         return FakeResult()
 
 
-# ── Bug 1: an unreachable secondary DNS server must not abort provisioning ──
-# (found live: REMOTE_DNS_SERVERS' second host was down — "No route to
-# host" — and add_to_dns raised RuntimeError, aborting VM creation entirely,
-# even though bash's own add_to_dns has no such check and just moves on.)
+# ── An unreachable secondary DNS server must not abort provisioning ───────
+# add_to_dns logs a failure for an unreachable secondary server and continues, as the bash version does.
 def _dying_ssh(hostname, cmd, **kwargs):
     if kwargs.get("check", True):
         raise RuntimeError("SSH command failed (rc=255) on {}: no route to host".format(hostname))
@@ -138,17 +132,8 @@ remote_calls = [kw for h, c, kw in fake.calls if h == "1.2.3.4"]
 check("DNSService.add_to_dns: every remote-server call passes check=False",
       len(remote_calls) >= 3 and all(kw.get("check") is False for kw in remote_calls))
 
-# ── Bug: a stale PTR record for a reused IP survives add_to_dns forever ────
-# Real bug found live 2026-09-23 (solar-system-lab.json): _dns_add_line()'s
-# own exact-line dedup only skips re-adding the IDENTICAL record — it never
-# removes an EXISTING PTR record for the same IP that points at a DIFFERENT
-# (older) hostname. Confirmed live: an IP a previous, since-destroyed VM
-# ("node1a.mydemo.lab") once held was reassigned to a new node
-# ("venus.mydemo.lab") — add_to_dns() left BOTH PTR lines in the reverse
-# zone file, and the new VM's own reverse-DNS lookup of its own IP could
-# come back with the stale, wrong name (which is exactly what happened,
-# compounded by a separate virt-customize bug leaving no static hostname
-# set at all — see prepare_virt_customize's own test below).
+# ── A stale PTR record for a reused IP is replaced ─────────────────────────
+# The reverse zone keeps one PTR record per IP. A new hostname for an IP replaces the stale record.
 services.ssh_run = lambda *a, **kw: FakeResult()
 ptr_svc = services.DNSService()
 ptr_svc.restart_named = lambda: None
@@ -181,12 +166,8 @@ check("DNSService.add_to_dns: removing a stale PTR for octet '1' never touches "
       and any("node10.mydemo.lab" in l for l in rev_lines2))
 
 
-# ── Bug 2: --qemu-commandline must be one argv element, not two ─────────────
-# (found live: virt-install rejected the two-element ["--qemu-commandline",
-# "-fw_cfg ..."] form with "expected one argument" — argparse saw the
-# leading "-" in the value and treated it as a new flag. bash's own
-# equivalent uses --qemu-commandline="..." — a single token — precisely to
-# avoid this.)
+# ── --qemu-commandline is passed as one argv element ──────────────────────
+# The value starts with "-". Passed as separate arguments, argparse reads it as a flag, so it is one token: --qemu-commandline="...".
 subproc_calls = []
 
 
@@ -238,13 +219,9 @@ check("create_vm: disk_format='raw' uses a .raw path with an explicit driver.typ
       ".raw" in disk_arg and ".qcow2" not in disk_arg and "driver.type=raw" in disk_arg)
 
 
-# ── vm_machine: a 2015-era CentOS 7 GenericCloud image (kernel 3.10.0-229)
-# hangs in a dracut emergency shell ("Not all disks have been found") when
-# booted under virt-install's own q35 default — confirmed live 2026-09-02
-# on a completely unmodified clone of the source image (so this is a
-# genuine chipset/old-kernel incompatibility, not anything config_method-
-# specific). --machine pc (legacy i440fx) boots it cleanly. Left empty by
-# default so every already-working image is unaffected.
+# ── vm_machine: old guests need --machine pc ──────────────────────────────
+# A 2015-era CentOS 7 image does not boot under the q35 default, and boots with --machine pc (i440fx). The field is empty
+# by default, so images that already boot are unaffected.
 subproc_calls.clear()
 backend.create_vm(
     "vm1", "2", "4096", "40", "network=default,model=virtio",
@@ -263,36 +240,10 @@ check("create_vm: vm_machine='pc' adds --machine pc to the virt-install invocati
       "--machine" in argv and argv[argv.index("--machine") + 1] == "pc")
 
 
-# ── config_method="install_iso" (Ubuntu autoinstall): two real bugs found
-# live 2026-09-03, back to back, on the same VM:
-#
-# 1. Boot order: a bare `--cdrom PATH` (no explicit order) alongside the
-#    disk's old boot.order=2 left SeaBIOS with only the (empty) disk in its
-#    boot list — it booted straight into "Boot failed: not a bootable disk /
-#    No bootable device" and sat there for the VM's entire lifetime (zero
-#    installer output, zero network activity, ~11 minutes of real CPU time
-#    spread across 18 hours of wall-clock, confirmed via `virsh screenshot`).
-#
-# 2. Once the boot order was fixed and the installer actually started,
-#    subiquity found and parsed the autoinstall config fine but then stopped
-#    at an interactive prompt — "Confirmation is required to continue. Add
-#    'autoinstall' to your kernel command line to avoid this. Continue with
-#    autoinstall? (yes|no)" — and sat there forever with --noautoconsole and
-#    nobody at the console (also confirmed via `virsh screenshot`). Subiquity
-#    gates unattended mode on literally seeing "autoinstall" on
-#    /proc/cmdline, regardless of the seed config's own content. The normal
-#    fix (`--location URL` + `--extra-args autoinstall`) doesn't work here:
-#    `--extra-args` only applies to a `--location` boot, and `--location`
-#    itself only works for install trees the *client* can read directly — a
-#    local path on the remote hypervisor fails with "Cannot access install
-#    tree on remote connection".
-#
-# Both fixed together: extract the ISO's own casper/vmlinuz+initrd on the
-# hypervisor (xorriso, no mount needed) and boot them directly via
-# `--boot kernel=,initrd=,cmdline=autoinstall` — a boot mechanism entirely
-# separate from cdrom/hd boot order, so it settles bug 1 too. --cdrom stays
-# attached as a device (the extracted initrd's own init script mounts it as
-# the install source once booted).
+# ── config_method="install_iso" (Ubuntu autoinstall) ──────────────────────
+# The ISO is booted with an explicit kernel and initrd, which carry the autoinstall argument, because --location cannot
+# read a path on the remote hypervisor. The ISO's casper/vmlinuz and initrd are extracted on the hypervisor with xorriso.
+# --cdrom stays attached, because the initrd mounts it as the install source.
 _real_os_unlink = backends.os.unlink
 backends.os.unlink = lambda path: None  # mkisofs/scp are mocked, so the seed
                                           # .iso this branch tries to unlink
@@ -320,23 +271,10 @@ check("create_vm (autoinstall): no disk carries a per-device boot.order= "
       "(direct kernel boot bypasses cdrom/hd boot order entirely)",
       not any("boot.order" in a for a in install_call))
 
-# ── config_method="install_iso" (autoinstall): post-install boot reset.
-# Found live 2026-09-03, immediately after fixing the confirmation-prompt
-# bug above: virt-install's own "Restarting guest" step (part of --wait -1
-# finishing) brought the domain back up on the exact same kernel/initrd/
-# cmdline as the installer boot, since nothing about that lower-level --boot
-# mechanism knows the install is now done. The freshly-installed VM booted
-# straight back into the live installer's initrd hunting for a live
-# filesystem on /dev/sr0 and hung at "Attempt interactive netboot from a
-# URL?" forever — confirmed via `virsh screenshot`. A --location-based
-# install wouldn't need any of this (virt-install's own installer-aware
-# machinery resets the boot config itself), but --location doesn't work over
-# a remote hypervisor connection here (see the comment above). Fixed by
-# destroying the auto-restarted domain, resetting it to plain disk boot via
-# virt-xml, detaching the now-stale seed cdrom, then starting it for real —
-# --edit on a *running* domain only touches the offline definition, so the
-# destroy has to come first or the very next start just reboots the old
-# (bad) config again (also confirmed live).
+# ── config_method="install_iso": reset to disk boot after the install ───────
+# After the install, virt-install restarts the domain with the installer's kernel and initrd. The reset destroys the
+# domain, sets plain disk boot with virt-xml, detaches the stale seed cdrom and starts the domain. --edit on a running
+# domain changes only the offline definition, so the destroy must come first.
 calls_after_install = subproc_calls[subproc_calls.index(install_call) + 1:]
 destroy_call = next((c for c in calls_after_install if "destroy" in c), None)
 edit_call = next((c for c in calls_after_install if "--edit" in c), None)
@@ -356,15 +294,8 @@ check("create_vm (autoinstall): the domain is started again after the boot-confi
       start_call is not None and edit_call is not None
       and calls_after_install.index(edit_call) < calls_after_install.index(start_call))
 
-# ── xorriso extraction command must quote its vm_name-derived paths ─────────
-# Found in code review 2026-09-05: the very next line after this extraction
-# (the cleanup `rm -f '{seed}' '{vmlinuz}' '{initrd}'`) already single-quotes
-# these same paths, but the extraction command that builds vmlinuz_remote/
-# initrd_remote in the first place did not — and both embed vm_name, a lab.
-# json node hostname never validated against shell metacharacters anywhere
-# in this codebase. Run over ssh_run(), which hands the whole string to the
-# remote shell, an unquoted vm_name containing a space (or worse) could
-# break — or inject into — this command.
+# ── The xorriso extraction command quotes vm_name-derived paths ──────────────
+# vm_name comes from the lab JSON and is not validated, so the extraction paths are quoted, as the cleanup command already is.
 backends.os.unlink = lambda path: None
 subproc_calls.clear()
 backend.create_vm(
@@ -381,21 +312,10 @@ check("create_vm (autoinstall): xorriso extraction quotes the ISO source path to
       "'/iso/ubuntu-24.04-live-server-amd64.iso'" in extract_call[-1])
 
 
-# ── kickstart/autoyast/preseed (--location-based installs): two real bugs found
-# live 2026-09-17, back to back, the first time this path was actually
-# live-tested end to end. (1) --location with a bare hypervisor-local path
-# fails ("Cannot access install tree on remote connection") whenever
-# virt-install runs on a different host than the hypervisor — fixed by
-# ensure_iso_install_tree() (see its own tests in
-# 10_lab_creation_core_test.py); this block only verifies backends.py's own
-# call site actually uses its return value as --location. (2) once that was
-# fixed and a real kickstart install actually ran end to end, the domain came
-# back up on plain SeaBIOS/legacy firmware and failed to boot ("Boot failed:
-# not a bootable disk") — this --location-based branch builds its OWN argv
-# from scratch (not base_args above) and had never included --boot at all,
-# silently ignoring VM_BOOT (every lab JSON in this project defaults to
-# "uefi") regardless of what firmware the guest's own kickstart bootloader
-# step assumed.
+# ── --location-based installs (kickstart, autoyast, preseed) ───────────────
+# The --location install tree comes from ensure_iso_install_tree(), and the call site must use its return value.
+# The --location branch builds its own argv, so it passes --boot from VM_BOOT. Without it the guest boots legacy BIOS,
+# while the kickstart bootloader assumes the configured firmware.
 _real_ensure_iso_install_tree = backends.ensure_iso_install_tree
 iso_tree_calls = []
 backends.ensure_iso_install_tree = lambda remote_host, iso_loc, iso_image: (
@@ -418,33 +338,18 @@ check("create_vm (kickstart): --boot carries the resolved boot_flag (matches VM_
       "--boot" in install_call and install_call[install_call.index("--boot") + 1] == "uefi")
 check("create_vm (kickstart): --extra-args still carries the real inst.ks= URL",
       "inst.ks=" in install_call[install_call.index("--extra-args") + 1])
-check("create_vm (kickstart): --extra-args carries inst.text — confirmed live 2026-09-17 "
-      "that without it, RHEL10's own Anaconda silently tries to start its default "
-      "graphical/WebUI path in a --noautoconsole environment and hangs forever with "
-      "zero further disk/network activity, no error at all",
+check("create_vm (kickstart): --extra-args carries inst.text "
+      "(without it, Anaconda starts its default graphical/WebUI path in a --noautoconsole "
+      "environment and hangs with zero further disk/network activity, and no error)",
       "inst.text" in install_call[install_call.index("--extra-args") + 1])
-check("create_vm (kickstart): --extra-args carries TERM=vt100 — confirmed live 2026-09-17, "
-      "with hard evidence (real disk writes/CPU time appearing only after manually "
-      "sending one arbitrary keystroke to the guest's serial console): Anaconda's "
-      "newt/slang text UI queries the terminal's capabilities on startup and blocks "
-      "forever waiting for a reply nothing is attached (--noautoconsole) to ever send",
+check("create_vm (kickstart): --extra-args carries TERM=vt100 "
+      "(Anaconda's newt/slang text UI queries the terminal's capabilities on startup and blocks "
+      "waiting for a reply that nothing attached with --noautoconsole ever sends)",
       "TERM=vt100" in install_call[install_call.index("--extra-args") + 1])
 
 
-# ── prepare_install_iso() autoinstall hostname: found live 2026-09-03, on the
-# same VM as the two bugs above, once it actually finished installing and
-# booted the real (fixed) disk — `hostname` inside the freshly-installed,
-# fully SSH-reachable VM read back "localhost", not "venus.mydemo.lab". The
-# autoinstall user-data deliberately has no `identity:` section (it would
-# force a separate default user this project doesn't want — root-only
-# access is the point), but `identity` is autoinstall's only mechanism for
-# setting /etc/hostname at install time, so without it curtin just leaves
-# whatever the live installer environment defaulted to. meta-data's
-# local-hostname doesn't help either — that's a cloud-init concept, and the
-# seed cdrom (cloud-init's own NoCloud datasource) is detached again right
-# after this install finishes, so nothing ever re-reads it on a later real
-# boot. Fixed with an explicit late-command, the same mechanism already used
-# two lines above it for the sshd config.
+# ── prepare_install_iso (autoinstall): hostname is set by a late command ─────
+# The autoinstall config has no identity section, so the hostname is set by an explicit late command, as the sshd config is.
 pubkey_path = Path("/root/.ssh/id_rsa.pub")
 pubkey_path.parent.mkdir(parents=True, exist_ok=True)
 if not pubkey_path.exists():
@@ -459,11 +364,8 @@ with tempfile.TemporaryDirectory() as tmp:
 check("prepare_install_iso (autoinstall): a late-command sets /etc/hostname to the real node name",
       'echo "venus.mydemo.lab" > /target/etc/hostname' in autoinstall_user_data)
 
-# vm_name is quoted in that late-command — found in code review 2026-09-05:
-# this string runs as a real shell command inside the install target, and
-# vm_name (a lab.json node hostname) is never validated against shell
-# metacharacters anywhere in this codebase. A name with an embedded space
-# must stay one shell word, not become "echo two words > ..." unquoted.
+# vm_name is quoted in the late command, because the command runs as a shell command in the install target and vm_name
+# is not validated. A name with a space must stay one shell word.
 with tempfile.TemporaryDirectory() as tmp:
     lc.prepare_install_iso(
         "two words", tmp, "autoinstall", "ubuntu-24.04-live-server-amd64.iso",
@@ -474,16 +376,8 @@ with tempfile.TemporaryDirectory() as tmp:
 check("prepare_install_iso (autoinstall): the hostname late-command quotes vm_name",
       'echo "two words" > /target/etc/hostname' in autoinstall_user_data)
 
-# ── prepare_install_iso (autoinstall): the #cloud-config YAML must escape
-# its own network/credential values, not just quote (or not even quote) them
-# raw ─────────────────────────────────────────────────────────────────────
-# Found in code review 2026-09-05, confirmed by direct execution: myip/
-# mymask/mygw/mydns/mydomain were bare (not even hand-quoted) YAML scalars,
-# and root_pwd_hash/root_ssh_pubkey were hand-quoted but not escaped — the
-# exact same bug already found and fixed in setup_harvester_cluster.py's
-# own hand-built YAML, just worse here (some fields had no quoting at all).
-# A mydomain value with an embedded colon+newline injected two new,
-# unrelated top-level keys straight into the rendered document.
+# ── prepare_install_iso (autoinstall): YAML values are escaped ────────────
+# Network and credential values are written as escaped YAML scalars. A value with an embedded newline must not create keys.
 malicious_domain = "mydemo.lab]\nssh_pwauth: false\nfake_key: injected"
 with tempfile.TemporaryDirectory() as tmp:
     lc.prepare_install_iso(
@@ -506,17 +400,8 @@ else:
           "appears un-escaped in the rendered YAML (substring check, no pyyaml)",
           "\nssh_pwauth: false" not in autoinstall_user_data)
 
-# ── prepare_install_iso (kickstart/autoyast): must inject ROOT_SSH_PUBKEY
-# (the automation VM's own real, current key), not the raw ROOT_SSH_KEY
-# config-file value ─────────────────────────────────────────────────────
-# Confirmed live 2026-09-17: lab_creation.cfg's ROOT_SSH_KEY had drifted from
-# this automation VM's actual ~/.ssh/id_rsa.pub. Kickstart/autoyast echoed
-# ROOT_SSH_KEY straight into authorized_keys (unlike ignition/combustion/
-# cloud-init/preseed, which all end up using the real id_rsa.pub) — the VM
-# provisioned fine but was permanently SSH-unreachable ("Permission denied
-# (publickey)"), for deimos.mydemo.lab specifically and for every other
-# kickstart/autoyast install generally. A stale/mismatched ROOT_SSH_KEY
-# value must never end up in the rendered answer file again.
+# ── prepare_install_iso (kickstart/autoyast): inject the real public key ─────
+# The answer file gets the automation VM's own public key, not the ROOT_SSH_KEY config value, which can drift from it.
 _stale_config_key = "ssh-rsa AAAAstaleconfigkey stale@config"
 _saved_subprocess_run = subprocess.run
 subprocess.run = _real_subprocess_run  # process_template() genuinely shells out — nothing to mock
@@ -541,15 +426,8 @@ finally:
     subprocess.run = _saved_subprocess_run
 
 
-# ── copy_vm_image / disk_format: found live on nuc6 (2026-08-31) — create_vm's
-# disk_format="raw" landed its own new disk at <vm_name>.raw, but
-# copy_vm_image() (which actually populates the disk with the source
-# image's content, called BEFORE create_vm) still unconditionally wrote to
-# <vm_name>.qcow2 regardless — create_vm's --import would then have found
-# nothing at .raw and silently created a blank, non-bootable disk instead
-# of using the copied image. Also: a plain `cp` renamed to .raw would not
-# even be a valid raw disk (the source is genuinely QCOW2-container
-# content) — needs a real `qemu-img convert -O raw`, not a rename.
+# ── copy_vm_image writes the disk in the format create_vm expects ────────────
+# With disk_format raw, copy_vm_image writes a raw image with qemu-img convert -O raw, so create_vm finds the disk it imports.
 subproc_calls.clear()
 backend.copy_vm_image("source.qcow2", "vm1", "40", config_method="cloud-init")
 cmds = [" ".join(c) for c in subproc_calls]
@@ -570,24 +448,15 @@ check("copy_vm_image: disk_format='raw' never does a plain cp of the source imag
       not any("cp /iso/source.qcow2" in c for c in cmds))
 check("copy_vm_image: disk_format='raw' resizes with -f raw against the .raw path",
       any("qemu-img resize -f raw" in c and "vm1.raw" in c for c in cmds))
-# GPT backup header/table repair: growing a raw GPT-partitioned disk with
-# qemu-img resize leaves the backup GPT structures at the old end of the
-# disk instead of the new one — confirmed live 2026-09-01 as the likely
-# cause of a lab-host VM's root filesystem appearing to reset to its
-# pristine first-boot Btrfs snapshot after a reboot (dmesg: "GPT: Use GNU
-# Parted to correct GPT errors."). sgdisk -e moves them back to the end.
+# GPT backup header and table repair ─────────────────────────────────────
+# Growing a raw GPT disk with qemu-img resize leaves the backup structures at the old end of the disk. sgdisk -e moves them back.
 check("copy_vm_image: disk_format='raw' repairs the GPT backup header/table after resize",
       any("sgdisk -e" in c and "vm1.raw" in c for c in cmds))
 
 
-# ── Bug 3: delete_vm must not undefine the domain before removing storage ───
-# (found live, twice: a bare `undefine --nvram` succeeded regardless of
-# whether the domain was running, removing its definition before the real
-# `undefine --nvram --remove-all-storage` call ever ran — which then failed
-# with "domain not found", leaving the qcow2 file on disk. Fixed by dropping
-# the redundant first undefine: `destroy` alone guarantees a stopped domain
-# without touching its definition, so the one remaining undefine call always
-# finds it and removes storage too.)
+# ── delete_vm: destroy first, then one undefine that removes storage ───────
+# destroy stops a running domain and keeps its definition. The single undefine --nvram --remove-all-storage then removes the
+# definition and the disks.
 virsh_calls = []
 
 
@@ -608,24 +477,9 @@ check("delete_vm: the undefine call includes --remove-all-storage",
       "--remove-all-storage" in virsh_calls[1])
 
 
-# ── Bug 4: reboot_vm must prefer a direct guest reboot over virsh/ACPI ──────
-# (found live, on a fresh Uyuni server install: virsh's ACPI-triggered
-# `reboot` routinely fails to produce a lifecycle event within 120s in this
-# nested-virt environment. The ORIGINAL fallback, an immediate hard `reset`,
-# is confirmed live — reproduced TWICE on two separate disposable VMs, even
-# with a guest-side `sync` added first — to silently lose a just-installed
-# transactional-update snapshot: `transactional-update pkg install` returns
-# and correctly marks the new snapshot as default, but a `reset` (the
-# hardware reset line, not a guest/qemu-mediated shutdown) can still boot
-# back into the OLD snapshot. A first fix escalated through ACPI `reboot`
-# then ACPI `shutdown` before falling back to `reset` — confirmed live this
-# never loses a snapshot, but ACPI signals routinely never reach the guest
-# in this environment either, so it still fell through to `reset` most of
-# the time. What actually works, confirmed live: a plain `ssh vm "reboot"`
-# — bypassing ACPI-signal-forwarding through qemu entirely — completed in
-# ~15s on a VM where the ACPI path had just failed twice in a row. Fixed:
-# reboot via SSH directly whenever the guest is reachable; only fall back
-# to the virsh ACPI/reset escalation when it isn't.)
+# ── reboot_vm: reboot over SSH when the guest is reachable ─────────────────
+# virsh reset can boot back into an older transactional-update snapshot, and ACPI signals often never reach the guest. A
+# reboot from inside the guest over SSH is reliable. The virsh escalation is used only when the guest is not reachable.
 sync_ssh_calls = []
 
 
@@ -721,17 +575,9 @@ check("reboot_vm: tries shutdown before giving up and resetting",
 backends.socket.create_connection = socket.create_connection
 
 
-# ── vm_is_reusable / reboot_vm: their domstate check must use 3.6-compatible
-# subprocess.run() kwargs ────────────────────────────────────────────────────
-# Found in code review 2026-09-05: both called self._virsh("domstate", ...,
-# capture_output=True, text=True) -- Python 3.7+-only kwargs. This project's
-# containerized test suite (and even the real automation VM's own bare
-# python3) runs Python 3.6, where subprocess.run() rejects those two kwargs
-# outright with a TypeError. Not currently reachable from any bare-python3
-# entry point (every real caller goes through a python3.11-shebanged
-# script), but a landmine for a future one -- fixed to the same
-# stdout=PIPE/stderr=PIPE/universal_newlines=True form used everywhere else
-# in this codebase.
+# ── vm_is_reusable / reboot_vm: Python 3.6 subprocess arguments ───────────────
+# These calls use stdout=PIPE, stderr=PIPE and universal_newlines=True. capture_output and text need Python 3.7 or later,
+# and the test suite runs on 3.6.
 def _py36_strict_run(args, **kwargs):
     # Mimics real Python 3.6's subprocess.run(): TypeError on either
     # Python-3.7+-only kwarg, exactly what the fixed code must never pass.
@@ -771,18 +617,8 @@ check("reboot_vm: its domstate check never raises TypeError under Python-3.6-str
 backends.socket.create_connection = socket.create_connection
 
 
-# ── push_provisioning_files (cloud-init): quote vm_name-derived paths ───────
-# Found in code review 2026-09-05: the remote shell command that assembles
-# the NoCloud cidata ISO on the hypervisor built its rm-f/-o/mv paths from
-# vm_name (a lab.json node hostname, never validated against shell
-# metacharacters) unquoted — a name with an embedded space broke those
-# paths outright, and a shell metacharacter could inject into the command.
-# The "for i in {vm}*" glob and the "${{i/{vm}_/}}" pattern-expansion stay
-# unquoted on purpose (mirrors bash's own unquoted-glob behavior — see the
-# comment above sources= in push_provisioning_files itself), but every
-# other use of vm_name here doesn't need to be a glob and is now
-# shlex.quote()'d. This whole cloud-init branch of push_provisioning_files
-# had no test coverage at all before this.
+# ── push_provisioning_files (cloud-init): vm_name paths are quoted ──────────
+# The paths that build the NoCloud ISO are shell-quoted. The glob and the pattern expansion in the same command stay unquoted, on purpose.
 rsync_calls = []
 
 
@@ -818,26 +654,10 @@ check("push_provisioning_files (cloud-init): the cp step's variable expansions a
       'cp "${i}" "/tmp/${i/two words_/}"' in ci_call)
 
 
-# ── Bug 5: mgradm install's pg_hba/IPv6 race must be pre-empted, not ────────
-# recovered from after the fact
-# (found live on cutoveruyuni2.mydemo.lab, 2026-08-28: the original recovery
-# only patched pg_hba and did `systemctl restart uyuni-server` AFTER
-# `mgradm install` had already died — but `mgradm install` itself performs
-# schema/org/admin bootstrap, so a plain restart just brings the Tomcat
-# process back up against a completely empty database (confirmed directly:
-# spacecmd login "Invalid credentials", zero rows in web_contact, zero
-# tables at all). And `mgradm install` refuses to simply be re-run once its
-# containers/volumes exist ("Server is already initialized!"). Fixed by
-# running install in the background and patching pg_hba the moment uyuni-db
-# is ready, before uyuni-server's first connection attempt — so the ONE
-# install command completes end-to-end.)
-# _run_install_with_pg_hba_guard/_ensure_server_container_active now live in
-# libs/mgradm_common.py (moved 2026-09-12 — see that module's own docstring:
-# `from install_uyuni import ...` broke once install_uyuni.py was deployed
-# without its .py suffix). install_uyuni._run_install_with_pg_hba_guard is
-# still the SAME function object (aliased back on import), so calling it
-# through install_uyuni is unchanged — but its actual ssh_run/time/die come
-# from mgradm_common's own module globals now, so that's what needs patching.
+# ── mgradm install: the pg_hba race is handled during the install ───────────
+# The install runs in the background, and pg_hba is patched as soon as uyuni-db is ready. This happens before uyuni-server's
+# first connection, so one install command completes. The guard lives in libs/mgradm_common.py. install_uyuni re-exports it,
+# so patches must target mgradm_common's own globals.
 mgradm_common.time.sleep = lambda *a, **kw: None
 
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
@@ -879,14 +699,7 @@ except SystemExit:
     died = True
 check("_run_install_with_pg_hba_guard: dies if mgradm install's own exit code is non-zero", died)
 
-# setup_uyuni(): install_cmd's --organization must be shell-quoted as ONE
-# argument. Real bug found live 2026-09-13 in install_smlm.py's identical
-# command-construction pattern: an unquoted multi-word --organization
-# ("SUSE Test") got split by the remote shell into two tokens, and mgradm
-# misinterpreted the stray second word as its own optional FQDN positional
-# argument ("Test is not a valid FQDN"), failing the whole install. Same
-# latent bug existed here — uyuni_org just never happened to contain a
-# space in practice, so it was never hit live.
+# setup_uyuni(): the --organization value is shell-quoted as one argument.
 install_uyuni.ssh_run = FakeSSH()
 install_uyuni.reboot_vm = lambda virt_srv, hostname: None
 install_uyuni.check_ssh_conn = lambda hostname: None
@@ -899,17 +712,9 @@ check("setup_uyuni(): a multi-word uyuni_org is shell-quoted as ONE argument, no
       "--organization 'SUSE Test'" in captured_install_cmd[0])
 
 
-# ── Bug 6: CLM stuck-build restart-and-retry wrapper ─────────────────────────
-# (Round 4 of the CLM stuck-build investigation, 2026-08-28 — see
-# MIGRATION_TODO.md, "the Web UI 'Build' button theory, tested and
-# disproven": Uyuni's own async CLM align worker can get itself wedged
-# after a small, non-deterministic number of builds; the only confirmed
-# mitigation is restarting uyuni-server.service and re-triggering the
-# same build/promote action. _wait_for_clm_with_restart_retry wraps
-# sc.wait_for_content_environment with exactly that recovery, and
-# run_clm_actions/_trigger_clm_action carry the validation + dispatch
-# that used to live in spacecmd_common.run_content_lifecycle_actions
-# before this wrapper needed to intercept it.)
+# ── CLM build: restart the server and retry when the align worker is stuck ─
+# Uyuni's async CLM align worker can wedge after a few builds. The wrapper restarts uyuni-server and re-triggers the action
+# when a build does not finish. run_clm_actions and _trigger_clm_action dispatch and validate the actions.
 
 # _trigger_clm_action: build vs promote dispatch, and promote's own
 # 'from_env' validation.
@@ -1037,15 +842,8 @@ check("run_clm_actions: runs build then promote in order",
       calls["trigger"] == [("build", "proj"), ("promote", "proj", "dev")])
 
 
-# ── install_smlm.main() must not crash with NameError on its normal path ───
-# Found in code review 2026-09-05, confirmed by direct execution: main()
-# unconditionally assigned to _DEFINITION[0]/_CLU_TYPE[0]/_MYDOMAIN[0] —
-# three names never declared anywhere else in the file (verified by
-# repo-wide grep) and never read anywhere either, a pure porting leftover.
-# Every single normal invocation of `install_smlm.py <lab.json>` raised
-# "NameError: name '_DEFINITION' is not defined" right after resolving the
-# target node, before ever reaching the real install logic. Removed the
-# three dead (write-only, unread) lines entirely.
+# ── install_smlm.main(): no unused module-level assignments ──────────────────
+# main() does not assign names that are never declared or read, which would raise NameError on a normal run.
 with tempfile.TemporaryDirectory() as tmp:
     smlm_json = Path(tmp) / "lab.json"
     smlm_json.write_text(
@@ -1072,17 +870,12 @@ with tempfile.TemporaryDirectory() as tmp:
 check("install_smlm.main(): no longer raises NameError on its normal (non-flag) path",
       not isinstance(smlm_error, NameError))
 check("install_smlm.main(): actually reaches setup_smlm() (proves it got all the way "
-      "through the previously-crashing segment, not just past an earlier early-return)",
+      "through the segment that crashes without the fix, not just past an earlier early-return)",
       len(smlm_setup_calls) == 1)
 
 
-# ── db_common.digits_only(): guards postgresql_port/pg_version/mariadb_port ──
-# Found in code review 2026-09-05 (originally as install_postgresql._digits_only,
-# moved to libs/db_common.py 2026-09-27 so install_mariadb.py/install_nextcloud.py/
-# install_seafile.py share the identical guard): both were interpolated unquoted
-# into remote shell commands (package/service/unit names, "port = {port}") all
-# over this file, and _validate()'s own checks are never actually invoked by the
-# real deploy pipeline.
+# ── db_common.digits_only(): port and version values are digits only ────────
+# Values that are interpolated into remote shell commands must be digits. The check is shared by the database installers.
 check("digits_only: a plain digit string passes through unchanged",
       db_common.digits_only({"p": "5432"}, "p", "1", "label") == "5432")
 check("digits_only: a missing value falls back to the given default",
@@ -1098,11 +891,8 @@ check("digits_only: a value with a shell metacharacter dies rather than being "
       _digits_only_died)
 
 
-# ── install_struts_demo/install_wordpress: struts_demo_ns/wordpress_ns must
-# be validated before ever reaching a remote kubectl command ───────────────
-# Found in code review 2026-09-05: neither script had a _validate() at all
-# (confirmed by grep), so struts_demo_ns/name and wordpress_ns/name reached
-# "kubectl delete -n {ns} ..." completely unvalidated and unquoted.
+# ── install_struts_demo / install_wordpress: namespaces are validated ───────
+# The namespace and name values are validated before they reach a remote kubectl command.
 struts_ssh_calls = []
 install_struts_demo.ssh_run = lambda *a, **kw: struts_ssh_calls.append(a)
 _struts_died = False
@@ -1124,12 +914,8 @@ check("setup_wordpress: a malicious wordpress_name exits before ever calling ssh
       _wordpress_died and not wordpress_ssh_calls)
 
 
-# ── install_smlm_proxy.generate_smlm_proxy_config(): nested spacecmd command
-# must be built with shlex.quote(), not hand-rolled single quotes ──────────
-# Found in code review 2026-09-05: admin_user/admin_pass/fqdn/server/email
-# are free-text addon-config values with no format validation at all, and
-# were embedded via hand-rolled single quotes that an embedded single quote
-# in any of them would have broken out of.
+# ── install_smlm_proxy: the nested spacecmd command is quoted with shlex ────
+# Free-text values are quoted with shlex.quote(), so an embedded single quote cannot break the command.
 proxy_subproc_calls = []
 install_smlm_proxy.subprocess.run = lambda args, **kw: proxy_subproc_calls.append(args) or FakeResult(returncode=1)
 proxy_cfg = {
@@ -1147,12 +933,8 @@ check("generate_smlm_proxy_config: an embedded single quote in admin_user doesn'
       shlex.split(remote_cmd)[shlex.split(remote_cmd).index("-u") + 1] == "it's-admin")
 
 
-# ── setup_smlm_prereqs/setup_smlm_proxy_prereqs: the self-signed-TLS-cert
-# heredoc's _fqdn='{fqdn}' must not break on an embedded single quote ──────
-# Found in code review 2026-09-05: smlm_fqdn/smlm_proxy_fqdn are free-text
-# with no format validation at all, and were embedded via hand-rolled
-# single quotes in a multi-line heredoc — an embedded single quote would
-# have broken out of that quoting.
+# ── setup_smlm_prereqs / setup_smlm_proxy_prereqs: quoted FQDN in a heredoc ──
+# The FQDN is quoted with shlex.quote(), so an embedded single quote cannot break the heredoc.
 fqdn_calls = []
 install_smlm.ssh_run = lambda *a, **kw: fqdn_calls.append(a[1] if len(a) > 1 else kw.get("cmd", ""))
 install_smlm.k8s.ssh_run = lambda *a, **kw: FakeResult()
@@ -1174,24 +956,9 @@ check("setup_smlm_proxy_prereqs: an embedded single quote in smlm_proxy_fqdn rou
       shlex.split(tls_cmd.split("\n")[1])[0] == "_fqdn=a.b'; rm -rf /; echo '")
 
 
-# ── DNSService: real concurrency stress test for the 2026-09-21 _dns_lock ──
-# setup_lab.py's new --parallel VM-creation mode means multiple real
-# threads can now call add_to_dns() concurrently for DIFFERENT nodes
-# sharing the SAME zone file. _dns_add_line()/_dns_remove_line() do a
-# plain read-whole-file -> mutate -> write-whole-file, non-atomically — a
-# real lost-update race without a lock. This spawns REAL threading.Thread
-# workers (not a mock of the lock itself) hammering add_to_dns()
-# concurrently and verifies every single one of their entries survives.
-#
-# With ssh_run/file-I/O mocked this fast, the actual race window is too
-# narrow for the GIL's own scheduling to reliably interleave two threads
-# mid-read-modify-write in one run — confirmed by hand: with _dns_lock
-# swapped for a no-op, the same test still "passed" most runs purely by
-# luck. So Path.read_text is wrapped here with a small artificial delay —
-# widening the window deterministically — for every caller, including the
-# real _dns_add_line/_dns_remove_line inside add_to_dns() itself. This is
-# what actually proves _dns_lock serializes access, not just that the
-# lock object exists.
+# ── DNSService: concurrency test for _dns_lock ─────────────────────────────
+# Several threads call add_to_dns() for different nodes on one zone file. Path.read_text is slowed slightly, so the race
+# window is wide enough for the test to show that _dns_lock serializes the read-modify-write.
 import threading  # noqa: E402
 import time as _time  # noqa: E402
 

@@ -4,10 +4,8 @@
 # License: GPLv3
 #
 # This is the ONE bootstrap entrypoint — install_demo_server_scripts.sh and README.md both
-# point here. Replaced the old setup_kvm_node.sh (bash), retired to
-# legacy_bash/setup_demo_server/ 2026-08-31 — it had drifted out of sync with this file for
-# months (missing e.g. the opt-in _network_mode=nat support) since nothing enforced the two
-# staying in sync; don't resurrect it or add a "keep both working" fallback. Calls the modular
+# point here. There is no separate bash version, and a second copy would not stay in sync, so do
+# not maintain one. Calls the modular
 # per-OS profiles in libs/kvm_host_profiles.py directly, in-process, instead of a single
 # hardcoded if/elif. setup_lab_automation.sh (building the automation VM's own image) is
 # unchanged/out of scope here — it stays OS-agnostic since it always builds a SLE Micro image
@@ -96,11 +94,9 @@ def ensure_fusermount_compat():
     to inject the automation VM's network/SSH/hostname config directly into its
     qcow2) hardcode the legacy FUSE2 binary name "fusermount" internally,
     regardless of which libfuse version actually performed the mount.
-    Confirmed live 2026-08-30 on a Leap 15.6 host with only fuse3 installed (no
-    "fuse" v2 package exists in openSUSE's repos at all — rpm --whatprovides
-    confirms it): guestmount succeeds (uses libfuse3 directly), but
-    guestunmount then fails with "failed to unmount /mnt: exec: No such file
-    or directory" — silently, since setup_lab_automation.sh's own call sites
+    On a Leap 15.6 host with only fuse3 installed (openSUSE's repos have no "fuse" v2 package),
+    guestmount succeeds, since it uses libfuse3 directly. guestunmount then fails with "failed to
+    unmount /mnt: exec: No such file or directory". This is silent, since setup_lab_automation.sh's own call sites
     redirect its stderr away or run it from an EXIT trap. The mount is never
     released, the qcow2 file stays open, and the VM boots from a completely
     unmodified image (no static IP/SSH key/hostname ever applied — no
@@ -141,7 +137,7 @@ def _automation_host_reachable(myip, timeout=3):
     actually exists and is running. On the very first bootstrap of the
     first KVM node the automation VM has not been created yet, so this is
     always False there — the DNS step is skipped and do_it_all() behaves
-    exactly as it did before this feature existed.
+    with no DNS step.
     """
     if not myip:
         return False
@@ -280,7 +276,7 @@ def configure_nat_network(name, cidr):
     per-OS-network-stack concern — nmcli vs. wicked), defining a libvirt
     network is a single OS-agnostic `virsh net-define` operation, so keeping
     it flat here avoids conflating the two different kinds of "networking
-    setup" this project now has.
+    setup" this project has.
     """
     existing = subprocess.run(
         ["virsh", "net-info", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -337,7 +333,7 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
     if isinstance(profile, kvm_host_profiles._SuseRegisteredProfile):
         # SLES only — see _SuseRegisteredProfile.register_repos()'s own
         # docstring: SUSEConnect --product fails outright on a genuinely
-        # unregistered host without this (confirmed live 2026-08-29).
+        # unregistered host without this.
         profile.regcode = cfg.get("SUSE_regcode", "")
         profile.suse_email = cfg.get("SUSE_email", "")
         profile.suse_url = cfg.get("SUSE_url", "")

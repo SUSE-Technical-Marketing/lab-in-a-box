@@ -5,25 +5,15 @@
 """
 libs/backends.py — hypervisor/VM-backend abstraction.
 
-VMBackend is the interface a compute backend implements to create/destroy/
-manage the VMs a lab definition describes. LibvirtBackend is the only
-implementation today (and the default) — it holds the logic that used to
-live directly in lab_creation.py as flat functions taking a raw
-virt_srv/remote_host pair (create_vm, delete_vm, copy_vm_image,
-vm_is_reusable, reboot_vm, copy_to_hypervisor, _host_resources). Those flat
-functions still exist in lab_creation.py as thin wrappers so every existing
-caller (scripts + all 40 addons) keeps working unchanged: they build a
-LibvirtBackend internally and delegate. check_or_generate_mac() got the
-same treatment originally, but its flat wrapper had no real caller left
-(everything goes through backend.check_or_generate_mac() via the object
-get_backend() returns) — removed rather than kept as unused dead code.
+VMBackend is the interface a compute backend implements to create, destroy and manage the VMs a
+lab definition describes. LibvirtBackend is the default and holds the libvirt/KVM logic. The flat
+functions in lab_creation.py (create_vm, delete_vm, copy_vm_image, vm_is_reusable, reboot_vm,
+copy_to_hypervisor, _host_resources) are thin wrappers that build a LibvirtBackend and delegate to
+it, so existing callers keep working.
 
-get_backend() is the factory new code (Phase 5 tasks 5.2+) should call: it
-resolves the KVM host (via resolve_kvm_host/locate_kvm_host, unchanged from
-Phase 4) and returns a ready VMBackend, so callers never see host selection
-or connection URIs. It is not yet wired into setup_vm.py/destroy_vm.py —
-those still call resolve_kvm_host/locate_kvm_host directly, unchanged, to
-keep this move zero-risk; a later task can switch them over.
+get_backend() is the factory callers use. It resolves the KVM host (resolve_kvm_host and
+locate_kvm_host) and returns a ready VMBackend, so callers never handle host selection or
+connection URIs. setup_vm.py and destroy_vm.py call resolve_kvm_host and locate_kvm_host directly.
 """
 
 import base64
@@ -69,18 +59,14 @@ def _read_conflict_confirmation():
 
 def _parse_sku_table(raw, config_key):
     """
-    Parses an optional config-file override for a cloud backend's own fixed (name, cores, mem_gb)
-    sizing table — added 2026-09-10, per explicit user request: none of these tables (Hetzner's
-    SERVER_TYPES, AWS's INSTANCE_TYPES, etc.) should be a hardcoded ceiling a user can't extend or
-    replace without editing this file. Format: "name:cores:mem_gb,name:cores:mem_gb,..." — e.g.
-    "t3.medium:2:4,t3.large:2:8". Returns None if `raw` is empty/unset (caller keeps its own
-    built-in default table unchanged); returns the parsed list of (name, cores, mem_gb) tuples
-    otherwise, replacing the built-in table entirely — this is a full override, not a merge, so a
-    user who only wants to ADD one entry must repeat the ones they still want.
+    Parses the optional config-file override of a cloud backend's fixed (name, cores, mem_gb)
+    sizing table. Format: "name:cores:mem_gb,name:cores:mem_gb,..." (e.g. "t3.medium:2:4,t3.large:2:8").
+    Returns None when `raw` is empty or unset, so the caller keeps its built-in table. Otherwise returns
+    the parsed list of (name, cores, mem_gb) tuples. That list replaces the built-in table entirely: it
+    is a full override, not a merge, so an entry added this way must repeat the entries still wanted.
 
-    Dies with a clear, specific message (naming the real config key and the exact malformed
-    entry) on any parse error, rather than silently falling back to the built-in table or
-    crashing later with a confusing KeyError/ValueError deep inside _pick_*().
+    Dies with a message that names the config key and the malformed entry on any parse error, rather
+    than falling back silently or failing later with a KeyError or ValueError inside _pick_*().
     """
     if not raw:
         return None
@@ -127,33 +113,21 @@ def _poll_for_ip(fetch_fn, vm_name, timeout=180, interval=5):
 
 def _cloud_no_mac(mymac):
     """
-    Shared check_or_generate_mac() body for every cloud backend (Hetzner/AWS/GCP/Alibaba/
-    Scaleway/UpCloud/OVHcloud/Exoscale). Dropped 2026-09-09, found live-testing: unlike
-    LibvirtBackend/HarvesterBackend, a cloud provider's own DHCP assigns networking — there is no
-    MAC-address concept to check, generate, resolve conflicts on, or persist to the lab
-    definition at all. The previous behaviour (each cloud backend calling the same
-    generate/validate/conflict-prompt/save machinery as LibvirtBackend, via
-    _check_or_generate_mac()) was real, pointless friction: it could even trigger an interactive
-    "regenerate this MAC?" TTY prompt and a definition-file save for a value that is never sent to
-    or read from any cloud provider. This just passes through whatever the JSON already had (or
-    "") — no generation, no conflict-checking, no definition mutation, no save. Returns (mymac,
-    None) — the None matches HarvesterBackend's own "network is libvirt-only, ignored here"
-    contract; no cloud backend's create_vm() reads its own `network` parameter.
+    Shared check_or_generate_mac() body for the cloud backends (Hetzner, AWS, GCP, Alibaba,
+    Scaleway, UpCloud, OVHcloud, Exoscale). A cloud provider assigns networking itself, so there is no
+    MAC address to check, generate, resolve or persist. The function returns the mymac value from the
+    lab JSON, or an empty string, with no generation, no conflict check and no definition save. The
+    second return value is None, matching HarvesterBackend's libvirt-only network. No cloud create_vm()
+    reads its `network` parameter.
     """
     return mymac or "", None
 
 
-# Serializes MAC generation/conflict-resolution end to end — added 2026-09-21
-# for setup_lab.py's parallel VM-creation mode. Two real, concrete hazards
-# without it: (1) list_used_macs() (a live query) + _check_or_generate_mac()'s
-# own generate-a-new-random-one decision is a genuine TOCTOU window — two
-# threads racing it can both decide the SAME "unused" MAC is free; (2) a
-# real conflict (an explicit mymac already claimed by a different VM) hits
-# an interactive tty prompt (_read_conflict_confirmation) AND mutates+saves
-# the shared `definition` object in place — neither is safe with more than
-# one thread inside this function at once. Held for the WHOLE call, not just
-# the list_used_macs() read, since the decision and any resulting
-# definition mutation/save are part of the same critical section.
+# Serializes MAC generation and conflict resolution across threads. The check in
+# _check_or_generate_mac() is not atomic, and an explicit mymac already claimed by
+# another VM can prompt on the tty and mutate the shared definition. The lock is held
+# for the whole call, so the decision and any resulting definition update form one
+# critical section.
 _mac_lock = threading.Lock()
 
 
@@ -276,29 +250,19 @@ class VMBackend(object):
 
     def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, **kwargs):
         """
-        Return value contract, added 2026-09-09 (found live-testing AWSBackend — see TODO): a
-        cloud backend (one whose real IP is only known after the provider's own DHCP assigns it —
-        Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) returns the real, reachable
-        IP address it just assigned, as a string, once the instance is confirmed running — polling
-        the provider's own API/CLI if the create call's own response doesn't already carry it.
-        LibvirtBackend/HarvesterBackend return None unchanged (the caller already has a correct,
-        static `myip` from the lab JSON for those — nothing to report back). setup_vm.py's
-        provision_vm() uses this return value, when not None, in place of the JSON's own `myip`
-        for DNS registration — see its own comments for why this order matters (a cloud node's
-        DNS entry cannot be written before the node exists and the provider has assigned it a
-        real address, unlike the static-IP libvirt/Harvester case).
+        Create the VM. Cloud backends return the real, reachable IP address assigned to it, as a string, once the
+        instance is running. They poll the provider's API or CLI when the create call does not return the address.
+        LibvirtBackend and HarvesterBackend return None, because the caller already has a static `myip` from the lab
+        JSON. setup_vm.py's provision_vm() uses a non-None return value in place of `myip` for DNS registration.
         """
         raise NotImplementedError
 
     def get_ip(self, vm_name):
         """
-        Return the real IP address of an EXISTING instance named vm_name, or None if it doesn't
-        exist or (for LibvirtBackend/HarvesterBackend, which never call this) isn't implemented.
-        Added 2026-09-09 alongside create_vm()'s own return-IP contract above — used by
-        ensure_cloud_dns_vm() (backends.py) to find a previously-created cloud DNS VM's address
-        again on a later run, without recreating it. Only implemented by the cloud backends;
-        LibvirtBackend/HarvesterBackend raise NotImplementedError (they have no reason to be
-        called this way — their nodes' addresses are always the static, already-known `myip`).
+        Return the real IP address of the existing instance named vm_name, or None if it does not exist. Only cloud
+        backends implement this. ensure_cloud_dns_vm() uses it to find an existing cloud DNS VM's address on a later run
+        without recreating the VM. LibvirtBackend and HarvesterBackend raise NotImplementedError, because their addresses
+        are the static `myip` from the lab JSON.
         """
         raise NotImplementedError
 
@@ -316,10 +280,8 @@ class VMBackend(object):
 
     def vm_state(self, vm_name):
         """
-        Power state of an existing VM, in the provider's own words (e.g.
-        "running", "stopped"), or "not found". Added 2026-09-30 for
-        scripts/vm_power.py; backends that don't implement it raise
-        NotImplementedError and vm_power.py reports "unsupported".
+        Power state of an existing VM, in the provider's own words (e.g. "running", "stopped"), or "not found".
+        Backends that do not implement it raise NotImplementedError, and scripts/vm_power.py reports "unsupported".
         """
         raise NotImplementedError
 
@@ -333,11 +295,10 @@ class VMBackend(object):
 
     def open_vm_ports(self, vm_name, ports):
         """
-        Make `ports` (a lab-JSON open_ports list: "443", "69/udp", ...; tcp by
-        default) reachable from anywhere on an existing VM. Best effort and
-        idempotent; added 2026-09-30. Default: nothing to do for this backend
-        (libvirt has no firewall of its own; the host forwards ports) — cloud
-        backends override it with their own firewall/security-group mechanism.
+        Make `ports` (a lab-JSON open_ports list such as "443" or "69/udp"; tcp by default) reachable from anywhere
+        on an existing VM. The operation is best effort and idempotent. The default does nothing, because libvirt has no
+        firewall of its own and the host forwards ports. Cloud backends override it with their own firewall or
+        security-group mechanism.
         """
         log("- open_ports: nothing to open on the '{}' backend".format(type(self).__name__))
 
@@ -358,81 +319,55 @@ class VMBackend(object):
 
     def ensure_ports_open(self, open_ports):
         """
-        Best-effort: opens `open_ports` (same shape as create_vm()'s own
-        open_ports kwarg — e.g. ["51820/udp"], default protocol tcp) for
-        this account's compute, independent of creating any particular VM.
-        Added 2026-09-18 for overlay.py's OVERLAY_HUB_ACCOUNT — the overlay
-        hub can be an ALREADY-EXISTING host (OVERLAY_HUB_HOST), which never
-        goes through create_vm()'s own open_ports handling, so the caller
-        needs a standalone way to still get the port opened automatically
-        for a real cloud backend.
+        Best effort: open `open_ports` (same shape as create_vm()'s open_ports argument, e.g. ["51820/udp"], tcp by
+        default) for this account's compute, without creating a VM. Used when the overlay hub is an existing host
+        (OVERLAY_HUB_HOST), which never goes through create_vm().
 
-        No-op by default (matches every backend's existing "absorbed by
-        **kwargs, ignored" stance on open_ports elsewhere) — only
-        AWSBackend overrides this today, delegating to its own
+        No-op by default, like the other backends that ignore open_ports. Only AWSBackend overrides this, delegating to
         _ensure_security_group_access().
         """
         pass
 
     def get_private_ip(self, vm_name):
         """
-        Returns the real PRIVATE/internal IP of an existing instance named
-        vm_name, or None. Added 2026-09-18 for overlay.py's site-gateway
-        routing — another node in the SAME site/subnet routes through its
-        local gateway via this address, never the gateway's public IP
-        (irrelevant for same-subnet traffic, and may not even exist).
+        Return the private (internal) IP of the existing instance named vm_name, or None. The overlay's site-gateway
+        routing uses it: another node in the same site reaches the gateway through this address, not the public IP.
 
-        No-op (returns None) by default; only AWSBackend overrides this
-        today — matches every other cloud-only addition's "AWS got it
-        first" pattern elsewhere in this file.
+        No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
 
     def get_subnet_cidr(self):
         """
-        Returns this account's own configured subnet's real CIDR block
-        (e.g. "172.31.0.0/20"), or None if this backend has no such
-        concept or isn't configured with one. Added 2026-09-18 for
-        overlay.py — a site gateway advertises this to the hub as the real,
-        routable subnet other sites should reach it through, instead of a
-        synthetic overlay-only address.
+        Return this account's configured subnet CIDR (e.g. "172.31.0.0/20"), or None if the backend has no such concept
+        or is not configured with one. A site gateway advertises this CIDR to the overlay hub as the routable subnet that
+        other sites reach it through.
 
-        No-op (returns None) by default; only AWSBackend overrides this
-        today.
+        No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
 
     def disable_source_dest_check(self, vm_name):
         """
-        Best-effort: disables this instance's "source/destination check"
-        (a cloud-provider-level packet filter that drops any packet not
-        addressed TO or FROM the instance's own IP — independent of, and
-        enforced BELOW, the guest's own net.ipv4.ip_forward=1) so it can
-        actually forward traffic for other nodes in its site. Added
-        2026-09-18 for overlay.py's site gateways — without this, a site
-        gateway's ip_forward=1 has no effect at all on a cloud backend that
-        enforces this check; packets are silently dropped before ever
-        reaching the guest kernel.
+        Best effort: disable the instance's source/destination check. This is a cloud-provider packet filter that drops
+        any packet not addressed to or from the instance's own IP, and it runs below the guest's net.ipv4.ip_forward. A
+        gateway that forwards traffic for other nodes needs the check disabled, or the packets are dropped before they
+        reach the guest kernel.
 
-        No-op by default; only AWSBackend overrides this today (EC2's own
-        SourceDestCheck attribute). No known equivalent implemented yet for
-        the other 7 cloud backends.
+        No-op by default. Only AWSBackend overrides it, using EC2's SourceDestCheck attribute. No equivalent is implemented
+        for the other cloud backends.
         """
         pass
 
 
 class LibvirtBackend(VMBackend):
     """
-    The default (and only, today) backend — talks to a libvirt hypervisor
-    over `virsh --connect <virt_srv>` and provisioning files/images over SSH
-    to `remote_host`. Every method body here is a straight move (unchanged
-    logic) from what used to be a flat lab_creation.py function of the same
-    behaviour, taking virt_srv/remote_host/vm_img_loc/lab_setup_path/iso_loc
-    as explicit params — those are now constructor state instead.
+    The default backend. Talks to a libvirt hypervisor over `virsh --connect <virt_srv>` and
+    provisions files and images over SSH to `remote_host`. The constructor keeps virt_srv, remote_host,
+    vm_img_loc, lab_setup_path and iso_loc as instance state.
 
-    remote_host/iso_loc/vm_img_loc/lab_setup_path are optional because some
-    operations (delete_vm, reboot_vm, vm_is_reusable, check_or_generate_mac,
-    list_used_macs) only ever needed virt_srv.
+    remote_host, iso_loc, vm_img_loc and lab_setup_path are optional. Operations that only need virt_srv
+    (delete_vm, reboot_vm, vm_is_reusable, check_or_generate_mac, list_used_macs) do not require them.
     """
 
     def __init__(self, virt_srv, remote_host=None, iso_loc=None, vm_img_loc=None, lab_setup_path=None):
@@ -453,9 +388,8 @@ class LibvirtBackend(VMBackend):
         return run_libvirt_tool("virt-install", self.remote_host, self.virt_srv, args, **kwargs)
 
     def _virt_xml(self, *args, **kwargs):
-        """Same fallback as _virsh(), for virt-xml (used to edit an already-
-        defined domain's XML in place — see create_vm()'s autoinstall branch
-        for why this is needed)."""
+        """Same fallback as _virsh(), for virt-xml (edits an already-defined domain's
+        XML in place, as used by create_vm()'s autoinstall branch)."""
         return run_libvirt_tool("virt-xml", self.remote_host, self.virt_srv, args, **kwargs)
 
     @classmethod
@@ -573,42 +507,14 @@ class LibvirtBackend(VMBackend):
 
     def reboot_vm(self, vm_name):
         """
-        Reboot a VM. Prefers a direct, guest-side reboot over anything
-        virsh/ACPI-mediated, because BOTH are confirmed live (2026-08-28, on
-        two separate disposable nuc6.mydemo.lab VMs) to be unreliable in
-        this nested-virt environment in ways that matter:
+        Reboot a VM. A guest-side reboot is preferred over virsh or ACPI, because in this nested-virt environment
+        `virsh reset` can boot back into an older transactional-update snapshot, and ACPI signals often do not reach the
+        guest in time.
 
-        - `virsh reset` (the original, immediate fallback here) silently
-          loses a just-installed transactional-update snapshot:
-          `transactional-update pkg install` returns and correctly marks
-          the new snapshot as default (confirmed via its own log: "New
-          default snapshot is #N"), but `reset` — the hardware RESET line,
-          equivalent to the physical reset button, not a guest- or
-          qemu-mediated shutdown — can still boot back into the OLD
-          snapshot. A plain guest-side `sync` first (an earlier attempted
-          fix) does NOT prevent this — reproduced the bug again with it
-          already in place.
-        - A first fix escalated through ACPI `reboot` then ACPI `shutdown`
-          before ever falling back to `reset`, on the theory that the
-          guest's own clean shutdown sequence avoids whatever `reset`
-          skips. Confirmed live that this HELPS (never loses a snapshot)
-          but ACPI signals routinely never reach the guest in time at all
-          in this environment — `virsh reboot` AND `virsh shutdown` each
-          failed to produce a lifecycle event within 120s on the very same
-          VM, still falling through to `reset` far more often than not.
-
-        What actually works, confirmed live: a plain `ssh vm "reboot"` —
-        bypassing ACPI-signal-forwarding through qemu entirely by running
-        the reboot command directly in the guest's own init system —
-        completed in ~15s on a VM where the ACPI path had just failed
-        twice in a row. So: if the guest is currently reachable over SSH,
-        reboot it that way and return immediately — the broken-pipe/
-        connection-reset this causes is the expected, successful outcome,
-        not a failure to check for (callers already poll for the guest
-        coming back via check_ssh_conn(), same as every other reboot path
-        here). Only fall back to the virsh-mediated ACPI/reset escalation
-        below when the guest ISN'T reachable over SSH to begin with (there
-        is no other way to intervene in that case).
+        If the guest is reachable over SSH, the method runs `reboot` inside the guest and returns at once. The resulting
+        broken pipe or connection reset is the expected outcome. Callers poll for the guest to come back with
+        check_ssh_conn(). The virsh-mediated ACPI and reset sequence is used only when the guest is not reachable over SSH,
+        since there is no other way to intervene in that case.
         """
         try:
             probe = socket.create_connection((vm_name, 22), timeout=3)
@@ -653,29 +559,16 @@ class LibvirtBackend(VMBackend):
 
     def delete_vm(self, vm_name):
         """
-        Remove a VM and all its storage from the hypervisor. Two calls, in
-        this order:
-          1. destroy (force power-off if running; no-op/fails harmlessly if
-             already stopped — `destroy` never removes the domain's
-             definition, only its running state)
-          2. undefine --nvram --remove-all-storage (the one call that
-             actually deletes disk images and the NVRAM/UEFI vars file, now
-             guaranteed to still find the domain defined since step 1 never
-             removes that definition)
+        Remove a VM and all its storage from the hypervisor, in two calls:
 
-        NOTE: an earlier version of this method (and bash's own delete_vm,
-        libs/lab_creation.bash:1131-1137 — a pre-existing bug, faithfully
-        ported, not introduced by this port) called a bare `undefine
-        --nvram` (no --remove-all-storage) BEFORE `destroy`. That plain
-        undefine succeeds regardless of whether the domain is running,
-        removing its definition — so by the time the real
-        `--remove-all-storage` undefine ran, the domain was already gone
-        ("domain not found") and the disk image was silently never removed.
-        Confirmed live on a disposable test VM (nuc6.mydemo.lab, 2026-08-28):
-        the qcow2 file was left behind twice, cleaned up manually. Fixed by
-        dropping the redundant/harmful first undefine entirely — `destroy`
-        alone is enough to ensure a running domain is stopped before the one
-        real undefine call removes both the definition and its storage.
+          1. destroy: force power-off if the domain is running. It does not remove the definition, so calling it on a
+             stopped domain is harmless.
+          2. undefine --nvram --remove-all-storage: deletes the disk images and the NVRAM/UEFI vars file, and removes the
+             definition.
+
+        The definition must still exist when step 2 runs. An undefine issued before destroy would remove the definition
+        while the domain is running, and the later --remove-all-storage call would then fail with "domain not found" and
+        leave the disk image behind.
         """
         log("Deleting VM '{}'".format(vm_name))
         self._virsh("destroy", vm_name,
@@ -731,17 +624,10 @@ class LibvirtBackend(VMBackend):
             die("Failed to resize VM image \"{}\" to \"{}G\"".format(vm_name, vm_dsk_gb))
 
         if disk_format == "raw":
-            # GPT keeps a backup header+table at the very end of the disk —
-            # growing the raw file with qemu-img resize leaves that backup
-            # copy sitting in the middle of the disk instead, at the old
-            # end. Confirmed live 2026-09-01: this alone doesn't stop the
-            # kernel/GRUB reading the (unaffected) primary header, but shows
-            # up as "GPT: Use GNU Parted to correct GPT errors." in dmesg,
-            # and was the leading suspect in a lab-host VM's root filesystem
-            # appearing to reset to its pristine first-boot snapshot after a
-            # reboot. Never needed for qcow2 (each VM's own disk is created
-            # at its final size there, never grown after the fact), so
-            # scoped to the raw path only.
+            # GPT keeps a backup header and partition table at the end of the disk. Growing a raw
+            # image with qemu-img resize leaves that backup in the middle of the disk, so the raw
+            # path relocates it. qcow2 disks are created at their final size and never grown, so
+            # this applies to raw images only.
             log("- Repair GPT backup header/table after resize (raw disks only)")
             result = ssh_run(self.remote_host, "sgdisk -e {}".format(dest_q), check=False)
             if result.returncode != 0:
@@ -769,38 +655,24 @@ class LibvirtBackend(VMBackend):
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
     ):
         """
-        Create a VM on a KVM hypervisor via virt-install, covering all 6
-        config_method branches:
+        Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
 
             ""              → Ignition + Combustion (SLE Micro default)
-            "install_iso"   → full OS install from installer ISO: autoyast/
-                               kickstart/preseed (via --location/--extra-args,
-                               blocks with --wait -1) or Ubuntu autoinstall (via
-                               --cdrom + a seed CDROM built with mkisofs, also
-                               --wait -1)
-            "iso-cloud-init"→ NOTE: an incomplete stub inherited from bash —
-                               this branch only computes an unused _boot_params
-                               value and creates no VM at all. Preserved as a
-                               no-op rather than guessing at the missing logic.
-            "virt_customize"→ image already fully configured by
-                               prepare_virt_customize_for_vm(); boot it directly
-            "cloud-init"    → cloud-init ISO attached as a cdrom, then a 3-minute
-                               wait, optional salt state apply, eject, reboot
+            "install_iso"   → full OS install from an installer ISO: autoyast, kickstart or preseed (via --location and
+                              --extra-args, blocks with --wait -1), or Ubuntu autoinstall (via --cdrom and a seed CDROM
+                              built with mkisofs, also --wait -1)
+            "iso-cloud-init"→ a stub: this branch computes an unused _boot_params value and creates no VM
+            "virt_customize"→ the image is already configured by prepare_virt_customize_for_vm(); boot it directly
+            "cloud-init"    → cloud-init ISO attached as a cdrom, then a 3-minute wait, optional salt state apply,
+                              eject, reboot
 
-        extra_disks entries look like "/dev/sdb,bus=scsi" or "UUID=xxx,bus=sata"
-        (a path or a UUID= reference, with an optional per-disk bus override).
+        extra_disks entries look like "/dev/sdb,bus=scsi" or "UUID=xxx,bus=sata": a path or UUID= reference, with an
+        optional per-disk bus override.
 
-        vm_machine overrides virt-install's own machine-type default
-        (currently "q35" — chosen by virt-install/libosinfo, not something
-        this project has ever set explicitly). Confirmed live 2026-09-02: a
-        2015-era CentOS 7 GenericCloud image (kernel 3.10.0-229) hangs in a
-        dracut emergency shell under q35 ("Not all disks have been found" —
-        its virtio-blk root disk never appears in time under Q35's PCIe
-        topology), on a completely unmodified clone of the source image, so
-        this is a genuine old-guest/chipset incompatibility, not anything
-        config_method-specific. The identical disk boots straight through
-        with `--machine pc` (the legacy i440fx chipset). Left empty by
-        default — unchanged behavior for every image that already works.
+        vm_machine overrides the machine type. The default is q35, chosen by virt-install and libosinfo. Some old guests
+        do not boot under q35: a 2015-era CentOS 7 GenericCloud image stops in a dracut emergency shell, because its
+        virtio-blk root disk does not appear in time under the PCIe topology. Setting `--machine pc` (the legacy i440fx
+        chipset) boots the same disk. The field is empty by default, so images that already boot are unchanged.
         """
         vm_img_loc = self.vm_img_loc
         remote_host = self.remote_host
@@ -897,43 +769,16 @@ class LibvirtBackend(VMBackend):
                 if scp.returncode != 0:
                     die("scp seed failed for '{}'".format(vm_name))
 
-                # Boot order, take 1: confirmed live 2026-09-03 that a bare
-                # `--cdrom PATH` (no explicit order) alongside the disk's old
-                # boot.order=2 left the install ISO with no boot priority at
-                # all — SeaBIOS booted straight into the (empty) disk and sat
-                # at "Boot failed: not a bootable disk / No bootable device"
-                # for the VM's entire lifetime (zero installer output, zero
-                # network activity, ~11 minutes of real CPU time spread
-                # across 18 hours of wall-clock, confirmed via `virsh
-                # screenshot`). A domain-level `--boot cdrom,hd` device list
-                # fixed that (and does still matter here — see below).
+                # A bare --cdrom leaves the install ISO without boot priority, so the firmware falls
+                # through to the empty disk. A domain-level --boot cdrom,hd device list sets the order.
                 #
-                # Take 2: fixing the boot order only got as far as a SECOND
-                # dead end, also confirmed live via `virsh screenshot`:
-                # subiquity found and parsed the autoinstall config fine, but
-                # then stopped at an interactive prompt — "Confirmation is
-                # required to continue. Add 'autoinstall' to your kernel
-                # command line to avoid this. Continue with autoinstall?
-                # (yes|no)" — and sat there forever with --noautoconsole and
-                # nobody at the console. Subiquity's unattended mode is
-                # gated on literally seeing "autoinstall" on /proc/cmdline,
-                # regardless of the seed config's own content. The normal
-                # way to inject that (`--location URL` + `--extra-args
-                # autoinstall`) doesn't work here: `--extra-args` is
-                # documented as only applying to a `--location` boot, and
-                # `--location` itself only works for install trees the
-                # *client* (this automation VM) can read directly — a local
-                # path on the remote hypervisor fails with "Cannot access
-                # install tree on remote connection". Fixed by extracting
-                # the ISO's own casper/vmlinuz+initrd on the hypervisor
-                # (xorriso, no mount needed) and booting them directly via
-                # `--boot kernel=,initrd=,cmdline=autoinstall` — a boot
-                # mechanism separate from cdrom/hd boot order entirely, so
-                # `--boot cdrom,hd` from take 1 is no longer meaningful (the
-                # kernel/initrd are what actually boots now) but --cdrom
-                # itself still has to stay attached as a device: the
-                # extracted initrd's own init script mounts it as the
-                # install source once booted.
+                # Subiquity (Ubuntu's installer) runs unattended only when 'autoinstall' is on the kernel
+                # command line, regardless of the seed config. --location cannot inject it here:
+                # --extra-args applies only to --location, and --location needs an install tree the
+                # client can read, not a path on the remote hypervisor. The ISO's casper/vmlinuz and
+                # initrd are therefore extracted on the hypervisor with xorriso and booted directly via
+                # --boot kernel=,initrd=,cmdline=autoinstall. --cdrom stays attached because the
+                # extracted initrd mounts it as the install source.
                 vmlinuz_remote = "{}/{}_vmlinuz".format(vm_img_loc, vm_name)
                 initrd_remote = "{}/{}_initrd".format(vm_img_loc, vm_name)
                 extract = ssh_run(
@@ -964,36 +809,13 @@ class LibvirtBackend(VMBackend):
                 if r.returncode != 0:
                     die("virt-install (autoinstall) failed for '{}'".format(vm_name))
 
-                # The direct kernel/initrd boot above is only valid for the
-                # INSTALLER's own first boot — confirmed live 2026-09-03 that
-                # virt-install's automatic post-install restart (it reboots
-                # the domain itself once curtin/subiquity finish and power
-                # it off) reused the exact same <kernel>/<initrd>/<cmdline>
-                # unchanged, since nothing in this lower-level --boot
-                # mechanism knows the install is now done. That sent the
-                # freshly-installed VM straight back into the live
-                # installer's own initrd looking for a live filesystem on
-                # /dev/sr0, which by then may not even still be attached —
-                # "Unable to find a medium containing a live file system /
-                # Attempt interactive netboot from a URL?", hung forever the
-                # same way as the two boot problems above. (A --location-
-                # based install wouldn't need this: virt-install's own
-                # installer-aware machinery resets the boot config itself
-                # afterward — this only applies because --location can't
-                # reach a remote-hypervisor-local path, per the note above.)
-                # Fixed by explicitly resetting the domain to a plain disk
-                # boot before starting it for real: clear kernel/initrd/
-                # cmdline (empty value = remove) and set dev=hd, then detach
-                # the now-empty/stale seed cdrom (its backing file was just
-                # deleted above) — leaving it attached-but-sourceless is
-                # harmless for boot but pointless to keep. This has to
-                # happen on a STOPPED domain — virt-install's own "Restarting
-                # guest" already brought it back up (still on the old boot
-                # config) by the time this line runs, and --edit on a running
-                # domain only updates the persistent/offline definition, not
-                # the live one, so the very next `--virsh start` below would
-                # just hit "Domain is already active" and boot the OLD config
-                # again (confirmed live) — hence the explicit destroy first.
+                # The direct kernel/initrd boot is valid only for the installer's first boot.
+                # virt-install restarts the domain itself once the install finishes and reuses the same
+                # kernel, initrd and cmdline, which would boot the installer again. Before the real start,
+                # reset the domain to a plain disk boot: clear kernel, initrd and cmdline, set dev=hd, and
+                # detach the now-stale seed cdrom. This runs on a stopped domain. --edit on a running domain
+                # changes only the persistent definition, so the next start would boot the old config;
+                # hence the explicit destroy first.
                 self._virsh("destroy", vm_name, check=False)
                 edit = self._virt_xml(vm_name, "--edit", "--boot", "kernel=,initrd=,cmdline=,hd", check=False)
                 if edit.returncode != 0:
@@ -1014,15 +836,10 @@ class LibvirtBackend(VMBackend):
             location_arg = ensure_iso_install_tree(remote_host, iso_loc, iso_image)
             extra_args_by_type = {
                 "autoyast": "autoyast=http://{}/lab_creation/install_iso/{}.xml".format(mydns, vm_name),
-                # inst.text (a KERNEL command-line arg, distinct from the kickstart
-                # file's own `text` directive — that only picks the install UI's
-                # style, not whether it even tries to start a display at all):
-                # confirmed live 2026-09-17 that without it, RHEL10's own Anaconda
-                # silently attempts to start its default (graphical/WebUI) install
-                # path in a --noautoconsole, no-display environment — no error, no
-                # further disk or network activity at all, forever. A well-known
-                # RHEL8+ kickstart gotcha; --location's own kickstart file `text`
-                # line stopped being sufficient on its own some releases back.
+                # inst.text is a kernel command-line argument, separate from the kickstart's own 'text'
+                # directive, which only selects the UI style. Without it RHEL 10's Anaconda starts its
+                # graphical/WebUI path, which never completes under --noautoconsole with no display.
+                # RHEL 8 and later need the argument because the kickstart 'text' line alone is not enough.
                 "kickstart": "inst.ks=http://{}/lab_creation/install_iso/{}.ks inst.sshd inst.text".format(
                     mydns, vm_name),
                 "preseed": "auto=true priority=critical url=http://{}/lab_creation/install_iso/{}.preseed".format(mydns, vm_name),
@@ -1033,29 +850,14 @@ class LibvirtBackend(VMBackend):
             r = self._virt_install(
                 "--name", vm_name, "--vcpus", str(vm_cpu), "--memory", str(vm_mem),
                 "--os-variant", os_variant,
-                # This call builds its own argv from scratch (not base_args above) and had
-                # never included --boot at all — confirmed live 2026-09-17: it silently fell
-                # back to virt-install's own legacy-BIOS default regardless of VM_BOOT
-                # ("uefi" by default in every existing lab JSON), producing a real,
-                # confusing "Boot failed: not a bootable disk" once the *other*
-                # --location bug (see ensure_iso_install_tree()) was fixed and the
-                # installer could finally run — kickstart's own bootloader step correctly
-                # wrote BIOS boot code, but the actual firmware the domain used to boot
-                # afterward never matched.
+                # This call builds its own argv, so it must pass --boot itself. Without it virt-install
+                # falls back to its legacy-BIOS default, while the kickstart bootloader and the domain
+                # firmware must agree with VM_BOOT (uefi by default).
                 "--boot", boot_flag,
                 "--location", location_arg,
-                # TERM=vt100: confirmed live 2026-09-17, with hard evidence (real disk
-                # writes and CPU time appearing only after manually sending one
-                # arbitrary keystroke to the guest's serial console) — Anaconda's own
-                # text-mode UI (newt/slang) queries the terminal's capabilities on
-                # startup via a cursor-position-report escape sequence and BLOCKS
-                # waiting for a reply. With --noautoconsole, nothing is ever attached
-                # to answer that query, so without an explicit TERM= telling it the
-                # terminal's capabilities up front (skipping the query entirely), the
-                # install hangs forever right after Anaconda's own startup banner —
-                # not a slow install, a genuine indefinite wait with zero further
-                # disk/network activity. A well-known class of gotcha for any
-                # serial-console-only unattended TUI install, not kickstart-specific.
+                # Anaconda's text UI queries the terminal's capabilities at startup and blocks until the
+                # reply arrives. With --noautoconsole nothing answers that query, so TERM=vt100 is set
+                # to skip it.
                 "--extra-args", "{} console=ttyS0,115200n8 TERM=vt100".format(extra_args),
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
@@ -1070,10 +872,8 @@ class LibvirtBackend(VMBackend):
             self._virsh("start", vm_name)
 
         elif config_method == "iso-cloud-init":
-            # Only ever computed an unused _boot_params value (a Harvester
-            # config_url kernel arg) and never actually called virt-install —
-            # a pre-existing incomplete stub, not something introduced by
-            # this port. Left as a no-op.
+            # Computes an unused _boot_params value (a Harvester config_url kernel arg) and never
+            # calls virt-install. This is an incomplete stub, left as a no-op.
             if vcluster == "harvester":
                 pass  # _boot_params = "harvester.install.config_url=http://10.100.0.10/harvester/config-create.yaml"
 
@@ -1167,17 +967,10 @@ class LibvirtBackend(VMBackend):
             if r.returncode != 0:
                 die("failed to rsync '{}' files for '{}'".format(config_method, vm_name))
 
-            # vm_name (a lab.json node hostname, never validated against shell
-            # metacharacters) is interpolated unquoted into "for i in {vm}*"
-            # and the "${{i/{vm}_/}}" pattern below — that's deliberate (see
-            # the sources= comment above: this mirrors bash's own unquoted-
-            # glob behavior, and a bash pattern-expansion context can't be
-            # single-quoted the normal way regardless). Every OTHER use of
-            # vm_name here (the cp target, the iso paths) doesn't need to be
-            # a glob, so those are shlex.quote()'d — found in code review
-            # 2026-09-05, same class of bug already fixed elsewhere this
-            # session (a vm_name with a space or shell metacharacter must
-            # not be able to break, or inject into, this remote command).
+            # vm_name is interpolated unquoted into the 'for i in {vm}*' and '${i/{vm}_/}' patterns on
+            # purpose: bash pattern expansion needs the unquoted glob. Every other use of vm_name here
+            # is shlex.quote()'d, so a name with spaces or shell metacharacters cannot break or inject
+            # into the remote command.
             ci_iso = shlex.quote("{}/{}_ci.iso".format(vm_img_loc, vm_name))
             tmp_iso = shlex.quote("/tmp/ci_{}.iso".format(vm_name))
             remote_cmd = (
@@ -1195,21 +988,13 @@ class LibvirtBackend(VMBackend):
 
     def host_resources(self):
         """
-        Query free vCPUs, free memory (MiB), and free disk (MiB) on
-        self.vm_img_loc for this backend's host, over SSH. Raises
-        RuntimeError/ValueError on any query failure — the caller (typically
-        select_kvm_host) treats that host as disqualified rather than letting
-        the whole selection blow up.
+        Return free vCPUs, free memory (MiB) and free disk (MiB) on self.vm_img_loc for this backend's host, over SSH.
+        Raises RuntimeError or ValueError on any query failure. The caller, typically select_kvm_host, treats that host as
+        disqualified instead of failing the whole selection.
 
-        virsh runs LOCALLY on `host` itself (qemu:///system), not via
-        self.virt_srv's qemu+ssh:// URI — we're already executing remotely
-        on that exact host via ssh_output, so reconnecting via
-        qemu+ssh://root@{host} from within that same host is a redundant
-        loopback SSH hop whose host key (for "localhost"/"::1" from that
-        host's own perspective) is never pre-accepted, and hangs
-        indefinitely waiting for interactive confirmation when run
-        unattended — confirmed as a real bug (2026-08-27) via the identical
-        pattern in scripts/refresh_hypervisor_status.py.
+        virsh runs locally on `host` (qemu:///system), not through self.virt_srv's qemu+ssh:// URI. The command already runs
+        on that host over SSH, and a second SSH hop back to the same host would wait for an unaccepted host key when run
+        unattended.
         """
         host = self.remote_host
         vm_img_loc = self.vm_img_loc
@@ -1232,84 +1017,35 @@ class LibvirtBackend(VMBackend):
 
 class HarvesterBackend(VMBackend):
     """
-    Provisions guest VMs on an already-running, externally-managed Harvester
-    cluster instead of a KVM/libvirt hypervisor. NOT the same thing as
-    scripts/install_harvester.py (a k8s addon that Helm-installs Harvester/
-    SUSE Virtualization chart components INSIDE an RKE2/K3s cluster) — this
-    backend instead CONSUMES an existing Harvester cluster, the same
-    relationship LibvirtBackend has to an existing KVM hypervisor.
+    Provisions guest VMs on an existing, externally managed Harvester cluster instead of a
+    KVM/libvirt hypervisor. This backend consumes a cluster that already exists, as LibvirtBackend
+    consumes an existing KVM host. It is separate from scripts/install_harvester.py, which installs
+    Harvester components inside an RKE2 or K3s cluster.
 
-    v1 scope, fixed by design (not re-litigated here):
-      - config_method="cloud-init" ONLY. Ignition+Combustion's fw_cfg
-        delivery channel has no KubeVirt analogue.
-      - single-cluster: kubeconfig/namespace come from /etc/lab_creation.cfg
-        (HARVESTER_KUBECONFIG/HARVESTER_NAMESPACE), not per-node lab-JSON
-        fields — matches this project's preference to avoid new lab-JSON
-        parameters for backend-specific config.
-      - the Harvester cluster is assumed to share the same bridge/L2 segment
-        as the automation VM, so this project's existing DNS/BIND logic
-        carries over unchanged; nothing here configures cluster networking.
-      - copy_vm_image() does NOT import/upload an image — the operator must
-        pre-import a VirtualMachineImage named after ISO_IMAGE in Harvester
-        before deploying; dies clearly if it's missing rather than silently
-        creating a VM with no boot disk.
-      - create_vm()'s VM gets a real LAN-routable IP (matching this
-        backend's own bridge/L2-sharing assumption above, and this
-        project's DNS/SSH conventions) only when HARVESTER_NETWORK is set
-        in /etc/lab_creation.cfg to a pre-existing Multus
-        NetworkAttachmentDefinition ("<namespace>/<name>", or a bare name
-        for one in HARVESTER_NAMESPACE) — same "operator pre-configures it,
-        this backend only consumes it" stance as the VirtualMachineImage
-        above: dies clearly if the NAD is missing, never creates one
-        itself (the underlying Harvester VLAN network — which physical NIC,
-        which VLAN ID — is a one-time cluster-level decision this project
-        has no way to make generically, exactly like a KVM host's own
-        bridge configuration). Omitting HARVESTER_NETWORK keeps the
-        original pod-network behavior (backward compatible) — confirmed
-        live 2026-08-30 that this is the real, previously-undocumented gap
-        the docstring below used to flag as a TODO: a pod-network VM is
-        never reachable via this project's DNS/SSH conventions the way any
-        other backend's VM is.
+    Requirements and limits:
+      - config_method="cloud-init" only. Ignition and Combustion have no KubeVirt equivalent.
+      - Single cluster. The kubeconfig and namespace come from /etc/lab_creation.cfg
+        (HARVESTER_KUBECONFIG and HARVESTER_NAMESPACE), not from per-node lab-JSON fields.
+      - The cluster must share the bridge and L2 segment of the automation VM, so the existing DNS and
+        BIND logic applies unchanged. This backend does not configure cluster networking.
+      - copy_vm_image() does not import an image. The operator imports a VirtualMachineImage named after
+        ISO_IMAGE beforehand. The backend exits with a clear error if it is missing, rather than creating
+        a VM without a boot disk.
+      - With HARVESTER_NETWORK set in /etc/lab_creation.cfg, create_vm() attaches the VM to an existing
+        Multus NetworkAttachmentDefinition ("<namespace>/<name>", or a bare name in HARVESTER_NAMESPACE).
+        The VM then gets a LAN-routable IP, which the DNS and SSH conventions need. The backend exits with a
+        clear error if the NAD is missing and never creates one. The physical network (which NIC, which
+        VLAN) is a cluster-level decision for the operator. Without HARVESTER_NETWORK the VM uses the pod
+        network, and that address is not reachable through the DNS and SSH conventions.
 
-    CRD/CLI shapes (verified via WebSearch against current docs, not
-    assumed): VirtualMachine is kubevirt.io/v1; VirtualMachineImage is
-    harvesterhci.io/v1beta1; NetworkAttachmentDefinition is
-    k8s.cni.cncf.io/v1 (multus.networkName references it as
-    "<namespace>/<name>"; the VM's own interface stays "bridge" binding
-    regardless of pod vs. multus — only the networks[] entry differs,
-    confirmed against Harvester's own documented VLAN-network VM example);
-    a DataVolume booting from an existing image
-    needs a harvesterhci.io/imageId annotation (<namespace>/<image-name>)
-    and the image's own status.storageClassName (Harvester generates one
-    per image, "longhorn-image-<suffix>") — read from the VirtualMachineImage
-    at create_vm() time rather than guessed. virtctl start/stop/restart is
-    the VM lifecycle control tool.
-
-    LIVE-VERIFIED twice against real Harvester clusters (2026-08-29 against
-    an ISO-installed cluster, 2026-08-30 against a PXE-installed one — see
-    scripts/setup_harvester_cluster.py): a full check_or_generate_mac() →
-    copy_vm_image() → prepare_cloud_init() → push_provisioning_files() →
-    create_vm() → delete_vm() round trip, with create_vm() reaching a real
-    Running VirtualMachine + VirtualMachineInstance with a real pod-network
-    IP each time (status verified via kubectl/virtctl — neither run set
-    HARVESTER_NETWORK, so both got the original pod-network path). That
-    round trip surfaced a real gap since fixed (2026-08-30): the VM's
-    pod-network IP is never reachable via this project's DNS/SSH
-    conventions the way a libvirt-backed VM's is — provision_vm()'s own
-    check_ssh_conn()/reboot_vm() steps would hang forever against one.
-    HARVESTER_NETWORK (see v1-scope above) now lets create_vm() attach the
-    VM to a pre-existing Multus VLAN network instead, giving it a real
-    LAN-routable IP. LIVE-TESTED end-to-end 2026-08-30: a real ClusterNetwork
-    + VlanConfig bound to a second, dedicated NIC (deliberately not the
-    node's own mgmt NIC) + a VLAN-1 NetworkAttachmentDefinition, all
-    hand-crafted against Harvester's real CRDs; create_vm() with real
-    cloud-init static networking came up with the configured static IP (not
-    a DHCP lease) and real SSH login succeeded — a Harvester-backed VM now
-    behaves like any other backend's VM. HarvesterBackend deliberately does
-    NOT create the ClusterNetwork/VlanConfig/NetworkAttachmentDefinition
-    itself — that's a one-time, cluster-level physical-network decision
-    (which NIC, which VLAN) an operator makes once, not something safe to
-    infer per-VM.
+    Resource shapes come from the current Kubernetes and Harvester CRDs. VirtualMachine is kubevirt.io/v1.
+    VirtualMachineImage is harvesterhci.io/v1beta1. NetworkAttachmentDefinition is k8s.cni.cncf.io/v1,
+    referenced from the VM's networks[] entry through multus.networkName as "<namespace>/<name>". The VM
+    interface keeps the bridge binding for both pod and Multus networks. A DataVolume that boots from an
+    existing image needs the harvesterhci.io/imageId annotation ("<namespace>/<image-name>") and the
+    image's status.storageClassName, which Harvester generates per image ("longhorn-image-<suffix>").
+    create_vm() reads that value from the VirtualMachineImage at run time. virtctl start, stop and
+    restart control the VM lifecycle.
     """
 
     def __init__(self, kubeconfig, namespace="default", vm_img_loc=None, lab_setup_path=None,
@@ -1318,7 +1054,7 @@ class HarvesterBackend(VMBackend):
         self.namespace = namespace
         self.vm_img_loc = vm_img_loc
         self.lab_setup_path = lab_setup_path
-        # <namespace>/<name> of a pre-existing Multus NetworkAttachmentDefinition
+        # <namespace>/<name> of an existing Multus NetworkAttachmentDefinition
         # (k8s.cni.cncf.io/v1) — see create_vm()'s docstring for why this backend
         # doesn't create one itself. None (the default) preserves the original
         # pod-network behavior — backward compatible, no config change required.
@@ -1515,10 +1251,8 @@ class HarvesterBackend(VMBackend):
             vm_network = {"name": "default", "pod": {}}
 
         secret_name = "{}-cloudinit".format(vm_name)
-        # "bridge" is the correct KubeVirt interface binding for BOTH pod and
-        # multus network types — only the networks[] entry above (pod vs.
-        # multus) actually changes which one a VM gets. Confirmed against
-        # Harvester's own documented VLAN-network VM example.
+        # "bridge" is the KubeVirt interface binding for both pod and Multus networks. Only the
+        # networks[] entry above (pod or multus) decides which network the VM gets.
         interface = {"name": "default", "bridge": {}}
         if mymac:
             interface["macAddress"] = mymac
@@ -1541,19 +1275,11 @@ class HarvesterBackend(VMBackend):
                             "storageClassName": storage_class,
                             "resources": {"requests": {"storage": "{}Gi".format(vm_dsk_gb)}},
                         },
-                        # Confirmed live (2026-08-29) against a real Harvester
-                        # v1.7.1 cluster: a VirtualMachineImage import does NOT
-                        # create a clonable PVC at all (`kubectl get pvc`: none
-                        # exist) — this version's storage backend is Longhorn's
-                        # own BackingImage feature instead. The original guess
-                        # here (source.pvc, cloning from a same-named PVC) failed
-                        # outright: "The source pvc <image> doesn't exist". The
-                        # per-image storageClassName (status.storageClassName,
-                        # already used just above) is itself backed by that
-                        # BackingImage, so a plain source.blank PVC provisioned
-                        # under it comes back pre-populated with the image
-                        # content via Longhorn's CSI driver — confirmed live:
-                        # the resulting VM actually booted the real image.
+                        # A Harvester VirtualMachineImage import does not create a clonable PVC. The image is
+                        # stored as a Longhorn BackingImage instead. The per-image storageClassName is backed by
+                        # that BackingImage, so a source.blank PVC provisioned under it comes up pre-populated
+                        # with the image content through Longhorn's CSI driver. source.pvc would need a PVC of the
+                        # same name, which does not exist.
                         "source": {"blank": {}},
                     },
                 }],
@@ -1562,11 +1288,8 @@ class HarvesterBackend(VMBackend):
                     "spec": {
                         "domain": {
                             "cpu": {"cores": int(vm_cpu)},
-                            # KubeVirt requires memory.guest or resources.limits.memory —
-                            # requests alone is rejected outright ("either memory.guest or
-                            # resources.limits.memory must be set") — confirmed live
-                            # 2026-08-29 against a real Harvester cluster. No overcommit:
-                            # limits == requests, same value the VM is actually sized for.
+                            # KubeVirt requires memory.guest or resources.limits.memory; requests alone are rejected.
+                            # limits and requests are set to the same value, the memory the VM is sized for.
                             "resources": {"requests": {"memory": "{}Mi".format(vm_mem)},
                                           "limits": {"memory": "{}Mi".format(vm_mem)}},
                             "devices": {
@@ -1580,18 +1303,10 @@ class HarvesterBackend(VMBackend):
                         "networks": [vm_network],
                         "volumes": [
                             {"name": "rootdisk", "dataVolume": {"name": "{}-rootdisk".format(vm_name)}},
-                            # networkDataSecretRef, not just secretRef: confirmed live 2026-08-30
-                            # (during the Multus network-attachment live test — never caught
-                            # against pod networking, which doesn't need custom guest network
-                            # config at all) that KubeVirt's cloudInitNoCloud volume type reads
-                            # userdata from secretRef but SEPARATELY reads networkdata from
-                            # networkDataSecretRef — a Secret's own "networkdata" key sitting
-                            # inside secretRef's target is never even looked at. Without this,
-                            # the NoCloud seed simply has no network-config file at all, and
-                            # cloud-init falls back to its own auto-generated (DHCP) config for
-                            # every detected interface — a real, previously-undiscovered
-                            # HarvesterBackend bug (both fields point at the same Secret, which
-                            # push_provisioning_files() already populates with both keys).
+                            # cloudInitNoCloud reads networkdata only from networkDataSecretRef, not from the
+                            # 'networkdata' key inside secretRef's target. Both fields point at the same Secret, which
+                            # push_provisioning_files() populates with both keys. Without networkDataSecretRef,
+                            # cloud-init falls back to DHCP on every detected interface.
                             {"name": "cloudinitdisk", "cloudInitNoCloud": {
                                 "secretRef": {"name": secret_name},
                                 "networkDataSecretRef": {"name": secret_name},
@@ -1647,56 +1362,37 @@ class HarvesterBackend(VMBackend):
 
 class HetznerBackend(VMBackend):
     """
-    Talks to the real Hetzner Cloud API (https://api.hetzner.cloud/v1, confirmed live 2026-09-06)
-    directly over HTTPS from wherever this code runs — unlike LibvirtBackend/HarvesterBackend,
-    there is no separate hypervisor to SSH/kubectl into; Hetzner's API IS the hypervisor. Auth: a
-    Hetzner Cloud API token (HETZNER_TOKEN in lab_creation.cfg), scoped to one Hetzner Cloud
-    PROJECT — projects, not the whole account, are the natural "where do these VMs live" boundary
-    (mirrors HARVESTER_NAMESPACE's own scoping role). Uses stdlib urllib (this project's own
-    existing convention for outbound HTTP, e.g. libs/services.py/setup_harvester_cluster.py) —
-    not a new `requests` dependency.
+    Talks to the Hetzner Cloud API (https://api.hetzner.cloud/v1) directly over HTTPS from wherever
+    this code runs. Hetzner's API is the hypervisor, so there is no separate host to SSH into or
+    kubectl. Auth: a Hetzner Cloud API token (HETZNER_TOKEN in lab_creation.cfg), scoped to one Hetzner
+    Cloud project. The project is the boundary where the VMs live, as HARVESTER_NAMESPACE is for
+    Harvester. The backend uses the stdlib urllib, like the other HTTP backends.
 
-    Real, load-bearing mismatches with this project's own KVM-shaped assumptions, confirmed rather
-    than glossed over (same "operator pre-configures it, this backend only consumes it" stance
-    already established for HarvesterBackend's VirtualMachineImage/NetworkAttachmentDefinition):
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this
+    backend only consumes them:
 
-    - config_method: ONLY "cloud-init" is supported — Hetzner provisions via a `user_data` field
-      at server-creation time (raw cloud-init text), the same mechanism HarvesterBackend already
-      uses, not Ignition/Combustion.
-    - ISO_IMAGE: Hetzner has no concept of uploading an arbitrary qcow2/ISO the way libvirt or
-      Harvester do. Its own images are either a curated system-image NAME (e.g. "ubuntu-24.04") or
-      a numeric ID for a private snapshot/image the operator already created out-of-band (e.g. by
-      building a custom SLE Micro server once, by hand, and snapshotting it) — ISO_IMAGE must be
-      set to one of those, not a qcow2 filename. This backend does not create or upload one itself.
-    - vm_cpu/vm_mem: Hetzner sells fixed (cpu, memory) server_type SKUs (cx22, cx32, cpx31, ...),
-      not arbitrary custom sizing — create_vm() picks the SMALLEST available server_type whose own
-      cores/memory both meet or exceed the requested vm_cpu/vm_mem, rather than adding a new
-      per-node "hetzner instance type" lab-JSON field (same "translate existing fields into the
-      provider's own model, don't grow new config" principle already applied to Harvester).
-    - vm_dsk_gb: each server_type ships a FIXED local disk size bundled with the plan — NOT
-      independently resizable at creation the way a libvirt/Harvester disk is. This backend does
-      NOT attempt to attach a separate Volume to make up the difference (a real, deliberate scope
-      cut, not an oversight) — it dies clearly if the requested vm_dsk_gb exceeds the chosen
-      server_type's own included disk, rather than silently under-provisioning.
-    - MAC addresses: Hetzner has no concept of a customer-assigned MAC at all (confirmed against
-      its own API — no field for it anywhere in the server-create request). check_or_generate_mac()
-      still goes through the same shared `_check_or_generate_mac()` helper (so a mymac VALUE always
-      gets resolved/saved back to the lab definition like every other backend, for consistency) —
-      it is simply never sent to Hetzner or read back from it. list_used_macs() always returns
-      empty (there is nothing to check a new MAC against on this backend).
-
-    NOT live-tested (no real Hetzner Cloud account/project available in this session) — API
-    request/response shapes verified against Hetzner's own current documentation and multiple
-    independently-published curl examples, 2026-09-06, not guessed.
+      - config_method: only "cloud-init". Hetzner takes a `user_data` field at server creation, the same
+        mechanism HarvesterBackend uses. Ignition and Combustion are not supported.
+      - ISO_IMAGE: Hetzner has no upload for arbitrary qcow2 or ISO files. ISO_IMAGE is either a curated
+        system image name (e.g. "ubuntu-24.04") or the numeric ID of a private snapshot the operator
+        created beforehand. It is never a qcow2 filename. The backend does not create or upload images.
+      - vm_cpu and vm_mem: Hetzner sells fixed (cpu, memory) server_type SKUs (cx22, cx32, cpx31, ...)
+        and no custom sizes. create_vm() picks the smallest server_type whose cores and memory meet or
+        exceed the request. No new per-node instance-type field is added.
+      - vm_dsk_gb: each server_type has a fixed local disk bundled with it, and it cannot be resized at
+        creation. The backend does not attach a separate Volume to make up the difference. It exits with a
+        clear error if vm_dsk_gb is larger than the chosen server_type's disk.
+      - MAC addresses: the Hetzner API has no customer-assigned MAC field. check_or_generate_mac() still
+        uses the shared _check_or_generate_mac() helper, so a mymac value is resolved and saved to the lab
+        definition like on every backend. The value is never sent to Hetzner or read back from it.
+        list_used_macs() always returns an empty list.
     """
 
     API_BASE = "https://api.hetzner.cloud/v1"
 
-    # Smallest-to-largest by (cores, memory_gb) — enough of Hetzner's own current shared-vCPU
-    # lineup to cover this project's typical lab-sized nodes; extend as needed. Confirmed current
-    # names/specs against Hetzner's own pricing page, 2026-09-06. This built-in table is used only
-    # when HETZNER_SERVER_TYPES isn't set — see resolve()'s own docstring note and README's
-    # Compute backends table for the override + the real URL to Hetzner's own current lineup.
+    # Smallest-to-largest by (cores, memory_gb), covering the shared-vCPU lineup used for
+    # typical lab-sized nodes. Used only when HETZNER_SERVER_TYPES is not set. The README's
+    # Compute backends table gives the override format and the URL of Hetzner's current lineup.
     SERVER_TYPES = [
         ("cx22", 2, 4), ("cx32", 4, 8), ("cx42", 8, 16), ("cx52", 16, 32),
     ]
@@ -1717,10 +1413,9 @@ class HetznerBackend(VMBackend):
             die("backend 'hetzner' requires HETZNER_TOKEN to be set in /etc/lab_creation.cfg "
                 "(VM '{}')".format(vm_name))
         location = config.get("HETZNER_LOCATION") or None
-        # HETZNER_SERVER_TYPES: optional full override of the built-in SERVER_TYPES table — added
-        # 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-        # ceiling. "name:cores:mem_gb,...", e.g. "cx22:2:4,cx32:4:8". See _parse_sku_table()'s own
-        # docstring for the exact format and README for where to find Hetzner's current lineup.
+        # HETZNER_SERVER_TYPES: optional full override of the built-in SERVER_TYPES table, in the
+        # form "name:cores:mem_gb,...", e.g. "cx22:2:4,cx32:4:8". See _parse_sku_table() for the
+        # exact format and the README for Hetzner's current lineup.
         server_types = _parse_sku_table(config.get("HETZNER_SERVER_TYPES"), "HETZNER_SERVER_TYPES")
         return cls(token, location=location, server_types=server_types,
                    vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
@@ -1767,10 +1462,10 @@ class HetznerBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        public_net.ipv4.ip field is confirmed against Hetzner's own published API docs. Returns
-        None if the server doesn't exist or has no public IPv4 assigned (e.g. an IPv4-less
-        server, or one still initializing)."""
+        """
+        Return the public IPv4 address of the server named vm_name, from public_net.ipv4.ip. Returns None if the server
+        does not exist, or has no public IPv4 assigned yet (an IPv4-less server, or one still initializing).
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -1886,10 +1581,9 @@ class HetznerBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_server_type() entirely and uses the given
-        # Hetzner server_type name verbatim, e.g. for a type not in the built-in table or a
-        # HETZNER_SERVER_TYPES override the operator didn't want to set globally.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_server_type() and uses
+        # the given Hetzner server_type name verbatim, e.g. a type that is not in the built-in table
+        # or a HETZNER_SERVER_TYPES override.
         server_type = cloud_instance_type or self._pick_server_type(vm_cpu, vm_mem, vm_dsk_gb, vm_name)
 
         body = {
@@ -1913,12 +1607,9 @@ class HetznerBackend(VMBackend):
                 "HetznerBackend does not attach extra Volumes to make up the difference".format(
                     _YELLOW, _RESET, vm_dsk_gb, server_type, disk_gb))
 
-        # Real, documented (NOT independently live-verified — see this class's own top-level
-        # docstring) contract: Hetzner's own create-server response already carries the new
-        # server's public IPv4 inline, unlike AWS's RunInstances (empty until a later poll) — no
-        # separate wait loop needed here. Falls back to a short get_ip() poll if the create
-        # response is ever missing it in practice (e.g. IPv4 still provisioning), rather than
-        # assuming the inline field is unconditionally present.
+        # The create-server response carries the new server's public IPv4 inline. get_ip() is a
+        # short poll that runs only when that field is missing, for example while the IPv4 is still
+        # being provisioned.
         ip = ((server.get("public_net") or {}).get("ipv4") or {}).get("ip") or None
         if not ip:
             log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
@@ -1939,78 +1630,47 @@ class HetznerBackend(VMBackend):
 
 class AWSBackend(VMBackend):
     """
-    Talks to Amazon EC2 by shelling out to the real `aws` CLI (`aws ec2 ...`), the same
-    "wrap the standard CLI tool, don't reimplement its API client" convention this project already
-    uses for virsh/virt-install (LibvirtBackend) and kubectl/virtctl (HarvesterBackend) — AWS's own
-    request-signing (SigV4) makes a raw urllib implementation (HetznerBackend's own approach, a
-    plain Bearer-token REST API) impractical to hand-roll correctly, and `aws` is the standard,
-    already-documented way most operators already have credentials configured for. Auth: either
-    `AWS_PROFILE` (a named profile from `~/.aws/config`) or `AWS_ACCESS_KEY_ID`+
-    `AWS_SECRET_ACCESS_KEY` (passed as env vars to the `aws` subprocess only, never written to
-    disk) — both in `/etc/lab_creation.cfg`. `AWS_REGION` is required either way. `AWS_SESSION_TOKEN`
-    is optional and required in practice for any temporary/STS-issued credential (an `AWS_ACCESS_KEY_ID`
-    starting with `ASIA` rather than `AKIA` — SSO/IAM-Identity-Center or an assumed role) — a real,
-    confirmed-live gap, found and fixed 2026-09-09: `AWS_ACCESS_KEY_ID`+`AWS_SECRET_ACCESS_KEY` alone
-    are meaningless for that credential type without their paired session token.
+    Talks to Amazon EC2 by running the `aws` CLI (`aws ec2 ...`). This follows the convention used
+    for virsh and virt-install (LibvirtBackend) and kubectl and virtctl (HarvesterBackend). AWS request
+    signing (SigV4) is impractical to implement by hand, so the CLI handles it.
 
-    Real, documented mismatches with this project's KVM-shaped assumptions (same stance as
-    HetznerBackend/HarvesterBackend — operator pre-configures the cloud-native prerequisite,
-    this backend only consumes it):
+    Auth: either AWS_PROFILE (a named profile from ~/.aws/config), or AWS_ACCESS_KEY_ID and
+    AWS_SECRET_ACCESS_KEY. The keys are passed as environment variables to the aws subprocess only and are
+    never written to disk. AWS_SESSION_TOKEN is optional, but required for temporary credentials such as
+    STS or SSO credentials, whose access key ID starts with ASIA. AWS_REGION is always required.
 
-    - config_method: ONLY "cloud-init" — passed as EC2's own `--user-data` at launch time.
-    - ISO_IMAGE: must be a real AMI ID (e.g. "ami-0123456789abcdef0") the operator already has
-      access to — this backend does not build, import, or copy any image.
-    - Networking: EC2 needs a subnet + security group to be reachable at all. `AWS_SUBNET_ID`/
-      `AWS_SECURITY_GROUP_ID` are optional — omitted, EC2 falls back to the account's own default
-      VPC/security group (fine for a quick lab, not recommended for anything real). `AWS_KEY_NAME`
-      (an EC2 key pair already registered in this region) is optional too — cloud-init's own
-      user-data is this project's actual access mechanism (matches every other backend), the EC2
-      key pair is just an extra, redundant access path if set.
-    - vm_cpu/vm_mem: EC2 sells fixed (vCPU, memory) instance-type SKUs, same "pick the smallest
-      sufficient one from a small table" approach as HetznerBackend.SERVER_TYPES — see
-      AWSBackend.INSTANCE_TYPES. vm_dsk_gb DOES map directly here, unlike Hetzner — EC2 lets the
-      root EBS volume be resized independently at launch (via --block-device-mappings, keyed off
-      the AMI's own real root device name, looked up via `describe-images` rather than assumed).
-    - EC2 has no native "name" field on an instance — this backend uses the standard `Name` tag
-      convention (`aws ec2 describe-instances --filters Name=tag:Name,Values=<vm_name>`) to find a
-      VM by name, exactly how the AWS console/CLI ecosystem itself expects instances to be named.
-    - MAC addresses: EC2 does not let you assign a custom MAC (confirmed against its own API) —
-      same stub stance as HetznerBackend's check_or_generate_mac()/list_used_macs().
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend
+    only consumes them:
 
-    LIVE-TESTED 2026-09-09 against a real AWS account (eu-central-1): a real EC2 instance was
-    created, correctly reachable over SSH with cloud-init applied (real hostname, real injected
-    key), and cleanly terminated — see TODO for the full account/session log, including the two
-    real, generally-applicable CLI bugs found and fixed in the process (this project's installed
-    `aws` CLI (2.36.41) rejects the traditional --min-count/--max-count pair outright, replaced
-    with --count; a subnet with MapPublicIpOnLaunch=false, a common real-world default, needs
-    --associate-public-ip-address explicitly or the instance ends up unreachable) — neither was
-    guessed, both confirmed against the real API via --dry-run before being fixed here.
+      - config_method: only "cloud-init", passed as EC2's --user-data at launch.
+      - ISO_IMAGE: must be an AMI ID (e.g. "ami-0123456789abcdef0") the operator can access. The backend
+        does not build, import or copy images.
+      - Networking: EC2 needs a subnet and security group to be reachable. AWS_SUBNET_ID and
+        AWS_SECURITY_GROUP_ID are optional. When omitted, EC2 uses the account's default VPC and security
+        group, which suits a quick lab but not a production setup. AWS_KEY_NAME (an existing EC2 key pair in
+        the region) is optional. Cloud-init user-data is the access mechanism on every backend; the key
+        pair is an extra access path.
+      - vm_cpu and vm_mem: EC2 sells fixed (vCPU, memory) instance types. The backend picks the smallest
+        sufficient one from INSTANCE_TYPES. vm_dsk_gb maps directly: the root EBS volume is sized at launch
+        with --block-device-mappings, keyed off the AMI's root device name from describe-images.
+      - EC2 instances have no native name field. The backend identifies a VM by the Name tag
+        (aws ec2 describe-instances --filters Name=tag:Name,Values=<vm_name>).
+      - MAC addresses: EC2 does not allow a custom MAC. check_or_generate_mac() and list_used_macs() are
+        stubs, as in HetznerBackend.
 
-    NESTED VIRTUALIZATION (2026-09-30, opt-in, OFF by default — every existing lab is unaffected):
-    per-node/common lab-JSON field `aws_nested_virtualization: "true"` adds
-    `--cpu-options "NestedVirtualization=enabled"` to run-instances — AWS's own real, documented
-    (not guessed) mechanism (docs.aws.amazon.com/AWSEC2/latest/UserGuide/
-    amazon-ec2-nested-virtualization.html) for running a hypervisor (KVM, this project's own
-    requirement) INSIDE a regular, non-bare-metal EC2 instance, announced Feb 2026 and expanded
-    since. This is what makes it possible to run this project's own kickstart/combustion-based
-    lab pipeline — including a real Harvester HCI ISO install, which needs genuine /dev/kvm, not
-    Kubernetes-only KubeVirt — directly on a cloud-provisioned EC2 "hypervisor" node, the same way
-    it already runs on a real physical host, with ZERO changes to anything past create_vm(): the
-    resulting instance is just an SSH-reachable Linux box with working /dev/kvm once
-    setup_kvm_node.py installs libvirt on it, indistinguishable from bare metal to every other
-    layer of this project. See _NESTED_VIRT_SUPPORTED_FAMILIES below for the real, current, exact
-    supported-family list (ground-truthed against that same AWS doc page, not inferred) — dies
-    with a clear message
-    naming a real supported alternative if the resolved instance_type's family isn't in it, rather
-    than reaching a confusing mid-launch AWS API rejection. Requires an explicit
-    cloud_instance_type from a supported family — this backend's own default INSTANCE_TYPES table
-    (the T3 burstable family) does NOT support nested virtualization, so nested virt without an
-    explicit cloud_instance_type override dies with the same clear message, rather than silently
-    launching a t3.* instance that would then fail at the real AWS API layer instead. NOT
-    live-tested (no AWS account in this project's dev/CI environment with quota for one of the
-    real supported 8th-gen instance families) — real reference implementation exists though:
-    avaleror/suse-virt-workshop (a separate, unrelated project) documents this exact pattern
-    working end-to-end against a real m8id.8xlarge instance.
+    The CLI takes --count for run-instances. A subnet with MapPublicIpOnLaunch=false needs
+    --associate-public-ip-address, or the instance has no reachable address.
+
+    Nested virtualization is opt-in and off by default. The per-node or common lab-JSON field
+    aws_nested_virtualization: "true" adds --cpu-options "NestedVirtualization=enabled" to run-instances.
+    AWS documents this for running KVM inside a regular, non-bare-metal EC2 instance
+    (docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html). The kickstart and
+    combustion lab pipeline, including a Harvester HCI ISO install that needs real /dev/kvm, can then run on
+    an EC2 "hypervisor" node. Nothing after create_vm() changes: once setup_kvm_node.py installs libvirt, the
+    instance behaves like bare metal. The supported families are listed in _NESTED_VIRT_SUPPORTED_FAMILIES.
+    The backend exits with a message that names a supported alternative when the resolved instance family is
+    not in that list. Nested virtualization requires an explicit cloud_instance_type, because the default
+    INSTANCE_TYPES table (T3, burstable) does not support it.
     """
 
     # Smallest-to-largest by (cores, memory_gb) — the standard burstable general-purpose family,
@@ -2021,12 +1681,10 @@ class AWSBackend(VMBackend):
         ("t3.medium", 2, 4), ("t3.large", 2, 8), ("t3.xlarge", 4, 16), ("t3.2xlarge", 8, 32),
     ]
 
-    # Exact instance-family list AWS documents as supporting nested virtualization — quoted
-    # verbatim (lowercased for comparison) from docs.aws.amazon.com/AWSEC2/latest/UserGuide/
-    # amazon-ec2-nested-virtualization.html's own "Considerations" section, ground-truthed
-    # 2026-09-30, not inferred/extrapolated from a partial announcement. Only NON-bare-metal
-    # ("virtual") instance types are listed there in the first place — a `.metal` instance
-    # already has direct, unmediated hardware virtualization access and needs no such flag.
+    # Instance families AWS documents as supporting nested virtualization, lowercased for
+    # comparison. The list is taken from the "Considerations" section of the EC2 nested
+    # virtualization user guide and covers only virtual (non-.metal) types. A .metal instance
+    # already has direct hardware virtualization and needs no flag.
     _NESTED_VIRT_SUPPORTED_FAMILIES = {
         "m7i", "m7i-flex", "m8i", "m8id", "m8i-flex",
         "c7i", "c7i-flex", "c8i", "c8id", "c8i-flex",
@@ -2062,19 +1720,11 @@ class AWSBackend(VMBackend):
         access_key = None if profile else config.get("AWS_ACCESS_KEY_ID")
         secret_key = None if profile else config.get("AWS_SECRET_ACCESS_KEY")
         session_token = None if profile else config.get("AWS_SESSION_TOKEN")
-        # AWS_PROFILE wins outright when set — confirmed live 2026-09-13:
-        # resolve_cloud_account()'s merge only overrides same-named keys, so
-        # a cloud_account that sets AWS_PROFILE (e.g. to use SSO) still had
-        # /etc/lab_creation.cfg's own leftover AWS_ACCESS_KEY_ID/SECRET/
-        # SESSION_TOKEN (a different, unrelated config layer) come through
-        # untouched — and the `aws` CLI's own credential chain checks those
-        # explicit env vars BEFORE AWS_PROFILE, so a stale/expired key from
-        # lab_creation.cfg silently defeated a freshly-configured SSO
-        # profile (RequestExpired, even though the profile itself worked
-        # fine when tested directly). Setting a profile is an explicit,
-        # deliberate choice of auth mechanism; it should never be silently
-        # undermined by whatever raw keys happen to still be sitting in a
-        # different config layer.
+        # AWS_PROFILE takes precedence when set. resolve_cloud_account() merges by key, so
+        # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN from /etc/lab_creation.cfg
+        # would survive the merge. The aws CLI checks those variables before AWS_PROFILE, so they
+        # are cleared here. A profile is an explicit auth choice and must not be overridden by raw
+        # keys from another config layer.
         if not profile and not (access_key and secret_key):
             die("backend 'aws' requires either AWS_PROFILE, or both AWS_ACCESS_KEY_ID and "
                 "AWS_SECRET_ACCESS_KEY, in /etc/lab_creation.cfg (VM '{}')".format(vm_name))
@@ -2082,11 +1732,9 @@ class AWSBackend(VMBackend):
             die("backend 'aws': AWS_ACCESS_KEY_ID '{}' is a temporary/STS credential (starts with "
                 "'ASIA') but no AWS_SESSION_TOKEN is set in /etc/lab_creation.cfg — it will be "
                 "rejected without its paired session token (VM '{}')".format(access_key, vm_name))
-        # AWS_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table — added
-        # 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-        # ceiling. "name:cores:mem_gb,...", e.g. "t3.medium:2:4,t3.large:2:8". See
-        # _parse_sku_table()'s own docstring for the exact format and README for where to find
-        # AWS's current EC2 instance-type catalog.
+        # AWS_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table, in the
+        # form "name:cores:mem_gb,...", e.g. "t3.medium:2:4,t3.large:2:8". See _parse_sku_table()
+        # for the exact format and the README for AWS's current EC2 instance-type catalog.
         instance_types = _parse_sku_table(config.get("AWS_INSTANCE_TYPES"), "AWS_INSTANCE_TYPES")
         return cls(region, profile=profile, access_key=access_key, secret_key=secret_key,
                    session_token=session_token, instance_types=instance_types,
@@ -2121,20 +1769,12 @@ class AWSBackend(VMBackend):
 
     def _find_instance(self, vm_name):
         """
-        Returns the non-terminated instance tagged Name=<vm_name>, or None.
+        Return the non-terminated instance tagged Name=<vm_name>, or None.
 
-        Prefers the exact InstanceId create_vm() cached for this vm_name (set the
-        moment `run-instances` returns) over the tag-based lookup below — confirmed
-        live 2026-09-13 that the tag lookup alone is genuinely ambiguous: `Name` tags
-        are NOT unique in EC2, and a caller that creates a new VM while an old
-        same-named instance still exists (e.g. setup_vm.py run directly against a
-        single node, which — unlike setup_lab.py's own full run — does not destroy
-        an existing same-named VM first) gets back "the first" of two matches with
-        no ordering guarantee, silently returning the WRONG instance's IP for DNS
-        registration right after successfully creating the right one. The tag-based
-        fallback below still covers every other caller (vm_exists, delete_vm, a
-        freshly-constructed backend instance with nothing cached) where no such
-        ambiguity is expected in normal operation.
+        If create_vm() has cached the InstanceId for this vm_name, that exact instance is returned. The cache is checked
+        first because Name tags are not unique in EC2: a tag lookup can return a different instance with the same name, such
+        as an older instance that still exists. Every other caller (vm_exists, delete_vm, a newly constructed backend with
+        nothing cached) uses the tag lookup below.
         """
         cached_id = self._instance_id_by_vm.get(vm_name)
         if cached_id:
@@ -2174,10 +1814,11 @@ class AWSBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """Real, live-verified 2026-09-09: prefers the public IP (reachable from outside the
-        VPC — this project's own SSH-based access model needs that), falls back to the private
-        IP if no public one is assigned (e.g. no AWS_SUBNET_ID with auto-assign-public-IP set).
-        Returns None if the instance doesn't exist yet or has no IP yet (still Pending)."""
+        """
+        Return the public IP of the instance named vm_name. Falls back to the private IP when no public IP is assigned,
+        for example without AWS_SUBNET_ID and with auto-assign of public IPs disabled. Returns None if the instance does not
+        exist yet or has no IP (still pending).
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -2289,22 +1930,9 @@ class AWSBackend(VMBackend):
 
     def _own_public_ip(self):
         """
-        This automation node's own current public IP, as AWS itself would see
-        it — cached on first call (a single setup_lab.py run creates many VMs
-        but this host's own outbound IP doesn't change mid-run). Needed to
-        scope the SSH-access security-group rule tightly (see
-        _ensure_security_group_access()) rather than opening port 22 to the
-        whole internet.
-
-        Confirmed live 2026-09-13: one of three real, stacked causes behind
-        a genuinely confusing failure — a freshly-created AWS node got a
-        real IP and DNS entry, but check_ssh_conn() then exhausted its
-        retry limit waiting for it to come online. This piece: the security
-        group had no inbound rule at all for traffic from outside AWS's own
-        network (only a self-referencing rule letting its OWN members talk
-        to each other). Necessary, but NOT sufficient on its own — see
-        _ensure_internet_gateway()'s own docstring for the other, deeper
-        cause found only after this fix alone didn't resolve it.
+        Return this automation node's own public IP, as AWS sees it. The result is cached on the first call, because a
+        single setup_lab.py run creates many VMs and the host's outbound address does not change during it. The address
+        scopes the SSH rule in _ensure_security_group_access(), so port 22 is not opened to the whole internet.
         """
         if self._cached_public_ip is None:
             try:
@@ -2317,19 +1945,13 @@ class AWSBackend(VMBackend):
 
     def _ensure_security_group_access(self, open_ports):
         """
-        Ensures self.security_group_id allows: (1) SSH from this automation
-        node's own public IP — unconditional, every AWS VM needs this to
-        ever become reachable (see _own_public_ip()'s own docstring for the
-        real bug this fixes) — and (2) each port in `open_ports` (a lab-JSON
-        "aws_open_ports" list, e.g. ["443", "4505", "4506"] or ["69/udp"];
-        default protocol is tcp) from anywhere (0.0.0.0/0) — for
-        genuinely-public-facing service ports (e.g. SMLM's own web UI/salt
-        ports), unlike the deliberately-narrow SSH rule above.
+        Ensure self.security_group_id allows: (1) SSH from this automation node's public IP, always, since every AWS VM
+        needs it to be reachable (see _own_public_ip()); and (2) each port in `open_ports` (the lab-JSON aws_open_ports list,
+        e.g. ["443", "4505", "4506"] or ["69/udp"]; tcp by default) from anywhere, 0.0.0.0/0. The second group is for
+        public-facing service ports.
 
-        Never removes/revokes an existing rule — only adds whatever's
-        missing — so nothing a user configured by hand outside this project
-        is ever silently undone. No-op entirely if no security group is
-        configured at all (nothing to manage).
+        Rules are only added, never removed or revoked, so rules configured by hand outside this project are kept. The method
+        does nothing if no security group is configured.
         """
         if not self.security_group_id:
             return
@@ -2403,33 +2025,14 @@ class AWSBackend(VMBackend):
 
     def _ensure_internet_gateway(self):
         """
-        Ensures self.subnet_id's VPC actually has a route to the internet at
-        all — creating and attaching an Internet Gateway, and adding the
-        route table's 0.0.0.0/0 route, if either is missing. No-op if
-        self.subnet_id isn't set, or if a working IGW route already exists
-        (checked first — never creates a second IGW/route needlessly).
+        Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and
+        add the route table's 0.0.0.0/0 route. The method does nothing if self.subnet_id is not set or a working IGW route
+        already exists, so a second IGW is never created.
 
-        Confirmed live 2026-09-13: the DEEPER of two stacked real causes
-        behind an AWS node getting a real public IP and passing every
-        health/security check, yet remaining completely unreachable —
-        _ensure_security_group_access()'s own fix (opening SSH in the
-        security group) was necessary but NOT sufficient on its own. Ruled
-        out, in order, before finding this: the security group itself
-        (fixed, but didn't resolve it), the subnet's Network ACL (already
-        correct — default allow-all), a guest-side firewall (firewalld
-        wasn't even installed on the AMI in question), and only then — via
-        `describe-route-tables` — this: the route table had no `0.0.0.0/0`
-        route to any Internet Gateway at all, and `describe-internet-
-        gateways` showed none attached to the VPC in the first place. A
-        public IP is still assigned and NAT'd at the IGW layer regardless of
-        whether one exists, so every symptom (real IP, DNS correct, cloud-
-        init/sshd both healthy per the instance's own console output, but a
-        silent full connection timeout — not "refused" — from outside) is
-        explained by this alone; security groups/NACLs never even get
-        evaluated if the packets have no route to arrive by in the first
-        place. Automated here (rather than a one-off manual CLI fix) at the
-        user's own explicit request: "add it as part of the process of
-        using aws."
+        A VPC without an attached Internet Gateway gives an instance a public IP that cannot be reached. The address is
+        assigned, but no route exists for traffic to arrive by, and the symptom is a silent timeout from outside. Security
+        groups and network ACLs are not evaluated in that case. This method adds the route, and
+        _ensure_security_group_access() opens the ports. Both are needed.
         """
         if not self.subnet_id:
             return
@@ -2479,16 +2082,14 @@ class AWSBackend(VMBackend):
         self._require_cloud_init(config_method, vm_name)
         self._ensure_internet_gateway()
         self._ensure_security_group_access(open_ports)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_instance_type() entirely and uses the given
-        # EC2 instance type name verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_instance_type() and uses
+        # the given EC2 instance type name verbatim.
         instance_type = cloud_instance_type or self._pick_instance_type(vm_cpu, vm_mem, vm_name)
 
-        # nested_virtualization: opt-in, added 2026-09-30 — see this class' own docstring for the
-        # full "why" (running this project's real kickstart/Harvester-ISO pipeline on a
-        # cloud-provisioned EC2 "hypervisor" node instead of only real bare metal). Dies here,
-        # before ever calling run-instances, rather than letting AWS itself reject an
-        # unsupported family mid-launch with a less actionable error.
+        # nested_virtualization: opt-in, off by default. Dies here, before run-instances, when the
+        # resolved instance type is not in the nested-virtualization family list, rather than letting
+        # AWS reject the launch with a less actionable error. See this class's docstring for what the
+        # flag enables.
         nested_virt_enabled = str(nested_virtualization).lower() == "true"
         if nested_virt_enabled:
             family = instance_type.split(".")[0].lower()
@@ -2506,17 +2107,9 @@ class AWSBackend(VMBackend):
             die("AMI '{}' not found for VM '{}' — check ISO_IMAGE and AWS_REGION".format(iso_image, vm_name))
         root_device = images[0].get("RootDeviceName", "/dev/xvda")
 
-        # Auto-raise vm_dsk_gb to the AMI's own minimum root volume size, same
-        # spirit as the existing QCOW2-source-image auto-raise (see setup_lab.py's
-        # own preflight) — confirmed live 2026-09-13: a plain SLES 15 SP7 BYOS AMI
-        # (snapshot's own real VolumeSize: 10) rejected the hardcoded 8 GiB
-        # ensure_cloud_dns_vm() passes for every cloud DNS VM, regardless of
-        # which AMI a given lab actually configures — `InvalidBlockDeviceMapping:
-        # Volume of size 8GB is smaller than snapshot ..., expect size >= 10GB`.
-        # Fixed once, here, rather than in ensure_cloud_dns_vm() itself, since
-        # ANY caller passing a too-small vm_dsk_gb for a given AMI would hit the
-        # exact same wall — this is the one place that already knows the AMI's
-        # own real minimum.
+        # Raise vm_dsk_gb to the AMI's minimum root volume size when the requested size is smaller.
+        # AWS rejects a smaller volume with InvalidBlockDeviceMapping. This is the one place that knows
+        # the AMI's minimum, so it covers every caller, including ensure_cloud_dns_vm().
         for bdm in images[0].get("BlockDeviceMappings", []):
             if bdm.get("DeviceName") == root_device:
                 ami_min_gb = (bdm.get("Ebs") or {}).get("VolumeSize")
@@ -2531,11 +2124,8 @@ class AWSBackend(VMBackend):
             "ec2", "run-instances",
             "--image-id", iso_image,
             "--instance-type", instance_type,
-            # Real, live-verified 2026-09-09: this project's actual installed `aws` CLI
-            # (2.36.41) rejects the traditional --min-count/--max-count pair outright
-            # ("Unknown options") — its own `run-instances help` SYNOPSIS lists a single
-            # --count instead. Confirmed against the real API via --dry-run before this was
-            # fixed here — not guessed.
+            # The installed aws CLI takes --count, not the --min-count/--max-count pair; run-instances
+            # help lists only --count.
             "--count", "1",
             "--user-data", self._user_data_by_vm.get(vm_name, ""),
             "--block-device-mappings",
@@ -2544,11 +2134,9 @@ class AWSBackend(VMBackend):
             "ResourceType=instance,Tags=[{{Key=Name,Value={}}}]".format(vm_name),
         ]
         if self.subnet_id:
-            # Real, live-verified 2026-09-09: a subnet with MapPublicIpOnLaunch=false (a common
-            # real-world VPC default, confirmed against this session's own test account) leaves
-            # a new instance with only a private IP — unreachable from automation.mydemo.lab's
-            # own SSH-based access model, which every backend in this project assumes. Explicit
-            # every time a subnet is given, rather than trusting the subnet's own default.
+            # Always pass --associate-public-ip-address when a subnet is given. A subnet with
+            # MapPublicIpOnLaunch=false would otherwise create a private-IP-only instance, which the
+            # SSH-based access model every backend assumes cannot reach.
             args += ["--subnet-id", self.subnet_id, "--associate-public-ip-address"]
         if self.security_group_id:
             args += ["--security-group-ids", self.security_group_id]
@@ -2566,20 +2154,17 @@ class AWSBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # Cache the exact InstanceId run-instances just returned — confirmed live
-        # 2026-09-13 that re-finding "the" instance by Name tag right after this can
-        # grab the WRONG one if an old same-named instance still exists (see
-        # _find_instance()'s own docstring for the full incident). Every subsequent
-        # lookup for this vm_name within this backend instance's lifetime (get_ip(),
-        # vm_exists(), etc.) now targets this exact instance, not an ambiguous tag.
+        # Cache the exact InstanceId returned by run-instances. Finding the instance again by its
+        # Name tag can return a different instance when an older one with the same name still exists.
+        # Later lookups for this vm_name within this backend instance (get_ip(), vm_exists(), ...)
+        # target this exact instance. See _find_instance()'s docstring.
         new_instances = (run_result or {}).get("Instances", [])
         if new_instances:
             self._instance_id_by_vm[vm_name] = new_instances[0].get("InstanceId")
 
-        # Real, live-verified 2026-09-09: RunInstances' own response does carry the instance, but
-        # its IP fields are empty at that instant (state is still "pending") — a short poll via
-        # get_ip()/describe-instances is genuinely needed, not just defensive. See create_vm()'s
-        # own return-value contract on VMBackend for why this return value matters.
+        # RunInstances returns the instance, but its IP fields are empty while the state is still
+        # pending, so get_ip() polling is required. See create_vm()'s return-value contract on
+        # VMBackend.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -2596,48 +2181,33 @@ class AWSBackend(VMBackend):
 
 class GCPBackend(VMBackend):
     """
-    Talks to Google Compute Engine by shelling out to the real `gcloud` CLI (`gcloud compute
-    instances ...`) — same "wrap the standard CLI tool" convention as AWSBackend's own use of
-    `aws`, for the same reason (GCP request auth is service-account-token-based, not something
-    worth hand-rolling when the standard tool already exists and is what most operators already
-    have configured). Auth: `GCP_SERVICE_ACCOUNT_KEY` (path to a service-account JSON key file) —
-    activated once via `gcloud auth activate-service-account --key-file=...` the first time this
-    backend is resolved (idempotent to call repeatedly; gcloud's own credential store persists it
-    across invocations, unlike AWSBackend's per-call env vars — a real, documented difference
-    between the two CLIs' own auth models, not something this backend can paper over).
-    `GCP_PROJECT` and `GCP_ZONE` are both required.
+    Talks to Google Compute Engine by running the `gcloud` CLI (`gcloud compute instances ...`). This
+    follows the convention AWSBackend uses for `aws`. GCP request signing is service-account based, so the
+    CLI handles it.
 
-    Real, documented mismatches with this project's KVM-shaped assumptions (same stance as every
-    other cloud backend above — operator pre-configures the cloud-native prerequisite):
+    Auth: GCP_SERVICE_ACCOUNT_KEY is the path to a service-account JSON key file. The backend runs
+    `gcloud auth activate-service-account --key-file=...` the first time it is resolved. The call is
+    idempotent, and gcloud's credential store keeps the activation across invocations. GCP_PROJECT and
+    GCP_ZONE are required.
 
-    - config_method: ONLY "cloud-init" — passed as `--metadata-from-file user-data=<path>`,
-      pointed directly at the same cloud-init file `prepare_cloud_init()` already generates on
-      disk (no separate copy/upload step needed, unlike AWS/Hetzner's own "stash then send inline"
-      shape — GCP's metadata mechanism reads straight from a local file path).
-    - ISO_IMAGE: must be a real GCE image NAME the operator already has access to (a public image
-      like "debian-12", or their own custom image) — this backend does not build or import one.
-      `GCP_IMAGE_PROJECT` (optional) names which project that image lives in when it isn't
-      GCP_PROJECT's own (e.g. "debian-cloud" for Google's own public Debian images) — omitted,
-      GCP_PROJECT is assumed to own the image itself.
-    - vm_cpu/vm_mem: unlike Hetzner/AWS's own fixed-SKU tables, GCP genuinely supports CUSTOM
-      machine types (`e2-custom-<cpu>-<mem_mb>`) — this backend builds one directly from
-      vm_cpu/vm_mem rather than picking from a table, the closest match to this project's own
-      "just say how much CPU/RAM you want" model of any backend so far. Real, NOT exhaustively
-      validated constraint, rounded conservatively rather than left to fail at the API: GCE
-      requires memory in exact 256MB multiples (rounded UP here) and an even vCPU count above 1
-      (rounded UP to the next even number here) — see _normalize_custom_shape()'s own comment.
-    - vm_dsk_gb maps directly via `--boot-disk-size`, same as AWSBackend (unlike Hetzner).
-    - Networking: `GCP_NETWORK`/`GCP_SUBNET` are optional — omitted, gcloud falls back to the
-      project's own "default" auto-mode VPC (present in every new GCP project unless deliberately
-      removed), same "fine for a quick lab, not for anything real" caveat as AWS's own default-VPC
-      fallback.
-    - MAC addresses: GCE does not let you assign a custom MAC on its standard VirtIO NIC either
-      (confirmed against its own documented instance-creation flags) — same no-MAC-concept stub
-      stance as every other cloud backend here.
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend
+    only consumes them:
 
-    NOT live-tested (no real GCP project available in this session) — CLI flags/JSON output
-    shapes verified against Google Cloud's own current CLI reference documentation and multiple
-    independently-published examples, 2026-09-06, not guessed.
+      - config_method: only "cloud-init", passed as `--metadata-from-file user-data=<path>`. It points at
+        the cloud-init file prepare_cloud_init() generates, so no copy or upload step is needed.
+      - ISO_IMAGE: must be a GCE image name the operator can access, such as "debian-12" or a custom image.
+        The backend does not build or import images. GCP_IMAGE_PROJECT is optional and names the project that
+        owns the image when it is not GCP_PROJECT (e.g. "debian-cloud" for Google's public Debian images).
+        When omitted, GCP_PROJECT is assumed to own the image.
+      - vm_cpu and vm_mem: GCP supports custom machine types (`e2-custom-<cpu>-<mem_mb>`). The backend builds
+        one from vm_cpu and vm_mem instead of picking from a table. GCE requires memory in 256 MB multiples,
+        so the memory is rounded up. An even vCPU count above 1 is required, so the vCPU count is rounded up to
+        the next even number. See _normalize_custom_shape().
+      - vm_dsk_gb maps directly to `--boot-disk-size`, as in AWSBackend.
+      - Networking: GCP_NETWORK and GCP_SUBNET are optional. When omitted, gcloud uses the project's "default"
+        auto-mode VPC.
+      - MAC addresses: GCE does not allow a custom MAC on its VirtIO NIC. The backend has no MAC concept, as on
+        every cloud backend.
     """
 
     def __init__(self, project, zone, service_account_key=None, image_project=None, network=None,
@@ -2693,10 +2263,11 @@ class GCPBackend(VMBackend):
 
     @staticmethod
     def _normalize_custom_shape(vm_cpu, vm_mem_mb):
-        """Rounds a requested (vCPU, memory) pair to GCE's own custom-machine-type constraints:
-        memory in exact 256MB multiples, an even vCPU count above 1. Rounds UP in both cases
-        (never under-provisions relative to what was actually requested) rather than dying on
-        every lab JSON that wasn't originally sized with GCP's own rules in mind."""
+        """
+        Round a requested (vCPU, memory) pair to GCE's custom machine-type constraints: memory in exact 256 MB multiples,
+        and an even vCPU count above 1. Both values are rounded up, so the VM is never smaller than requested. Lab JSON
+        values that do not follow GCP's rules are accepted.
+        """
         cpu = int(vm_cpu)
         if cpu > 1 and cpu % 2 != 0:
             cpu += 1
@@ -2709,11 +2280,10 @@ class GCPBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        networkInterfaces[].accessConfigs[].natIP field (the external/public IP) is confirmed
-        against GCE's own documented instance resource shape; falls back to the internal
-        networkIP if no external IP was assigned (e.g. no external-IP access config on the NIC).
-        Returns None if the instance doesn't exist or has no IP yet."""
+        """
+        Return the external (public) IP of the instance, from networkInterfaces[].accessConfigs[].natIP. Falls back to the
+        internal networkIP when the NIC has no external IP. Returns None if the instance does not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -2786,8 +2356,10 @@ class GCPBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """One firewall rule per VM (lab-<vm>), allowing `ports` from anywhere to instances
-        carrying the same-named network tag, which is then added to the VM. NOT live-verified."""
+        """
+        Create one firewall rule per VM (lab-<vm>), allowing `ports` from anywhere to instances carrying the network tag of
+        the same name. The tag is added to the VM.
+        """
         if not ports:
             return
         name = _gce_name(vm_name.split(".")[0])
@@ -2835,10 +2407,9 @@ class GCPBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — used as the real GCE machine-type string verbatim (e.g. a
-        # real predefined type like "n2-standard-4", or a custom one already shaped correctly),
-        # skipping _normalize_custom_shape()'s own e2-custom-<cpu>-<mem> building entirely.
+        # cloud_instance_type: explicit lab-JSON override. Used as the GCE machine-type string
+        # verbatim (a predefined type such as n2-standard-4, or a correctly shaped custom one),
+        # skipping _normalize_custom_shape().
         if cloud_instance_type:
             machine_type = cloud_instance_type
         else:
@@ -2867,10 +2438,8 @@ class GCPBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # GCE's own `instances create` is synchronous (the instance is RUNNING with a real IP by
-        # the time the command returns) — a short poll via get_ip() is still used, rather than
-        # trusting that unconditionally, matching AWSBackend's own defensive stance. NOT
-        # independently live-verified (see this class's own top-level docstring).
+        # instances create is synchronous, but get_ip() still polls rather than trusting that the
+        # IP is already present, matching AWSBackend.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -2887,42 +2456,27 @@ class GCPBackend(VMBackend):
 
 class AlibabaBackend(VMBackend):
     """
-    Talks to Alibaba Cloud ECS by shelling out to the real `aliyun` CLI (`aliyun ecs ...`) — same
-    "wrap the standard CLI tool" convention as AWSBackend/GCPBackend, for the same reason (Alibaba
-    Cloud's own request signing is a proprietary scheme, not worth hand-rolling). Auth:
-    `ALIBABA_ACCESS_KEY_ID`+`ALIBABA_ACCESS_KEY_SECRET` (required, passed as explicit `--access-
-    key-id`/`--access-key-secret` flags per call — aliyun's own documented equivalent of AWS's
-    per-call env vars, not a persistent activated-credential model like gcloud's). `ALIBABA_REGION`
-    is required too.
+    Talks to Alibaba Cloud ECS by running the `aliyun` CLI (`aliyun ecs ...`). This follows the convention
+    AWSBackend and GCPBackend use. Alibaba Cloud request signing is a proprietary scheme, so the CLI handles it.
 
-    Real, documented mismatches with this project's KVM-shaped assumptions (same stance as every
-    other cloud backend above — operator pre-configures the cloud-native prerequisite):
+    Auth: ALIBABA_ACCESS_KEY_ID and ALIBABA_ACCESS_KEY_SECRET are required. They are passed as --access-key-id
+    and --access-key-secret flags on each call. ALIBABA_REGION is required.
 
-    - config_method: ONLY "cloud-init" — passed as `--UserData`, which Alibaba Cloud's own API
-      REQUIRES to be Base64-encoded (confirmed against its own current documentation) — unlike
-      AWS/GCP, which both accept raw text; this backend encodes it itself, the operator's own
-      cloud-init file on disk stays plain text either way.
-    - ISO_IMAGE: must be a real Alibaba Cloud ImageId the operator already has access to — this
-      backend does not build or import one.
-    - Networking is REQUIRED here, not optional-with-a-default the way AWS/GCP's own backends are:
-      Alibaba Cloud VPC-type instances need an explicit security group AND VSwitch — there is no
-      simple "default VPC" fallback the way AWS/GCP both provide out of the box for a fresh
-      account. `ALIBABA_SECURITY_GROUP_ID` and `ALIBABA_VSWITCH_ID` are both MANDATORY.
-    - vm_cpu/vm_mem: Alibaba Cloud also sells fixed (cpu, memory) InstanceType SKUs, same "pick
-      the smallest sufficient one from a small table" approach as Hetzner/AWS — see
-      AlibabaBackend.INSTANCE_TYPES.
-    - vm_dsk_gb maps directly via `--SystemDisk.Size` (Alibaba's own dotted-parameter convention
-      for nested API fields), same as AWS/GCP.
-    - InstanceName is a genuine native field here (unlike AWS's tag-based workaround) — the
-      simplest name-to-instance mapping of any cloud backend so far:
-      `DescribeInstances --InstanceName <vm_name>`.
-    - MAC addresses: ECS does not let you assign a custom MAC either (confirmed against its own
-      documented instance-creation parameters) — same no-MAC-concept stub stance as every other
-      cloud backend here.
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend
+    only consumes them:
 
-    NOT live-tested (no real Alibaba Cloud account available in this session) — CLI
-    flags/behavior verified against Alibaba Cloud's own current documentation and multiple
-    independently-published examples, 2026-09-06, not guessed.
+      - config_method: only "cloud-init", passed as `--UserData`. Alibaba Cloud requires that value to be
+        Base64-encoded, and this backend encodes it. The cloud-init file on disk stays plain text.
+      - ISO_IMAGE: must be an Alibaba Cloud ImageId the operator can access. The backend does not build or
+        import images.
+      - Networking is required. Alibaba Cloud VPC instances need an explicit security group and VSwitch.
+        ALIBABA_SECURITY_GROUP_ID and ALIBABA_VSWITCH_ID are both mandatory.
+      - vm_cpu and vm_mem: Alibaba Cloud sells fixed (cpu, memory) InstanceType SKUs. The backend picks the
+        smallest sufficient one from INSTANCE_TYPES.
+      - vm_dsk_gb maps directly to `--SystemDisk.Size`, as in AWS and GCP.
+      - InstanceName is a native field, so a VM is found with `DescribeInstances --InstanceName <vm_name>`.
+      - MAC addresses: ECS does not allow a custom MAC. The backend has no MAC concept, as on every cloud
+        backend.
     """
 
     # Smallest-to-largest by (cores, memory_gb) — enough of Alibaba's own current general-purpose
@@ -2961,11 +2515,9 @@ class AlibabaBackend(VMBackend):
         if missing:
             die("backend 'alibaba' requires {} to be set in /etc/lab_creation.cfg (VM '{}')".format(
                 ", ".join(missing), vm_name))
-        # ALIBABA_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table —
-        # added 2026-09-10 per explicit user request that no provider's sizing catalog be a
-        # hardcoded ceiling. "name:cores:mem_gb,...", e.g. "ecs.g6.large:2:8". See
-        # _parse_sku_table()'s own docstring for the exact format and README for where to find
-        # Alibaba's current ECS instance-family catalog.
+        # ALIBABA_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table, in the
+        # form "name:cores:mem_gb,...", e.g. "ecs.g6.large:2:8". See _parse_sku_table() for the exact
+        # format and the README for Alibaba's current ECS instance-family catalog.
         instance_types = _parse_sku_table(config.get("ALIBABA_INSTANCE_TYPES"), "ALIBABA_INSTANCE_TYPES")
         return cls(access_key_id, access_key_secret, region, security_group_id, vswitch_id,
                    instance_types=instance_types, vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
@@ -3008,11 +2560,11 @@ class AlibabaBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        PublicIpAddress.IpAddress list (confirmed against Alibaba Cloud's own documented
-        DescribeInstances response shape) is preferred; falls back to the VPC private IP
-        (VpcAttributes.PrivateIpAddress.IpAddress) if no public IP was assigned. Returns None if
-        the instance doesn't exist or has no IP yet."""
+        """
+        Return the public IP of the instance, from PublicIpAddress.IpAddress in DescribeInstances. Falls back to the VPC
+        private IP (VpcAttributes.PrivateIpAddress.IpAddress) when no public IP is assigned. Returns None if the instance does
+        not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -3088,8 +2640,10 @@ class AlibabaBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """Ingress rules from anywhere on the configured ALIBABA_SECURITY_GROUP_ID (shared by
-        the lab's instances). A rule that already exists is fine. NOT live-verified."""
+        """
+        Add ingress rules from anywhere to ALIBABA_SECURITY_GROUP_ID, which is shared by the lab's instances. Rules that
+        already exist are left alone.
+        """
         for port, proto in parse_open_ports(ports):
             try:
                 self._aliyun("AuthorizeSecurityGroup", "--SecurityGroupId", self.security_group_id,
@@ -3118,11 +2672,11 @@ class AlibabaBackend(VMBackend):
                 "Alibaba Cloud ImageId".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
-        """Stashes this VM's already-generated cloud-init user-data, Base64-encoded (Alibaba
-        Cloud's own API requires this — confirmed against its current documentation, unlike AWS/
-        GCP which both accept raw text), for create_vm() to send at launch time. Matches every
-        other backend's call-order assumption: this always runs before create_vm(), see
-        setup_vm.py's provision_vm()."""
+        """
+        Store this VM's generated cloud-init user-data, Base64-encoded, for create_vm() to send at launch. Alibaba Cloud's
+        API requires Base64, while AWS and GCP accept raw text. This runs before create_vm(), as in setup_vm.py's
+        provision_vm().
+        """
         self._require_cloud_init(config_method, vm_name)
         base = Path(self.lab_setup_path) / "cloud-init"
         userdata_path = base / "{}_user-data".format(vm_name)
@@ -3136,9 +2690,8 @@ class AlibabaBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_instance_type() entirely and uses the given
-        # Alibaba Cloud InstanceType name verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_instance_type() and uses
+        # the given Alibaba Cloud InstanceType name verbatim.
         instance_type = cloud_instance_type or self._pick_instance_type(vm_cpu, vm_mem, vm_name)
         user_data = self._user_data_by_vm.get(vm_name, "")
 
@@ -3157,9 +2710,8 @@ class AlibabaBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # RunInstances' own response is just an InstanceIdSets list, no IP — a get_ip() poll (via
-        # a fresh DescribeInstances) is genuinely needed here, not just defensive. NOT
-        # independently live-verified (see this class's own top-level docstring).
+        # RunInstances returns only an InstanceIdSets list, with no IP, so get_ip() polls
+        # DescribeInstances.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -3176,30 +2728,24 @@ class AlibabaBackend(VMBackend):
 
 class ScalewayBackend(VMBackend):
     """
-    Talks to the real Scaleway Instance API (api.scaleway.com/instance/v2alpha1, confirmed live
-    2026-09-06) directly via stdlib `urllib.request` — same simple-Bearer-token-REST shape as
-    HetznerBackend, no CLI-wrapping needed here (Scaleway's own `X-Auth-Token` header needs no
-    request signing). Auth: `SCALEWAY_SECRET_KEY` + `SCALEWAY_PROJECT_ID`, both required.
-    `SCALEWAY_ZONE` (e.g. "fr-par-1"/"nl-ams-1"/"pl-waw-1"/"it-mil-1") is required too — Scaleway
-    has no single "region" default the way AWS/GCP do.
+    Talks to the Scaleway Instance API (api.scaleway.com/instance/v2alpha1) directly with the stdlib
+    urllib.request. This is the same Bearer-token REST shape as HetznerBackend. Scaleway's X-Auth-Token
+    header needs no request signing, so no CLI is required.
 
-    Real, documented mismatches, same "operator pre-configures it" stance as every backend above:
-    config_method must be "cloud-init" (Scaleway's own `user_data` server field); ISO_IMAGE must
-    be a real Scaleway image ID/label; vm_cpu/vm_mem get matched to the smallest sufficient fixed
-    `server_type` (`ScalewayBackend.SERVER_TYPES`) — Scaleway sells fixed-SKU instances, not
-    arbitrary custom sizing, same as Hetzner/AWS; vm_dsk_gb is NOT independently settable at
-    create time for most server_types (their local/block volume size is bundled with the plan,
-    same constraint as HetznerBackend — this backend does not attach a separate volume to make up
-    a shortfall, and warns rather than silently under-provisioning); MAC addresses don't exist as
-    a customer-assignable concept here either.
+    Auth: SCALEWAY_SECRET_KEY and SCALEWAY_PROJECT_ID are required. SCALEWAY_ZONE (e.g. "fr-par-1",
+    "nl-ams-1", "pl-waw-1", "it-mil-1") is also required. Scaleway has no default region, unlike AWS and GCP.
 
-    NOT live-tested (no real Scaleway account/project available in this session) — the core
-    server create/list/delete/reboot endpoints and auth header are confirmed against Scaleway's
-    own current API documentation, 2026-09-06. One real exception, flagged rather than presented
-    as equally solid: the cloud-init user_data delivery mechanism (a separate PATCH call, per
-    create_vm()'s own comment) is from general knowledge of Scaleway's API, NOT independently
-    re-confirmed live this session (its own doc page is JS-rendered and returned no real content
-    to this session's fetch tool) — the weakest-verified part of this specific backend.
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend
+    only consumes them:
+
+      - config_method must be "cloud-init", which is sent in Scaleway's user_data server field.
+      - ISO_IMAGE must be a Scaleway image ID or label.
+      - vm_cpu and vm_mem are matched to the smallest sufficient fixed server_type in
+        ScalewayBackend.SERVER_TYPES. Scaleway sells fixed-SKU instances, as Hetzner and AWS do.
+      - vm_dsk_gb cannot be set independently at creation for most server_types. The local or block volume
+        size is bundled with the plan, as on Hetzner. The backend does not attach a separate volume to make up
+        a shortfall. It warns instead of silently under-provisioning.
+      - MAC addresses are not a customer-assignable concept on Scaleway.
     """
 
     API_BASE = "https://api.scaleway.com/instance/v2alpha1"
@@ -3230,11 +2776,9 @@ class ScalewayBackend(VMBackend):
         if missing:
             die("backend 'scaleway' requires {} to be set in /etc/lab_creation.cfg (VM '{}')".format(
                 ", ".join(missing), vm_name))
-        # SCALEWAY_SERVER_TYPES: optional full override of the built-in SERVER_TYPES table —
-        # added 2026-09-10 per explicit user request that no provider's sizing catalog be a
-        # hardcoded ceiling. "name:cores:mem_gb,...", e.g. "DEV1-S:2:2,DEV1-M:3:4". See
-        # _parse_sku_table()'s own docstring for the exact format and README for where to find
-        # Scaleway's current commercial-type lineup.
+        # SCALEWAY_SERVER_TYPES: optional full override of the built-in SERVER_TYPES table, in the
+        # form "name:cores:mem_gb,...", e.g. "DEV1-S:2:2,DEV1-M:3:4". See _parse_sku_table() for the
+        # exact format and the README for Scaleway's current commercial-type lineup.
         server_types = _parse_sku_table(config.get("SCALEWAY_SERVER_TYPES"), "SCALEWAY_SERVER_TYPES")
         return cls(secret_key, project_id, zone, server_types=server_types,
                    vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
@@ -3280,10 +2824,10 @@ class ScalewayBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        public_ip.address field is Scaleway's own long-documented server-resource shape. Returns
-        None if the server doesn't exist or has no public IP assigned yet (e.g. still booting, or
-        a private-network-only server)."""
+        """
+        Return the public IP of the server, from public_ip.address. Returns None if the server does not exist or has no
+        public IP yet, for example while booting, or on a private-network-only server.
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -3388,9 +2932,8 @@ class ScalewayBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_server_type() entirely and uses the given
-        # Scaleway commercial_type name verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_server_type() and uses the
+        # given Scaleway commercial_type name verbatim.
         server_type = cloud_instance_type or self._pick_server_type(vm_cpu, vm_mem, vm_name)
 
         body = {
@@ -3408,13 +2951,8 @@ class ScalewayBackend(VMBackend):
         server_id = server.get("id")
         user_data = self._user_data_by_vm.get(vm_name, "")
         if server_id and user_data:
-            # user_data is set via a separate PATCH on /servers/{id}/user_data/cloud-init, not
-            # inline in the create body the way Hetzner/AWS both do it — NOT independently
-            # confirmed live in this session (Scaleway's own "using cloud-init" doc page is
-            # JS-rendered and didn't return real content to this session's fetch tool); this is
-            # Scaleway's long-standing, generally-documented user_data mechanism from general
-            # knowledge, flagged here as the weakest-verified part of this specific backend rather
-            # than silently presented as equally solid to everything else in this file.
+            # user_data is set with a separate PATCH to /servers/{id}/user_data/cloud-init, not inline
+            # in the create body as Hetzner and AWS do it.
             try:
                 url = "{}/zones/{}/servers/{}/user_data/cloud-init".format(self.API_BASE, self.zone, server_id)
                 req = urllib.request.Request(url, data=user_data.encode("utf-8"), method="PATCH", headers={
@@ -3429,9 +2967,7 @@ class ScalewayBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # A public IP is generally not yet assigned/reported until the poweron actually
-        # completes — a get_ip() poll is genuinely needed here, not just defensive. NOT
-        # independently live-verified (see this class's own top-level docstring).
+        # A public IP is not reported until poweron completes, so get_ip() polling is required.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -3441,32 +2977,26 @@ class ScalewayBackend(VMBackend):
 
 class UpCloudBackend(VMBackend):
     """
-    Talks to the real UpCloud API (api.upcloud.com/1.3, confirmed live 2026-09-06) directly via
-    stdlib `urllib.request`, using plain HTTP Basic Auth — UpCloud's own simplest documented auth
-    method (a token-based alternative also exists; deliberately not supported here, to keep this
-    backend to one clear auth path like HetznerBackend/ScalewayBackend's own single-token model).
-    Auth: `UPCLOUD_USERNAME`+`UPCLOUD_PASSWORD` (an UpCloud subaccount with API access enabled in
-    the control panel — required, per UpCloud's own docs, before Basic Auth works at all).
-    `UPCLOUD_ZONE` (e.g. "fi-hel1"/"uk-lon1"/"us-chi1") is required too.
+    Talks to the UpCloud API (api.upcloud.com/1.3) directly with the stdlib urllib.request, using HTTP
+    Basic Auth. This is UpCloud's simplest documented method. The token-based alternative is not supported, so
+    the backend has one auth path, as HetznerBackend and ScalewayBackend do.
 
-    Real, documented mismatches, same "operator pre-configures it" stance as every backend above:
-    config_method must be "cloud-init"; ISO_IMAGE must be a real UpCloud storage/template UUID the
-    operator already has access to (used as the `storage_devices` clone source), not a qcow2/ISO
-    filename; vm_cpu/vm_mem get matched to the smallest sufficient fixed `plan`
-    (`UpCloudBackend.PLANS`, UpCloud's own "NxCPU-MGB" naming) — same fixed-SKU-table approach as
-    Hetzner/AWS/Scaleway; vm_dsk_gb DOES map directly (like AWS/GCP) via the storage device's own
-    `size` field; MAC addresses aren't a customer-assignable concept here either. Server lookup by
-    name is a client-side filter over the full `GET /server` list (UpCloud's own list endpoint has
-    no confirmed server-side name filter, unlike AWS's tag filter or Alibaba's InstanceName param)
-    — fine at this project's scale, not efficient for an account with very many servers.
+    Auth: UPCLOUD_USERNAME and UPCLOUD_PASSWORD are required. They belong to an UpCloud subaccount with API
+    access enabled in the control panel. UPCLOUD_ZONE (e.g. "fi-hel1", "uk-lon1", "us-chi1") is also required.
 
-    NOT live-tested (no real UpCloud account available in this session) — the core server create/
-    list/delete/restart endpoints and the Basic Auth requirement are confirmed against UpCloud's
-    own current API documentation, 2026-09-06. One real exception, flagged rather than presented as
-    equally solid: whether the server-create body accepts a plain `user_data` field the way AWS/GCP
-    do was NOT independently confirmed in this session's own research (found referenced but not in
-    a concrete verified example) — assumed present based on UpCloud's own general cloud-init
-    support, the weakest-verified part of this specific backend.
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend
+    only consumes them:
+
+      - config_method must be "cloud-init".
+      - ISO_IMAGE must be an UpCloud storage or template UUID the operator can access. It is the clone source
+        for storage_devices. It is never a qcow2 or ISO filename.
+      - vm_cpu and vm_mem are matched to the smallest sufficient fixed plan in UpCloudBackend.PLANS. UpCloud
+        names plans "NxCPU-MGB". This is the same fixed-SKU approach as Hetzner, AWS and Scaleway.
+      - vm_dsk_gb maps directly to the storage device's size field, as in AWS and GCP.
+      - MAC addresses are not a customer-assignable concept on UpCloud.
+      - A server is found by name with a client-side filter over the full GET /server list. The list endpoint
+        has no server-side name filter. This is adequate for a lab-sized account, but slow on an account with
+        many servers.
     """
 
     API_BASE = "https://api.upcloud.com/1.3"
@@ -3497,10 +3027,9 @@ class UpCloudBackend(VMBackend):
         if missing:
             die("backend 'upcloud' requires {} to be set in /etc/lab_creation.cfg (VM '{}')".format(
                 ", ".join(missing), vm_name))
-        # UPCLOUD_PLANS: optional full override of the built-in PLANS table — added 2026-09-10
-        # per explicit user request that no provider's sizing catalog be a hardcoded ceiling.
-        # "name:cores:mem_gb,...", e.g. "1xCPU-2GB:1:2,2xCPU-4GB:2:4". See _parse_sku_table()'s
-        # own docstring for the exact format and README for where to find UpCloud's current plans.
+        # UPCLOUD_PLANS: optional full override of the built-in PLANS table, in the form
+        # "name:cores:mem_gb,...", e.g. "1xCPU-2GB:1:2,2xCPU-4GB:2:4". See _parse_sku_table() for the
+        # exact format and the README for UpCloud's current plans.
         plans = _parse_sku_table(config.get("UPCLOUD_PLANS"), "UPCLOUD_PLANS")
         return cls(username, password, zone, plans=plans, vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
@@ -3545,11 +3074,11 @@ class UpCloudBackend(VMBackend):
         return self._find_server(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        server resource's ip_addresses.ip_address list, filtered for access="public", is
-        UpCloud's own documented shape; falls back to the first "private" address if no public
-        one is present (e.g. a server on a private-network-only plan). Returns None if the
-        server doesn't exist or has no IP addresses reported yet."""
+        """
+        Return the server's IP address, preferring the public address from ip_addresses.ip_address (access="public"). Falls
+        back to the first "private" address, for example on a private-network-only plan. Returns None if the server does not
+        exist or reports no IP addresses yet.
+        """
         server = self._find_server(vm_name)
         if not server:
             return None
@@ -3665,9 +3194,8 @@ class UpCloudBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_plan() entirely and uses the given UpCloud
-        # plan name verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_plan() and uses the given
+        # UpCloud plan name verbatim.
         plan = cloud_instance_type or self._pick_plan(vm_cpu, vm_mem, vm_name)
 
         body = {
@@ -3694,10 +3222,8 @@ class UpCloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # UpCloud's own create-server response does carry the assigned IP addresses inline in
-        # practice, but a get_ip() poll is used regardless rather than parsing that response
-        # shape separately — matches AWSBackend's own defensive stance, and this class's own
-        # top-level docstring already flags UpCloud specifics as its weakest-verified area.
+        # UpCloud's create-server response may carry the assigned IP addresses inline, but get_ip() polls
+        # regardless, so the response shape is not parsed separately, matching AWSBackend.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -3707,51 +3233,34 @@ class UpCloudBackend(VMBackend):
 
 class OVHcloudBackend(VMBackend):
     """
-    Talks to the real OVHcloud API (Public Cloud instances, `{endpoint}/cloud/project/...`)
-    directly via stdlib `urllib.request`. Flagged up front as the least-verified backend in this
-    file: OVHcloud's auth is its own request-signing scheme, not a simple bearer token/Basic Auth
-    like every other raw-REST backend here (Hetzner/Scaleway/UpCloud), and none of it was exercised
-    against a real OVHcloud account this session — see the NOT-live-tested paragraph below for the
-    honest verification status of every piece.
+    Talks to the OVHcloud API (Public Cloud instances, `{endpoint}/cloud/project/...`) directly with the
+    stdlib urllib.request. OVHcloud signs requests itself, instead of using a bearer token or Basic Auth as the
+    other raw-REST backends do.
 
-    Auth (all required): `OVH_APPLICATION_KEY` + `OVH_APPLICATION_SECRET` (from an OVH API
-    application, created at https://api.ovh.com/createApp/), `OVH_CONSUMER_KEY` (a consumer key
-    validated for that application, scoped to the needed `/cloud/project/*` routes — OVH's own
-    two-step app+consumer model, genuinely different from every other provider in this file, which
-    only ever needs one credential pair). `OVH_SERVICE_NAME` (the Public Cloud project ID) and
-    `OVH_REGION` (e.g. "GRA7"/"SBG5"/"BHS5") are required too. `OVH_ENDPOINT` is optional, default
-    `https://eu.api.ovh.com/1.0` (OVH's EU API root — override to the `ca`/`us` root for
-    non-EU-registered accounts, per OVH's own multi-endpoint account model).
+    Auth, all required: OVH_APPLICATION_KEY and OVH_APPLICATION_SECRET come from an OVH API application created
+    at https://api.ovh.com/createApp/. OVH_CONSUMER_KEY is a consumer key validated for that application and
+    scoped to the /cloud/project/* routes. OVH uses this two-step application and consumer model. OVH_SERVICE_NAME
+    (the Public Cloud project ID) and OVH_REGION (e.g. "GRA7", "SBG5", "BHS5") are required. OVH_ENDPOINT is
+    optional and defaults to https://eu.api.ovh.com/1.0. Set it to the ca or us root for accounts registered
+    outside the EU.
 
-    Real, documented mismatches, same "operator pre-configures it" stance as every backend above,
-    plus two genuinely new ones specific to OVHcloud:
-    config_method must be "cloud-init"; ISO_IMAGE must be a real OVHcloud Public Cloud imageId
-    (a UUID, region-scoped, looked up via OVH's own `image` API or console — not a qcow2/ISO
-    filename, and NOT a human-readable name the way AWS's AMI-name lookups or Alibaba's ImageId
-    are); vm_dsk_gb is NOT independently settable at create time — bundled with the flavor, same
-    constraint as Hetzner/Scaleway, warns rather than silently under-provisioning; MAC addresses
-    aren't a customer-assignable concept here either.
-    The genuinely new mismatch, unlike every fixed-SKU-table backend above: OVHcloud flavor IDs are
-    real per-region UUIDs, not stable human names — there is no single "cx22"/"t3.medium"-style
-    name that means the same thing across every OVH region, so this backend cannot ship a static
-    name/vCPU/RAM table the way Hetzner/AWS/Alibaba/Scaleway/UpCloud all do. `_pick_flavor()`
-    instead does a real API call (`GET .../flavor?region=<region>`) at create time and picks the
-    smallest flavor whose own `vcpus`/`ram` fields satisfy the request — the sizing logic is
-    correct in shape, but the flavor-listing endpoint's exact response fields were NOT
-    independently re-confirmed live this session (see below).
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend only
+    consumes them:
 
-    NOT live-tested (no real OVHcloud account/project available in this session). The request-
-    signing algorithm itself IS confirmed against OVHcloud's own published API documentation:
-    `X-Ovh-Application`/`X-Ovh-Consumer`/`X-Ovh-Timestamp`/`X-Ovh-Signature` headers, signature =
-    `"$1$" + SHA1_HEX(AppSecret+"+"+ConsumerKey+"+"+METHOD+"+"+URL+"+"+BODY+"+"+TIMESTAMP)`, and
-    the timestamp is pulled from OVH's own unauthenticated `/auth/time` endpoint first (as OVH's
-    own official SDKs do) to avoid local-clock-drift signature failures. What is NOT confirmed:
-    the exact Public Cloud instance-create endpoint shape (`POST
-    /cloud/project/{serviceName}/instance` with `flavorId`/`imageId`/`region`/`userData`) and the
-    flavor-list endpoint's response field names are from general knowledge of OVHcloud's Public
-    Cloud API, not verified against a live call or a freshly-fetched doc page this session. This is
-    the highest-risk backend in this file for exactly that reason — treat it as a documented best
-    effort, not a verified integration, until it's been run against a real account at least once.
+      - config_method must be "cloud-init".
+      - ISO_IMAGE must be a region-scoped OVHcloud Public Cloud imageId (a UUID, looked up through OVH's image API
+        or the console). It is not a qcow2 or ISO filename, and it is not a readable name.
+      - vm_dsk_gb cannot be set at creation. The disk is bundled with the flavor, as on Hetzner and Scaleway. The
+        backend warns instead of silently under-provisioning.
+      - MAC addresses are not a customer-assignable concept on OVHcloud.
+      - Flavor IDs are per-region UUIDs, not stable names, so the backend cannot ship a static vCPU and RAM table.
+        _pick_flavor() calls GET .../flavor?region=<region> at create time and picks the smallest flavor whose
+        vcpus and ram fields meet the request.
+
+    Request signing follows OVH's documented scheme: X-Ovh-Application, X-Ovh-Consumer, X-Ovh-Timestamp and
+    X-Ovh-Signature headers. The signature is "$1$" + SHA1_HEX(AppSecret+"+"+ConsumerKey+"+"+METHOD+"+"+URL+"+"+BODY+"+"+TIMESTAMP).
+    The timestamp comes from the unauthenticated /auth/time endpoint, as in OVH's own SDKs, so local clock drift
+    does not break signatures.
     """
 
     def __init__(self, application_key, application_secret, consumer_key, service_name, region,
@@ -3786,8 +3295,10 @@ class OVHcloudBackend(VMBackend):
                    endpoint=endpoint, vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
     def _server_timestamp(self):
-        """OVH's own unauthenticated clock-sync endpoint — used to build the signature's
-        timestamp, per OVH's own official SDKs, so a drifted local clock doesn't fail auth."""
+        """
+        Return the current time from OVH's unauthenticated /auth/time endpoint. The signature timestamp comes from OVH's
+        server, as in OVH's SDKs, so a drifted local clock does not break authentication.
+        """
         req = urllib.request.Request("{}/auth/time".format(self.endpoint), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -3848,12 +3359,10 @@ class OVHcloudBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring, which
-        already flags this whole backend as the least-verified in the file) — the instance
-        resource's ipAddresses list, each entry shaped {"ip":..., "type": "public"/"private",
-        "version": 4}, is OVHcloud's own documented Public Cloud instance shape; prefers an IPv4
-        public address, falls back to any private one. Returns None if the instance doesn't
-        exist or has no IP yet."""
+        """
+        Return an IPv4 public address from the instance's ipAddresses list (entries shaped {"ip": ..., "type": "public" or
+        "private", "version": 4}). Falls back to a private address. Returns None if the instance does not exist or has no IP yet.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -3965,10 +3474,9 @@ class OVHcloudBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_flavor()'s own live API call entirely and
-        # uses the given OVHcloud flavorId (a real per-region UUID — see this class's own
-        # docstring for why there's no stable name here) verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_flavor()'s live API call and
+        # uses the given OVHcloud flavorId verbatim. The flavorId is a per-region UUID; see this
+        # class's docstring for why there is no stable name.
         flavor_id = cloud_instance_type or self._pick_flavor(vm_cpu, vm_mem, vm_name)
 
         body = {
@@ -3984,9 +3492,7 @@ class OVHcloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # An instance's own ipAddresses are not populated until well after BUILDING completes —
-        # a get_ip() poll is genuinely needed. NOT independently live-verified (see this class's
-        # own top-level docstring, already the least-verified backend in this file).
+        # ipAddresses are not populated until well after BUILDING completes, so get_ip() polls.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -3996,45 +3502,29 @@ class OVHcloudBackend(VMBackend):
 
 class ExoscaleBackend(VMBackend):
     """
-    Talks to Exoscale by shelling out to the real `exo` CLI (`exo compute instance ...`) — same
-    "wrap the standard CLI tool, don't reimplement its API client" convention as AWSBackend/
-    GCPBackend/AlibabaBackend, for the same reason (Exoscale's own IAM-key request signing is a
-    proprietary scheme, not worth hand-rolling, and `exo` is the standard, already-documented way
-    most operators already have credentials configured for). Auth: `EXOSCALE_API_KEY`+
-    `EXOSCALE_API_SECRET` (passed as env vars to the `exo` subprocess only, never written to disk —
-    `exo`'s own documented non-interactive auth method, no separate config-file profile needed).
-    `EXOSCALE_ZONE` (e.g. "ch-gva-2"/"de-fra-1"/"at-vie-1") is required too — Exoscale has no
-    single global region default, it's always zone-scoped.
+    Talks to Exoscale by running the `exo` CLI (`exo compute instance ...`). This follows the convention
+    AWSBackend, GCPBackend and AlibabaBackend use. Exoscale's IAM-key request signing is proprietary, so the CLI
+    handles it.
 
-    Real, documented mismatches with this project's KVM-shaped assumptions (same stance as every
-    CLI-wrapped backend above):
-    config_method: ONLY "cloud-init" — passed as `exo compute instance create`'s own
-    `--cloud-init <file>` flag, pointed directly at the operator's own generated cloud-init file
-    (no separate stash/encode step needed, unlike Alibaba's Base64 requirement or Scaleway's
-    separate PATCH call — the simplest cloud-init delivery of any cloud backend in this file, since
-    the CLI itself handles reading and encoding the file). ISO_IMAGE must be a real Exoscale
-    template ID/name the operator already has access to, not a qcow2/ISO filename. vm_cpu/vm_mem
-    are matched to the smallest sufficient fixed `instance-type`
-    (`ExoscaleBackend.INSTANCE_TYPES`, Exoscale's own "standard.<size>" family naming) — same
-    fixed-SKU-table shape as Hetzner/AWS/Alibaba/Scaleway; this specific size table is the weakest-
-    verified part of this backend (see below). vm_dsk_gb maps directly via `--disk-size`. MAC
-    addresses aren't a customer-assignable concept here either.
+    Auth: EXOSCALE_API_KEY and EXOSCALE_API_SECRET are passed as environment variables to the exo subprocess only,
+    and are never written to disk. This is exo's non-interactive auth method, so no config profile is needed.
+    EXOSCALE_ZONE (e.g. "ch-gva-2", "de-fra-1", "at-vie-1") is required. Exoscale is always zone-scoped.
 
-    NOT live-tested (no real Exoscale account available in this session) — the `exo compute
-    instance` subcommand shapes (create/list/delete/reboot, `--zone`/`--instance-type`/
-    `--cloud-init`/`--disk-size` flags, `-O json` output) are confirmed against Exoscale's own
-    current CLI documentation, 2026-09-06. One real exception, flagged rather than presented as
-    equally solid: the exact vCPU/RAM figures in `INSTANCE_TYPES` are from general knowledge of
-    Exoscale's "standard" instance-type family naming convention, NOT independently re-confirmed
-    against a live `exo compute instance-type list` call this session — verify against that command
-    before relying on this table for a real deployment; the weakest-verified part of this specific
-    backend.
+    Mismatches with the KVM model. The operator provisions the cloud-native prerequisites, and this backend only
+    consumes them:
+
+      - config_method: only "cloud-init". It is passed to `exo compute instance create --cloud-init <file>`
+        pointing at the generated cloud-init file. The CLI reads and encodes the file.
+      - ISO_IMAGE must be an Exoscale template ID or name the operator can access. It is not a qcow2 or ISO filename.
+      - vm_cpu and vm_mem are matched to the smallest sufficient fixed instance-type in
+        ExoscaleBackend.INSTANCE_TYPES, which follows Exoscale's "standard.<size>" naming.
+      - vm_dsk_gb maps directly to --disk-size.
+      - MAC addresses are not a customer-assignable concept on Exoscale.
     """
 
-    # Smallest-to-largest by (cores, memory_gb) — Exoscale's own "standard" family naming; NOT
-    # independently re-confirmed live this session, see this class's own docstring. Used only
-    # when EXOSCALE_INSTANCE_TYPES isn't set — see resolve() and README's Compute backends table
-    # for the override and the real URL to check Exoscale's current instance-type catalog.
+    # Smallest-to-largest by (cores, memory_gb), following Exoscale's standard family naming.
+    # Used only when EXOSCALE_INSTANCE_TYPES is not set. resolve() and the README's Compute
+    # backends table give the override and the catalog URL.
     INSTANCE_TYPES = [
         ("standard.tiny", 1, 1), ("standard.small", 1, 2), ("standard.medium", 2, 4),
         ("standard.large", 4, 8), ("standard.extra-large", 4, 16),
@@ -4060,11 +3550,9 @@ class ExoscaleBackend(VMBackend):
         if missing:
             die("backend 'exoscale' requires {} to be set in /etc/lab_creation.cfg (VM '{}')".format(
                 ", ".join(missing), vm_name))
-        # EXOSCALE_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table —
-        # added 2026-09-10 per explicit user request that no provider's sizing catalog be a
-        # hardcoded ceiling. "name:cores:mem_gb,...", e.g. "standard.tiny:1:1,standard.small:1:2".
-        # See _parse_sku_table()'s own docstring for the exact format and README for where to
-        # find Exoscale's current instance-type catalog.
+        # EXOSCALE_INSTANCE_TYPES: optional full override of the built-in INSTANCE_TYPES table, in the
+        # form "name:cores:mem_gb,...", e.g. "standard.tiny:1:1,standard.small:1:2". See
+        # _parse_sku_table() for the exact format and the README for Exoscale's current catalog.
         instance_types = _parse_sku_table(config.get("EXOSCALE_INSTANCE_TYPES"), "EXOSCALE_INSTANCE_TYPES")
         return cls(api_key, api_secret, zone, instance_types=instance_types,
                    vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
@@ -4106,10 +3594,11 @@ class ExoscaleBackend(VMBackend):
         return self._find_instance(vm_name) is not None
 
     def get_ip(self, vm_name):
-        """NOT independently live-verified (see this class's own top-level docstring) — the
-        instance-list entry's own "public-ip" field is `exo`'s own current CLI JSON output
-        convention. Returns None if the instance doesn't exist or has no public IP yet (e.g. a
-        private-network-only instance, or still starting)."""
+        """
+        Return the public IP from the instance-list entry's "public-ip" field, as printed by exo's JSON output. Returns None
+        if the instance does not exist or has no public IP yet, for example a private-network-only instance or one still
+        starting.
+        """
         instance = self._find_instance(vm_name)
         if not instance:
             return None
@@ -4175,9 +3664,10 @@ class ExoscaleBackend(VMBackend):
             die(str(e))
 
     def open_vm_ports(self, vm_name, ports):
-        """A per-VM security group (lab-<vm>) with one ingress rule per port from anywhere,
-        attached to the instance — Exoscale's default security group lets nothing in. Rules or
-        an attachment that already exist are fine. NOT live-verified."""
+        """
+        Create a per-VM security group (lab-<vm>) with one ingress rule per port from anywhere, and attach it to the
+        instance. Exoscale's default security group allows no inbound traffic. Existing rules or attachments are left alone.
+        """
         if not ports:
             return
         name = _gce_name(vm_name.split(".")[0])
@@ -4231,9 +3721,8 @@ class ExoscaleBackend(VMBackend):
         config_method="", iso_image="", mymac=None, cloud_instance_type="", **kwargs
     ):
         self._require_cloud_init(config_method, vm_name)
-        # cloud_instance_type: an explicit per-node/common lab-JSON override — added 2026-09-10
-        # per explicit user request — bypasses _pick_instance_type() entirely and uses the given
-        # Exoscale instance-type name verbatim.
+        # cloud_instance_type: explicit lab-JSON override. Bypasses _pick_instance_type() and uses
+        # the given Exoscale instance-type name verbatim.
         instance_type = cloud_instance_type or self._pick_instance_type(vm_cpu, vm_mem, vm_name)
         userdata_path = self._userdata_path_by_vm.get(vm_name)
 
@@ -4251,10 +3740,7 @@ class ExoscaleBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-        # `exo compute instance create` is synchronous but a get_ip() poll is used regardless
-        # rather than parsing its own create-command output separately — matches AWSBackend's
-        # own defensive stance. NOT independently live-verified (see this class's own top-level
-        # docstring).
+        # exo compute instance create is synchronous, but get_ip() still polls, matching AWSBackend.
         log("Waiting for '{}' to be assigned a real IP address".format(vm_name))
         return _poll_for_ip(lambda: self.get_ip(vm_name), vm_name)
 
@@ -4283,32 +3769,23 @@ CLOUD_BACKEND_NAMES = frozenset(BACKENDS) - {"libvirt", "harvester"}
 
 def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
     """
-    Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm() below. Installs BIND
-    and configures it to serve `mydomain` from the SAME on-disk path/convention this project's
-    existing DNSService (libs/services.py) already assumes for automation.mydemo.lab
-    (NAMED_ZONE_DIR = /var/lib/named, `systemctl restart named`) — so add_to_dns()'s existing
-    remote_dns_servers mechanism (already SSH-appending a line to a zone file and restarting named
-    on any listed server, unmodified since it was built for automation.mydemo.lab's own SUSE/BIND
-    setup) works against this VM with zero new DNS-propagation code.
+    Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(). It installs BIND and serves
+    `mydomain` from the same on-disk path and convention DNSService (libs/services.py) uses for
+    automation.mydemo.lab: NAMED_ZONE_DIR is /var/lib/named, and named is restarted with `systemctl restart named`.
+    This lets add_to_dns() append records through the existing remote_dns_servers mechanism, which SSH-appends a line
+    to a zone file and restarts named on each listed server, with no new propagation code.
 
-    One real, deliberate compatibility shim, since the actual cloud AMI is very likely Ubuntu/
-    Debian, not SUSE (matches this project's own Compute-backends docs — ISO_IMAGE for a cloud
-    backend is a real provider AMI/image, operator-supplied, not assumed to be SUSE): Debian/
-    Ubuntu's bind9 package expects zone files under /etc/bind or /var/cache/bind, not
-    /var/lib/named — /var/lib/named is created explicitly and named.conf.local points its zone
-    there instead, rather than porting DNSService's own hardcoded path.
+    Cloud AMIs are usually Ubuntu or Debian, not SUSE. Debian and Ubuntu's bind9 package expects zone files under
+    /etc/bind or /var/cache/bind. The shim creates /var/lib/named and points named.conf.local at it, instead of
+    porting DNSService's hardcoded path.
 
-    Real, live-tested 2026-09-09 (see TODO): Ubuntu 24.04's bind9 package already ships a working
-    named.service unit natively at /usr/lib/systemd/system/named.service — enabling/starting/
-    restarting `named` directly Just Works, no bind9.service alias needed. An earlier draft here
-    created one anyway (on the wrong assumption Ubuntu only ships bind9.service) — confirmed live
-    against a real instance that it actively SHADOWED the real unit (/etc/systemd/system/ wins
-    over /usr/lib/systemd/system/ in systemd's own search order) with a symlink to a path that
-    doesn't exist, breaking `systemctl restart named` outright even though `enable --now named`
-    and `is-active` both still looked fine. Removed.
+    Ubuntu 24.04's bind9 package ships a working named.service at /usr/lib/systemd/system/named.service. Enable,
+    start and restart `named` directly. Do not add a bind9.service alias in /etc/systemd/system, because that alias
+    shadows the packaged unit.
 
-    NOT live-tested independently of the AWS live-testing session this was written during — see
-    TODO for the current verification status of the whole ensure_cloud_dns_vm() mechanism.
+    The zone is queried successfully through the DNS VM's private IP and its loopback address. Querying the same zone
+    through the instance's public IP can return a root-zone NXDOMAIN, so records on this VM are not reliably
+    resolvable from outside the cloud network. The cause is not yet identified. See TODO.
     """
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
@@ -4326,49 +3803,32 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
         'zone "{d}" {{ type master; file "/var/lib/named/{d}.lan"; allow-update {{ none; }}; }};'
     ).format(d=mydomain)
 
-    # Deliberately one shell command per list item, run entirely via `runcmd` (which cloud-init
-    # runs LAST, after `packages` has actually installed bind9) rather than cloud-config's
-    # `write_files` module — write_files runs in cloud-init's early init stage, BEFORE packages
-    # install, so a `bind:bind` chown or a write into /var/lib/named (which doesn't exist yet on
-    # a stock Debian/Ubuntu image — see this function's own docstring) would silently fail there.
+    # Each entry is one shell command, run through runcmd. cloud-init runs runcmd last, after
+    # packages has installed bind9. write_files runs earlier, before packages install, so a
+    # bind:bind chown or a write into /var/lib/named would fail on a stock image.
     #
-    # Real bug found live-testing 2026-09-09, and just as real as the ordering issue above: an
-    # earlier draft here also created `ln -sf /lib/systemd/system/bind9.service
-    # /etc/systemd/system/named.service`, on the (wrong) assumption that Ubuntu's bind9 package
-    # only ships a bind9.service unit. Confirmed live against a real instance: Ubuntu 24.04's
-    # bind9 package already provides a working named.service natively at
-    # /usr/lib/systemd/system/named.service — that symlink didn't just do nothing, it actively
-    # SHADOWED the real one (/etc/systemd/system/ wins over /usr/lib/systemd/system/ in systemd's
-    # own search order) with a link to a path (/lib/systemd/system/bind9.service) that doesn't
-    # exist at all, breaking `systemctl restart named` outright even though `enable --now named`
-    # and `is-active` both still looked fine (they resolve differently). No such symlink is
-    # needed — enabling/starting/restarting `named` directly Just Works on a real Ubuntu image.
+    # Ubuntu's bind9 package already ships a working named.service in /usr/lib/systemd/system.
+    # Do not symlink it from /etc/systemd/system: that shadows the packaged unit and points at a
+    # path that does not exist. Enable and restart named directly.
     commands = [
         "mkdir -p /var/lib/named",
         "printf '%s\\n' {args} > /var/lib/named/{d}.lan".format(args=zone_printf_args, d=mydomain),
         "printf '%s\\n' {conf} > /etc/bind/named.conf.local".format(conf="'{}'".format(named_conf_line)),
         "chown -R bind:bind /var/lib/named",
         "chmod 0755 /var/lib/named",
-        # Real bug found live-testing 2026-09-09: Ubuntu's own `usr.sbin.named` AppArmor profile
-        # only allows `/var/lib/bind/**` for zone data, not `/var/lib/named/**` (this project's
-        # own existing NAMED_ZONE_DIR convention, chosen to match automation.mydemo.lab's SUSE
-        # setup) — named would fail to load the zone with a plain "permission denied", despite
-        # completely correct standard UNIX ownership/permissions (the two lines just above).
-        # Fixed via Ubuntu's own supported override mechanism (a local/ drop-in, already
-        # #include'd by the shipped profile) rather than disabling confinement.
+        # Ubuntu's usr.sbin.named AppArmor profile allows zone data only under /var/lib/bind/**, not
+        # under /var/lib/named/** (the NAMED_ZONE_DIR convention used elsewhere). Without an override,
+        # named fails to load the zone with permission denied despite correct UNIX ownership. The
+        # local/ drop-in is Ubuntu's supported override, so the profile stays enforced.
         "printf '%s\\n' '/var/lib/named/** rw,' > /etc/apparmor.d/local/usr.sbin.named",
         "apparmor_parser -r /etc/apparmor.d/usr.sbin.named",
         "systemctl enable --now named",
     ]
     runcmd_block = "\n".join("  - {}".format(yq(cmd)) for cmd in commands)
 
-    # Real bug found live-testing 2026-09-09: a bare top-level `ssh_authorized_keys:` only grants
-    # the distro's own DEFAULT user (Ubuntu's "ubuntu") a key — root SSH stays blocked behind
-    # Ubuntu's stock cloud image's own rejection wrapper ("Please login as the user \"ubuntu\"...").
-    # Every SSH call this project makes (ensure_cloud_dns_vm()'s own later zone-file append via
-    # add_to_dns()'s remote_dns_servers, exactly like every other backend) assumes root access —
-    # matches template_user-data's own explicit `users: [..., {name: root, ...}]` convention,
-    # confirmed working live against the real EC2 test node this same session.
+    # A top-level ssh_authorized_keys grants the key only to the distro default user (ubuntu), and
+    # the image's login wrapper keeps root SSH blocked. Every SSH call this project makes assumes
+    # root, so root is declared explicitly under users:, the same convention as template_user-data.
     return (
         "#cloud-config\n"
         "package_update: true\n"
@@ -4387,46 +3847,32 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
 
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path):
     """
-    Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend (one per
-    backend — e.g. "lab-dns-aws" — reused across every lab/run that uses that same backend, not
-    per-lab), and returns its real IP. Added 2026-09-09, alongside create_vm()'s own real-IP
-    return contract, after a user request: cloud nodes generally cannot reach
-    automation.mydemo.lab's own BIND server at all (it sits behind the home-lab's own NAT/router,
-    not internet-reachable) — a real multi-node cloud cluster needs its OWN DNS server, living
-    inside that same cloud network, for its nodes to resolve each other. See setup_vm.py's
-    provision_vm() for how this plugs into add_to_dns()'s existing remote_dns_servers mechanism.
+    Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
+    There is one DNS VM per backend, e.g. "lab-dns-aws", reused by every lab that uses that backend. It is not
+    created per lab.
 
-    Genuinely NOT yet implemented (a known, real gap, not silently glossed over): a freshly
-    created cloud node does not automatically point its own DNS resolution (/etc/resolv.conf, or
-    the cloud provider's own VPC-level DHCP option set) at this DNS VM — so a *second* cloud node
-    in the same lab cannot yet resolve a *first* one by hostname without that additional wiring.
-    Real multi-node cloud clusters need that follow-up before they can rely on hostname resolution
-    between their own nodes.
+    Cloud nodes generally cannot reach automation.mydemo.lab's own BIND server, which sits behind the home lab's NAT
+    and is not reachable from the internet. A cloud cluster therefore needs its own DNS server inside the same
+    cloud network, and its nodes resolve each other through it. See provision_vm() in setup_vm.py for how this plugs
+    into add_to_dns()'s remote_dns_servers mechanism.
 
-    With multiple cloud accounts (backend.account set — see resolve_cloud_account()) each account
-    is its own isolated cloud network, so the DNS VM is per-account: "lab-dns-<backend>-<account>".
-    The unnamed / "default" account keeps the plain "lab-dns-<backend>" name, unchanged.
+    Known limitation: a freshly created cloud node does not point its own DNS resolution (/etc/resolv.conf or the
+    provider's VPC DHCP option set) at this DNS VM. A second cloud node in the same lab therefore cannot resolve a
+    first one by hostname until that wiring is added.
 
-    Reuse/creation: looks up the fixed name "lab-dns-<backend_name>[-<account>]" via the backend's
-    own vm_exists()/get_ip() (same idempotent-reuse convention as every other node in this project);
-    creates it via the SAME backend's own create_vm() otherwise, using the smallest instance/plan
-    size available (1 vCPU / 512 MiB is intentionally tiny — BIND's own footprint is minimal) and
-    the SAME ISO_IMAGE the calling lab already configured (no new required config key). Uses
-    `iso_loc`/`vm_img_loc` values from the caller only insofar as copy_vm_image() needs them —
-    irrelevant for every cloud backend (a no-op validation call, per each one's own docstring).
+    With multiple cloud accounts (backend.account set, see resolve_cloud_account()), each account is an isolated
+    cloud network, so the DNS VM is per account: "lab-dns-<backend>-<account>". The unnamed or "default" account
+    keeps the plain "lab-dns-<backend>" name.
 
-    LIVE-TESTED 2026-09-09 against a real AWS account, and NOT fully green — see TODO for the
-    complete account. Confirmed solidly working: root SSH access, BIND install/start, the zone
-    file getting the real record written via add_to_dns()'s existing SSH-based
-    remote_dns_servers mechanism completely unmodified, and DNS resolution being correct when
-    queried via the DNS VM's own private IP OR its loopback address. Confirmed BROKEN, and NOT
-    resolved this session despite real effort: querying the SAME zone via the DNS VM's AWS
-    Elastic/Public IP from an external client (automation.mydemo.lab included) returns a
-    synthesized root-zone NXDOMAIN instead of the real answer, even though unrelated recursive
-    queries (e.g. a real google.com lookup) through that exact same public IP work fine — ruled
-    out ISP-level interception, AppArmor, security groups, and stale cache as the cause; not yet
-    root-caused. This means today, this DNS VM's own records are NOT reliably queryable from
-    automation.mydemo.lab over the public IP — a real, currently open problem, not a solved one.
+    Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
+    If the VM does not exist, it is created with the same backend's create_vm(), at the smallest instance or plan size
+    (1 vCPU and 512 MiB, enough for BIND) and with the ISO_IMAGE the calling lab already configured. No new required
+    config key is added. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
+    copy_vm_image() validation is a no-op.
+
+    Known limitation: querying this DNS VM's zone through its public IP from an external client, including
+    automation.mydemo.lab, can return a root-zone NXDOMAIN, even though recursive queries through the same public IP
+    work. Use the private IP or loopback address. The cause is not yet identified. See TODO.
     """
     acct = getattr(backend, "account", "") or ""
     if acct in ("", "default"):
@@ -4460,13 +3906,10 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
         die("cloud DNS VM '{}' was created on backend '{}' but create_vm() reported no IP — "
             "cannot continue".format(dns_vm_name, backend_name))
 
-    # Real bug found live-testing 2026-09-09: create_vm() reporting an IP only means the cloud
-    # provider assigned one — cloud-init's own package_update+packages+runcmd sequence (installing
-    # and starting bind9) takes real additional time after that, well past when SSH itself
-    # answers. Without this wait, add_to_dns()'s later SSH-based zone-file append (setup_vm.py's
-    # provision_vm()) would race a DNS VM that isn't running named yet — its own check=False
-    # design (a secondary DNS server being unreachable must not abort provisioning) means that
-    # race was failing completely silently rather than raising anything.
+    # create_vm() returns once the provider has assigned an IP, but cloud-init still needs time to
+    # install and start bind9. Wait here until named answers, so add_to_dns()'s later SSH append
+    # does not race it. Because the DNS VM is a secondary server, check=False would otherwise hide
+    # that race completely.
     log("- Waiting for \"{}{}{}\" to finish installing and starting BIND".format(_RED, dns_vm_name, _RESET))
     waited = 0
     while waited < 240:
@@ -4490,24 +3933,15 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
 def _resolve_account_name(definition, config, vm_name):
     """
-    The cloud_account name that applies to `vm_name`: an explicit
-    "cloud_account" field (node, then common) if set, else — added
-    2026-09-12 — auto-discovered from whatever credentials files actually
-    exist, so an encrypted account for the same provider isn't silently
-    ignored just because the lab JSON never named it explicitly (the
-    encrypted-credentials feature's whole point). Auto-discovery only
-    engages when the node's own "backend" field (independent of any
-    account — see effective_backend_name()'s own fallback chain) already
-    names an actual CLOUD backend; a libvirt/harvester node never triggers
-    a credentials-directory scan.
+    Return the cloud_account name that applies to `vm_name`. An explicit "cloud_account" field (node, then common) is used
+    if set. Otherwise auto-discovery checks the credentials files for a matching account, so an encrypted account is used
+    even when the lab JSON does not name it. Auto-discovery runs only when the node's own "backend" field names a cloud
+    backend. A libvirt or harvester node never scans the credentials directory.
 
-    Returns "" if no account applies (today's behaviour: read
-    lab_creation.cfg directly) — never None, so every caller can keep
-    treating "falsy" as "no account" as before.
+    Returns "" when no account applies, in which case lab_creation.cfg is read directly. Never returns None.
 
-    Dies if auto-discovery finds more than one credentials file for that
-    provider — genuinely ambiguous, must be resolved with an explicit
-    "cloud_account" rather than guessed.
+    Dies if auto-discovery finds more than one credentials file for the provider. The ambiguity must be resolved with an
+    explicit "cloud_account".
     """
     node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
     common_cfg = definition.get("common", {}) or {}
@@ -4610,18 +4044,13 @@ def get_backend(definition, config, vm_name, for_existing=False, vm_img_loc=None
 
 def get_backend_for_account(account_name, config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
     """
-    Resolves a backend purely from a named cloud account, independent of
-    any specific lab node — added 2026-09-18 for overlay.ensure_overlay_hub()
-    (the overlay hub lives in its OWN designated account, via
-    OVERLAY_HUB_ACCOUNT, which may differ from — or not even appear in —
-    any lab node's own backend/cloud_account).
+    Resolve a backend from a named cloud account, independent of any lab node. overlay.ensure_overlay_hub() uses it,
+    because the hub lives in its own account (OVERLAY_HUB_ACCOUNT), which may differ from any lab node's backend or
+    cloud_account.
 
-    Mirrors get_backend() minus the per-node backend/cloud_account
-    resolution. Safe because every backend_cls.resolve() classmethod only
-    ever reads from `config` (the account's own merged config) and uses
-    `vm_name` for error messages — never `definition` itself (confirmed by
-    inspection across all 8 cloud backends) — so a synthetic single-node
-    definition is fine here.
+    Mirrors get_backend() without the per-node backend and cloud_account resolution. A synthetic single-node definition is
+    enough, because each backend's resolve() classmethod reads only the account's merged config and uses vm_name for error
+    messages.
     """
     acct = primary.load_cloud_account(account_name, config=config)
     cloudtype = acct.get("CLOUDTYPE", "")

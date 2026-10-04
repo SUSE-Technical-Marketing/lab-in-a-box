@@ -171,9 +171,8 @@ check("is_active() checks over SSH once configure() has recorded a remote_host",
 check("is_active() never calls local subprocess.run once a remote_host is known",
       local_run.call_count == 0)
 
-# Found in code review 2026-09-05: a never-configured service used to fall
-# back to a LOCAL iptables check here and could report itself "active" if
-# that happened to succeed — but _remote_host alone can't tell "configured
+# A never-configured service must not fall back to a LOCAL iptables check, which could report it
+# as "active". _remote_host alone cannot tell "configured
 # for a local hypervisor" apart from "configure() never even ran", since
 # both leave it at None. Fixed with an explicit _configured flag: a service
 # that was never applied can't be active, full stop, without even touching
@@ -181,8 +180,7 @@ check("is_active() never calls local subprocess.run once a remote_host is known"
 svc3 = services.PortForwardService()  # never configured — no remote_host recorded
 with mock.patch.object(subprocess, "run", return_value=_cp(0)) as local_run2:
     check("is_active() reports False when configure() has never run, without even "
-          "checking iptables (found in code review 2026-09-05 — it used to fall back "
-          "to a local check and could misreport 'active')",
+          "checking iptables",
           svc3.is_active() is False and local_run2.call_count == 0)
 
 # Once configure() HAS run for a local hypervisor (REMOTE_HOST genuinely

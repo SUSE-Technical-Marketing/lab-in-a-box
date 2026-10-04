@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Pure-logic unit tests for scripts/refresh_hypervisor_status.py (masking,
-# host/image selection — SSH itself is mocked, no live hypervisor available)
+# host/image selection; SSH is mocked)
 # and webui/lib/discovery.py's status()/dynamic ISO_IMAGE enum injection (a
 # plain temp file, no mocking needed). Run from 08_hypervisor_status.sh, in
 # its own container — see tests/run_tests.sh.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
 # lab_creation.py/primary.py live in libs/ post-cutover —
-# legacy_bash/libs/ holds the retired pre-cutover forks, not a fallback path.
+# legacy_bash/ is not a fallback path.
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "webui" / "lib"))
 
@@ -59,8 +59,8 @@ finally:
     lab_creation.ssh_output = _orig_ssh_output
 
 # -- host_status (mocked ssh_output, success + failure) ----------------------
-# Regression test for a real bug (2026-08-27): host_status used to run virsh
-# via a qemu+ssh://root@{host} URI even though it was already executing
+# Regression test: host_status must not run virsh via a qemu+ssh://root@{host} URI when it is
+# already executing
 # remotely ON {host} — a redundant loopback SSH hop whose host key is never
 # pre-accepted, hanging forever when run unattended. virsh must run locally
 # (qemu:///system) since we're already on the target host.

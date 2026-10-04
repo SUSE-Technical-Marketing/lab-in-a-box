@@ -221,9 +221,10 @@ def clear_passphrase_cache():
 
 
 def credentials_dirs(config=None):
-    """Search path for credential/cloud-account files: config["CREDENTIALS_PATH"]
-    (a lab_creation.cfg key, added 2026-09-11) if set, else the built-in
-    default + local dev fallback."""
+    """
+    Return the search path for credential and cloud-account files: config["CREDENTIALS_PATH"] if it is set, otherwise the
+    built-in default and a local development fallback.
+    """
     custom = (config or {}).get("CREDENTIALS_PATH")
     if custom:
         return [custom]
@@ -243,23 +244,15 @@ def cloud_account_path(name, config=None):
 
 def list_cloud_accounts(config=None):
     """
-    Every parseable credentials file across credentials_dirs(config), as
-    (name, cloudtype) pairs. `cloudtype` is ALWAYS a plaintext top-level
-    field even in an otherwise fully-encrypted file (see
-    try_load_cloud_account()'s own docstring on the two encrypted shapes) —
-    so this never decrypts anything and never prompts for a passphrase.
+    Return every parseable credentials file under credentials_dirs(config), as (name, cloudtype) pairs. cloudtype is always a
+    plaintext top-level field, even in an otherwise encrypted file. This function therefore never decrypts anything and never prompts
+    for a passphrase.
 
-    Added 2026-09-12 to support automatic account discovery (see
-    find_cloud_account_for_cloudtype() below) — before this, a cloud
-    backend with no explicit "cloud_account" set silently fell back to
-    plaintext lab_creation.cfg keys even when an encrypted credentials file
-    for that same provider existed, which is what the encrypted-store
-    feature was actually meant to replace.
+    It supports automatic account discovery (see find_cloud_account_for_cloudtype()). A cloud backend with no explicit cloud_account
+    uses the matching file, and not the plaintext keys in lab_creation.cfg.
 
-    A file that fails to parse, isn't a mapping, or has no cloudtype field
-    is skipped silently — inventorying what's usable, not validating every
-    file in the directory; load_cloud_account() still gives the real error
-    if a specific broken one is ever actually selected.
+    A file that fails to parse, is not a mapping, or has no cloudtype is skipped. The function inventories the usable files and does
+    not validate them. load_cloud_account() reports the real error for a file that is selected.
     """
     accounts = []
     seen = set()
@@ -318,20 +311,12 @@ def find_cloud_account_for_cloudtype(cloudtype, config=None):
 
 def list_service_credentials(config=None):
     """
-    Like list_cloud_accounts(), but for non-cloud external-service credentials
-    (SCC, SUSE Application Collection, …) — added 2026-09-18 per explicit user
-    request that /etc/lab_creation/credentials/ cover more than just cloud
-    providers, while plaintext-in-lab-JSON remains fully valid either way.
+    Like list_cloud_accounts(), but for non-cloud external-service credentials, such as SCC and the SUSE Application Collection.
+    Plaintext values in the lab JSON remain valid.
 
-    Every parseable file across credentials_dirs(config), as (name,
-    credential_kind) pairs, reading a top-level 'credential_kind' (or
-    'kind') field — deliberately a DIFFERENT marker key from cloud_account's
-    own 'cloudtype', so the two concepts share the same directory/file
-    format/encryption mechanism without ever colliding: a file is either a
-    cloud account (has cloudtype) or a service credential (has
-    credential_kind), never both. Same "skip anything unparseable or
-    marker-less" contract as list_cloud_accounts() — inventorying what's
-    usable, not validating every file in the directory.
+    Each file's credential_kind, or kind, is read. That marker differs from the cloud account marker, cloudtype. The two concepts share
+    the directory, file format and encryption, and a file is one or the other. Unparseable files and files without a marker are
+    skipped, as in list_cloud_accounts().
     """
     creds = []
     seen = set()
@@ -421,34 +406,20 @@ def _decrypt_value(envelope, cache_key, label, passphrase_prompt, max_attempts=3
 
 def try_load_cloud_account(name, config=None, passphrase_prompt=None):
     """
-    Non-dying load of a per-account credentials/cloud-account file: returns
-    (data, error) where exactly one is None. `data`, when present, is a flat
-    dict with the provider normalised to the key "CLOUDTYPE". Used by the
-    preflight, which folds any error into its own issue list rather than
-    aborting.
+    Load a per-account credentials file without exiting on error. Returns (data, error), where exactly one of the two is None.
+    data is a flat dict, with the provider normalised to the key CLOUDTYPE. The preflight uses this, and it reports errors in its own
+    issue list.
 
-    Multiple cloud accounts, the same way KVM_HOSTS gives multiple hypervisors
-    (see backends.resolve_cloud_account()). Looks under credentials_dirs(config)
-    — default /etc/lab_creation/credentials, configurable via lab_creation.cfg's
-    CREDENTIALS_PATH — for <name>.{yaml,yml,json,cfg}. The file carries a
-    `cloudtype` (aws/gcp/hetzner/…) plus the same connection keys that
-    provider's backend already reads from lab_creation.cfg (AWS_REGION, etc.).
+    Multiple cloud accounts work like multiple KVM hosts. The file is <name>.{yaml,yml,json,cfg} under credentials_dirs(config). It
+    carries a cloudtype, such as aws, gcp or hetzner, and the connection keys that the provider's backend reads from lab_creation.cfg,
+    for example AWS_REGION.
 
-    Encryption (added 2026-09-11 — see scripts/setup_credentials.py, which is
-    the normal way to create these files, and libs/crypto_store.py for the
-    actual cipher): encrypted by default. Two shapes are recognised, both
-    written by setup_credentials.py:
-      - Whole-file: a top-level "encrypted: true" with the crypto_store
-        envelope fields alongside it; the decrypted plaintext is itself a
-        YAML mapping of the real fields.
-      - Field-level: only some values are themselves envelope dicts
-        ({"encrypted": true, ...}) — the rest of the file stays plain text
-        (e.g. AWS_REGION/AWS_PROFILE readable, AWS_SECRET_ACCESS_KEY boxed).
-    A file can opt out entirely with a top-level "unencrypted: true" — no
-    passphrase is ever prompted for one (the loader checks for "encrypted"/
-    per-field envelopes, not "unencrypted", so an absent flag and an explicit
-    unencrypted: true behave identically: only actually-encrypted content
-    ever triggers a prompt).
+    Files are encrypted by default, and scripts/setup_credentials.py creates them. Two encrypted shapes are recognised:
+      - Whole file: a top-level "encrypted: true" with the crypto_store envelope fields. The decrypted content is a YAML mapping of
+        the fields.
+      - Field level: some values are envelope dicts ({"encrypted": true, ...}), and the rest stays plain text, for example AWS_REGION.
+    A file with a top-level "unencrypted: true" is read without a passphrase. A passphrase is requested only when encrypted content is
+    present.
     """
     p = cloud_account_path(name, config)
     if p is None:
@@ -624,18 +595,12 @@ _VAR_REF_RE = re.compile(r'\$\{(\w+)\}|\$(\w+)')
 
 def _parse_shell_vars(text):
     """
-    Parse simple KEY=value or KEY="value" assignments from a bash config file.
-    Skips comments, declare statements, arrays, and command substitutions.
+    Parse KEY=value and KEY="value" assignments from a bash config file. Comments, declare statements, arrays and command
+    substitutions are skipped.
 
-    Expands ${VAR}/$VAR references to previously-parsed keys in the same file
-    (sequential, like bash `source` — e.g. the real lab_creation.cfg.example
-    ships `VIRT_SRV="qemu+ssh://root@${REMOTE_HOST}/system?..."`, which relies
-    on REMOTE_HOST already having been assigned earlier in the same file).
-    Falls back to the process environment for anything not defined earlier in
-    the file, matching a sourced script's actual variable scope. An
-    unresolvable reference is left as-is rather than raising.
-
-    Returns a dict.
+    ${VAR} and $VAR references to keys parsed earlier in the same file are expanded, in order, as bash does with source. For example,
+    lab_creation.cfg.example uses REMOTE_HOST inside VIRT_SRV. A reference that is not defined earlier falls back to the process
+    environment. An unresolvable reference is left as it is. Returns a dict.
     """
     result = {}
     for line in text.splitlines():

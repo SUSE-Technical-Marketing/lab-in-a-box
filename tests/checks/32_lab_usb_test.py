@@ -66,10 +66,8 @@ check("remap: other common fields (ISO_IMAGE, VM_MEM, …) pass through unchange
       remapped["common"]["ISO_IMAGE"] == "img.qcow2" and remapped["common"]["VM_MEM"] == "4096")
 
 # A node with a falsy config ({} or None — e.g. a minimal node relying
-# entirely on inherited common defaults) must still get a myip. Found in
-# code review 2026-09-05: `(node_cfg or {})["myip"] = ip` mutated a
-# throwaway dict instead of the real one whenever node_cfg was falsy,
-# silently dropping myip for that node in the remapped output.
+# entirely on inherited common defaults) must still get a myip. `(node_cfg or {})["myip"] = ip`
+# would mutate a throwaway dict whenever node_cfg is falsy, dropping myip in the remapped output.
 falsy_cfg_original = {
     "common": {},
     "nodes": {
@@ -121,8 +119,7 @@ check("remap: a NAT range too small for the lab raises a clear ValueError, not a
 
 
 # ── _find_repo_root(): the real repo, not wherever it happens to be run from ──
-# Confirmed live 2026-09-05: the OLD assumption ("two directories up from
-# this deployed script") broke outright once run as the installed
+# Two directories up from this deployed script is not the repo root. Once run as the installed
 # /usr/local/bin/build_lab_usb.py copy every other script here is meant to
 # be invoked as -- resolves to /usr/local, which has none of the sibling
 # directories (setup_demo_server/, the whole repo tree) this script actually

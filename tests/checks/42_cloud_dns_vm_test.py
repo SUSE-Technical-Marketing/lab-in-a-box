@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Unit tests for libs/backends.py's ensure_cloud_dns_vm() and its cloud-init generator
-# (_cloud_dns_vm_user_data()) — added 2026-09-09 alongside AWSBackend's own real-IP return
-# contract (see TODO). No real cloud account needed: a fake backend records every call made on
+# (_cloud_dns_vm_user_data()). No real cloud account needed: a fake backend records every call made on
 # it. Verifies the reuse-vs-create decision, the generated YAML's validity and shell-script
 # correctness, and CLOUD_BACKEND_NAMES' own membership — not real provider behavior. Run from
 # 42_cloud_dns_vm.sh, in its own container — see tests/run_tests.sh.
@@ -59,13 +58,11 @@ try:
     check("runcmd writes the real zone file path", "/var/lib/named/mydemo.lab.lan" in joined)
     check("runcmd writes the real named.conf.local zone stanza",
           any('zone "mydemo.lab"' in c and "/var/lib/named/mydemo.lab.lan" in c for c in runcmd))
-    check("runcmd does NOT create a bind9.service -> named.service alias symlink — a real bug "
-          "found live-testing 2026-09-09: Ubuntu's bind9 package already ships a working "
-          "named.service natively, and that symlink actively shadowed it with a broken link",
+    check("runcmd does NOT create a bind9.service -> named.service alias symlink, since Ubuntu's "
+          "bind9 package already ships a working named.service, which the symlink would shadow",
           not any("ln -sf" in c and "named.service" in c for c in runcmd))
-    check("runcmd writes an AppArmor local override for /var/lib/named — a real bug found "
-          "live-testing 2026-09-09: Ubuntu's usr.sbin.named profile only allows /var/lib/bind/**, "
-          "so named fails to load the zone with a plain 'permission denied' otherwise",
+    check("runcmd writes an AppArmor local override for /var/lib/named, since Ubuntu's "
+          "usr.sbin.named profile only allows /var/lib/bind/**",
           any("/etc/apparmor.d/local/usr.sbin.named" in c and "/var/lib/named/** rw," in c for c in runcmd))
     check("runcmd reloads the AppArmor profile after writing the override, before starting named",
           runcmd.index(next(c for c in runcmd if "/etc/apparmor.d/local/usr.sbin.named" in c))
@@ -137,9 +134,8 @@ class _FakeBackendCreate:
 
 create_backend = _FakeBackendCreate()
 with tempfile.TemporaryDirectory() as tempfile_dir:
-    # ensure_cloud_dns_vm() itself (not the backend) does a real `ssh ... systemctl is-active
-    # named` poll after create_vm() returns — a real bug found live-testing 2026-09-09 needed
-    # this wait (cloud-init's own package install takes real time past when the IP is assigned).
+    # ensure_cloud_dns_vm() itself (not the backend) polls `ssh ... systemctl is-active named`
+    # after create_vm() returns, because cloud-init's package install continues after the IP is assigned.
     # Mocked here the same way every other backend test in this suite mocks subprocess.run.
     with mock.patch.object(backends.subprocess, "run", return_value=_cp(0)):
         ip = backends.ensure_cloud_dns_vm(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for the multiple-cloud-accounts feature (added 2026-09-10, same
+# Unit tests for the multiple-cloud-accounts feature (same
 # shape as KVM_HOSTS giving multiple hypervisors):
 #   primary.try_load_cloud_account / load_cloud_account  — the account files
 #   backends.resolve_cloud_account / effective_backend_name / get_backend
@@ -95,7 +95,7 @@ check("load_cloud_account: dies on a missing account", any("not found" in m for 
 
 
 # ── primary.list_cloud_accounts / find_cloud_account_for_cloudtype ─────────
-# Auto-discovery (added 2026-09-12): a cloud-backend node with no explicit
+# Auto-discovery: a cloud-backend node with no explicit
 # "cloud_account" should use an encrypted credentials file automatically if
 # exactly one matches its provider, instead of silently falling back to
 # plaintext lab_creation.cfg keys — the point of the encrypted-store feature
@@ -270,7 +270,7 @@ check("ensure_cloud_dns_vm: a named account -> lab-dns-<backend>-<account>",
 
 # ── primary.try_load_service_credential / list_service_credentials /
 # find_service_credential_for_kind — external-service credentials, added
-# 2026-09-18, the credential_kind-marked counterpart of cloud_account above ──
+# The credential_kind-marked counterpart of cloud_account above ──
 with tempfile.TemporaryDirectory() as d:
     _write(d, "scc-mine", ".cfg",
            "credential_kind=scc\nscc_user=joe@example.com\nscc_password=hunter2\n")

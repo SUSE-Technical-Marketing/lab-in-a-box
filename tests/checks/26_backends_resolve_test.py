@@ -91,8 +91,8 @@ check("HarvesterBackend.resolve() uses HARVESTER_NAMESPACE when set", backend.na
 
 
 # ── _check_or_generate_mac(): reads the lab definition exactly once ─────────
-# Regression coverage for two real bugs, fixed in sequence:
-#   1. This used to re-read/re-parse the lab file from disk on a MAC
+# Regression coverage for two cases:
+#   1. The MAC-conflict path must not re-read/re-parse the lab file from disk on a MAC
 #      conflict, discarding the caller's own already-loaded `definition`
 #      entirely, then write the patched copy back as JSON unconditionally
 #      (breaking YAML lab files).
@@ -194,7 +194,7 @@ check("_check_or_generate_mac: declining a conflict never writes a .system_modif
 
 
 # ── LibvirtBackend.check_or_generate_mac: real concurrency stress test for
-# the 2026-09-21 _mac_lock ────────────────────────────────────────────────
+# the _mac_lock ────────────────────────────────────────────────
 # setup_lab.py's new --parallel VM-creation mode means multiple real
 # threads can now call check_or_generate_mac() concurrently for different
 # VMs. The real hazard: list_used_macs() (a live query) and

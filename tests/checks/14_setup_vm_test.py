@@ -2,8 +2,7 @@
 # Mocked unit tests for scripts/setup_vm.py — backends.get_backend() is
 # monkeypatched to return a fake backend recording every call made on it
 # (matching how setup_vm.py now goes through the backend abstraction
-# instead of lab_creation's flat wrapper functions directly), since no live
-# KVM host is available. Verifies provision_vm()'s call ordering (DNS
+# instead of lab_creation's flat wrapper functions directly). Verifies provision_vm()'s call ordering (DNS
 # registered before the VM is created, VM created before the connectivity
 # wait) and the "existing node" refusal — not real provisioning. Run from
 # 14_setup_vm.sh, in its own container — see tests/run_tests.sh.
@@ -89,8 +88,8 @@ check("provision_vm: config_method='cloud-init' dispatches to prepare_cloud_init
       and "prepare_ignition_combustion" not in order
       and "prepare_virt_customize_for_vm" not in order
       and "prepare_install_iso" not in order)
-check("provision_vm: DNS is registered AFTER the VM is created (2026-09-09 fix — a cloud "
-      "backend's real IP is only known once create_vm() returns; see TODO)",
+check("provision_vm: DNS is registered AFTER the VM is created "
+      "(a cloud backend's real IP is only known once create_vm() returns)",
       order.index("create_vm") < order.index("add_to_dns"))
 check("provision_vm: the VM is created before the first connectivity wait",
       order.index("create_vm") < order.index("check_ssh_conn"))
@@ -99,7 +98,7 @@ check("provision_vm: rebooted, then waited on again, after the first connectivit
 check("provision_vm: stale SSH host keys cleaned before the connectivity wait",
       order.index("clean_ssh_keys") < order.index("check_ssh_conn"))
 check("provision_vm: cloud_instance_type is threaded from env through to backend.create_vm() "
-      "(added 2026-09-10 — see README's Compute backends table)",
+      "(see README's Compute backends table)",
       create_vm_kwargs.get("cloud_instance_type") == "m5.2xlarge")
 
 
@@ -157,8 +156,7 @@ check("main --help: exits 0 and prints usage", code == 0 and "Usage" in buf.getv
 
 
 # ── main(): destroy-before-recreate ──────────────────────────────────────────
-# Confirmed live 2026-09-17/18: setup_vm.py's own standalone entrypoint never
-# did this — setup_lab.py's own orchestration always calls destroy_vm() before
+# setup_vm.py's standalone entrypoint does not do this. setup_lab.py's orchestration always calls destroy_vm() before
 # provision_vm() for every node (unless --keep says it's reusable), but a
 # direct `setup_vm.py <lab.json> <vm>` retry after a failed attempt died with
 # "Disk ... is already in use by other guests" instead of just recreating,

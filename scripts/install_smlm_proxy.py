@@ -157,11 +157,9 @@ def setup_smlm_proxy_prereqs(hostname, cfg):
         "    --dry-run=client -o yaml | kubectl apply -f -\n"
         "\n"
         "rm -rf ${{_tmp}}"
-    # smlm_proxy_fqdn is free-text with no format validation at all — the
-    # hand-rolled single quotes above (found in code review 2026-09-05)
-    # broke, or could be injected through, this remote command the moment
-    # the value contained an embedded single quote. shlex.quote() escapes
-    # correctly even nested inside the surrounding heredoc.
+    # smlm_proxy_fqdn is free-text with no format validation. It is passed through shlex.quote(),
+    # which escapes embedded single quotes. Hand-rolled single quotes would not, and could be injected
+    # through the remote command. shlex.quote() also nests correctly inside the surrounding heredoc.
     ).format(fqdn=shlex.quote(cfg.get("smlm_proxy_fqdn", "") or ""), ns=shlex.quote(ns)))
 
 
@@ -185,12 +183,9 @@ def generate_smlm_proxy_config(hostname, cfg):
     max_cache = cfg.get("smlm_proxy_max_cache") or "2048"
     email = cfg.get("smlm_proxy_email") or "root@{}".format(cfg.get("smlm_proxy_fqdn", ""))
 
-    # admin_user/admin_pass/fqdn/server/email are free-text addon-config
-    # values with no format validation at all — hand-rolled single quotes
-    # here (found in code review 2026-09-05) broke, or could be injected
-    # through, this remote command the moment any of them contained an
-    # embedded single quote. shlex.quote() escapes correctly even nested
-    # inside other quoted shell words (unlike a bare "'{}'".format(...)).
+    # admin_user, admin_pass, fqdn, server and email are free-text values with no format validation.
+    # They are passed through shlex.quote(), which escapes embedded single quotes and nests inside other
+    # quoted shell words, unlike a bare "'{}'".format(...).
     inner_cmd = "proxy_container_config_nossl -p {port} -o /tmp/smlm-proxy-config.tar.gz {fqdn} {server} {max_cache} {email}".format(
         port=ssh_port, fqdn=cfg.get("smlm_proxy_fqdn", ""), server=cfg.get("smlm_proxy_server", ""),
         max_cache=max_cache, email=email,

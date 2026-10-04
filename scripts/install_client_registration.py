@@ -6,10 +6,8 @@
 #
 # Reference: https://www.uyuni-project.org/uyuni-docs/en/uyuni/client-configuration/registration-bootstrap.html
 #            https://documentation.suse.com/multi-linux-manager/5.2/en/docs/client-configuration/registration-bootstrap.html
-# (verified live 2026-08-28 — identical mechanism across Uyuni and every
-# current SMLM version; see libs/spacecmd_common.py's
-# module docstring, "Client registration" section, for the full research
-# notes and caveats)
+# The mechanism is the same across Uyuni and current SMLM versions. See libs/spacecmd_common.py's
+# module docstring, "Client registration" section, for the research notes and caveats.
 #
 # This is the CLIENT side — install_uyuni.py/install_smlm.py install the
 # SERVER. This addon runs on a plain VM/baremetal node (nodes[x].addons, not
@@ -171,24 +169,14 @@ def _wait_channels(cfg, hostname=None, exec_prefix=None, activation_key=None):
     will actually consume, whether or not they were separately named in
     sync_channels too.
 
-    Real bug found live 2026-09-22 (solar-system-lab.json): most real labs
-    create their activation keys via install_smlm.py's own
-    smlm_activation_keys list, not this addon's own
-    client_registration_activation_key_base_channel/_child_channels
-    fields — so for an ALREADY-EXISTING key (the overwhelmingly common
-    case), those fields are simply never populated in a per-node
-    client_registration override, and this function used to silently
-    return an empty channel list. That short-circuited register_client()'s
-    own pending-channels check to "nothing to wait for", sending
-    registration straight to _register_now() even while the key's real
-    channels were still mid-reposync. Confirmed live: this is exactly why
-    a client got the classic salt-minion instead of venv-salt-minion (its
-    real providing channel's own bootstrap marker file 404s until synced),
-    and the hardened salt-master then rejected it outright ("protocol
-    version 2, minimum required 3"). If hostname/exec_prefix/
-    activation_key are given and the local fields are empty, look up the
-    key's REAL channels server-side via describe_activation_key() instead
-    of trusting only this addon's own (likely-unpopulated) config.
+    Keys created by install_smlm.py's smlm_activation_keys list do not carry this addon's
+    client_registration_activation_key_base_channel or _child_channels fields. For an existing key,
+    those fields stay empty in a per-node override, so the channel list comes back empty.
+    register_client() then treats the pending-channels check as satisfied and registers at once, even
+    while the key's channels are still syncing. Whenever hostname, exec_prefix and activation_key are
+    given and the local channel fields are empty, the key's real channels are therefore looked up
+    server-side via describe_activation_key(). A client registered before its channels finish syncing
+    can get the wrong salt-minion package, which the salt-master then rejects.
     """
     wait_channels = set((cfg.get("client_registration_sync_channels") or "").split())
     base_channel = cfg.get("client_registration_activation_key_base_channel")
@@ -242,14 +230,9 @@ def _launch_background_retry(json_file, vm_name):
     setup_lab.py's own captured output, since this worker outlives the
     addon invocation that launched it.
 
-    Added 2026-09-21 per explicit user requirement, replacing a first
-    version of this fix that blocked synchronously with a timeout instead:
-    with many nodes sharing the same still-syncing channel, each would
-    have waited out its own full timeout in turn, potentially adding hours
-    to a lab deployment that's already going to fail on all of them
-    anyway. A detached per-node background retry lets the deployment
-    finish its OWN timeline while each pending registration finishes (or
-    keeps trying) independently, on its own.
+    The worker retries without a timeout and stops once registration succeeds. A synchronous wait with
+    a timeout is not used, because each node would wait out its own timeout in turn. A detached per-node
+    retry lets the deployment finish while each pending registration continues on its own.
     """
     Path(_RETRY_LOG_DIR).mkdir(parents=True, exist_ok=True)
     log_path = str(Path(_RETRY_LOG_DIR) / "client-registration-retry-{}.log".format(vm_name))
@@ -371,12 +354,9 @@ def main():
         # against the same smlm52beta.mydemo.lab, each with its own key. A
         # node expresses this via its own addons[] entry:
         # {"client_registration": {"client_registration_activation_key": "..."}}
-        # instead of a plain "client_registration" string — see
-        # k8s.addon_node_config()'s docstring (added 2026-09-11; this used to
-        # be a flat nodes[x].client_registration_* field, replaced by the
-        # nested addons[]-scoped form so it's unambiguous which addon a
-        # per-node override belongs to, and so the same mechanism works for
-        # any addon, not just this one).
+        # instead of a plain "client_registration" string. See k8s.addon_node_config()'s docstring. The
+        # nested form replaces a flat nodes[x].client_registration_* field, so it is unambiguous which
+        # addon an override belongs to, and the same mechanism works for any addon.
         eff_cfg = k8s.addon_node_config(definition, "client_registration", vm_name)
         register_client(vm_name, eff_cfg, json_file=json_file)
 

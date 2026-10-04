@@ -44,8 +44,8 @@ check("_yaml_dq produces a single well-formed double-quoted scalar for a value w
       ids._yaml_dq("o'clock") == '"o\'clock"')
 
 
-# ── render_ds389_manifest: real Kubernetes object structure, ground-truthed
-#    against 389ds/ds-container's own kustomize + doc ───────────────────────
+# ── render_ds389_manifest: Kubernetes object structure, following
+#    389ds/ds-container's kustomize manifests ───────────────────────
 manifest = ids.render_ds389_manifest(
     "ds389", "dirsrv", "quay.io/389ds/dirsrv:latest", "dc=mydemo,dc=lab", "s3cr3t",
     "5Gi", None, 30389, 30636)
@@ -75,8 +75,7 @@ check("render_ds389_manifest: runs as the real dirsrv uid/gid 389, not root",
       "runAsUser: 389" in manifest and "fsGroup: 389" in manifest)
 check("render_ds389_manifest: fsGroup sits at POD level (spec.template.spec.securityContext), "
       "not per-container — a real Kubernetes API rejection ('unknown field "
-      "...containers[0].securityContext.fsGroup') caught live-testing this addon 2026-09-21, "
-      "even though upstream's own doc sample has this exact same placement error",
+      "...containers[0].securityContext.fsGroup'), and the upstream doc sample uses the same placement",
       "\n      securityContext:\n        fsGroup: 389\n" in manifest)
 check("render_ds389_manifest: runAsUser stays container-level, scoped to dirsrv only, and the "
       "container's own securityContext carries no fsGroup (it isn't a valid field there)",

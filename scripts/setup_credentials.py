@@ -103,8 +103,8 @@ PROVIDER_FIELDS = {
     ],
 }
 
-# External-SERVICE credentials (SCC, SUSE Application Collection, …) —
-# added 2026-09-18. Same file format/directory/encryption as
+# External-SERVICE credentials (SCC, SUSE Application Collection, …).
+# Same file format/directory/encryption as
 # PROVIDER_FIELDS above, but marked with a "credential_kind" field instead
 # of "cloudtype" (see libs/primary.py's find_service_credential_for_kind()/
 # libs/addon_common.py's resolve_credential()) so the two concepts never
@@ -285,10 +285,8 @@ def interactive_build(credentials_dir):
 
     # The filename is "<provider>-<account_name>.yaml", and it's that WHOLE
     # stem — not just what's typed here — that a lab JSON's cloud_account
-    # must reference. Found live 2026-09-11: without saying so explicitly at
-    # both ends (the prompt AND the confirmation after writing), it's easy
-    # to type "myaccount" here and then, just as naturally, write
-    # "cloud_account": "myaccount" in the lab JSON — which doesn't exist.
+    # must reference. The prompt and the confirmation after writing both state this, because it is
+    # easy to write "cloud_account": "myaccount" in the lab JSON, which does not exist.
     account_name = input("Account name (the file will be named "
                          "<provider>-<name>.yaml — that whole name is what "
                          "you'll put in cloud_account): ").strip()
@@ -386,11 +384,11 @@ def main():
     credentials_dir = primary.credentials_dirs(config)[0]
     # EOFError (stdin ran out / piped input too short / Ctrl-D) and
     # KeyboardInterrupt (Ctrl-C) are real, expected ways for an interactive
-    # prompt sequence to end early — confirmed live 2026-09-11: without this,
-    # either one surfaces as a raw Python traceback instead of a clean abort.
+    # prompt sequence to end early.
+    # Both are caught, so the prompt ends in a clean abort instead of a raw Python traceback.
     try:
         print("What kind of credential?")
-        print("  1) Cloud provider (used to create/manage VMs — cloud_account)")
+        print("  1) Cloud provider (creates and manages VMs, as cloud_account)")
         print("  2) External service (SCC, SUSE Application Collection, … — e.g. smlm_scc_account)")
         choice = input("Choice: ").strip()
         if choice == "2":

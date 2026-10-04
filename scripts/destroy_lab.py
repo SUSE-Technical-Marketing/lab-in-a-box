@@ -37,7 +37,7 @@ def destroy_lab(definition, config, defaults, json_file):
         # bash's `destroy_vm.sh` calls have no `||` error check anywhere —
         # one VM's destroy failing must never block tearing down the rest of
         # the lab. Matches the same wrapper in setup_lab.py's
-        # phase_create_vms (there for the same reason, plus the pre-existing
+        # phase_create_vms (there for the same reason, plus the existing
         # first-run "VM never existed" case).
         try:
             destroy_vm(definition, config, defaults, vm_name)

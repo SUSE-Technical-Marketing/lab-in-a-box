@@ -86,7 +86,7 @@ class Validator:
     def vreq_or_credential(self, section, field, kind, account_field=None):
         """
         Like vreq(), but also satisfied by the external-service credential
-        store (see resolve_credential() below) — added 2026-09-18. Passes if
+        store (see resolve_credential() below). Passes if
         EITHER the plaintext <section>.<field> is set, OR <section>.
         <account_field> (default "<kind>_account") names an explicit
         credential file (trusted without decrypting it here — --validate
@@ -114,7 +114,7 @@ def require_k8s_name(cfg, field, default):
     namespace/resource name, and validate it at RUNTIME against the same
     lowercase-alphanumeric-plus-hyphens shape Validator.vns() checks.
 
-    Found in code review 2026-09-05: many install_<addon>.py scripts read a
+    Many install_<addon>.py scripts read a
     "*_ns" (or similarly-shaped resource-name) config value and interpolate
     it, unquoted, directly into remote kubectl/shell commands run over
     ssh_run() — and Validator.vns()'s own format check is never actually
@@ -184,8 +184,7 @@ _lab_schema_mod = None
 
 def _lab_schema():
     """
-    lab_schema, loaded in-process (found via PATH, same resolution
-    subprocess.run(["lab_schema", ...]) used before this) — an explicit
+    lab_schema, loaded in-process from its PATH location. An explicit
     SourceFileLoader is required since a deployed lab_schema has no .py
     suffix, same reason apps.py needs one for install_<addon> scripts.
     Cached like apps.py's own plugin cache.
@@ -275,8 +274,7 @@ def resolve_credential(cfg, kind, field_map, account_key=None, config=None):
     """
     Resolves a named external-service credential (SCC, SUSE Application
     Collection, …) from /etc/lab_creation/credentials/ the same way
-    backends.resolve_cloud_account() already does for cloud providers —
-    added 2026-09-18 per explicit user request. An addon's own plaintext
+    backends.resolve_cloud_account() already does for cloud providers. An addon's own plaintext
     lab-JSON fields remain fully valid and are the fallback whenever no
     matching credentials file is used; this is purely additive.
 
@@ -288,8 +286,7 @@ def resolve_credential(cfg, kind, field_map, account_key=None, config=None):
       3. No explicit name and more than one matching file exists ->
          genuinely ambiguous, die() rather than guess.
       4. Otherwise (no explicit name, zero matching files) -> every field
-         comes straight from cfg via field_map, exactly as before this
-         feature existed.
+         comes straight from cfg via field_map.
 
     kind      : credential_kind to look for, e.g. "scc", "appcollection".
     field_map : {canonical_field: cfg_key} — canonical_field is the kind's

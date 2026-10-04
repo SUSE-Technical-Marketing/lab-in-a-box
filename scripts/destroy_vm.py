@@ -57,7 +57,7 @@ def destroy_vm(definition, config, defaults, vm_name):
     # the instance and makes get_ip() unable to find it — otherwise del_from_dns() would try to
     # remove a record built from an empty IP, matching nothing, leaving the real entry (registered
     # with the real IP at create time) permanently orphaned in both the local zone and the cloud
-    # DNS VM. Found alongside create_vm()'s own real-IP return contract, 2026-09-09 — see TODO.
+    # DNS VM. create_vm() returns the real IP, so the entry matched here is the one it created.
     # Honours a per-node/common "cloud_account" (its cloudtype), same as get_backend().
     backend_name = backends.effective_backend_name(definition, config, vm_name)
     myip = env.get("myip", "")
@@ -86,7 +86,7 @@ def destroy_vm(definition, config, defaults, vm_name):
 
     # No cross-cloud WireGuard overlay cleanup needed here — individual lab
     # nodes are never themselves WireGuard peers (see libs/overlay.py's
-    # module docstring, corrected 2026-09-18): only each site's shared,
+    # module docstring): only each site's shared,
     # persistent gateway is, and destroying one ordinary node never touches
     # that. The route this node had (if overlay was enabled) is irrelevant
     # once the node itself is gone.

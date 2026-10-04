@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Unit tests for libs/db_common.py's setup_mariadb_os() — the OS-native
-# MariaDB installer extracted from install_mariadb.py 2026-09-27 so
+# MariaDB installer, extracted from install_mariadb.py so
 # install_nextcloud.py/install_seafile.py can reuse the identical logic for
 # their own companion database instead of an ad-hoc container. Verifies the
 # real password handling (MYSQL_PWD env var, never a "-p<password>" CLI

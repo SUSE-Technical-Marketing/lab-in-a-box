@@ -8,6 +8,7 @@
 # setup_lab.py, not a markdown fence). No hardware needed for THIS check —
 # it's pure text comparison, so it runs in the normal containerized sweep.
 # Run from 33_examples_sync.sh, in its own container — see tests/run_tests.sh.
+import html
 import json
 import re
 import sys
@@ -71,14 +72,14 @@ def extract_jsonc_after(readme_text, anchor):
     if anchor_pos == -1:
         check("README.md still contains the anchor {!r}".format(anchor), False)
         return None
-    m = re.search(r"```jsonc\n(.*?)```", readme_text[anchor_pos:], re.S)
+    m = re.search(r'<pre><code class="language-jsonc">(.*?)</code></pre>', readme_text[anchor_pos:], re.S)
     if not m:
-        check("a ```jsonc fence follows {!r} in README.md".format(anchor), False)
+        check("a language-jsonc code block follows {!r} in README.md".format(anchor), False)
         return None
-    return json.loads(strip_jsonc_comments(m.group(1)))
+    return json.loads(strip_jsonc_comments(html.unescape(m.group(1))))
 
 
-readme_text = (_REPO / "README.md").read_text()
+readme_text = (_REPO / "docs" / "src" / "index.html").read_text()
 
 # name -> the README anchor whose NEXT ```jsonc fence is that example's
 # source of truth. rancher-cluster's own "### RKE2 + Rancher + Longhorn"
@@ -86,11 +87,11 @@ readme_text = (_REPO / "README.md").read_text()
 # example under "## Lab definition format" instead (see the README's own
 # "see the full ... example above").
 _ANCHORS = {
-    "standalone": "### Minimal single-VM lab",
-    "rancher-cluster": "## Lab definition format",
-    "multi-host": "### Spreading a cluster across two hosts",
-    "uyuni-lab": "### SUSE Multi-Linux Manager (Uyuni) server + a registered client",
-    "legacy": "### Deploying a legacy image (CentOS 7)",
+    "standalone": '<h3 id="minimal-single-vm-lab">',
+    "rancher-cluster": '<h2 id="lab-definition-format">',
+    "multi-host": '<h3 id="spreading-a-cluster-across-two-hosts">',
+    "uyuni-lab": '<h3 id="suse-multi-linux-manager-uyuni-server--a-registered-client">',
+    "legacy": '<h3 id="deploying-a-legacy-image-centos-7">',
 }
 
 for name, anchor in _ANCHORS.items():

@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-# Unit tests for the general per-node addon-config-override mechanism (added
-# 2026-09-11): an addons[] entry is either a plain "<addon>" string, or a
-# single-key {"<addon>": {...}} mapping overriding that addon's shared
-# top-level config for that one node — e.g. a lab registering many OSes
-# against one shared Uyuni/SMLM server, each node needing its own
-# client_registration_activation_key. Covers the shared parsing helpers
-# (apps.addon_entry_name/addon_entry_overrides), k8s.addon_nodes()/
-# addon_node_config(), and install_client_registration.py's own use of
-# them. register_client() itself is mocked (no real spacecmd/mgrctl). Run
-# from 48_client_registration.sh, in its own container — see
-# tests/run_tests.sh.
+# Unit tests for the per-node addon-config override. An addons[] entry is a plain "<addon>" string, or a single-key
+# {"<addon>": {...}} mapping that overrides that addon's shared config for one node. The shared parsing helpers
+# (apps.addon_entry_name and addon_entry_overrides), k8s.addon_nodes() and addon_node_config(), and install_client_registration.py
+# are covered. register_client() is mocked. Run from 48_client_registration.sh, in its own container (see tests/run_tests.sh).
 import sys
 from pathlib import Path
 
@@ -140,15 +133,9 @@ check("install_client_registration main(): _vm_name env scopes to one node, over
       and calls[0][1]["client_registration_activation_key"] == "1-debian13")
 
 
-# ── register_client(): hands off to a background retry instead of blocking ──
-# Added 2026-09-21 per explicit user requirement: a first version of this
-# fix blocked synchronously (with a timeout) waiting for channels to sync
-# — correctly flagged as a real problem, since with many nodes sharing the
-# same still-syncing channel, each would wait out its own full timeout in
-# turn, potentially adding hours to a deployment. Fixed: if the required
-# channels aren't ALREADY fully synced, hand off to a DETACHED background
-# worker (no artificial timeout, it only stops once registration actually
-# succeeds) and return immediately so the rest of the deployment moves on.
+# ── register_client(): a background retry when channels are still syncing ──
+# When the required channels are not fully synced, registration is handed to a detached background worker, which runs until the
+# registration succeeds. The call returns at once, so the rest of the deployment continues.
 class _FakeSc:
     def __init__(self, pending=None, key_exists=False, real_channels=None):
         self.calls = []
@@ -239,19 +226,9 @@ check("register_client(): no sync_channels/activation-key-channels configured, k
       and any(c[0] == "ensure_client_registered" for c in fake_sc3.calls)
       and launch_calls == [])
 
-# -- REAL BUG found live 2026-09-22 (solar-system-lab.json): the activation key
-# was created by install_smlm.py's own smlm_activation_keys list, not this
-# addon's own client_registration_activation_key_base_channel/_child_channels
-# fields — so a per-node client_registration override that only names the key
-# (the overwhelmingly common real shape) had NO local channel fields at all.
-# _wait_channels() used to return an empty list in that case, short-circuiting
-# straight to synchronous registration even while the key's real channels
-# were still mid-reposync — confirmed live this is exactly why a client got
-# the classic salt-minion instead of venv-salt-minion (its real providing
-# channel's own bootstrap marker 404s until synced), and the hardened
-# salt-master then rejected it outright ("protocol version 2, minimum
-# required 3"). Fix: when the key already exists and no local fields are
-# set, look up its REAL channels server-side via describe_activation_key().
+# -- Channels from the activation key ------------------------------------------
+# When the activation key is created elsewhere and the node sets only the key name, the channels are read from the server with
+# describe_activation_key(). Otherwise registration would not wait for channels that are still syncing.
 launch_calls.clear()
 fake_sc4 = _FakeSc(
     key_exists=True,

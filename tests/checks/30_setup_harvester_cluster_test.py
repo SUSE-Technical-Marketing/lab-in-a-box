@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/setup_harvester_cluster.py (new, 2026-08-30) — the
-# PXE-based Harvester HCI cluster bootstrap script. No podman/root/real
-# network needed: urllib fetches, virt-install, and the VIP-wait poll are
-# all mocked; template rendering uses the REAL bash-eval process_template()
-# against the real shipped templates, so a real substitution bug would
-# still be caught. Run from 30_setup_harvester_cluster.sh, in its own
-# container — see tests/run_tests.sh.
+# Unit tests for scripts/setup_harvester_cluster.py, the PXE-based Harvester HCI cluster bootstrap. No podman, root or real network is
+# needed. urllib fetches, virt-install and the VIP wait are mocked. Template rendering uses the real process_template() on the real
+# templates, so a substitution error is caught. Run from 30_setup_harvester_cluster.sh, in its own container (see tests/run_tests.sh).
 import sys
 import tempfile
 from pathlib import Path
@@ -107,8 +103,8 @@ with tempfile.TemporaryDirectory() as tmp:
           "  - ssh-rsa AAAAtest key1" in config_text and "  - ssh-rsa AAAAtest key2" in config_text)
     check("rendered create config still requires iso_url even under PXE (real Harvester requirement)",
           "iso_url: http://10.0.0.1/lab_creation/harvester/v1.7.1/harvester-v1.7.1-amd64.iso" in config_text)
-    check("rendered create config includes dns_nameservers — confirmed live 2026-08-30 that Harvester's "
-          "own installer refuses to proceed without it for a static-IP management_interface "
+    check("rendered create config includes dns_nameservers, which Harvester's "
+          "installer requires for a static-IP management_interface "
           "('Invalid configuration: DNS servers are required for static IP address')",
           "dns_nameservers:" in config_text
           and "  - 192.168.88.73" in config_text and "  - 192.168.88.1" in config_text)
@@ -216,13 +212,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("join config also gets the optional install.* extra-lines block",
           "replica_count: 1" in config_text)
 
-# ── _yaml_scalar(): a value's own quotes/backslashes/newlines must not corrupt
-#    or inject into the rendered YAML ──────────────────────────────────────
-# Found live 2026-09-05: without escaping, a system_settings value ending in
-# a literal newline injected a brand-new, unrelated top-level `install:` key
-# into the document — not just a cosmetic corruption, a real YAML-injection
-# bug (this project's own cluster.json is normally operator-controlled, but
-# nothing about _yaml_scalar() itself should silently trust that).
+# ── _yaml_scalar(): quotes, backslashes and newlines are escaped ──────────────
+# A value with a newline must not add a top-level key to the rendered YAML. _yaml_scalar() escapes it.
 check('_yaml_scalar: embedded double-quotes are escaped, not passed through raw',
       shc._yaml_scalar('a"b') == '"a\\"b"')
 check('_yaml_scalar: embedded backslashes are escaped (before quotes, so the '
@@ -263,10 +254,7 @@ def _fake_run_libvirt_tool(binary, remote_host, virt_srv, args, **kwargs):
 
 shc.run_libvirt_tool = _fake_run_libvirt_tool
 
-# known_hosts purge — same fix setup_lab.py/destroy_lab.py already apply to
-# every normal lab VM, added here after a live test (2026-09-04) found a
-# stale host key from a PREVIOUSLY-reused lab IP made ssh_run() refuse a
-# genuinely-answering, freshly-installed node outright.
+# The known_hosts entries are purged before the first connection, as setup_lab.py does, so a reused IP does not refuse a new node.
 keygen_calls = []
 _real_subprocess_run = lc.subprocess.run
 
@@ -294,9 +282,8 @@ binary, remote_host, virt_srv, args = captured_calls[0]
 check("_create_netboot_vm invokes virt-install (not virsh)", binary == "virt-install")
 check("_create_netboot_vm passes the configured hypervisor as remote_host", remote_host == "hv1.mydemo.lab")
 boot_arg = args[args.index("--boot") + 1]
-check("_create_netboot_vm's --boot flag selects the plain (non-secure-boot) OVMF loader/nvram — "
-      "confirmed live 2026-08-30 that virt-install's bare 'uefi' shorthand auto-selected the "
-      "SECURE BOOT OVMF variant, which silently blocks loading an unsigned ipxe.efi ('Access Denied')",
+check("_create_netboot_vm's --boot flag selects the plain (non-secure-boot) OVMF loader/nvram "
+      "(virt-install's bare 'uefi' shorthand picks the SECURE BOOT variant, which blocks an unsigned ipxe.efi)",
       "--boot" in args and boot_arg.startswith("uefi,loader=")
       and "ovmf-x86_64-code.bin" in boot_arg and "ovmf-x86_64-vars.bin" in boot_arg
       and "ovmf-x86_64-ms-" not in boot_arg)
@@ -304,10 +291,8 @@ disk_arg = next(a for a in args if "path=" in a)
 net_arg = next(a for a in args if "mac.address=" in a)
 check("_create_netboot_vm's disk has boot.order=1 (avoids the ISO path's reboot-loop bug)",
       "boot.order=1" in disk_arg)
-check("_create_netboot_vm's network device has boot.order=2 — confirmed live 2026-08-30 that "
-      "giving the disk a boot.order without also giving the network device one produces a domain "
-      "with no usable network boot entry at all (per-device boot.order excludes any device "
-      "without one, silently dropping --boot's hd,network device-order tokens)",
+check("_create_netboot_vm's network device has boot.order=2 (a disk boot.order without one on the "
+      "network device leaves the domain with no usable network boot entry)",
       "boot.order=2" in net_arg)
 check("_create_netboot_vm creates a blank disk (no --import, no source OS image)",
       "--import" not in args)
@@ -360,9 +345,8 @@ with tempfile.TemporaryDirectory() as tmp:
     dest = shc._fetch_harvester_kubeconfig(kubeconfig_cfg, _CREATE_NODE)
     check("_fetch_harvester_kubeconfig connects to the create node's own IP",
           ssh_calls[0][0] == "192.168.88.143")
-    check("_fetch_harvester_kubeconfig reads the standard RKE2 kubeconfig path via sudo — "
-          "live-tested 2026-09-04: 'rancher' has NOPASSWD:ALL sudo but can't read this "
-          "root-owned 0600 file directly, a plain (no-sudo) `cat` got 'Permission denied'",
+    check("_fetch_harvester_kubeconfig reads the standard RKE2 kubeconfig path via sudo, "
+          "since the root-owned 0600 file cannot be read without it",
           ssh_calls[0][1] == "sudo cat /etc/rancher/rke2/rke2.yaml")
     check("_fetch_harvester_kubeconfig connects as Harvester's default 'rancher' user, not root",
           ssh_calls[0][2] == "rancher")

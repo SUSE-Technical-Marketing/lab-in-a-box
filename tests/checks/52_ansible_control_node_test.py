@@ -122,13 +122,9 @@ check("setup_ansible_control_node: an unreachable managed node does not abort th
 unreachable_targets = set()
 
 
-# ── _find_uyuni_server / _write_inventory_env: the credential-env-file fix ──
-# Added 2026-09-18 after a real, live-reported failure: SMLM's own
-# "Ansible > Schedule Playbook" feature invokes the dynamic inventory
-# script via a Salt state running under salt-minion's own process
-# environment, which never inherits an operator's `export`ed shell vars —
-# the script died every time SMLM itself triggered it. Fix: write the
-# credentials to a file on the control node the script reads as a fallback.
+# ── _find_uyuni_server / _write_inventory_env: credentials for the inventory script ──
+# Scheduled playbook runs start the inventory script from the salt-minion environment, which does not have the shell variables of an
+# operator. The credentials are therefore written to a file on the control node, and the script reads that file as a fallback.
 calls.clear()
 smlm_definition = {
     "smlm": {"smlm_admin_user": "admin", "smlm_admin_pass": "1234"},
@@ -177,15 +173,9 @@ check("main(): defaults managed_nodes to every OTHER node in the lab definition,
       targets_reached == {"venus.mydemo.lab", "mars.mydemo.lab"})
 
 
-# ── uyuni_dynamic_inventory.py's own logic: group-name sanitization ────────
-# Real bug found live 2026-09-19: this lab's own real SMLM system groups
-# include hyphens (e.g. "galilean-moons", "gas-giants") — Ansible group
-# names may only contain letters/digits/underscore, so using them verbatim
-# triggered "[WARNING]: Invalid characters were found in group names but
-# not replaced" on stderr, which SMLM's own "Schedule Playbook" Salt-state
-# wrapper treats as a hard failure even though the inventory itself parsed
-# fine. Imported directly (a plain, dependency-free script) rather than
-# only checked via its pushed content above.
+# ── uyuni_dynamic_inventory.py: group-name sanitization ─────────────────────
+# Ansible group names may contain only letters, digits and underscores. A hyphenated SMLM group name produces a warning on stderr,
+# which the Schedule Playbook wrapper treats as a failure. The script replaces the invalid characters, and the test imports it directly.
 _inv_dir = _REPO / "templates" / "addons" / "ansible_control_node" / "inventory"
 sys.path.insert(0, str(_inv_dir))
 import uyuni_dynamic_inventory as udi  # noqa: E402
@@ -247,7 +237,7 @@ check("build_inventory(): sanitized group correctly lists its real members",
 check("build_inventory(): 'all'.children lists the SANITIZED names, not the originals",
       "galilean_moons" in inv["all"]["children"] and "galilean-moons" not in inv["all"]["children"])
 
-# Two different SMLM group names that sanitize to the SAME Ansible group name -> merged, not dropped.
+# Two SMLM group names that sanitize to the same Ansible group name are merged, not dropped.
 udi.xmlrpc.client.ServerProxy = lambda *a, **kw: _FakeProxy(
     systems=[{"name": "a.lab", "id": 1}, {"name": "b.lab", "id": 2}],
     groups_and_members={"gas-giants": ["a.lab"], "gas_giants": ["b.lab"]})
@@ -258,14 +248,9 @@ check("build_inventory(): a merged collision only appears ONCE in 'all'.children
       inv2["all"]["children"].count("gas_giants") == 1)
 
 
-# ── the control node's own entry gets ansible_connection=local ─────────────
-# Real bug found live 2026-09-19: SMLM's own "Schedule Playbook" run
-# against the full inventory tried to SSH to charon.mydemo.lab (the
-# control node itself) as just another target and failed outright
-# ("Permission denied") — install_ansible_control_node.py only ever
-# installs the control node's own SSH key on every OTHER lab node, never
-# on itself. Standard Ansible fix: mark whichever host matches this
-# script's own local FQDN as ansible_connection=local.
+# ── the control node's own entry uses ansible_connection=local ─────────────
+# The control node is not a managed target and does not hold its own SSH key. Its own entry is marked ansible_connection=local,
+# so that the inventory does not make it SSH to itself.
 udi.socket.getfqdn = lambda: "charon.mydemo.lab"
 udi.xmlrpc.client.ServerProxy = lambda *a, **kw: _FakeProxy(
     systems=[{"name": "charon.mydemo.lab", "id": 7}, {"name": "venus.mydemo.lab", "id": 8}],

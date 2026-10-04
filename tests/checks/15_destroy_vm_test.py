@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked unit tests for scripts/destroy_vm.py — no live KVM host available;
-# backends.get_backend() is monkeypatched to return a fake backend
+# Mocked unit tests for scripts/destroy_vm.py; backends.get_backend() is monkeypatched to return a fake backend
 # recording every call made on it (matching how destroy_vm.py now goes
 # through the backend abstraction instead of lab_creation's flat wrapper
 # functions directly). Verifies the "existing node" no-op path and the
@@ -61,7 +60,7 @@ check("destroy_vm: normal path resolves the backend, removes DNS, then deletes t
 
 
 # ── a cloud-backend node (empty myip in the JSON, by design) resolves its real IP
-#    via backend.get_ip() BEFORE delete_vm() removes the instance — 2026-09-09 fix ──
+#    via backend.get_ip() BEFORE delete_vm() removes the instance ──
 class _FakeCloudBackend:
     def __init__(self):
         self.calls = []

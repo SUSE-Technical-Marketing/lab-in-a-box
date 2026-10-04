@@ -109,7 +109,7 @@ check("list_used_macs() returns empty (Hetzner has no MAC concept)",
       backend.list_used_macs() == ([], {}))
 
 fake_definition = {"nodes": {"vm1": {}}}
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): no MAC concept, no generation, pure passthrough
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -186,7 +186,7 @@ check("create_vm() picks a real server_type", captured["body"].get("server_type"
 check("create_vm() sends a Bearer token", captured["headers"].get("Authorization") == "Bearer tok123")
 check("create_vm() omits location when none was configured", "location" not in captured["body"])
 check("create_vm() returns the real IP from the create response's own public_net.ipv4.ip "
-      "(2026-09-09 contract — no poll needed when Hetzner already includes it inline)",
+      "(no poll needed when Hetzner already includes it inline)",
       returned_ip == "203.0.113.5")
 
 b4 = backends.HetznerBackend("tok123", location="nbg1")
@@ -197,8 +197,8 @@ check("create_vm() sends location when one was configured", captured["body"].get
 
 
 # ── cloud_instance_type: explicit override bypasses _pick_server_type() entirely ──
-# added 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-# ceiling — see _parse_sku_table()'s own docstring and README's Compute backends table.
+# No provider's sizing catalog is a hardcoded ceiling. See _parse_sku_table()'s docstring and
+# README's Compute backends table.
 b5 = backends.HetznerBackend("tok123")
 b5._user_data_by_vm["vm1"] = ""
 with mock.patch.object(backends.urllib.request, "urlopen", side_effect=_fake_urlopen):

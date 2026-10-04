@@ -100,7 +100,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on ECS ─────
 check("list_used_macs() returns empty (ECS has no MAC concept this backend uses)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): no MAC concept, no generation, pure passthrough
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -181,8 +181,7 @@ def _fake_run(args, **kwargs):
 with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
     returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init", iso_image="m-0123456789")
 
-check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-      "contract)", returned_ip == "203.0.113.30")
+check("create_vm() returns the real IP once the instance is confirmed running", returned_ip == "203.0.113.30")
 run_call = next(c for c in calls if "RunInstances" in c)
 check("create_vm() sends the real ImageId", "m-0123456789" in run_call)
 check("create_vm() picks a real InstanceType", "ecs.g6.large" in run_call)
@@ -195,8 +194,8 @@ check("create_vm() sends the already Base64-encoded UserData as-is",
 
 
 # ── cloud_instance_type: explicit override bypasses _pick_instance_type() entirely ──
-# added 2026-09-10 per explicit user request that no provider's sizing catalog be a hardcoded
-# ceiling — see _parse_sku_table()'s own docstring and README's Compute backends table.
+# No provider's sizing catalog is a hardcoded ceiling. See _parse_sku_table()'s docstring and
+# README's Compute backends table.
 b5 = backends.AlibabaBackend("keyid", "keysecret", "cn-hangzhou", "sg-1", "vsw-1")
 b5._user_data_by_vm["vm1"] = ""
 calls = []

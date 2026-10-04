@@ -11,21 +11,15 @@
 #   mediagoblin_admin_password : [OPTIONAL] admin password (default: changeme123)
 #   mediagoblin_admin_email    : [OPTIONAL] admin email (default: admin@lab.local)
 #
-# Deploys the official mediagoblin/mediagoblin Docker Hub image — confirmed ACTIVELY maintained
-# live (stable release 0.15.0, 2026-02-25), native Docker support since 0.14.0. Deliberately
-# simplified from that project's own "production" 4-service compose stack (web + celery worker +
-# RabbitMQ + nginx reverse proxy) down to ONE pod: MediaGoblin's own documented
-# CELERY_ALWAYS_EAGER=true mode processes uploads synchronously in-process instead of via a
-# separate Celery worker/broker — real, documented, single-process deployment mode, not a
-# workaround (see docs.mediagoblin.org's own "Considerations for Production Deployments"). Trade-
-# off, stated plainly: a large upload's processing (video transcoding, etc.) blocks the web request
-# until done, and an aborted connection halts it — acceptable for a lab demo, not for a real
-# multi-user site. No official Helm chart exists for MediaGoblin — this uses raw manifests, same
-# pattern as install_mailman.py/install_nv_testing.py.
+# Deploys the official mediagoblin/mediagoblin Docker Hub image (stable release 0.15.0, native Docker
+# support since 0.14.0). The project's production compose stack (web, celery worker, RabbitMQ and nginx)
+# is reduced to one pod. MediaGoblin's CELERY_ALWAYS_EAGER=true mode processes uploads synchronously
+# in-process, with no separate worker or broker. A large upload's processing (video transcoding, etc.)
+# blocks the web request until it finishes, and an aborted connection halts it. This suits a lab demo,
+# not a multi-user site. No official Helm chart exists, so this uses raw manifests, as install_mailman.py does.
 #
-# NOT live-tested (no cluster available in this session). Uses emptyDir (not a PersistentVolumeClaim)
-# for /srv — ephemeral/quick-demo, matches install_mailman.py's own same tradeoff and caveat about
-# this project's RKE2 clusters having no default StorageClass.
+# Uses emptyDir (not a PersistentVolumeClaim) for /srv, which is ephemeral and suited to a quick demo.
+# The same tradeoff applies as in install_mailman.py, and RKE2 clusters have no default StorageClass.
 
 __version__ = "5fc5f69"
 
