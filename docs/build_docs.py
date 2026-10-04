@@ -318,8 +318,7 @@ def figure(name, alt):
 
 
 def swap_diagrams(body):
-    """Replace the legacy diagram figure and recognised Mermaid blocks with brand SVG figures."""
-    body = re.sub(r'<p align="center" float="left">\s*<kbd><picture>.*?diagram1.*?</p>', "", body, flags=re.DOTALL)
+    """Replace recognised Mermaid blocks with brand SVG figures."""
 
     def repl(match):
         for marker, figs in DIAGRAMS.items():
