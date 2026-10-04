@@ -112,8 +112,21 @@ window.apiGet = async function(action, params = {{}}) {{
     }}
     return window.EMBEDDED_SCHEMAS.schemas[comp];
   }}
-  // Fall back to original for other actions (base, validate, status, save)
-  return originalApiGet.call(this, action, params);
+  // Static mode: disable status (no hypervisor connection)
+  if (action === 'status') {{
+    return {{ available: false }};
+  }}
+  // Static mode: disable validate/save (no backend)
+  if (action === 'validate' || action === 'save') {{
+    throw new Error(`${{action}} requires a backend (not available in static mode)`);
+  }}
+  // Try original for 'base' and others, but catch failures
+  try {{
+    return await originalApiGet.call(this, action, params);
+  }} catch (e) {{
+    console.warn(`API call ${{action}} failed (static mode?):`, e.message);
+    throw e;
+  }}
 }};
 
 {js_content}
