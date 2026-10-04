@@ -39,8 +39,8 @@ jobs:
       - name: Build static WebUI
         run: |
           cd "${{ github.workspace }}"
-          python3.11 scripts/build-static-webui.py
-          ls -lh webui/htdocs/index-static.html
+          python3.11 scripts/build-cube-static.py
+          ls -lh webui/htdocs/lab-builder-static.html
 
       - name: Prepare GitHub Pages deployment
         run: |
