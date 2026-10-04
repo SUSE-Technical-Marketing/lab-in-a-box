@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>lab-in-a-box · Português (Brasil)</title>
 <meta name="description" content="lab-in-a-box cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os add-ons que você descreve. As VMs">
+<meta name="theme-color" content="#12a99d">
 <link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <script type="importmap">
 {
   "imports": {
@@ -22,129 +23,180 @@
 </script>
 <style>
 :root {
-  --bg: #f5f6f8; --panel: #ffffff; --ink: #1d2026; --muted: #5b6270; --line: #e1e4e9;
-  --accent: #0b7a73; --code: #eceef2; --stage: #e9ebef;
+  --bg: #eceef1; --panel: #ffffff; --ink: #23272d; --muted: #5a606b; --line: #dfe2e6;
+  --accent: #12a99d; --link: #0b6e67; --on-accent: #ffffff;
+  --code-bg: #23272d; --code-ink: #eceef1; --inline-code: #e3e6ea; --stage: #f6f7f8;
+  --tint: #e5f3f1; --coral: #e2725b; --navy: #1f2f4a; --sand: #d9c7a3;
+  --shadow: 0 1px 2px rgba(35,39,45,.06), 0 8px 24px rgba(35,39,45,.05);
+  --sans: "Schibsted Grotesk", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #121519; --panel: #1a1e24; --ink: #eceef2; --muted: #9aa3b0; --line: #2b313a;
-    --accent: #2fd1c2; --code: #1b2028; --stage: #1a1f26; color-scheme: dark;
+    --bg: #16191e; --panel: #23272d; --ink: #f3f4f5; --muted: #a9aeb7; --line: #353a42;
+    --accent: #2fd1c2; --link: #2fd1c2; --on-accent: #16191e;
+    --code-bg: #1b1e23; --code-ink: #eceef1; --inline-code: #2c3138; --stage: #1b1e23;
+    --tint: #1f3a3a; --coral: #f08a74; --navy: #b5bfd0;
+    --shadow: 0 1px 3px rgba(0,0,0,.35), 0 8px 26px rgba(0,0,0,.28); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #121519; --panel: #1a1e24; --ink: #eceef2; --muted: #9aa3b0; --line: #2b313a;
-  --accent: #2fd1c2; --code: #1b2028; --stage: #1a1f26; color-scheme: dark;
+  --bg: #16191e; --panel: #23272d; --ink: #f3f4f5; --muted: #a9aeb7; --line: #353a42;
+  --accent: #2fd1c2; --link: #2fd1c2; --on-accent: #16191e;
+  --code-bg: #1b1e23; --code-ink: #eceef1; --inline-code: #2c3138; --stage: #1b1e23;
+  --tint: #1f3a3a; --coral: #f08a74; --navy: #b5bfd0;
+  --shadow: 0 1px 3px rgba(0,0,0,.35), 0 8px 26px rgba(0,0,0,.28); color-scheme: dark;
 }
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 88px; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 400 17px/1.7 "Source Serif 4", Georgia, "Times New Roman", serif;
-  padding-inline: 20px; padding-block: 0 56px;
+  font: 400 17px/1.65 var(--sans); -webkit-font-smoothing: antialiased;
 }
-a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+a { color: var(--link); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--accent); text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 
+/* ---- header ---- */
+.topbar-wrap { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
 .topbar {
-  max-width: 1080px; margin: 0 auto; padding-block: 22px 18px;
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+  max-width: 1240px; margin: 0 auto; padding: 12px 24px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px;
 }
-.lockup { display: block; height: 40px; width: auto; }
+.lockup { display: block; height: 36px; width: auto; }
 .lockup--dark { display: none; }
-.opening-text h1 .lockup { display: inline-block; height: 3rem; vertical-align: middle; }
-html[data-theme="dark"] .lockup--light { display: none; }
+.opening-text h1 .lockup { display: inline-block; height: 3.4rem; vertical-align: middle; }
+.opening-text h1 .lockup--dark { display: none; }
+html[data-theme="dark"] .lockup--light { display: none !important; }
 html[data-theme="dark"] .lockup--dark { display: block; }
+html[data-theme="dark"] .opening-text h1 .lockup--dark { display: inline-block; }
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .lockup--light { display: none; }
+  html:not([data-theme="light"]) .lockup--light { display: none !important; }
   html:not([data-theme="light"]) .lockup--dark { display: block; }
+  html:not([data-theme="light"]) .opening-text h1 .lockup--dark { display: inline-block; }
 }
-.topbar nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; font: 500 14px/1.4 "Schibsted Grotesk", system-ui, sans-serif; }
-.topbar nav a { color: var(--muted); text-decoration: none; padding-block: 4px; }
-.topbar nav a:hover { color: var(--ink); }
-.topbar nav a[aria-current="page"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.topbar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.topbar nav { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font: 500 13px/1.4 var(--sans); }
+.topbar nav a { color: var(--muted); text-decoration: none; padding: 5px 10px; border-radius: 999px; }
+.topbar nav a:hover { color: var(--ink); background: var(--panel); }
+.topbar nav a[aria-current="page"] { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .theme-toggle {
-  font: 500 14px/1 "Schibsted Grotesk", system-ui, sans-serif; color: var(--ink);
-  background: transparent; border: 1px solid var(--line); border-radius: 999px;
-  padding: 8px 14px; cursor: pointer;
+  font: 600 13px/1 var(--sans); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer;
 }
-.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle:hover { border-color: var(--accent); color: var(--link); }
 
+/* ---- opening ---- */
 .opening {
-  max-width: 1080px; margin: 0 auto; padding-block: 28px 40px;
-  display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 48px; align-items: center;
+  max-width: 1240px; margin: 0 auto; padding: 56px 24px 40px;
+  display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 64px; align-items: center;
 }
 #hero {
-  width: 100%; aspect-ratio: 1 / 1; border-radius: 16px; background: var(--stage);
-  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  width: 100%; aspect-ratio: 1 / 1; border-radius: 24px; background: var(--stage);
+  box-shadow: 0 0 0 1px var(--line); display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 #hero canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 #hero img { width: 62%; height: auto; }
-.opening-text h1 {
-  font: 700 clamp(2.1rem, 4.6vw, 3.2rem)/1.06 "Schibsted Grotesk", system-ui, sans-serif;
-  letter-spacing: -0.02em; margin: 0 0 18px; text-wrap: balance;
+.eyebrow { font: 500 12px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+.opening-text h1 { font: 800 clamp(2rem, 4.4vw, 3rem)/1.05 var(--sans); letter-spacing: -0.035em; margin: 0 0 20px; }
+.lead { font-size: 1.2rem; line-height: 1.55; color: var(--muted); margin: 0; max-width: 36ch; text-wrap: pretty; }
+.lead strong { color: var(--ink); font-weight: 700; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px;
+  font: 600 14px/1 var(--sans); text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); white-space: nowrap;
 }
-.lead { font-size: 1.14rem; line-height: 1.6; color: var(--muted); margin: 0; max-width: 34ch; text-wrap: pretty; }
-.hint { font: 400 14px/1.4 "Schibsted Grotesk", system-ui, sans-serif; color: var(--muted); margin-top: 22px; }
+.btn:hover { border-color: var(--accent); color: var(--link); }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn--primary:hover { color: var(--on-accent); filter: brightness(.94); }
+.hint { font: 400 12px/1.4 var(--mono); color: var(--muted); margin-top: 22px; letter-spacing: .04em; }
 
-main.doc { max-width: 720px; margin: 0 auto; min-width: 0; }
+/* ---- layout: side nav + document ---- */
+.layout { max-width: 1240px; margin: 0 auto; padding: 8px 24px 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 56px; }
+.sidenav { position: sticky; top: 88px; align-self: start; max-height: calc(100vh - 110px); overflow-y: auto; padding-bottom: 24px; }
+.sidenav h2 { font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.sidenav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.sidenav a { display: block; padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font: 500 14px/1.35 var(--sans); }
+.sidenav a:hover { color: var(--ink); background: var(--panel); }
+.sidenav a.is-active { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.sidenav a.is-active::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); margin-right: 8px; }
+
+main.doc { min-width: 0; max-width: 780px; }
 main.doc > p, main.doc > ul, main.doc > ol { max-width: 68ch; }
-main.doc h1, main.doc h2, main.doc h3, main.doc h4 {
-  font-family: "Schibsted Grotesk", system-ui, sans-serif; line-height: 1.22; letter-spacing: -0.01em; text-wrap: balance;
-}
-main.doc h1 { font-size: 2rem; margin: 0 0 0.6em; }
-main.doc h2 { font-size: 1.55rem; font-weight: 700; margin: 2.8em 0 0.6em; }
-main.doc h3 { font-size: 1.2rem; font-weight: 700; margin: 2em 0 0.4em; }
+main.doc h1, main.doc h2, main.doc h3, main.doc h4 { font-family: var(--sans); line-height: 1.2; letter-spacing: -0.02em; text-wrap: balance; }
+main.doc h1 { font-size: 2rem; margin: 0 0 .6em; }
+main.doc h2 { font-size: 1.8rem; font-weight: 800; margin: 0 0 .7em; padding-top: 0; display: flex; align-items: center; gap: 14px; }
+main.doc h2::before { content: ""; flex: none; width: 14px; height: 14px; border-radius: 3px; background: var(--accent); box-shadow: 18px 0 0 -4px var(--navy); margin-right: 10px; }
+main.doc h3 { font-size: 1.2rem; font-weight: 700; margin: 2.1em 0 .45em; }
+main.doc h4 { font-size: 1rem; font-weight: 700; }
+main.doc hr { border: 0; height: 0; margin: 3.4em 0 2.6em; }
 main.doc p, main.doc ul, main.doc ol { margin: 0 0 1.1em; }
-main.doc li + li { margin-top: 0.3em; }
+main.doc li + li { margin-top: .3em; }
+main.doc li::marker { color: var(--accent); }
+main.doc strong { font-weight: 700; }
 main.doc table {
-  border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%;
-  font: 400 14px/1.5 "Schibsted Grotesk", system-ui, sans-serif; margin: 1.4em 0;
+  border-collapse: separate; border-spacing: 0; display: block; overflow-x: auto; max-width: 100%;
+  font: 400 14px/1.5 var(--sans); margin: 1.6em 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
 }
-main.doc th, main.doc td { border-bottom: 1px solid var(--line); padding: 9px 12px; text-align: left; vertical-align: top; }
-main.doc th { font-weight: 700; }
-main.doc code {
-  font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.86em;
-  background: var(--code); padding: 0.1em 0.35em; border-radius: 4px;
-}
-main.doc pre {
-  background: var(--code); padding: 16px 18px; border-radius: 10px; overflow-x: auto; margin: 1.4em 0;
-  line-height: 1.55;
-}
-main.doc pre code { background: none; padding: 0; font-size: 13px; }
+main.doc th, main.doc td { border-bottom: 1px solid var(--line); padding: 10px 14px; text-align: left; vertical-align: top; }
+main.doc tbody tr:last-child td { border-bottom: 0; }
+main.doc th { font: 500 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--bg); white-space: nowrap; }
+main.doc code { font-family: var(--mono); font-size: .86em; background: var(--inline-code); padding: .12em .4em; border-radius: 5px; }
+main.doc pre { background: var(--code-bg); color: var(--code-ink); padding: 18px 20px; border-radius: 12px; overflow-x: auto; margin: 1.5em 0; line-height: 1.6; box-shadow: 0 0 0 1px var(--line); }
+main.doc pre code { background: none; padding: 0; font-size: 13px; color: inherit; }
 main.doc img { max-width: 100%; height: auto; }
-main.doc details { border-top: 1px solid var(--line); padding: 10px 0; }
-main.doc summary { cursor: pointer; font: 700 15px/1.4 "Schibsted Grotesk", system-ui, sans-serif; }
-pre.mermaid { background: var(--panel); border: 1px solid var(--line); text-align: center; }
-main.doc blockquote {
-  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
-  background: var(--panel); border-radius: 0 8px 8px 0; font-size: 0.95em; color: var(--muted);
+main.doc details { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 4px 18px; margin: 1.2em 0; }
+main.doc details[open] { padding-bottom: 10px; }
+main.doc summary { cursor: pointer; font: 700 15px/1.4 var(--sans); padding: 10px 0; }
+main.doc summary:hover { color: var(--link); }
+main.doc blockquote, main.doc aside.callout {
+  margin: 1.6em 0; padding: 14px 18px 14px 50px; position: relative;
+  background: var(--panel); border-radius: 12px; box-shadow: 0 0 0 1px var(--line); font-size: .96em;
 }
-main.doc blockquote p { margin: 0; }
-main.doc aside.callout {
-  margin: 1.4em 0; padding: 12px 18px; border-left: 3px solid var(--accent);
-  background: var(--panel); border-radius: 0 8px 8px 0;
+main.doc blockquote::before, main.doc aside.callout::before {
+  content: ""; position: absolute; left: 18px; top: 19px; width: 16px; height: 16px; border-radius: 4px; background: var(--accent);
 }
-main.doc aside.callout p { margin: 0; }
-main.doc aside.callout-warning { border-left-color: #c2410c; }
-main.doc aside.callout-important { border-left-color: #7c3aed; }
-main.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
+main.doc aside.callout-warning::before { background: var(--coral); }
+main.doc aside.callout-important::before { background: var(--navy); }
+main.doc blockquote p, main.doc aside.callout p { margin: 0; }
+main.doc figure.diagram {
+  margin: 2em 0; padding: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); max-width: 100%;
+}
+main.doc figure.diagram img { display: block; width: 100%; height: auto; }
+main.doc figure.diagram img.diagram--dark { display: none; }
+html[data-theme="dark"] main.doc figure.diagram img.diagram--light { display: none; }
+html[data-theme="dark"] main.doc figure.diagram img.diagram--dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) main.doc figure.diagram img.diagram--light { display: none; }
+  html:not([data-theme="light"]) main.doc figure.diagram img.diagram--dark { display: block; }
+}
+pre.mermaid { background: var(--panel); color: var(--ink); text-align: center; }
 .anchor-top { display: block; height: 0; }
+main.doc p[align="right"] { text-align: right; font: 500 13px/1.4 var(--mono); margin: 0; }
+main.doc p[align="right"] a { color: var(--muted); text-decoration: none; }
+main.doc p[align="right"] a:hover { color: var(--link); }
+
 footer.site {
-  max-width: 720px; margin: 56px auto 0; padding-top: 22px; border-top: 1px solid var(--line);
-  font: 400 14px/1.5 "Schibsted Grotesk", system-ui, sans-serif; color: var(--muted);
+  max-width: 1240px; margin: 72px auto 0; padding: 24px 24px 56px; border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+  font: 400 12px/1.5 var(--mono); letter-spacing: .04em; color: var(--muted);
 }
 
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .sidenav { display: none; }
+  main.doc { margin: 0 auto; }
+}
 @media (max-width: 760px) {
-  .opening { grid-template-columns: 1fr; gap: 28px; padding-block: 12px 28px; }
-  #hero { max-width: 360px; margin: 0 auto; }
+  .opening { grid-template-columns: 1fr; gap: 28px; padding-block: 28px; }
+  #hero { max-width: 340px; margin: 0 auto; }
   .opening-text { text-align: center; }
   .lead { margin-inline: auto; }
+  .cta { justify-content: center; }
+  .opening-text h1 .lockup { height: 2.6rem; }
 }
-@media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; }
-}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 <script>
 (function () {
@@ -157,19 +209,23 @@ footer.site {
 </head>
 <body>
 <a id="top" class="anchor-top"></a>
-<header class="topbar">
+<div class="topbar-wrap"><header class="topbar">
 <a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
-<div><nav aria-label="Documentation"><a href="index.html">English</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html" aria-current="page">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html">Web UI</a></nav>
+<div class="topbar-right"><nav aria-label="Documentation"><a href="index.html">English</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html" aria-current="page">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html">Web UI</a></nav>
 <button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>
-</header>
+</header></div>
 <section class="opening">
 <div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
+<p class="eyebrow">IT labs, deployed automatically</p>
 <h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Português (Brasil)</h1>
 <p class="lead"><strong>lab-in-a-box</strong> cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os add-ons que você descreve. As VMs podem rodar em seus próprios hosts KVM, no Harvester ou em qualquer uma de oito nuvens públicas, e o mesmo arquivo funciona em todas.</p>
+<div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
 </div>
 </section>
+<div class="layout">
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#por-que-lab-in-a-box">Por que lab-in-a-box?</a></li><li><a href="#sumário">Sumário</a></li><li><a href="#arquitetura">Arquitetura</a></li><li><a href="#como-funciona">Como funciona</a></li><li><a href="#início-rápido">Início rápido</a></li><li><a href="#interface-web-lab-builder">Interface web (lab-builder)</a></li><li><a href="#formato-de-definição-do-laboratório">Formato de definição do laboratório</a></li><li><a href="#exemplos">Exemplos</a></li><li><a href="#guias-passo-a-passo">Guias passo a passo</a></li><li><a href="#comandos-disponíveis">Comandos disponíveis</a></li><li><a href="#add-ons-disponíveis">Add-ons disponíveis</a></li><li><a href="#referência-de-configuração">Referência de configuração</a></li><li><a href="#testes">Testes</a></li><li><a href="#contribuindo--configuração-de-desenvolvimento">Contribuindo / Configuração de desenvolvimento</a></li></ol></aside>
 <main class="doc">
 <blockquote>
 <p><em>Esta é uma tradução da comunidade. A fonte de referência é o <a href="index.html">README.md</a> (inglês) e pode estar mais atualizada do que esta página.</em></p>
@@ -232,21 +288,10 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 <hr />
 <p><a id="architecture"></a></p>
 <h2 id="arquitetura">Arquitetura</h2>
-<p align="center" float="left">
-  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="../media/diagram1.svg" width="800" alt="Diagrama geral da arquitetura"/></picture></kbd>
-  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="../media/diagram2.svg" width="800" alt="Diagrama de rede e serviços"/></picture></kbd>
-</p>
+
 
 <p>O sistema é construído em torno de uma <strong>arquitetura de dois níveis</strong>:</p>
-<pre class="mermaid">graph TB
-    Operator[&quot;Cliente do operador&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
-    subgraph HV[&quot;Nó(s) hipervisor — KVM/QEMU&quot;]
-        AutoVM[&quot;VM de automação&lt;br/&gt;DNS · HTTP · scripts · interface web&quot;]
-        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;VM do laboratório&quot;]
-        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;VM do laboratório&quot;]
-        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;VM do laboratório&quot;]
-    end
-</pre>
+<figure class="diagram"><img class="diagram--light" src="../media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="../media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="../media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="../media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="nós-hipervisor">Nó(s) hipervisor</h3>
 <p>Uma ou mais máquinas físicas (bare-metal) executando KVM/QEMU. Cada uma hospeda as VMs do laboratório e guarda as imagens QCOW2 de origem em <code>/var/lib/libvirt/images/sources/</code>. Um NUC, uma workstation, ou qualquer máquina x86_64 capaz de rodar KVM serve. Laboratórios que precisam de mais capacidade do que uma única máquina podem se espalhar por <strong>múltiplos hosts KVM</strong> — veja <a href="#multi-host-labs">laboratórios multi-host</a> abaixo.</p>
 <h3 id="vm-de-automação">VM de automação</h3>
@@ -267,15 +312,7 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 <h2 id="como-funciona">Como funciona</h2>
 <h3 id="pipeline-de-implantação">Pipeline de implantação</h3>
 <p>O <code>setup_lab.py</code> executa uma sequência fixa de fases; as duas fases exclusivas do Kubernetes são completamente ignoradas em um laboratório somente de VMs (sem a seção <code>kclusters</code>):</p>
-<pre class="mermaid">flowchart LR
-    A[&quot;phase_services&quot;] --&gt;|&quot;com kclusters&quot;| C[&quot;phase_dns&quot;]
-    A --&gt;|&quot;sem kclusters&quot;| D[&quot;phase_create_vms&quot;]
-    C --&gt; D[&quot;phase_create_vms&quot;]
-    D --&gt;|&quot;com kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
-    D --&gt;|&quot;sem kclusters&quot;| H[&quot;phase_vm_addons&quot;]
-    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
-    G --&gt; H[&quot;phase_vm_addons&quot;]
-</pre>
+<figure class="diagram"><img class="diagram--light" src="../media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="../media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="provisionamento-de-vms">Provisionamento de VMs</h3>
 <p>Cada VM é criada assim:
 1. Resolvendo a qual host KVM ela pertence (o campo explícito <code>kvm_host</code>, ou autosseleção por capacidade livre — veja <a href="#multi-host-labs">laboratórios multi-host</a>)
@@ -318,13 +355,7 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 </table>
 <h3 id="backends-de-vm">Backends de VM</h3>
 <p>Qual tecnologia de hipervisor realmente cria um nó é decidido por uma interface <code>VMBackend</code> intercambiável, resolvida uma vez por nó (<code>backend: harvester</code> na configuração daquele nó seleciona o <code>HarvesterBackend</code>; qualquer outro valor usa o <code>LibvirtBackend</code> por padrão) — todo add-on e script de orquestração conversa com o backend resolvido da mesma forma, seja ele qual for:</p>
-<pre class="mermaid">graph TD
-    SV[&quot;setup_vm.py / setup_lab.py&quot;] --&gt; GB[&quot;backends.get_backend()&quot;]
-    GB -- &quot;padrão&quot; --&gt; LB[&quot;LibvirtBackend&quot;]
-    GB -- &quot;backend: harvester&quot; --&gt; HB[&quot;HarvesterBackend&quot;]
-    LB --&gt; KVM[&quot;virt-install / virsh&lt;br/&gt;em um hipervisor KVM&quot;]
-    HB --&gt; KV[&quot;KubeVirt VirtualMachine&lt;br/&gt;em um cluster Harvester&quot;]
-</pre>
+<figure class="diagram"><img class="diagram--light" src="../media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="../media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="configuração-do-kubernetes">Configuração do Kubernetes</h3>
 <p>Depois que as VMs estão de pé, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. Tanto RKE2 quanto K3s são suportados. Assim que um cluster está pronto, seus add-ons rodam em sequência; add-ons de nível de VM (associados a um único nó em vez de a um cluster) rodam depois que aquele nó é provisionado.</p>
 <h3 id="laboratórios-multi-host">Laboratórios multi-host</h3>
@@ -350,13 +381,7 @@ Um laboratório não fica limitado a um único hipervisor. Defina <code>KVM_HOST
 <hr />
 <p><a id="quick-start"></a></p>
 <h2 id="início-rápido">Início rápido</h2>
-<pre class="mermaid">flowchart TD
-    S1[&quot;1. Preparar o sistema operacional do hipervisor&quot;] --&gt; S2[&quot;2. Preparar os scripts de instalação&quot;]
-    S2 --&gt; S3[&quot;3. Configurar e executar a configuração do nó KVM&quot;]
-    S3 --&gt; S4[&quot;4. Configurar a VM de automação&quot;]
-    S4 --&gt; S5[&quot;5. Apontar o DNS do cliente para a VM de automação&quot;]
-    S5 --&gt; S6[&quot;6. Construir seu primeiro laboratório&quot;]
-</pre>
+<figure class="diagram"><img class="diagram--light" src="../media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="../media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="requisitos">Requisitos</h3>
 <ul>
 <li>Uma máquina capaz de rodar KVM (Intel VT-x ou AMD-V habilitado)</li>
@@ -509,15 +534,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><a id="lab-definition-format"></a></p>
 <h2 id="formato-de-definição-do-laboratório">Formato de definição do laboratório</h2>
 <p>Laboratórios são definidos como arquivos JSON ou YAML (detectado automaticamente — veja a nota abaixo). O formato atual suporta múltiplos clusters Kubernetes por laboratório (<code>kclusters</code>); veja <code>examples/cluster.json.template</code> para o formato legado de cluster único (<code>cluster</code>).</p>
-<pre class="mermaid">graph TD
-    Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;por VM: myip, mymac, kcluster, addons...&quot;]
-    Lab --&gt; Common[&quot;common&lt;br/&gt;padrões compartilhados: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
-    Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type, clu_rel, mydomain, addons&quot;]
-    Lab --&gt; AddonSections[&quot;uma seção por add-on&lt;br/&gt;ex.: rancher, longhorn&quot;]
-    Nodes -. &quot;kcluster&quot; .-&gt; KClusters
-    KClusters -. &quot;addons&quot; .-&gt; AddonSections
-    Nodes -. &quot;addons&quot; .-&gt; AddonSections
-</pre>
+<figure class="diagram"><img class="diagram--light" src="../media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="../media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
     &quot;node101.mydemo.lab&quot;: {
@@ -1534,7 +1551,8 @@ install_longhorn --schema yaml      # ...ou YAML
 <code>podman</code></p>
 
 </main>
-<footer class="site">Generated from docs/src/ by docs/build_docs.py.</footer>
+</div>
+<footer class="site"><span>lab in·a box</span><span>Generated from docs/src/ by docs/build_docs.py</span></footer>
 <script>
 (function () {
   var root = document.documentElement, btn = document.getElementById('theme-toggle');
@@ -1555,9 +1573,21 @@ install_longhorn --schema yaml      # ...ou YAML
     try { localStorage.setItem('lab-theme', next); } catch (e) {}
     label();
   });
+  var links = [].slice.call(document.querySelectorAll('.sidenav a'));
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  var heads = [].slice.call(document.querySelectorAll('main.doc h2[id]')).filter(function (h) { return byId[h.id]; });
+  function activate() {
+    var current = heads[0];
+    heads.forEach(function (h) { if (h.getBoundingClientRect().top < 140) current = h; });
+    links.forEach(function (a) { a.classList.toggle('is-active', current && byId[current.id] === a); });
+  }
+  addEventListener('scroll', activate, { passive: true });
+  activate();
 })();
 </script>
 <script type="module" src="assets/hero.js"></script>
-<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";mermaid.initialize({ startOnLoad: true, theme: "neutral" });</script>
+
 </body>
 </html>
