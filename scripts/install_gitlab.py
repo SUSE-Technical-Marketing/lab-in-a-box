@@ -202,8 +202,8 @@ def setup_gitlab_podman(hostname, cfg):
 def setup_gitlab_kubernetes(hostname, cfg):
     """
     Installs GitLab via its own real, official Helm chart (charts.gitlab.io)
-    — see this file's own top-of-file reference for the exact values keys
-    ground-truthed against the chart's current values.yaml. Deployed ONCE
+    — see this file's own top-of-file reference for the exact values keys,
+    which match the chart's current values.yaml. Deployed ONCE
     to the cluster's server node, matching install_jenkins.py/
     install_ds389.py's own convention for a cluster-wide Kubernetes app
     (not per-node, unlike the podman path above).

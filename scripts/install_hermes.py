@@ -252,8 +252,7 @@ def setup_hermes(hostname, clu_name, mydomain, cfg):
 
     provider = cfg.get("hermes_llm_provider") or "openrouter"
     if provider not in _PROVIDER_ENV_VARS:
-        die("hermes_llm_provider '{}' is not one of {} — no other provider's real env var name "
-            "has been ground-truthed for this addon yet".format(provider, sorted(_PROVIDER_ENV_VARS)))
+        die("hermes_llm_provider '{}' is not one of {}".format(provider, sorted(_PROVIDER_ENV_VARS)))
 
     creds = ac.resolve_credential(cfg, "hermes", {
         "hermes_llm_api_key": "hermes_llm_api_key",
