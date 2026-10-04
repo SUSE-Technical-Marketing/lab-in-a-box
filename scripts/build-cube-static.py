@@ -1,0 +1,145 @@
+#!/usr/bin/env python3.11
+"""Build static offline version of cube canvas webui with embedded schemas."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def load_schemas():
+    """Load addon schemas."""
+    schema_file = Path(__file__).parent.parent / "webui" / "htdocs" / "schema.json"
+    if not schema_file.exists():
+        print(f"Error: {schema_file} not found", file=sys.stderr)
+        sys.exit(1)
+    with open(schema_file) as f:
+        return json.load(f)
+
+
+def load_base_schema():
+    """Load base schema."""
+    try:
+        result = subprocess.run(
+            ["python3.11", str(Path(__file__).parent / "lab_schema"), "--base"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except Exception as e:
+        print(f"Warning: Could not load base schema: {e}", file=sys.stderr)
+    return {}
+
+
+def build():
+    """Build static cube canvas webui."""
+    schemas = load_schemas()
+    base_schema = load_base_schema()
+
+    # Read original index.html (the cube canvas)
+    index_path = Path(__file__).parent.parent / "webui" / "htdocs" / "index.html"
+    with open(index_path) as f:
+        html = f.read()
+
+    # Find where to inject schemas (before </head>)
+    head_end = html.find("</head>")
+
+    # Create schema scripts
+    schemas_json = json.dumps(schemas)
+    base_json = json.dumps(base_schema)
+
+    schema_inject = f"""
+  <script id="embedded-schemas" type="application/json">
+{schemas_json}
+  </script>
+  <script id="embedded-base-schema" type="application/json">
+{base_json}
+  </script>
+  <script>
+// Static mode overrides: intercept API calls to use embedded data
+window.STATIC_MODE = true;
+window.EMBEDDED_SCHEMAS = JSON.parse(document.getElementById('embedded-schemas').textContent);
+window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-schema').textContent);
+  </script>
+"""
+
+    html = html[:head_end] + schema_inject + html[head_end:]
+
+    # Find where to inject API overrides (after app.js loads, before closing </body>)
+    body_end = html.rfind("</body>")
+
+    api_override = """
+  <script>
+// Override API functions for static mode
+const originalApiGet = window.apiGet;
+window.apiGet = async function(action, params = {}) {
+  if (action === 'components') {
+    return {
+      components: window.EMBEDDED_SCHEMAS.addons.map(name => {
+        const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
+        const fields = schema.fields || [];
+        const countFields = (arr) => {
+          if (!Array.isArray(arr)) return 0;
+          return arr.reduce((n, f) => {
+            if (f && typeof f === 'object' && f.name && f.type) return n + 1;
+            if (f && f.fields) return n + countFields(f.fields);
+            return n;
+          }, 0);
+        };
+        return {
+          name,
+          title: schema.title || name,
+          description: schema.description || '',
+          field_count: countFields(fields),
+          layers: (schema.capabilities && schema.capabilities.layers) || []
+        };
+      }),
+      count: window.EMBEDDED_SCHEMAS.addons.length,
+      scripts_dir: 'embedded'
+    };
+  }
+  if (action === 'schema') {
+    const comp = params.name;
+    if (!comp || !window.EMBEDDED_SCHEMAS.schemas[comp]) {
+      throw new Error(`Schema not found for ${comp}`);
+    }
+    return window.EMBEDDED_SCHEMAS.schemas[comp];
+  }
+  if (action === 'base') {
+    return window.EMBEDDED_BASE_SCHEMA;
+  }
+  if (action === 'status') {
+    return { available: false };
+  }
+  if (action === 'validate') {
+    return { valid: true, errors: [] };
+  }
+  if (action === 'save') {
+    throw new Error('In static mode, use Download to save lab.json');
+  }
+  throw new Error(`Unsupported in static mode: ${action}`);
+};
+  </script>
+"""
+
+    html = html[:body_end] + api_override + html[body_end:]
+
+    return html
+
+
+def main():
+    html = build()
+
+    output_path = Path(__file__).parent.parent / "webui" / "htdocs" / "lab-builder-static.html"
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    print(f"✓ Built {output_path} ({len(html)} bytes)", file=sys.stderr)
+    print(f"✓ Embedded {len(load_schemas()['addons'])} addon schemas", file=sys.stderr)
+    print(output_path)
+
+
+if __name__ == "__main__":
+    main()
