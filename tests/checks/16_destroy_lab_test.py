@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked unit tests for scripts/destroy_lab.py — no live
-# KVM host available; destroy_vm() and lab_creation.purge_known_host()
+# Mocked unit tests for scripts/destroy_lab.py; destroy_vm() and lab_creation.purge_known_host()
 # (ssh-keygen known-hosts cleanup — not necessarily installed in the test
 # container) are monkeypatched. Verifies per-node dispatch across the whole
 # lab and that one node's destroy failure never blocks the rest. Run from

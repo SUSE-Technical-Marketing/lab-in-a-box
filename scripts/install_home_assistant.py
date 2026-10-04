@@ -3,43 +3,23 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# JSON section: "home_assistant" — configurable keys:
-#   home_assistant_version : [OPTIONAL] Helm chart version (empty = latest, tracks Home Assistant's
-#                            own release automatically per this chart's own CI)
-#   home_assistant_ns      : [OPTIONAL] namespace (default: home-assistant)
-#   home_assistant_shorthn : [OPTIONAL] hostname prefix (default: home-assistant)
-#   home_assistant_rel     : [OPTIONAL] Helm repo alias (default: pajikos)
-#   home_assistant_repo_url: [OPTIONAL] Helm repo URL
-#                            (default: http://pajikos.github.io/home-assistant-helm-chart/)
-#   home_assistant_storage_size  : [OPTIONAL] PersistentVolumeClaim size (default: 5Gi)
-#   home_assistant_storage_class : [OPTIONAL] StorageClass name (default: cluster default)
-#   home_assistant_image_tag     : [OPTIONAL] Home Assistant image tag (default: 2026.7.0 —
-#                                  DELIBERATELY pinned below "stable"; see the live-test note in
-#                                  setup_home_assistant()'s own body for the real reason why)
+# JSON section: "home_assistant"
+#   home_assistant_version : Helm chart version (empty = latest, which follows Home Assistant's releases through the chart's CI)
+#   home_assistant_ns      : namespace (default home-assistant)
+#   home_assistant_shorthn : hostname prefix (default home-assistant)
+#   home_assistant_rel     : Helm repo alias (default pajikos)
+#   home_assistant_repo_url: Helm repo URL (default http://pajikos.github.io/home-assistant-helm-chart/)
+#   home_assistant_storage_size  : PersistentVolumeClaim size (default 5Gi)
+#   home_assistant_storage_class : StorageClass name (default: cluster default)
+#   home_assistant_image_tag     : Home Assistant image tag (default 2026.7.0). The tag is pinned below stable, see setup_home_assistant().
 #
-# Home Assistant itself has no official Helm chart (confirmed live, 2026-09-06) — this uses
-# pajikos/home-assistant-helm-chart, a real, actively-maintained community chart (confirmed: its
-# own CI auto-updates the chart on every new Home Assistant release) wrapping the project's own
-# official image (ghcr.io/home-assistant/home-assistant, confirmed at home-assistant/docker).
+# Home Assistant has no official Helm chart. This addon uses pajikos/home-assistant-helm-chart, a community chart that follows each
+# Home Assistant release, and it runs the official image (ghcr.io/home-assistant/home-assistant).
 #
-# PREREQUISITE this addon does NOT provide itself, confirmed elsewhere in this project: a
-# StorageClass — a bare RKE2 cluster has none by default (see install_open_webui.py's own header
-# for the live-confirmed finding). Home Assistant needs its PVC to actually bind, or the pod sits
-# Pending indefinitely.
+# Prerequisite, not provided by this addon: a StorageClass. A bare RKE2 cluster has none by default, and the PVC stays Pending without one.
 #
-# LIVE-TESTED 2026-09-06 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab — full
-# success end-to-end (a real 302 to /onboarding.html through the real Traefik ingress, not just
-# "helm said deployed"), but only after finding and fixing THREE real bugs along the way (none
-# guessable from code review alone): (1) `configuration.enabled=true` alone doesn't put Home
-# Assistant behind this addon's own ingress — it also needs `configuration.forceInit=true` and an
-# explicit `configuration.templateConfig` override with a real http:/trusted_proxies block,
-# otherwise a "400: Bad Request" comes back for every request; (2) `forceInit` specifically matters
-# on any RE-run against an already-provisioned PVC (a first-ever install onto a fresh volume would
-# have worked either way — this only bit an iterate-and-redeploy cycle, but that's a real scenario
-# this project's own `setup_lab.py` re-runs hit routinely); (3) the image tag needed pinning below
-# "stable" entirely — see that same in-body comment for the full chase (Home Assistant 2026.7.5+
-# stopped honoring YAML-based trusted-proxy config at runtime even though it accepts the YAML
-# without error, a genuine, currently-open upstream transition gap).
+# Known requirements: the ingress needs configuration.forceInit=true and a templateConfig with an http block that lists trusted proxies.
+# Otherwise every request through the ingress returns 400 Bad Request. forceInit is also needed on a re-run against an existing PVC.
 
 __version__ = "87e323b"
 
@@ -101,31 +81,15 @@ def setup_home_assistant(hostname, clu_name, mydomain, home_assistant_rel=None, 
     if home_assistant_storage_class:
         set_args.append("--set persistence.storageClass={}".format(shlex.quote(home_assistant_storage_class)))
 
-    # The image tag is DELIBERATELY PINNED below "stable" — a real, live-confirmed root cause,
-    # chased down 2026-09-06, not guessed: Home Assistant 2026.7.5+ deprecated YAML `http:`
-    # config (trusted_proxies/use_x_forwarded_for) in favor of a Settings > System > Network UI
-    # screen. On the actual current "stable" release (confirmed live: 2026.9.1), the YAML http:
-    # block is written to configuration.yaml correctly (this addon's own
-    # configuration.templateConfig override below does force it onto disk either way) but is NO
-    # LONGER HONORED AT RUNTIME — every request through this addon's own ingress still comes back
-    # "400: Bad Request" ("HTTP integration is not set-up for reverse proxies" in the pod's own
-    # logs), because trusted-proxy config now genuinely lives in Home Assistant's own internal
-    # `.storage/` state, not configuration.yaml, on that release. That Network UI screen is itself
-    # unreachable through a reverse proxy until trusted proxies are already configured — a real,
-    # currently-open chicken-and-egg gap Home Assistant's own community has flagged (see
-    # community.home-assistant.io "HTTP YAML Deprecation: how to access new install behind proxy").
-    # Confirmed live, cleanly (fresh PVC, no downgrade-storage-version confound): pinning to
-    # 2026.7.0 — the last release before that deprecation — starts cleanly and DOES still honor
-    # this YAML config; a real `curl` through the ingress gets a normal 302 to /onboarding.html
-    # (not a 400). Override home_assistant_image_tag once Home Assistant ships a scriptable way to
-    # set trusted proxies without the UI (or once this chart adds one), not before.
+    # The image tag is pinned below stable. Home Assistant 2026.7.5 and later no longer read trusted-proxy settings from YAML http:
+    # configuration at runtime. The settings are kept in internal storage, and the UI that sets them is itself unreachable through a
+    # reverse proxy. The last release that still reads the YAML block is 2026.7.0, which is the default tag. Change the tag only once
+    # a release can set trusted proxies without the UI.
     values_yaml = (
         "configuration:\n"
         "  enabled: true\n"
-        # Without this, an already-provisioned PVC (e.g. a previous run of this addon, or any
-        # earlier install) keeps its OLD configuration.yaml forever — confirmed live 2026-09-06:
-        # the setup-config init container only writes the template on first init, so upgrading
-        # this addon's own Helm values alone silently has no effect on an existing volume.
+        # The setup init container writes the template only on the first init. Without forceInit, an existing volume keeps its old
+        # configuration.yaml, and changed Helm values have no effect on it.
         "  forceInit: true\n"
         "  templateConfig: |-\n"
         "    default_config:\n"

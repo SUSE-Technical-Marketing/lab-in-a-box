@@ -1,0 +1,321 @@
+<p>A web interface that builds lab definitions (<code>lab.json</code>) by <strong>introspecting the
+project's own Python libraries at run time</strong>. It lists every installable
+component, and when you pick one it renders a form from that component's schema.
+Add a new <code>install_*</code> component, or a new field to an existing one, and the UI
+picks it up automatically — there is <strong>no per-component code in the UI</strong>.</p>
+<p>Lives in <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/tree/main/webui/"><code>webui/</code></a>.</p>
+<hr />
+<h2 id="contents">Contents</h2>
+<ul>
+<li><a href="#what-it-does">What it does</a></li>
+<li><a href="#how-it-stays-100-dynamic">How it stays 100% dynamic</a></li>
+<li><a href="#architecture">Architecture</a></li>
+<li><a href="#setup--everything-from-scratch">Setup — everything, from scratch</a></li>
+<li><a href="#0-prerequisites">0. Prerequisites</a></li>
+<li><a href="#1-install-the-automation-node-scripts--libraries">1. Install the automation-node scripts + libraries</a></li>
+<li><a href="#2a-run-locally-fastest-no-apache">2a. Run locally (fastest, no Apache)</a></li>
+<li><a href="#2b-deploy-on-apache-production-on-the-automation-vm">2b. Deploy on Apache (production, on the automation VM)</a></li>
+<li><a href="#2c-deploy-as-a-standalone-service-no-apache">2c. Deploy as a standalone service (no Apache)</a></li>
+<li><a href="#configuration">Configuration</a></li>
+<li><a href="#using-it--build-a-lab">Using it — build a lab</a></li>
+<li><a href="#http-api">HTTP API</a></li>
+<li><a href="#scope">Scope</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+<hr />
+<h2 id="what-it-does">What it does</h2>
+<ul>
+<li>Shows a live <strong>count of components</strong> discovered by reading the definitions
+  (61 <code>install_*</code> addons today).</li>
+<li><strong>▚ Lab topology</strong> (pinned) renders the base lab definition: <code>common</code>
+  (singleton) plus <code>nodes</code> and <code>kclusters</code> as <strong>repeatable</strong> keyed maps
+  (add/remove instances — hostname → settings, cluster name → settings).</li>
+<li>Selecting any addon renders a form from its <code>--schema</code>: required fields
+  flagged, defaults as placeholders, passwords masked, booleans as toggles,
+  arrays as comma-lists, descriptions as help text.</li>
+<li>Assembles everything into a <code>lab.json</code>, <strong>validates</strong> it through the project's
+  own <code>libs/primary</code>, then lets you <strong>download</strong> it or <strong>save</strong> it on the server.</li>
+</ul>
+<h2 id="how-it-stays-100-dynamic">How it stays 100% dynamic</h2>
+<p>The frontend contains no knowledge of any specific script. It walks the schema
+tree with one rule set ("Option B"):</p>
+<ul>
+<li>A <strong>field</strong> is any object with <code>name</code> + <code>type</code>, wherever it appears.</li>
+<li><code>fields</code> / <code>sections</code> are <strong>structural wrappers</strong> (they never become output keys).</li>
+<li>Any other named object is a <strong>group</strong> that becomes an output key; a group
+  marked <code>repeatable</code> becomes a keyed map of instances.</li>
+</ul>
+<p>So new fields, new components and new nested sections all render with zero UI
+changes. The only fixed convention is that small schema vocabulary — and it
+lives in the definitions, not the UI.</p>
+<h2 id="architecture">Architecture</h2>
+<p>Thin web layer over the existing Python libraries — <strong>no subprocess fan-out</strong>:</p>
+<pre><code>webui/
+├── htdocs/                 single-page app (vanilla HTML/CSS/JS)
+│   ├── index.html
+│   ├── app.js              generic schema walker + lab assembly
+│   └── style.css           theme-aware (light/dark)
+├── lib/
+│   ├── discovery.py        imports scripts/lab_schema (parse_script,
+│   │                       base_lab_schema) and libs/primary (validate) in-process
+│   └── api.py              transport-agnostic dispatch() — the only routing logic
+├── cgi-bin/labbuilder.py   Apache mod_cgi shim
+├── run-local.py            zero-dependency dev server (stdlib only)
+├── apache/lab-builder.conf Apache drop-in
+└── README.md               short version of this file
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Handled by</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Component list + count</td>
+<td><code>lab_schema.parse_script()</code> over <code>install_*</code></td>
+<td>in-process</td>
+</tr>
+<tr>
+<td>Base topology schema</td>
+<td><code>lab_schema.base_lab_schema()</code></td>
+<td>single source; <code>setup_lab.py --schema</code> emits the same</td>
+</tr>
+<tr>
+<td>Validation</td>
+<td><code>libs/primary.validate_definition()</code></td>
+<td>stderr captured, <code>SystemExit</code> caught</td>
+</tr>
+<tr>
+<td>Save</td>
+<td>writes to <code>LABBUILDER_OUTPUT_DIR</code></td>
+<td>filename sanitised</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="setup--everything-from-scratch">Setup — everything, from scratch</h2>
+<h3 id="0-prerequisites">0. Prerequisites</h3>
+<ul>
+<li>The <strong>automation VM</strong> of a lab-in-a-box deployment (see the main project
+  README for standing that up). It already runs Apache for the
+  provisioning HTTP server, so the web server is present.</li>
+<li><strong>Python 3.11</strong> — the toolchain pins to it explicitly (most distros ship an older default <code>python3</code> alongside it).</li>
+<li><code>curl</code> and <code>jq</code> are handy for the smoke tests below.</li>
+</ul>
+<h3 id="1-install-the-automation-node-scripts--libraries">1. Install the automation-node scripts + libraries</h3>
+<p>The web app reads the <strong>installed</strong> scripts and libraries. Make sure they're
+present and current (this also installs <code>lab_schema</code> with <code>--base</code>, which the
+base-topology form needs):</p>
+<pre><code class="language-bash"># on the automation VM, from the repo checkout:
+./install_automation_node_scripts.sh
+</code></pre>
+<p>This puts <code>install_*</code>, <code>setup_lab.py</code>, <code>lab_schema</code> in <code>/usr/local/bin/</code> and the
+Python libraries in <code>/usr/local/lib/lab_creation/</code> — exactly where the web app
+auto-detects them.</p>
+<blockquote>
+<p>If you change a script/definition later, re-run <code>install_automation_node_scripts.sh</code>
+so the installed copies (and therefore the web UI) pick it up.</p>
+</blockquote>
+<h3 id="2a-run-locally-fastest-no-apache">2a. Run locally (fastest, no Apache)</h3>
+<p>Zero dependencies — just Python 3:</p>
+<pre><code class="language-bash">python3 webui/run-local.py            # http://localhost:8677/
+python3 webui/run-local.py 9000       # custom port
+</code></pre>
+<p>It auto-detects the scripts/libs directories: the installed
+<code>/usr/local/bin</code> + <code>/usr/local/lib/lab_creation</code> if present, otherwise the
+repo's <code>scripts/</code> and <code>libs/</code>. To force the repo copies (e.g. testing local edits
+before installing):</p>
+<pre><code class="language-bash">LABBUILDER_SCRIPTS_DIR=&quot;$PWD/scripts&quot; \
+LABBUILDER_LIBS_DIR=&quot;$PWD/libs&quot; \
+python3 webui/run-local.py
+</code></pre>
+<p>Smoke-test it:</p>
+<pre><code class="language-bash">curl -s &quot;http://localhost:8677/api?action=components&quot; | jq '.count'
+curl -s &quot;http://localhost:8677/api?action=base&quot; | jq '.sections | keys'
+</code></pre>
+<h3 id="2b-deploy-on-apache-production-on-the-automation-vm">2b. Deploy on Apache (production, on the automation VM)</h3>
+<p>The app is a static page plus one CGI endpoint (<code>mod_cgi</code>).</p>
+<pre><code class="language-bash"># 1. Copy the app somewhere Apache can serve it
+sudo cp -r webui /srv/www/lab-builder
+
+# 2. Create a writable output dir for saved labs (owned by the Apache user)
+sudo mkdir -p /srv/www/lab-builder/labs
+sudo chown wwwrun /srv/www/lab-builder/labs      # 'apache' on RHEL family
+
+# 3. Drop in the vhost config
+sudo cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/    # SLES/openSUSE
+#   RHEL family:  sudo cp webui/apache/lab-builder.conf /etc/httpd/conf.d/
+
+# 4. Make sure CGI is enabled
+#   SLES/openSUSE: add 'cgid' to APACHE_MODULES in /etc/sysconfig/apache2, e.g.
+#     sudo sed -i 's/^APACHE_MODULES=&quot;\(.*\)&quot;/APACHE_MODULES=&quot;\1 cgid&quot;/' /etc/sysconfig/apache2
+#   RHEL family:   mod_cgid is on by default
+sudo systemctl restart apache2                    # 'httpd' on RHEL family
+</code></pre>
+<p>Then browse to:</p>
+<pre><code>http://&lt;automation-vm&gt;/lab-builder/
+</code></pre>
+<p>The <code>apache/lab-builder.conf</code> sets <code>LABBUILDER_OUTPUT_DIR=/srv/www/lab-builder/labs</code>
+and leaves scripts/libs auto-detected. Uncomment the <code>SetEnv</code> lines in it to
+override.</p>
+<p>The CGI runs as the Apache user. It only <strong>reads</strong> schemas and <strong>writes</strong> lab
+JSON under the output dir — it never builds labs or runs anything privileged.</p>
+<h3 id="2c-deploy-as-a-standalone-service-no-apache">2c. Deploy as a standalone service (no Apache)</h3>
+<p><code>install_automation_node_scripts.sh</code> can deploy the whole thing for you —
+see <a href="#1-install-the-automation-node-scripts--libraries">1. Install the automation-node scripts + libraries</a>
+above, and set <code>_webui_mode</code>:</p>
+<pre><code class="language-bash">_webui_mode=service _webui_port=8677 ./install_automation_node_scripts.sh
+</code></pre>
+<p>This runs <code>run-local.py</code> itself (no Apache/mod_cgi involved at all) as a
+persistent background process, bound to <code>0.0.0.0:${_webui_port}</code> (default
+<code>8677</code>). How it's started/stopped is <strong>not tied to systemd</strong>: the installer
+checks for <code>/run/systemd/system</code> — the standard signal that a system is
+actually running under systemd, not just that a <code>systemctl</code> binary happens
+to exist — and:</p>
+<ul>
+<li><strong>systemd present</strong>: installs and enables <code>lab-builder.service</code>
+  (<code>Type=simple</code>, <code>Restart=always</code>), managed the normal way:
+  <pre><code class="language-bash">systemctl {start|stop|restart|status} lab-builder
+</code></pre></li>
+<li><strong>no systemd</strong>: falls back to a small, init-system-independent control
+  script that does the same job with a plain PID file, no unit file, no
+  service manager involved:
+  <pre><code class="language-bash">lab-builder-ctl {start|stop|restart|status}
+</code></pre>
+  On a target like this, add <code>lab-builder-ctl start</code> to whatever mechanism
+  that system actually uses to run things at boot (there's no single
+  detection-and-hook that covers every non-systemd init, so this only
+  starts it for the current session on its own).</li>
+</ul>
+<p>Either way, browse to <code>http://&lt;automation-vm&gt;:&lt;port&gt;/</code> — there's no
+<code>/lab-builder/</code> path prefix in this mode (that prefix comes from the Apache
+vhost config, which isn't in play here).</p>
+<p>Use <code>_webui_mode=off</code> to skip deploying the web UI at all.</p>
+<hr />
+<h2 id="configuration">Configuration</h2>
+<p>All optional; env vars (set in the shell for <code>run-local.py</code>, or via <code>SetEnv</code> in
+the Apache config):</p>
+<table>
+<thead>
+<tr>
+<th>var</th>
+<th>meaning</th>
+<th>default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LABBUILDER_SCRIPTS_DIR</code></td>
+<td>dir with <code>install_*</code> + <code>lab_schema</code></td>
+<td><code>/usr/local/bin</code>, else <code>&lt;repo&gt;/scripts</code></td>
+</tr>
+<tr>
+<td><code>LABBUILDER_LIBS_DIR</code></td>
+<td>dir with the python <code>libs</code> package</td>
+<td><code>/usr/local/lib/lab_creation</code>, else <code>&lt;repo&gt;/libs</code></td>
+</tr>
+<tr>
+<td><code>LABBUILDER_OUTPUT_DIR</code></td>
+<td>where generated labs are written</td>
+<td><code>~/.lab-builder/labs</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="using-it--build-a-lab">Using it — build a lab</h2>
+<ol>
+<li><strong>Lab topology</strong> — click <em>▚ Lab topology</em>. Fill <code>common</code> (image, RAM, disk,
+   CPU, network). Under <code>nodes</code>, click <strong>+ add nodes</strong> for each VM: enter the
+   hostname (FQDN) as the key, its <code>myip</code>, <code>kcluster</code>, and role. Under
+   <code>kclusters</code>, add each cluster (name as key; <code>clu_type</code>, <code>clu_rel</code>, <code>mydomain</code>,
+   and the <code>addons</code> list). Click <strong>Add to lab</strong>.</li>
+<li><strong>Addons</strong> — pick e.g. <code>longhorn</code>, fill its options, <strong>Add to lab</strong>. Repeat.
+   (Remember to list the addon name in the relevant <code>kclusters.&lt;name&gt;.addons</code>
+   array so it actually gets installed.)</li>
+<li>Watch the <strong>lab.json</strong> panel assemble on the right.</li>
+<li><strong>Validate</strong> — runs <code>libs/primary</code> server-side; shows structural errors.</li>
+<li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
+   the usual way: <code>setup_lab.py &lt;lab&gt;.json</code>.</li>
+</ol>
+<h2 id="http-api">HTTP API</h2>
+<p>Same-origin JSON. Under Apache the base is <code>/lab-builder/api</code>; under <code>run-local</code>
+it's <code>/api</code>.</p>
+<table>
+<thead>
+<tr>
+<th>method</th>
+<th>path</th>
+<th>purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>api?action=components</code></td>
+<td>list components + live count</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>api?action=schema&amp;name=install_longhorn</code></td>
+<td>one addon's schema</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>api?action=base</code></td>
+<td>base lab-definition schema (common/nodes/kclusters)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>api?action=validate</code></td>
+<td><code>{ "config": {…} }</code> → validate via <code>libs/primary</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>api?action=save</code></td>
+<td><code>{ "filename": "mylab", "config": {…} }</code> → write file</td>
+</tr>
+</tbody>
+</table>
+<h2 id="scope">Scope</h2>
+<p>Builds a <strong>complete <code>lab.json</code></strong>: base topology (<code>common</code>/<code>nodes</code>/<code>kclusters</code>)
+plus every addon config section. <strong>Not</strong> built (by design): executing a lab from
+the web UI — you save the JSON and run <code>setup_lab.py</code> yourself. Running via
+<code>setup_lab.py</code>'s phase functions as a library is a possible future increment.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause / fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>action=base</code> returns HTTP 500 (<code>AttributeError: base_lab_schema</code>)</td>
+<td>Installed <code>/usr/local/bin/lab_schema</code> is older than <code>--base</code>. Re-run <code>install_automation_node_scripts.sh</code>, or point at the repo copy with <code>LABBUILDER_SCRIPTS_DIR=$PWD/scripts</code>.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --schema</code> errors <code>lab_schema: command not found</code></td>
+<td><code>lab_schema</code> isn't on <code>PATH</code>. It's in <code>/usr/local/bin</code> after install; in the repo run it from <code>scripts/</code> or add that dir to <code>PATH</code>.</td>
+</tr>
+<tr>
+<td><code>ImportError: cannot import name 'ThreadingHTTPServer'</code></td>
+<td>Old Python. <code>run-local.py</code> already ships a 3.6-compatible shim; make sure you're running the current file.</td>
+</tr>
+<tr>
+<td>Apache serves the page but <code>/lab-builder/api</code> 404/500</td>
+<td>CGI not enabled, or <code>cgi-bin/labbuilder.py</code> not executable. Enable <code>cgid</code> (see setup 2b) and <code>chmod +x webui/cgi-bin/labbuilder.py</code>.</td>
+</tr>
+<tr>
+<td><code>Save</code> fails with a permissions error</td>
+<td>The output dir isn't writable by the Apache user. <code>chown</code> it (setup 2b).</td>
+</tr>
+<tr>
+<td>Component count is <code>!</code> in the header</td>
+<td>The API call failed — check the browser console and the server log; usually a wrong scripts/libs dir.</td>
+</tr>
+</tbody>
+</table>

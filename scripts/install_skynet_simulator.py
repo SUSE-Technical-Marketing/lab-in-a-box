@@ -10,20 +10,14 @@
 #   skynet_simulator_ns      : [OPTIONAL] namespace (default: skynet-simulator)
 #   skynet_simulator_shorthn : [OPTIONAL] hostname prefix for ingress (default: skynet-simulator)
 #
-# LICENSE: MIT (confirmed live via GitHub's own license API, 2026-09-06) — self-hosting the real,
-# playable game is genuinely permitted.
+# LICENSE: MIT. Self-hosting the game is permitted.
 #
 # This deploys the game's own real files directly from its git repository (a plain static HTML/
-# CSS/JS app — confirmed live: index.html + css/ + script/ at the repo root, no build step) via a
+# CSS/JS app with index.html, css/ and script/ at the repo root and no build step) via a
 # Kubernetes initContainer that downloads the repo's own GitHub archive tarball and extracts it
 # into a shared volume; an ordinary nginx container serves it. The repo also ships a small optional
 # PHP/MySQL logging feature (update.php/log.sql) — deliberately NOT wired up here (no PHP/DB
 # runtime in this addon's nginx-only pod); the game itself works fully without it.
-#
-# LIVE-TESTED 2026-09-06 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab: full
-# success end-to-end — the initContainer's github archive-tarball fetch + flatten worked cleanly,
-# the pod reached Running in ~15s (no build step, as expected), and the real Traefik ingress
-# served a genuine HTTP 200 with <title>Skynet Simulator</title>.
 
 __version__ = "87e323b"
 

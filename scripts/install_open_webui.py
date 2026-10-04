@@ -13,7 +13,7 @@
 #                                 automatically as http://ollama.<ollama_ns>.svc.cluster.local:11434
 #                                 when this lab's own "ollama" addon section is present (in-cluster
 #                                 Service DNS, per the ollama-helm chart's own release/service naming —
-#                                 NOT independently confirmed live, verify with
+#                                 Verify with
 #                                 `kubectl get svc -n <ollama_ns>` if this doesn't resolve). Set
 #                                 explicitly to point at an Ollama instance outside this lab, or leave
 #                                 both this and the "ollama" section unset to use Open WebUI's own
@@ -27,17 +27,9 @@
 #                                 accepts any bearer token, so "sk-anything" works unless the proxy was
 #                                 configured with LiteLLM's own key enforcement)
 #
-# LIVE-TESTED 2026-09-05 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab: full
-# install -> all 4 pods (open-webui, its bundled ollama subchart, pipelines, redis) Running -> the
-# real Traefik ingress served a genuine HTTP 200 with a correct <title>Open WebUI</title>. One real
-# environment prerequisite this addon does NOT provide itself, confirmed by hitting it live: this
-# chart's PVCs (open-webui's own data volume, plus the pipelines sidecar's) need a StorageClass —
-# a bare RKE2 cluster (unlike K3s, which bundles local-path-provisioner) has NONE by default, so
-# the pods sit Pending indefinitely with no error surfaced anywhere in this addon's own output.
-# Install a storage addon (this project's own "longhorn", or any default StorageClass) BEFORE this
-# one on any cluster that doesn't already have one. (Values keys — ollamaUrls/openaiBaseApiUrls/
-# openaiApiKeys/ingress.host — and the in-cluster Ollama Service DNS name were pre-verified against
-# open-webui/helm-charts' own README before this live test, not guessed.)
+# The chart's PVCs need a StorageClass. A bare RKE2 cluster has none by default, and the pods then
+# stay Pending with no error in this addon's output. Install a storage addon (for example "longhorn")
+# or another default StorageClass before this addon.
 
 __version__ = "0259515"
 

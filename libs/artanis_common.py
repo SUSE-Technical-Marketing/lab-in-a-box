@@ -9,10 +9,9 @@ Artanis and share the same basic runtime shape: one web-facing container, listen
 configurable port (3000 by default, matching Artanis' own convention), needing persistent storage
 for its content (git objects for Colt, a SQLite database for WikiMusic), exposed via one Ingress.
 
-Neither project publishes a pre-built container image (confirmed live 2026-09-05: Colt's own
-GitLab repo HAS a Dockerfile at its root — buildable with a plain `docker build .` — but nothing is
-pushed to Docker Hub under any name this project could reference directly; WikiMusic's own repo has
-no Dockerfile at all, using GNU Guix — channels.scm/manifest.scm — for reproducible builds instead).
+Neither project publishes a pre-built container image. Colt's repo has a Dockerfile at its root,
+buildable with `docker build .`, but no image is pushed to a registry. WikiMusic's repo has no
+Dockerfile and builds with GNU Guix (channels.scm/manifest.scm) instead.
 So unlike almost every other addon in this project, BOTH `<name>_image` fields here are MANDATORY —
 the operator must build and push an image themselves (Colt: `docker build` the repo directly;
 WikiMusic: `guix pack -f docker` or an equivalent Guix-based build) before running either addon.

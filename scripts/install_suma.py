@@ -22,8 +22,7 @@ __version__ = "ca2d2d5"
 PLUGIN = {
     "name": "suma",
     "targets": ["vm", "baremetal"],
-    # standalone-container, not os-native: confirmed live 2026-08-29 — this
-    # script's own install() runs `mgradm ... install podman`, a real
+    # standalone-container, not os-native: this script's own install() runs `mgradm ... install podman`, a real
     # podman container on the host, not a bare package/binary install (see
     # libs/layers.py's own LAYER_OS_NATIVE docstring: "no container
     # involved" — mgradm's podman-based install doesn't qualify).

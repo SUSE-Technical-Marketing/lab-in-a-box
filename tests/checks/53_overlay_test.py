@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # Unit tests for libs/overlay.py — the cross-cloud, SITE-TO-SITE WireGuard
 # overlay (hub-and-spoke among SITE GATEWAYS, never individual lab nodes —
-# see the module's own docstring + repo TODO's "CROSS-CLOUD WIREGUARD
-# OVERLAY" entries for why the shape changed after live-testing). No real
+# see the module's own docstring). No real
 # WireGuard/SSH: ssh_run/ssh_output are monkeypatched directly on the
 # module (same convention as 52_ansible_control_node_test.py), and a fake
 # VMBackend stands in for backends.ensure_cloud_dns_vm()'s own
@@ -188,10 +187,9 @@ check("add_peer_to_hub: applies the peer LIVE via wg set with the FULL comma-joi
 check("add_peer_to_hub: persists a marked [Peer] block with the real site subnet, not just a /32",
       any(inp and "# peer: aws-aws-tmm" in inp and "PublicKey = GWPUB" in inp
           and "AllowedIPs = 10.99.0.5/32,172.31.0.0/20" in inp for _, _, inp in calls))
-check("add_peer_to_hub: adds a REAL kernel route for every AllowedIPs CIDR via wg0 — a real bug "
-      "found live-testing 2026-09-18: `wg set` alone never installs the kernel route wg-quick's "
-      "own parsing normally would, so the hub could decrypt inbound traffic from a new peer but "
-      "had nowhere to route a reply back",
+check("add_peer_to_hub: adds a REAL kernel route for every AllowedIPs CIDR via wg0 "
+      "(`wg set` alone does not install the kernel route that wg-quick normally would, so the "
+      "hub could decrypt traffic from a new peer but had no route to reply)",
       any("ip route replace 10.99.0.5/32 dev wg0" in c for _, c, _ in calls)
       and any("ip route replace 172.31.0.0/20 dev wg0" in c for _, c, _ in calls))
 
@@ -325,8 +323,8 @@ create_backend = _FakeBackendCreate()
 with tempfile.TemporaryDirectory() as tmp:
     hub_public_ip2, _, _ = overlay.ensure_overlay_hub(
         create_backend, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example", wg_port=51820)
-    check("ensure_overlay_hub: create path writes a real cloud-init user-data file (a real bug found "
-          "live-testing 2026-09-18 — create_vm() dies outright without one)",
+    check("ensure_overlay_hub: create path writes a cloud-init user-data file "
+          "(create_vm() dies without one)",
           (Path(tmp) / "cloud-init" / "lab-overlay-gw-aws-prod_user-data").exists())
 check("ensure_overlay_hub: create path uses the per-account gateway name ('lab-overlay-gw-aws-prod')",
       ("vm_exists", "lab-overlay-gw-aws-prod") in create_backend.calls)

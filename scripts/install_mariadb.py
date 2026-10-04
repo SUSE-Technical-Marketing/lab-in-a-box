@@ -81,7 +81,7 @@ def _validate(v):
 
 def setup_mariadb(hostname, templ_addons_loc, mariadb_cfg):
     """
-    Delete any pre-existing deployment/service, then render+apply the
+    Delete any existing deployment/service, then render+apply the
     mariadb manifest template. Mirrors setup_mariadb (bash).
 
     mariadb_cfg : the raw "mariadb" JSON section dict — passed straight

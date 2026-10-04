@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Mocked unit tests for scripts/setup_lab.py — no live KVM
-# host or Kubernetes cluster is available in this project. Covers:
+# Mocked unit tests for scripts/setup_lab.py. Covers:
 # _merged_env's defaults/config/JSON precedence, the addon-dispatch block
 # (shutil.which + subprocess.run, duplicate-addon skip, missing-installer
 # die()) for both cluster- and VM-level addons, and phase_create_vms's
@@ -66,13 +65,8 @@ setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name) if "missing" n
 run_calls = []
 setup_lab.subprocess.run = lambda args, env=None, **kw: run_calls.append((args, env)) or FakeCompleted()
 
-# clu_cfg deliberately has NO "addons" key — that's what a real
-# k8s.load_kclu_vars() call actually returns (it keeps only scalar fields,
-# so a list like "addons" is always dropped there). _install_cluster_addons
-# must read the addons list from definition["kclusters"][clu_name] directly
-# — regression guard for the real bug found live-testing install_ds389.py
-# 2026-09-21 (a cluster-level addons[] entry never installed anything,
-# always silently empty).
+# clu_cfg has no addons key, because load_kclu_vars() keeps only scalar fields. The cluster addons list is read from the definition.
+# This test checks that the cluster addons are read from definition["kclusters"].
 clu_cfg = {"clu_type": "rke2", "mgm_node": "srv1"}
 definition2 = {
     "nodes": {"srv1": {"kcluster": "c1"}, "agt1": {"kcluster": "c1"}},
@@ -118,11 +112,7 @@ check("phase_vm_addons: runs on the owning node", all(env["_vm_name"] == "vm1" f
 check("phase_vm_addons: a node with no addons is skipped entirely",
       not any("vm2" == env.get("_vm_name") for _, env in run_calls))
 
-# A node whose OWN VM creation failed must never have its addons attempted
-# either — found live 2026-09-12: every addon on such a node was SSH-ing
-# into a host that was never created, each addon's own die() message then
-# misleadingly blaming something addon-specific instead of the real, single
-# cause (already reported once from phase_create_vms).
+# A node whose VM creation failed has no host, so its addons are skipped. The creation failure is already reported once.
 run_calls.clear()
 setup_lab._report = setup_lab._RunReport()
 setup_lab._report.add_node("vm1", "FAILED")
@@ -148,11 +138,7 @@ check("collect_addon_names: a lab with no addons anywhere returns an empty list"
 
 # ── validate_addon_configs: --validate every referenced addon before any VM/
 # cluster work starts ───────────────────────────────────────────────────────
-# Found in code review 2026-09-05: each addon's own Validator (vns/vport/
-# vver/vreq/...) checks were only ever reachable by an operator manually
-# running `install_<addon> --validate <file>` — setup_lab.py never called
-# it at all, so a bad addon-config value surfaced only once that addon
-# actually ran, potentially after VMs/clusters were already created.
+# An invalid addon configuration value is reported before any VM or cluster is created.
 validate_def = {"kclusters": {"c1": {"addons": ["rancher", "longhorn"]}}, "nodes": {}}
 
 setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name)
@@ -200,11 +186,8 @@ check("phase_create_vms: an 'existing' node is never destroyed or provisioned",
 check("phase_create_vms: an 'existing' node is still waited on for SSH",
       calls["check_ssh_conn"] == ["existing1"])
 
-# --keep's reusability check dispatches through backends.get_backend(for_existing=True)
-# so it asks whichever backend actually owns the VM (AWS, Harvester, libvirt...),
-# not a hardcoded libvirt lookup — see setup_lab.py's own comment on this block for
-# the real incident (2026-09-15) that motivated the fix. Mocked here via a fake
-# backend object rather than lc.locate_kvm_host/lc.vm_is_reusable.
+# The --keep reusability check goes through backends.get_backend(for_existing=True), so the backend that owns the VM answers.
+# The test uses a fake backend object.
 class FakeBackend:
     def __init__(self, reusable=None, error=None):
         self._reusable = reusable
@@ -250,7 +233,7 @@ check("phase_create_vms: --keep + a VM that doesn't exist yet is still (re)creat
 
 # keep=True, backend can't even be reached (e.g. an expired cloud SSO token) ->
 # must NOT be treated as "doesn't exist, will recreate" — that conflation is
-# exactly what nearly destroyed a real production server live. The node is left
+# a destructive mistake. The node is left
 # untouched (no destroy/provision) and recorded as FAILED instead.
 for k in calls:
     calls[k].clear()
@@ -272,9 +255,7 @@ setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=False
 check("phase_create_vms: without --keep, the VM is always destroyed and recreated",
       calls["destroy"] == ["vm1"] and calls["provision"] == ["vm1"])
 
-# One node's provision_vm() dying (check_ssh_conn's own die() on a boot-wait
-# timeout, mirrored here as SystemExit) must not abort the whole multi-node
-# deploy — reported live 2026-09-01: it used to take the entire run down.
+# A provision_vm() failure on one node, a boot-wait timeout raised as SystemExit, must not stop the other nodes.
 for k in calls:
     calls[k].clear()
 
@@ -313,8 +294,8 @@ check("phase_create_vms: a node whose provision_vm() raises RuntimeError doesn't
 
 
 # ── _RunReport / print_summary: end-of-run overview of what worked / failed ──
-# setup_lab.py used to swallow a failed node/addon with one mid-run [WARN] and
-# then just say "LAB setup completed" — print_summary() gives a grouped
+# A failed node or addon must not be reported only by one mid-run [WARN] followed by
+# "LAB setup completed". print_summary() gives a grouped
 # breakdown and _report.failed drives main()'s exit code.
 setup_lab._report = setup_lab._RunReport()
 setup_lab._report.resources = (12, 24576, 240, 4)

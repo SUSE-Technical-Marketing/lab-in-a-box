@@ -1,17 +1,13 @@
 """
-kvm_host_profiles.py — modular per-OS package/repo setup for KVM hypervisor hosts.
+kvm_host_profiles.py: per-OS package and repository setup for KVM hypervisor hosts.
 
-Mirrors the OS dispatch that setup_demo_server/setup_kvm_node.sh (bash) used to do — a
-hardcoded if/elif for opensuse-leap/sles. That script is retired (legacy_bash/setup_demo_server/,
-2026-08-31 — it never got this profile registry, or anything else added since); this is a
-small profile registry instead, so adding a new host OS means adding one class, not editing
-a growing if/elif chain.
+The profiles replace a hardcoded if/elif on the OS id. Each profile knows how to:
+  - detect whether it applies to an /etc/os-release id or id_like
+  - refresh package metadata
+  - install its package list
+  - register repositories or subscriptions where needed (SUSEConnect, apt repositories and so on)
 
-Each profile is responsible for:
-  - detecting whether it applies to a given /etc/os-release id/id_like
-  - refreshing package metadata
-  - installing its package list
-  - any one-time repo/subscription registration (SUSEConnect, apt repos, etc.)
+Adding a host OS means adding one profile class.
 
 Usage:
     profile = detect_profile()
@@ -122,21 +118,10 @@ class HostOSProfile:
         anything else this project needs to support).
         """
         if self._service_active("NetworkManager"):
-            # Confirmed live (2026-08-29) on a real SLES 16 host: without
-            # migrating nic's existing connection first, this silently
-            # produces a non-functional bridge — `nmcli con up bridge_name`
-            # reports "successfully activated" but the bridge stays stuck
-            # "activating (waiting for ports)" forever, because nic's
-            # pre-existing (non-slave) connection is still active and keeps
-            # holding the device, so the new bridge-slave connection never
-            # actually attaches. The bridge also has no IP of its own unless
-            # explicitly given one (nmcli defaults a new connection to
-            # auto/DHCP) — so even once attached, the host itself would lose
-            # its address. Both fixed by capturing nic's current connection
-            # (if any) and its static IPv4 config before creating anything,
-            # giving the bridge that same config, and deactivating (not
-            # deleting — recoverable) the old connection so the slave
-            # connection can take the device over.
+            # Migrate the NIC's current connection to the bridge before creating the bridge. If the NIC keeps its connection, the
+            # bridge stays in "activating (waiting for ports)". The bridge also needs the host's static IPv4 config, or the host
+            # loses its address. The NIC's current connection and its static IPv4 config are captured, the bridge gets the same
+            # config, and the old connection is deactivated, not deleted, so the bridge slave can take over the device.
             existing_conn = subprocess.run(
                 ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "device", "show", nic],
                 capture_output=True, text=True,
@@ -265,7 +250,7 @@ class _SuseRegisteredProfile(_SuseZypperProfile):
     do_it_all()) after detect_profile() returns an instance, the same
     post-construction-mutation pattern already used for _extra_host_pkgs.
     Not constructor params: detect_profile() has no access to lab.cfg, only
-    the live host's own /etc/os-release.
+    the host's own /etc/os-release.
     """
 
     _products = ()  # set per concrete class
@@ -274,14 +259,8 @@ class _SuseRegisteredProfile(_SuseZypperProfile):
     suse_url = ""
 
     def register_repos(self):
-        # Confirmed live (2026-08-29): SUSEConnect --product on a genuinely
-        # fresh, never-registered SLES host fails outright ("Please provide
-        # Registration Code", HTTP 401) — this method previously only ever
-        # added MODULES, silently assuming the BASE product was already
-        # registered by some other means. Register the base product first
-        # when a regcode is available; a host that's already registered
-        # (SUSEConnect --status) tolerates a repeat --regcode call as a
-        # no-op, so this is safe to always attempt rather than probe first.
+        # Register the base product first when a registration code is available. Adding a module to an unregistered host fails,
+        # so the base product is registered before the modules. Registering an already registered host again is a no-op.
         if self.regcode:
             base_args = ["SUSEConnect", "--regcode", self.regcode]
             if self.suse_email:
@@ -293,9 +272,7 @@ class _SuseRegisteredProfile(_SuseZypperProfile):
             raise RuntimeError(
                 "SLES host registration requires a regcode — set SUSE_regcode "
                 "(and optionally SUSE_email/SUSE_url) in lab.cfg, or pre-register "
-                "this host with SUSEConnect yourself before running this. Confirmed "
-                "live 2026-08-29: SUSEConnect --product fails with 'Please provide "
-                "Registration Code' against a genuinely unregistered SLES host.")
+                "this host with SUSEConnect yourself before running this.")
 
         ver_id = self.os_info.get("VERSION_ID", "")
         arch = platform.machine()
@@ -312,35 +289,17 @@ class OpenSUSELeap15Profile(_SuseZypperProfile):
         "bridge-utils", "tcpdump", "sensors", "ftsteutates-sensors",
         "netcat-openbsd", "gptfdisk", "libvirt-daemon-qemu", "qemu-tools",
         "virt-install", "libguestfs",
-        # fuse3 — confirmed live 2026-08-30 missing on a Leap 15.6 Minimal-VM
-        # Cloud host (solver.onlyRequires=true there drops it as a weak
-        # Recommends of libguestfs). Without it, guestmount's own guestunmount
-        # counterpart fails with "guestunmount: failed to unmount /mnt: exec:
-        # No such file or directory" (fusermount3 missing) — setup_lab_automation.sh's
-        # guestmount-based automation-VM injection appears to run (no fatal
-        # error) but its writes never get flushed back to the qcow2 before the
-        # VM boots, so the automation VM comes up as a pristine, un-injected
-        # image (JeOS Firstboot wizard, no static IP/SSH key/hostname applied)
-        # with no visible failure anywhere in the log. Full installs (non-minimal
-        # base) generally already have fuse3 via some other package's Recommends,
-        # which is presumably why this was never caught before.
+        # fuse3 must be installed. guestmount injects files into the automation VM image, and it needs fusermount3 to flush its
+        # writes. Without fuse3 the writes are lost and the image boots un-injected, with no error. Minimal installs do not pull
+        # fuse3 in as a dependency, so it is listed explicitly.
         "fuse3",
     ]
 
 
 class OpenSUSELeap16Profile(_SuseZypperProfile):
     name = "opensuse-leap-16"
-    # Confirmed live 2026-09-01 against a real openSUSE Leap 16.0 host: the
-    # two changes below match exactly what SLES16Profile already found on
-    # the same SUSE-16-generation package set (see its own comments) —
-    # gpgme-devel was renamed libgpgme-devel, and cri-tools has no
-    # replacement anywhere in Leap 16's repos either. Every other package in
-    # this list (including sensors, ftsteutates-sensors's own dependency)
-    # confirmed installable as-is; ftsteutates-sensors/minikube-bash-completion/
-    # kubectl-who-can/kubevirt-virtctl/kubernetes1.28-client remain
-    # unverified (not tested this pass — none of them block create_vm/
-    # bootstrap, only their own optional features) and stay in
-    # unmapped_packages rather than being guessed at.
+    # Leap 16.0 names: gpgme-devel is libgpgme-devel, and cri-tools is not available. The other packages in this list install as they
+    # are. Packages whose availability is unverified are kept in unmapped_packages, not guessed at.
     packages = [
         "libvirt", "podman", "docker", "libgpgme-devel",
         "device-mapper-devel", "libbtrfs-devel", "git-core", "mc",
@@ -350,9 +309,7 @@ class OpenSUSELeap16Profile(_SuseZypperProfile):
     unmapped_packages = [
         "minikube-bash-completion", "kubectl-who-can", "kubevirt-virtctl",
         "kubernetes1.28-client", "ftsteutates-sensors",
-        # cri-tools: confirmed live 2026-09-01 genuinely unavailable on Leap
-        # 16, same as SLES 16 (see SLES16Profile's own comment) — "No
-        # matching items found", no renamed equivalent found either.
+        # cri-tools is not available on Leap 16, and no renamed package exists.
         "cri-tools",
     ]
 
@@ -365,17 +322,8 @@ class SLES15Profile(_SuseRegisteredProfile):
         "gpgme-devel", "device-mapper-devel", "libbtrfs-devel", "git-core", "mc",
         "bridge-utils", "tcpdump", "sensors", "ftsteutates-sensors",
         "netcat-openbsd", "gptfdisk",
-        # guestfs-tools (SLES's package name for what openSUSE calls
-        # libguestfs — confirmed live 2026-08-29 via `zypper search` on a
-        # real SLES 15 SP7 host): virt-customize/virt-ls, needed for the
-        # config_method="virt_customize" provisioning path. Confirmed
-        # missing live on that same host (a real, pre-existing SLES15Profile
-        # host that had never had it installed) — virt-customize failed
-        # outright with "virt-ls: No such file or directory". virt-install
-        # itself is NOT added here despite the NOTE below still applying to
-        # it: that same host already had it (via the `libvirt` package's own
-        # dependency chain on SLES, unlike openSUSE where it's a separate
-        # package) — guestfs-tools is the one confirmed gap.
+        # guestfs-tools provides virt-customize and virt-ls, which the virt_customize provisioning path needs. virt-install is not
+        # added, because SLES provides it through the libvirt package's dependencies. guestfs-tools is the package that is missing.
         "guestfs-tools",
         # NOTE: bash's SLES list stops here — no libvirt-daemon-qemu/qemu-tools/
         # virt-install, unlike the Leap list above. Preserved as-is.
@@ -387,52 +335,32 @@ class SLES16Profile(_SuseRegisteredProfile):
     name = "sles-16"
     packages = [
         "libvirt", "podman", "docker",
-        # gpgme-devel was renamed libgpgme-devel on SLES 16 — confirmed live
-        # 2026-08-29 (`zypper search gpgme-devel` -> "No matching items
-        # found"; `zypper search gpgme` shows libgpgme-devel/libgpgme11/etc.
-        # instead). All the other package names below were confirmed
-        # available as-is on a real, freshly base+PackageHub-registered
-        # SLES 16.0 host the same day.
+        # gpgme-devel is named libgpgme-devel on SLES 16. The other package names below are available as they are.
         "libgpgme-devel",
         "device-mapper-devel", "libbtrfs-devel", "git-core", "mc",
         "bridge-utils", "tcpdump", "sensors", "netcat-openbsd", "gptfdisk",
         # guestfs-tools: same confirmed-on-15 fix as SLES15Profile (see its
         # own comment) — confirmed available under the same name on SLES 16
-        # too, same live host as the rest of this list.
+        # too, same host as the rest of this list.
         "guestfs-tools",
     ]
     unmapped_packages = [
         "minikube-bash-completion", "kubectl-who-can", "kubevirt-virtctl",
         "kubernetes1.28-client", "ftsteutates-sensors",
-        # cri-tools: confirmed live 2026-08-29 genuinely unavailable on SLES
-        # 16 (base + PackageHub) — "No matching items found", no renamed
-        # equivalent found either. Was in SLES15Profile's installable list
-        # (sle-module-containers provides it there); no known source on 16.
+        # cri-tools is not available on SLES 16, and no renamed package exists.
         "cri-tools",
     ]
-    # Confirmed live 2026-08-29 against a real SLES 16.0 host: SLES 16 has
-    # NO separate sle-module-containers/sle-module-basesystem/sle-module-legacy
-    # at all (SUSEConnect --list-extensions after a real base registration
-    # lists only sle-ha and PackageHub) — SLES 16 folded what used to be
-    # separate modules on 15 into the base product itself. Confirmed all of
-    # this profile's `packages` (except the two moved to unmapped_packages
-    # above) install fine with nothing beyond PackageHub activated.
+    # SLES 16 has no separate sle-module-containers, sle-module-basesystem or sle-module-legacy. Those modules are part of the base
+    # product. Only PackageHub is needed in addition, for the packages in this list.
     _products = ("PackageHub",)
 
 
 # ── Ubuntu / Debian (apt) ────────────────────────────────────────────────────
 #
-# NOTE ON COMPLETENESS: this profile is a best-effort mapping of the CORE
-# virtualization/networking packages from bash's opensuse-leap list to their
-# Debian-family equivalents. Several entries in bash's list have NO reliable
-# apt equivalent installable from default repos without adding a third-party
-# repository first (Docker's own repo for a current `docker`, the Kubernetes
-# project's apt repo for `kubectl`/cri-tools, and minikube/virtctl/
-# kubectl-who-can aren't distro-packaged at all — they're installed via direct
-# binary download upstream). Rather than guess an apt repo URL/GPG key I can't
-# verify, those are listed in unmapped_packages and reported as warnings
-# instead of silently attempted or silently dropped. ftsteutates-sensors is a
-# SUSE-specific kernel-module package with no Debian equivalent at all.
+# This profile maps the core virtualization and networking packages to their Debian equivalents. Some packages need a third-party
+# repository (Docker, and the Kubernetes repository for kubectl and cri-tools). minikube, virtctl and kubectl-who-can are installed
+# from upstream binaries. Those packages are listed in unmapped_packages and reported as warnings. ftsteutates-sensors is a SUSE
+# kernel-module package with no Debian equivalent.
 class DebianProfile(HostOSProfile):
     name = "debian"
     packages = [
@@ -459,10 +387,8 @@ class DebianProfile(HostOSProfile):
 
 # ── RHEL / CentOS / Rocky / AlmaLinux / Fedora (dnf) ────────────────────────
 #
-# Same caveat as DebianProfile: docker/cri-tools/kubectl need their own repos
-# (Docker CE repo, Kubernetes project repo) which aren't added here; minikube/
-# virtctl/kubectl-who-can/ftsteutates-sensors have no dnf equivalent. Listed in
-# unmapped_packages rather than guessed.
+# As for Debian, docker, cri-tools and kubectl need their own repositories, which this profile does not add. minikube, virtctl,
+# kubectl-who-can and ftsteutates-sensors have no dnf package. They are listed in unmapped_packages.
 class RHELProfile(HostOSProfile):
     name = "rhel"
     packages = [

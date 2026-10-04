@@ -1,0 +1,1361 @@
+<blockquote>
+<p><em>これはコミュニティによる翻訳です。正典となる情報源は <a href="index.html">README.md</a>（英語）であり、このページより新しい場合があります。</em></p>
+</blockquote>
+<p align="center"><em>JSON または YAML ファイルを1つ用意するだけ。VM、DNS、Kubernetes、アドオンがすべて配線された、動作するラボが手に入る。</em></p>
+
+<p align="center" float="left">
+  <kbd><img src="../media/NUC.jpg" width="400" alt="このプロジェクトの開発・テストに使われた NUC の一台。" /></kbd>
+</p>
+
+<p><strong>lab-in-a-box</strong> は、単一の JSON または YAML ファイルから完全なラボを構築します。記述した VM、DNS、Kubernetes クラスター、アドオンを作成します。VM は自前の KVM ホスト、Harvester、または 8 つのパブリッククラウドのいずれでも動作し、同じファイルがどこでも使えます。</p>
+<h2 id="なぜ-lab-in-a-box-なのか">なぜ lab-in-a-box なのか</h2>
+<table>
+<tr>
+<td width="50%" valign="top">
+
+`setup_lab.py` · **JSON/YAML ファイル1つ、コマンド1つ。**
+VM、Kubernetes クラスター（RKE2/K3s）、アドオンを宣言的に記述するだけ。正しい順序ですべてを構築する。
+
+`install_<addon>` · **65種類のアドオンをすぐに利用可能。**
+Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni（アクティベーションキー、RBAC、Content Lifecycle Management、Ansible 連携など）、セキュリティトレーニング用の脆弱なデモアプリなど。
+
+[`lab-builder`](#web-ui-lab-builder) · **動的な Web UI。**
+各アドオン自身のスキーマからフォームを直接生成する — スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI がそれを取り込む。
+
+</td>
+<td width="50%" valign="top">
+
+`KVM_HOSTS` · **マルチハイパーバイザー対応。**
+1つのラボ定義で複数の KVM ホストに VM を分散配置できる。空き CPU/RAM/ディスクによる自動選択、またはノードごとの固定指定が可能。
+
+`podman` · **完全にコンテナ化されたテストスイート。**
+すべてのチェックが使い捨てのコンテナで実行され、pre-commit フックに組み込まれている。
+
+`config_method` · **差し替え可能なプロビジョニング。**
+Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-customize`（cloud-init/Ignition 未対応の古いディストリビューション向け）、またはスクリプト化された ISO インストール（AutoYaST/Kickstart/Preseed/AutoInstall）。
+
+</td>
+</tr>
+</table>
+
+<hr />
+<h2 id="目次">目次</h2>
+<ul>
+<li><a href="#architecture">アーキテクチャ</a></li>
+<li><a href="#how-it-works">動作の仕組み</a></li>
+<li><a href="#quick-start">クイックスタート</a></li>
+<li><a href="#web-ui-lab-builder">Web UI（lab-builder）</a></li>
+<li><a href="#lab-definition-format">ラボ定義フォーマット</a></li>
+<li><a href="#examples">例</a></li>
+<li><a href="#step-by-step-walkthroughs">ステップバイステップ・ウォークスルー</a></li>
+<li><a href="#available-commands">利用可能なコマンド</a></li>
+<li><a href="#available-addons">利用可能なアドオン</a></li>
+<li><a href="#configuration-reference">設定リファレンス</a></li>
+<li><a href="#testing">テスト</a></li>
+<li><a href="#contributing--developer-setup">貢献 / 開発環境のセットアップ</a></li>
+</ul>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="architecture"></a></p>
+<h2 id="アーキテクチャ">アーキテクチャ</h2>
+<p align="center" float="left">
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="../media/diagram1.svg" width="800" alt="アーキテクチャ概要図"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="../media/diagram2.svg" width="800" alt="ネットワーク・サービス図"/></picture></kbd>
+</p>
+
+<p>このシステムは <strong>2階層アーキテクチャ</strong> を中心に構築されている：</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;オペレーターのクライアント&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;ハイパーバイザーノード — KVM/QEMU&quot;]
+        AutoVM[&quot;自動化 VM&lt;br/&gt;DNS · HTTP · スクリプト · Web UI&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;ラボ VM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;ラボ VM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;ラボ VM&quot;]
+    end
+</pre>
+<h3 id="ハイパーバイザーノード">ハイパーバイザーノード</h3>
+<p>KVM/QEMU を実行する1台以上の物理・ベアメタルマシン。それぞれがラボの VM をホストし、<code>/var/lib/libvirt/images/sources/</code> に元となる QCOW2 イメージを保持する。NUC、ワークステーション、あるいは KVM を実行できる任意の x86_64 マシンであればよい。1台では容量が足りないラボは <strong>複数の KVM ホスト</strong> にまたがることができる — 詳細は下記の<a href="#multi-host-labs">マルチホストラボ</a>を参照。</p>
+<h3 id="自動化-vm">自動化 VM</h3>
+<p>ハイパーバイザー上で動作し、ラボ全体のコントロールプレーンとして機能する小さな VM。以下を提供する：</p>
+<ul>
+<li><strong>DNS</strong> — BIND（<code>named</code>）がラボドメインを提供し、外部リクエストを転送する。そのため、これを参照するどのクライアントからでもラボ内のすべてのホスト名が解決できる</li>
+<li><strong>HTTP</strong> — プロビジョニングファイル（Ignition、Combustion、cloud-init）を <code>/srv/www/htdocs/lab_creation/</code> で配信する</li>
+<li><strong>スクリプト</strong> — すべてのラボ管理コマンドが <code>/usr/local/bin/</code> にインストールされている</li>
+<li><strong>Web UI</strong>（任意）— <a href="#web-ui-lab-builder">lab-builder</a>、ブラウザベースの lab.json デザイナー</li>
+</ul>
+<p>すべてのユーザーコマンドは <strong>自動化 VM 上で</strong> 実行される。自動化 VM はハイパーバイザーと作成された VM に SSH で接続する。初期セットアップ後は、ハイパーバイザーへの直接アクセスは不要。</p>
+<h3 id="内部の仕組み">内部の仕組み</h3>
+<p>コマンドラインツールと各アドオンはすべて Python 3.11 で書かれており、<code>libs/</code> と <code>scripts/</code> に存在し、<code>/usr/local/lib/lab_creation/</code> にインストールされる — 互いに依存し合うのではなく、少数の共有ライブラリモジュール（<code>lab_creation.py</code>、<code>backends.py</code>、<code>services.py</code>、<code>spacecmd_common.py</code> など）を中心に構成されている。VM 作成は差し替え可能な <code>VMBackend</code> インターフェース（現在は <code>LibvirtBackend</code>）の背後にあり、同じオーケストレーションコードが将来的に他の仮想化バックエンド（KubeVirt、Harvester）を、アドオンに手を加えることなく対象にできるようになっている。1つのレガシーアドオン（<code>install_ds389</code>）はまだ純粋な bash のままだ — これは Python 移植より前からあり、bash の時点ですでに壊れていたため、移植する価値がなかった。これらが置き換えた bash 時代の実装は <code>legacy_bash/</code> 以下にアーカイブされたまま残っている。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="how-it-works"></a></p>
+<h2 id="動作の仕組み">動作の仕組み</h2>
+<h3 id="デプロイパイプライン">デプロイパイプライン</h3>
+<p><code>setup_lab.py</code> は固定されたフェーズの順序で実行される。<code>kclusters</code> セクションを持たない VM のみのラボでは、Kubernetes 専用の2つのフェーズは完全にスキップされる：</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;kclusters あり&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;kclusters なし&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;kclusters あり&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;kclusters なし&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="vm-のプロビジョニング">VM のプロビジョニング</h3>
+<p>各 VM は次の手順で作成される：
+1. どの KVM ホストに属するかを解決する（明示的な <code>kvm_host</code> フィールド、または空き容量による自動選択 — <a href="#multi-host-labs">マルチホストラボ</a>を参照）
+2. そのホスト上で元となる QCOW2 イメージをコピーしてリサイズする
+3. <code>config_method</code> に従ってテンプレートからプロビジョニングファイルを生成する
+4. BIND に DNS エントリを登録する
+5. ハイパーバイザー上で SSH 経由で <code>virt-install</code> を実行する
+6. SSH が利用可能になるまで待機する</p>
+<p>プロビジョニング方式はラボ JSON の <code>config_method</code>（ノードごと、または <code>common</code>）で制御される：</p>
+<table>
+<thead>
+<tr>
+<th>値</th>
+<th>方式</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(空、デフォルト)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>cloud-init ISO</td>
+<td>openSUSE Leap、Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>ハイパーバイザー上で QCOW2 を直接変更する（<code>virt-customize</code>）— ゲスト側で Ignition/cloud-init のサポートは不要</td>
+<td>CentOS 7、古い Debian/RHEL、または Ignition/cloud-init を持たない任意のイメージ</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>実際のインストーラー ISO からのスクリプト化インストール（<code>install_type</code> に応じて AutoYaST、Kickstart、Preseed、AutoInstall）</td>
+<td>他にプロビジョニング手段のないディストリビューション</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vm-バックエンド">VM バックエンド</h3>
+<p>どのハイパーバイザー技術が実際にノードを作成するかは、ノードごとに一度だけ解決される差し替え可能な <code>VMBackend</code> インターフェースによって決まる（そのノードの設定で <code>backend: harvester</code> を指定すると <code>HarvesterBackend</code> が選ばれ、それ以外はデフォルトで <code>LibvirtBackend</code> が使われる）。どのアドオンやオーケストレーションスクリプトも、解決されたバックエンドがどちらであっても同じ方法でやり取りする：</p>
+<pre class="mermaid">graph TD
+    SV[&quot;setup_vm.py / setup_lab.py&quot;] --&gt; GB[&quot;backends.get_backend()&quot;]
+    GB -- &quot;デフォルト&quot; --&gt; LB[&quot;LibvirtBackend&quot;]
+    GB -- &quot;backend: harvester&quot; --&gt; HB[&quot;HarvesterBackend&quot;]
+    LB --&gt; KVM[&quot;KVM ハイパーバイザー上の&lt;br/&gt;virt-install / virsh&quot;]
+    HB --&gt; KV[&quot;Harvester クラスター上の&lt;br/&gt;KubeVirt VirtualMachine&quot;]
+</pre>
+<h3 id="kubernetes-のセットアップ">Kubernetes のセットアップ</h3>
+<p>VM が立ち上がると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールする。RKE2 と K3s の両方をサポートする。クラスターの準備が整うと、そのアドオンが順番に実行される。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードがプロビジョニングされた後に実行される。</p>
+<h3 id="マルチホストラボ">マルチホストラボ</h3>
+<p><a id="multi-host-labs"></a>
+ラボは1つのハイパーバイザーに限定されない。自動化 VM 上の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを利用できるようになる：</p>
+<pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
+</code></pre>
+<p>その後、ラボ JSON の各ノードについて、次のいずれかを選べる：
+- <strong>明示的に固定する</strong> — そのノードの設定に <code>"kvm_host": "hv2.mydemo.lab"</code> を指定する、または
+- <strong>自動選択させる</strong> — <code>kvm_host</code> を省略する。ノードは、その時点で十分な空き CPU/RAM/ディスクを持つ設定済みホスト（SSH でライブに確認される）に配置される。</p>
+<p><code>kvm_host</code> を指定しないノードや、設定済みホストが1つしかないマシンは、この機能が存在する前とまったく同じように動作する — シングルハイパーバイザーのラボでは何も変わらない。</p>
+<h3 id="ライブラリの読み込み順序">ライブラリの読み込み順序</h3>
+<p>各スクリプトは次の順序で設定を読み込む：</p>
+<ol>
+<li><code>/etc/lab_creation.defaults</code> — システム全体のデフォルト、パス、パッケージリスト</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code> — 入力検証、設定の読み込み</li>
+<li><code>/etc/lab_creation.cfg</code> — ノード固有の設定（<code>REMOTE_HOST</code>、<code>ROOT_SSH_KEY</code>、<code>VIRT_SRV</code>、<code>KVM_HOSTS</code> など）</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code> — VM、DNS、オーケストレーション関数</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code> — Kubernetes クラスター関数</li>
+</ol>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="quick-start"></a></p>
+<h2 id="クイックスタート">クイックスタート</h2>
+<pre class="mermaid">flowchart TD
+    S1[&quot;1. ハイパーバイザーの OS を準備する&quot;] --&gt; S2[&quot;2. セットアップスクリプトをブートストラップする&quot;]
+    S2 --&gt; S3[&quot;3. KVM ノードのセットアップを設定して実行する&quot;]
+    S3 --&gt; S4[&quot;4. 自動化 VM を設定する&quot;]
+    S4 --&gt; S5[&quot;5. クライアントの DNS を自動化 VM に向ける&quot;]
+    S5 --&gt; S6[&quot;6. 最初のラボを構築する&quot;]
+</pre>
+<h3 id="必要条件">必要条件</h3>
+<ul>
+<li>KVM を実行できるマシン（Intel VT-x または AMD-V が有効）</li>
+<li>パッケージとイメージのダウンロード用のインターネットアクセス（またはローカルミラー）</li>
+<li>選択した OS の QCOW2 イメージを、ハイパーバイザー上の <code>/var/lib/libvirt/images/sources/</code> に配置しておくこと</li>
+</ul>
+<aside class="callout callout-important"><p>自動化 VM には具体的に <code>python3.11</code> が必要 — ツールチェーンは明示的にこのバージョンに固定されている。ほとんどのディストリビューションはこれとは別に、より古いデフォルトの <code>python3</code> を同梱している。インストールスクリプトは <code>python3.11</code> が見つからない場合、処理を続行しない。</p></aside>
+<p>テスト済みイメージ：
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — 推奨。Ignition+Combustion で使用
+- openSUSE Leap Micro — サポート対象。cloud-init で使用</p>
+<h3 id="ステップ1--ハイパーバイザーの-os-を準備する">ステップ1 — ハイパーバイザーの OS を準備する</h3>
+<p>ハードウェアに SLES（または他の KVM 対応 Linux）をインストールする。インストール時には次を選択する：
+- <strong>ネットワーク</strong>：メインの NIC に紐づく静的 IP 付きのブリッジインターフェース（<code>br0</code>）を作成する
+- <strong>システムロール</strong>：KVM Virtualization Host</p>
+<details>
+<summary>Linux から起動可能な USB を作成する</summary>
+
+
+<pre><code class="language-shell"># USB を挿す前に：
+cat /proc/partitions &gt; /tmp/partb4
+
+# USB を挿してから：
+cat /proc/partitions &gt; /tmp/parta
+
+# 新しいデバイスを見つける：
+diff /tmp/part*
+</code></pre>
+
+
+<aside class="callout callout-warning"><p>次のコマンドは対象デバイスの<strong>すべてのデータを破壊する</strong>。実行する前に、上記の <code>diff</code> の出力と <code>sdX</code> を必ず照合すること。</p></aside>
+
+
+<pre><code class="language-shell"># ISO を書き込む（sdX を自分のデバイスに置き換える）：
+dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
+</code></pre>
+
+
+</details>
+
+<h3 id="ステップ2--セットアップスクリプトをブートストラップする">ステップ2 — セットアップスクリプトをブートストラップする</h3>
+<p>ハイパーバイザーへの SSH アクセスを持つ任意の Linux マシンから：</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>これによりセットアップスクリプトが <code>/var/tmp/setup_demo_server/</code> にダウンロードされる。</p>
+<h3 id="ステップ3--kvm-ノードのセットアップを設定して実行する">ステップ3 — KVM ノードのセットアップを設定して実行する</h3>
+<p><a id="step-3--configure-and-run-the-kvm-node-setup"></a></p>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p><code>lab.cfg</code> の主な設定：</p>
+<table>
+<thead>
+<tr>
+<th>設定</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ROOT_PWD_HASH</code></td>
+<td>root パスワードのハッシュ — <code>mkpasswd --method=SHA-512 --stdin</code> で生成</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_PUB_KEY</code></td>
+<td>パスワードなしアクセス用の自分の SSH 公開鍵</td>
+</tr>
+<tr>
+<td><code>AUTOMATION_HOSTNAME</code></td>
+<td>自動化 VM のホスト名（例：<code>automation.mydemo.lab</code>）</td>
+</tr>
+<tr>
+<td><code>_QCOW_IMAGE</code></td>
+<td>元となる QCOW2 イメージのファイル名</td>
+</tr>
+<tr>
+<td>ネットワーク設定</td>
+<td>ラボネットワーク用の IP、ゲートウェイ、マスク、DNS</td>
+</tr>
+</tbody>
+</table>
+<p>その後、セットアップを実行する（<code>&lt;IP&gt;</code> をハイパーバイザーの IP に置き換える。ローカルの場合は省略）：</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>これにより自動化 VM がプロビジョニングされ、必要なすべてのサービスが起動する。</p>
+<h3 id="ステップ4--自動化-vm-を設定する">ステップ4 — 自動化 VM を設定する</h3>
+<p>SSH で自動化 VM に接続し、ラボスクリプトをインストールする：</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<p><code>lab_creation.cfg</code> の主な設定：</p>
+<table>
+<thead>
+<tr>
+<th>設定</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>（プライマリの）KVM ハイパーバイザーのホスト名または IP</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(任意)</em> <a href="#multi-host-labs">マルチホストラボ</a>向けの追加ハイパーバイザーのスペース区切りリスト</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>VM に注入する SSH 公開鍵の内容</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>libvirt 接続 URI（例：<code>qemu+ssh://root@hypervisor/system</code>）</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>VM 用のデフォルト libvirt ネットワーク（例：<code>bridge=br0</code>）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ステップ5--クライアントの-dns-を自動化-vm-に向ける">ステップ5 — クライアントの DNS を自動化 VM に向ける</h3>
+<p><a id="step-5--point-your-client-dns-at-the-automation-vm"></a></p>
+<p>自分のデスクトップからホスト名を解決できるようにするには：</p>
+<pre><code class="language-shell"># Linux（NetworkManager）：
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# または /etc/resolv.conf に追加：
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="ステップ6--最初のラボを構築する">ステップ6 — 最初のラボを構築する</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>他の出発点については下記の<a href="#examples">例</a>を参照するか、JSON を手書きする代わりに <a href="#web-ui-lab-builder">Web UI</a> を開く。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="web-ui-lab-builder"></a></p>
+<h2 id="web-uilab-builder">Web UI（lab-builder）</h2>
+<p><strong>プロジェクト自身の Python ライブラリを実行時にイントロスペクトする</strong>、ブラウザベースの <code>lab.json</code> デザイナー — アドオンについてハードコードされた知識は一切持たない。コンポーネントを選ぶと、そのコンポーネント自身のスキーマから直接フォームが生成される。スクリプトにフィールドを追加すれば、フロントエンドを変更せずに UI に表示される。</p>
+<pre><code class="language-shell"># 試す最も速い方法 — Python 以外の依存関係は不要：
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>本番デプロイ（Apache、または init に依存しないスタンドアロンの systemd サービス、および冪等に生成される自己署名証明書による HTTPS）については <strong><a href="webui.html">README.webui.md</a></strong> を参照 — 3つのデプロイモード、HTTP API、トラブルシューティングをすべてカバーしている。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="lab-definition-format"></a></p>
+<h2 id="ラボ定義フォーマット">ラボ定義フォーマット</h2>
+<p>ラボは JSON または YAML ファイルとして定義される（自動検出 — 下記の注記を参照）。現在のフォーマットは、ラボごとに複数の Kubernetes クラスター（<code>kclusters</code>）をサポートしている。従来のシングルクラスター形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照。</p>
+<pre class="mermaid">graph TD
+    Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;VMごと: myip, mymac, kcluster, addons...&quot;]
+    Lab --&gt; Common[&quot;common&lt;br/&gt;共有デフォルト値: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
+    Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type, clu_rel, mydomain, addons&quot;]
+    Lab --&gt; AddonSections[&quot;アドオンごとのセクション&lt;br/&gt;例: rancher, longhorn&quot;]
+    Nodes -. &quot;kcluster&quot; .-&gt; KClusters
+    KClusters -. &quot;addons&quot; .-&gt; AddonSections
+    Nodes -. &quot;addons&quot; .-&gt; AddonSections
+</pre>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;node101.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.101&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; または &quot;agent&quot;
+      &quot;kcluster&quot;: &quot;cluster1&quot;           // このノードがどの kclusters エントリに属するか
+    },
+    &quot;node102.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.102&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;kcluster&quot;: &quot;cluster1&quot;
+    }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;:     &quot;24576&quot;,
+    &quot;VM_DSK&quot;:     &quot;80&quot;,
+    &quot;VM_CPU&quot;:     &quot;6&quot;,
+    &quot;VM_BOOT&quot;:    &quot;uefi&quot;,             // uefi（デフォルト）、firmware=bios、bios、uefi=off
+    &quot;mymask&quot;:     &quot;24&quot;,
+    &quot;mygw&quot;:       &quot;192.168.88.1&quot;,
+    &quot;mydns&quot;:      &quot;192.168.88.73&quot;,
+    &quot;mynet_reverse&quot;: &quot;88.168.192&quot;
+  },
+  &quot;kclusters&quot;: {
+    &quot;cluster1&quot;: {
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; または &quot;k3s&quot;
+      &quot;clu_rel&quot;:   &quot;stable&quot;,
+      &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
+      &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
+    }
+  },
+  &quot;rancher&quot;: {
+    &quot;rancher_shorthn&quot;:   &quot;rancher&quot;,
+    &quot;rancher_rel&quot;:       &quot;rancher-prime&quot;,
+    &quot;rancher_repo_url&quot;:  &quot;https://charts.rancher.com/server-charts/prime&quot;,
+    &quot;rancher_helm_rel&quot;:  &quot;rancher&quot;,
+    &quot;rancher_helm_chart&quot;: &quot;rancher-prime/rancher&quot;,
+    &quot;rancher_Version&quot;:   &quot;--version 2.13.3&quot;,
+    &quot;cert_manager_ver&quot;:  &quot;--version v1.14.4&quot;
+  }
+}
+</code></pre>
+<details>
+<summary>同じラボを YAML で書くと</summary>
+
+
+<pre><code class="language-yaml">nodes:
+  node101.mydemo.lab:
+    myip: &quot;192.168.88.101&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c1&quot;
+    INSTALL_RKE2_TYPE: server   # &quot;server&quot; または &quot;agent&quot;
+    kcluster: cluster1          # このノードがどの kclusters エントリに属するか
+  node102.mydemo.lab:
+    myip: &quot;192.168.88.102&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c2&quot;
+    INSTALL_RKE2_TYPE: agent
+    kcluster: cluster1
+
+common:
+  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  VM_MEM: &quot;24576&quot;
+  VM_DSK: &quot;80&quot;
+  VM_CPU: &quot;6&quot;
+  VM_BOOT: uefi                # uefi（デフォルト）、firmware=bios、bios、uefi=off
+  mymask: &quot;24&quot;
+  mygw: &quot;192.168.88.1&quot;
+  mydns: &quot;192.168.88.73&quot;
+  mynet_reverse: &quot;88.168.192&quot;
+
+kclusters:
+  cluster1:
+    clu_type: rke2              # &quot;rke2&quot; または &quot;k3s&quot;
+    clu_rel: stable
+    mydomain: mydemo.lab
+    addons: [rancher, longhorn]
+
+rancher:
+  rancher_shorthn: rancher
+  rancher_rel: rancher-prime
+  rancher_repo_url: https://charts.rancher.com/server-charts/prime
+  rancher_helm_rel: rancher
+  rancher_helm_chart: rancher-prime/rancher
+  rancher_Version: &quot;--version 2.13.3&quot;
+  cert_manager_ver: &quot;--version v1.14.4&quot;
+</code></pre>
+
+
+</details>
+
+<p>ノードレベルの任意フィールド：</p>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>addons</code></td>
+<td>このVMだけに対して実行するアドオンスクリプトのリスト</td>
+</tr>
+<tr>
+<td><code>config_method</code></td>
+<td>プロビジョニング方式を上書きする（<code>cloud-init</code>、<code>virt_customize</code>、<code>install_iso</code>）</td>
+</tr>
+<tr>
+<td><code>kvm_host</code></td>
+<td><a href="#multi-host-labs">マルチホストラボ</a>において、このVMを特定のハイパーバイザーに固定する</td>
+</tr>
+<tr>
+<td><code>extra_dsk</code></td>
+<td>追加でアタッチするディスク — <code>"/dev/sdb"</code>、またはディスクごとにデフォルトのバスを上書きする <code>"/dev/sdb,bus=scsi"</code></td>
+</tr>
+<tr>
+<td><code>salt_states</code></td>
+<td>適用する Salt state（cloud-init 方式のみ）</td>
+</tr>
+</tbody>
+</table>
+<p>kcluster の任意フィールド：</p>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgm_node</code></td>
+<td>クラスターのアドオンインストーラーを実行するノードのホスト名。デフォルトは最初のサーバーノード</td>
+</tr>
+</tbody>
+</table>
+<p>各アドオンスクリプトは <code>--schema</code>（<code>--input-definition</code> のエイリアス）もサポートしており、自身の設定キーを機械可読な JSON または YAML で出力する — これは <a href="#web-ui-lab-builder">Web UI</a> がフォームを構築する際に読み取るのと同じスキーマである：</p>
+<pre><code class="language-shell">install_longhorn --schema
+setup_lab.py --input-definition yaml   # 基本トポロジースキーマ（common/nodes/kclusters）
+</code></pre>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="examples"></a></p>
+<h2 id="例">例</h2>
+<h3 id="最小のシングル-vm-ラボ">最小のシングル VM ラボ</h3>
+<p>可能な限り最小のラボ — Kubernetes なしの VM 1台：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
+    &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
+  }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py standalone.json
+</code></pre>
+<h3 id="rke2--rancher--longhornhello-world-クラスター">RKE2 + Rancher + Longhorn（"hello world" クラスター）</h3>
+<p>管理プラットフォームと分散ストレージを備えた2ノードクラスター — 完全な例は上記の<a href="#lab-definition-format">ラボ定義フォーマット</a>を参照。</p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+# 後で再実行し、すでに起動していて到達可能な VM はスキップする：
+setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<h3 id="クラスターを2つのホストに分散させる">クラスターを2つのホストに分散させる</h3>
+<p>サーバーを1つのハイパーバイザーに固定し、エージェントは空きのある<a href="#multi-host-labs">設定済みホスト</a>に自動配置させる：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;srv1.mydemo.lab&quot;:   { &quot;myip&quot;: &quot;192.168.88.10&quot;, &quot;kvm_host&quot;: &quot;hv1.mydemo.lab&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
+}
+</code></pre>
+<h3 id="suse-multi-linux-manageruyuniサーバー--登録済みクライアント">SUSE Multi-Linux Manager（Uyuni）サーバー + 登録済みクライアント</h3>
+<p>アクティベーションキー付きの Uyuni サーバーを立ち上げ、2台目の VM をそれに対する Salt クライアントとして登録する — 機能の全体像（<code>orgs</code>、RBAC、Content Lifecycle Management、Ansible 連携など）は<a href="#available-addons">利用可能なアドオン</a>を参照：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
+    &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;uyuni&quot;: {
+    &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
+    &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
+  },
+  &quot;client_registration&quot;: {
+    &quot;client_registration_server_type&quot;: &quot;uyuni&quot;,
+    &quot;client_registration_server&quot;: &quot;uyuni.mydemo.lab&quot;,
+    &quot;client_registration_activation_key&quot;: &quot;1-lab-clients&quot;
+  }
+}
+</code></pre>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="step-by-step-walkthroughs"></a></p>
+<h2 id="ステップバイステップウォークスルー">ステップバイステップ・ウォークスルー</h2>
+<p>上記の<a href="#examples">例</a>はコピー＆ペースト用の出発点である。以下の3つは、実際のシナリオを最初から最後まで完全にたどるもの — 何を実行し、各ステップで何が起こり、実際に動作したことをどう確認するか。以下の JSON フィールドとコマンドの形式はすべて、このプロジェクト自身のテストスイート（<code>tests/run_tests.sh</code>）およびソースコードと一致している。</p>
+<aside class="callout callout-tip"><p>ウォークスルー2と3は<strong>実機テスト済み</strong>である — 単独で検証されただけでなく、実際のサーバー/ハードウェアに対して実行されている。</p></aside>
+<h3 id="ウォークスルー1--最初のクラスターrke2--rancher--longhorn">ウォークスルー1 — 最初のクラスター：RKE2 + Rancher + Longhorn</h3>
+<p>目標：2台の SLE Micro VM、RKE2 クラスター、管理用の Rancher、ストレージ用の Longhorn — 最終的にブラウザから到達可能になる。</p>
+<ol>
+<li><strong>ラボファイルを書く。</strong> <code>rancher-cluster.json</code> として保存する（IP/ネットワークは自分のラボドメインに合わせて調整）：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>構築する：</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
+<p><code>setup_lab.py</code> は他の何かを行う前に、まずファイルを自動的にプリフライトチェックする — 誤った IP、存在しない <code>kcluster</code> への参照、<code>ISO_IMAGE</code> の欠落といった間違いは検出されて出力され（<code>✗ Preflight FAILED — N error(s)</code>）、途中まで作成が進んでから失敗するのではなく、何も作成されない。問題のないファイルは <code>✓ Preflight passed</code> を出力し、そのまま構築に進む。</p>
+<p>順序としては：両方のノードを DNS に登録する → 両方の VM を作成する（QCOW2 イメージをコピーし、Combustion ファイルを生成し、起動し、SSH を待つ）→ <code>node101</code> にサーバーとして RKE2 をインストールし、続いて <code>node102</code> にエージェントとしてインストールする → クラスターの管理ノード（<code>mgm_node</code>、デフォルトは最初のサーバーノード — ここでは <code>node101</code>）に <code>rancher</code> と <code>longhorn</code> をインストールする。Rancher を含む2ノードクラスターは通常15〜25分かかる。ほとんどの時間は RKE2 のブートストラップと Rancher 自身の Helm インストールに費やされる。</p>
+<ol start="3">
+<li><strong>DNS が解決することを確認する</strong>（自分のデスクトップから、<a href="#step-5--point-your-client-dns-at-the-automation-vm">自動化 VM の DNS を参照するよう設定した</a>後）：</li>
+</ol>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
+<p>両方とも <code>192.168.88.101</code> を返すはず（Rancher の ingress ホスト名は <code>rancher_shorthn</code> の値、<code>rancher</code>、をクラスターの <code>mydomain</code> の下に付けたもの）。</p>
+<ol start="4">
+<li>
+<p><strong>ログインする。</strong> <code>https://rancher.mydemo.lab</code> にアクセスし（自己署名証明書 — ブラウザが一度警告する）、自動化 VM の <code>/etc/lab_creation.cfg</code> にある <code>rancher_initial_pwd</code> でログインする。</p>
+</li>
+<li>
+<p><strong>すべてを再構築せずに反復する。</strong> ノードの設定を変更した、あるいは VM がクラッシュした場合は、<code>--keep</code> を付けて再実行する：すでに存在し、定義された IP/MAC と一致し、SSH で到達可能な VM はそのままにされる。実際に欠けているか壊れているものだけが（再）作成される：</p>
+</li>
+</ol>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<ol start="6">
+<li>終わったら<strong>破棄する</strong>：</li>
+</ol>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
+<h3 id="ウォークスルー2--登録済みクライアントを持つ-suse-multi-linux-manageruyuniサーバー">ウォークスルー2 — 登録済みクライアントを持つ SUSE Multi-Linux Manager（Uyuni）サーバー</h3>
+<p>目標：本物のアクティベーションキーを持つ Uyuni サーバーと、それに対して自身を Salt 管理クライアントとして登録する2台目の VM。実際の Uyuni サーバーに対して<strong>エンドツーエンドで実機テスト済み</strong>。</p>
+<ol>
+<li><strong>ラボファイルを書く</strong> — Uyuni サーバー用に1ノード、クライアント用にもう1ノード：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>構築する：</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
+<p>VM レベルのアドオン（<code>uyuni</code> と <code>client_registration</code> はどちらも、ここには <code>kclusters</code> セクションが存在しないため、クラスターではなくノードに紐づいている）は、自身のノードが立ち上がり次第実行される。<code>install_uyuni</code> はサーバーを起動し、到達可能になるまで待ってから、アクティベーションキーを作成する。続いて <code>install_client_registration</code> が <code>client1</code> をそれに対してブートストラップする — ブートストラップスクリプトをインストールして実行し、新しい minion の Salt キーが保留状態として現れるまで定期的に確認し、現れたら承認する。</p>
+<ol start="3">
+<li><strong>クライアントが実際に登録されたことを確認する。</strong> SSH で Uyuni サーバーに接続し、直接尋ねる：</li>
+</ol>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
+<p><code>client1.mydemo.lab</code> がリストに現れるはず。</p>
+<ol start="4">
+<li><code>uyuni_admin</code>/<code>uyuni_password</code> で <code>https://uyuni.mydemo.lab</code> の<strong>Web UI にログインする</strong>と、同じことを視覚的に確認したり、アクティベーションキーを閲覧したり、highstate を実行したりできる。</li>
+</ol>
+<p>既知のアップストリームの粗さ（このプロジェクトのバグではないが、遭遇した場合のために記載）：<code>salt-transactional-update</code> 自身のパッケージアップグレードスクリプトレットが、クライアント上の <code>/etc/salt/minion.d/transactional_update.conf</code> に重複した YAML キーを残すことがあり、手動で重複を解消するまで <code>salt-minion</code> がクラッシュループする。このリポジトリのコードはこのファイルには一切触れていない。</p>
+<h3 id="ウォークスルー3--nat-配下の自動化-vmハイパーバイザーとしてのシングル-nic-ラップトップ">ウォークスルー3 — NAT 配下の自動化 VM（ハイパーバイザーとしてのシングル NIC ラップトップ）</h3>
+<p>目標：ブリッジ用の空き NIC がないホスト上で自動化 VM をブートストラップする — 代わりに libvirt が管理するプライベートネットワークを使い、ホスト自身の実 IP から特定のポートを DNAT で転送する。使い捨ての入れ子 VM 上で<strong>エンドツーエンドで実機テスト済み</strong>。</p>
+<p>これを有効にしない限り、<a href="#quick-start">デフォルトのクイックスタート</a>のフローには何の変更もない — <code>_network_mode</code> はデフォルトで <code>"bridge"</code> であり、既存のあらゆるセットアップとバイト単位で同一である。</p>
+<ol>
+<li><strong><code>lab.cfg</code> で</strong>（クイックスタートの<a href="#step-3--configure-and-run-the-kvm-node-setup">ステップ3</a>）、次を設定する：</li>
+</ol>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # 表示されているデフォルト値 — 新しい libvirt 仮想ネットワークであり、ホストの実際の LAN ではない
+_nat_network_cidr="192.168.150.0/24" # 表示されているデフォルト値
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # 表示されているデフォルト値 — 「&lt;ハイパーバイザーの実IP上のポート&gt;:&lt;automation VM 上のポート&gt;/&lt;プロトコル&gt;」
+</code></pre>
+<p>これにより、<strong>ハイパーバイザー自身の実際に外部到達可能な IP</strong>（<code>&lt;外部&gt;</code>）上のポート 22/80/443 が、<strong>automation VM のプライベート NAT アドレス</strong>（<code>&lt;内部&gt;</code>）上の同じポートへ転送される — この時点でこのプライベートネットワーク上で待ち受けているのは automation VM だけなので、ここでの「内部」は常に「automation VM 上」を意味する。（後述のステップ5では、同じ <code>&lt;外部&gt;:&lt;内部&gt;/&lt;プロトコル&gt;</code> という構文を再利用して、代わりに <em>lab</em> VM（作成済みのもの）へ転送する — その場合の「内部」は automation VM ではなく、そのラボ VM 自身のプライベート NAT アドレスを指す。）</p>
+<ol start="2">
+<li><strong>いつも通りセットアップを実行する：</strong></li>
+</ol>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
+<p>これにより、ブリッジの代わりに libvirt ネットワーク <code>labnat</code>（NAT 化されており、DHCP/ゲートウェイは libvirt 自身が処理する — libvirt 組み込みの <code>default</code> ネットワークと同じ仕組みで、名前と CIDR だけがこのプロジェクト独自のものになっている）が定義され、続いてそのプライベート範囲内の静的 IP を持つ自動化 VM がその上に作成され、その後、上記の3つのポートがホスト自身の実 IP から DNAT で転送される。</p>
+<ol start="3">
+<li><strong>ネットワークと転送ルールが存在することを確認する</strong>（ハイパーバイザー上で）：</li>
+</ol>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # 自動化 VM のプライベート IP への DNAT ルール
+iptables -L LAB_PORTFWD_FWD -n -v            # FORWARD チェーンに対応する ACCEPT ルール
+</code></pre>
+<ol start="4">
+<li><strong>ハイパーバイザーの外部から自動化 VM に到達する</strong>。使うのはハイパーバイザー自身の実 IP であり、他のどこからもルーティングできない自動化 VM のプライベートアドレス <code>192.168.150.x</code> ではない：</li>
+</ol>
+<pre><code class="language-shell">ssh root@&lt;ハイパーバイザーの実IP&gt;          # DNAT で自動化 VM の SSH（ポート22）へ転送される
+</code></pre>
+<p>ポート80と443もデフォルトで転送される（プロビジョニングファイル用の HTTP サーバーと、<a href="#web-ui-lab-builder">Web UI</a> をセットアップした後はその HTTPS リスナー）— ハイパーバイザーの実 IP を通じて同様にアクセスできる。</p>
+<ol start="5">
+<li><strong>ラボ VM 向けの転送を追加する。</strong> 自動化 VM 自身だけでなく：そのノードに <code>forwarded_ports</code> フィールドを与え、<code>common.services</code> で一度だけ <code>portforward</code> サービスを有効にする：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…common の残りはいつも通り" }
+}
+</code></pre>
+<p>ラボ内のいずれかのノードが初めて <code>forwarded_ports</code> を宣言した時点で、<code>setup_lab.py</code>/<code>setup_vm.py</code> は同じ方法でハイパーバイザーの実 IP からこれら2つのポートを DNAT 転送する。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="available-commands"></a></p>
+<h2 id="利用可能なコマンド">利用可能なコマンド</h2>
+<p>すべてのコマンドは<strong>自動化 VM 上で</strong>実行され、最初の引数としてラボ定義の JSON ファイルを取る。</p>
+<table>
+<thead>
+<tr>
+<th>コマンド</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_lab.py [--keep] &lt;lab.json&gt;</code></td>
+<td>すべての VM を作成し、Kubernetes クラスターをセットアップし、クラスターレベルおよび VM レベルのすべてのアドオンを順番にインストールする。<code>--keep</code> は、すでに存在し、定義された IP/MAC と一致し、SSH で到達可能な VM をスキップする — これを指定しない場合、すべての VM が破棄され再作成される。</td>
+</tr>
+<tr>
+<td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>単一の VM を作成または再作成する</td>
+</tr>
+<tr>
+<td><code>destroy_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>単一の VM を破棄する</td>
+</tr>
+<tr>
+<td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
+<td>ラボ内のすべての VM を破棄する</td>
+</tr>
+</tbody>
+</table>
+<p>すべてのコマンドと、すべての <code>install_&lt;addon&gt;</code> スクリプトは以下をサポートする：</p>
+<pre><code class="language-shell">setup_lab.py --version              # インストール済みバージョンを表示する
+install_longhorn --schema           # このアドオンの設定スキーマを表示する（JSON）
+install_longhorn --schema yaml      # ...または YAML
+</code></pre>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="available-addons"></a></p>
+<h2 id="利用可能なアドオン">利用可能なアドオン</h2>
+<p>アドオンは kcluster またはノードの <code>addons</code> 配列に名前で参照される。対応する <code>install_&lt;name&gt;</code> スクリプトが <code>PATH</code> 上に存在する必要がある。</p>
+<p><sub>ジャンプ: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">セキュリティ &amp; コンプライアンス</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージ &amp; データベース</a> · <a href="#addons-collaboration">コラボレーション &amp; ファイル共有</a> · <a href="#addons-cicd">CI/CD &amp; ツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub></p>
+<p><a id="addons-k8s"></a></p>
+<details open>
+<summary><strong>Kubernetes プラットフォーム & GitOps</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
+<td>SUSE Rancher Prime Kubernetes 管理プラットフォーム</td>
+</tr>
+<tr>
+<td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
+<td>SUSE Longhorn 分散ブロックストレージ</td>
+</tr>
+<tr>
+<td><a href="https://goharbor.io/"><code>harbor</code></a></td>
+<td>コンテナレジストリ</td>
+</tr>
+<tr>
+<td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
+<td>Argo CD GitOps コントローラー</td>
+</tr>
+<tr>
+<td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
+<td>Kubernetes ポリシーエンジン</td>
+</tr>
+<tr>
+<td><a href="https://istio.io/"><code>istio</code></a></td>
+<td>サービスメッシュ</td>
+</tr>
+<tr>
+<td><a href="https://linkerd.io/"><code>linkerd</code></a></td>
+<td>サービスメッシュ</td>
+</tr>
+<tr>
+<td><a href="https://traefik.io/"><code>traefik</code></a></td>
+<td>Ingress コントローラー</td>
+</tr>
+<tr>
+<td><a href="https://nginx.org/"><code>nginx</code></a></td>
+<td>Ingress コントローラー / リバースプロキシ</td>
+</tr>
+<tr>
+<td><a href="https://coredns.io/"><code>coredns</code></a></td>
+<td>クラスター DNS</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
+<td>Kubernetes クラスター証明書のローテーション</td>
+</tr>
+<tr>
+<td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
+<td>クラウドネイティブワークロード向けのデータオーケストレーション/キャッシュ</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/suse-observability/"><code>suse_observability</code></a></td>
+<td>SUSE Observability（StackState ベースのメトリクス/トレース/トポロジー）</td>
+</tr>
+<tr>
+<td><a href="https://agones.dev/"><code>agones</code></a></td>
+<td>専用ゲームサーバーのホスティング/スケーリング（agones.dev）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-security"></a></p>
+<details open>
+<summary><strong>セキュリティ & コンプライアンス</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>neuvector</code></a></td>
+<td>SUSE NeuVector コンテナセキュリティプラットフォーム</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/testing/testing"><code>nv_testing</code></a></td>
+<td>NeuVector セキュリティテストワークロード（nginx/node/redis pod）</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>nv-demo-helm</code></a></td>
+<td>NeuVector の Helm ベースのデモワークロード</td>
+</tr>
+<tr>
+<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
+<td>OpenSCAP/ComplianceAsCode オペレーター</td>
+</tr>
+<tr>
+<td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
+<td>アイデンティティ・アクセス管理</td>
+</tr>
+<tr>
+<td><a href="https://kagent.dev/"><code>kagent</code></a></td>
+<td>Kubernetes 向けエージェント型 AI セキュリティアシスタント</td>
+</tr>
+<tr>
+<td><code>insecure_app</code></td>
+<td>意図的に脆弱な Web アプリケーション（デモ/トレーニング用）</td>
+</tr>
+<tr>
+<td><a href="https://struts.apache.org/"><code>struts_demo</code></a></td>
+<td>脆弱な Apache Struts2 デモアプリケーション（CVE-2017-5638）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-suma"></a></p>
+<details open>
+<summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.uyuni-project.org/"><code>uyuni</code></a></td>
+<td>Uyuni サーバー（アップストリーム）：アクティベーションキー、組織、RBAC、Content Lifecycle Management、Ansible 連携、SCAP/CVE 監査、dev/QA/prod 環境トポロジー — フィールドの完全な一覧は <code>install_uyuni --schema</code> を参照</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
+<td>SUSE Multi-Linux Manager サーバー — <code>uyuni</code> と同じ機能セットを Kubernetes/Helm でデプロイしたもの</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
+<td>SMLM プロキシ</td>
+</tr>
+<tr>
+<td><code>client_registration</code></td>
+<td>任意の VM を既存の <code>uyuni</code>/<code>smlm</code> サーバーの Salt クライアントとして登録する（アクティベーションキーによるブートストラップ + salt キーの承認）</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>suma</code></a></td>
+<td>SUSE Multi-Linux Manager（SUMA）。<code>mgradm</code> を使って OS 上に直接インストールされる — Kubernetes ではない</td>
+</tr>
+<tr>
+<td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
+<td>実際の Ansible コントロールノードをプロビジョニングする：<code>ansible-core</code> をインストールし、サンプルの Playbook と <code>uyuni</code>/<code>smlm</code> 自身のシステム一覧を問い合わせる動的インベントリスクリプトを配置し、ラボの他のノードへの SSH アクセスを設定する。<code>uyuni</code>/<code>smlm</code> 自身の <code>*_ansible_control_nodes</code> フィールドと連携し、サーバー側の「Ansible Control Node」エンタイトルメントを有効化する</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-storage"></a></p>
+<details open>
+<summary><strong>ストレージ & データベース</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://mariadb.org/"><code>mariadb</code></a></td>
+<td>MariaDB データベース — Kubernetes（Helm 不使用のマニフェスト）または OS に直接インストール。OS ネイティブのパス（<code>libs/db_common.py</code>）は、同じホスト上に付随データベースを必要とする他のアドオン（<code>nextcloud</code>、<code>seafile</code>）からも直接再利用される</td>
+</tr>
+<tr>
+<td><a href="https://www.postgresql.org/"><code>postgresql</code></a></td>
+<td>PostgreSQL データベース — Kubernetes（Helm）または OS に直接インストール。OS ネイティブのパス（<code>libs/db_common.py</code>）は、同じホスト上に付随データベースを必要とする他のアドオン（例：<code>nextcloud</code>）からも直接再利用される</td>
+</tr>
+<tr>
+<td><a href="https://www.openldap.org/"><code>openldap</code></a></td>
+<td>OpenLDAP ディレクトリサービス</td>
+</tr>
+<tr>
+<td><a href="https://www.port389.org/"><code>ds389</code></a></td>
+<td>389 Directory Server（LDAP）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-collaboration"></a></p>
+<details open>
+<summary><strong>コラボレーション & ファイル共有</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://nextcloud.com/"><code>nextcloud</code></a></td>
+<td>Nextcloud — デフォルトではスタンドアロンの podman コンテナ（Kubernetes 不使用、エアギャップ環境でのアプリインストールに対応する唯一のモード）、または Kubernetes クラスター上の実際のコミュニティ Helm チャート。オプションで Talk/Groupware/Flow/Assistant アプリ、および ONLYOFFICE/Euro-Office/Collabora によるドキュメント編集連携</td>
+</tr>
+<tr>
+<td><a href="https://www.seafile.com/"><code>seafile</code></a></td>
+<td>Seafile — デフォルトではスタンドアロンの podman コンテナ（Kubernetes 不使用）、または Kubernetes クラスター上の実際の公式 Helm チャート</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-cicd"></a></p>
+<details open>
+<summary><strong>CI/CD & 開発者向けツール</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.jenkins.io/"><code>jenkins</code></a></td>
+<td>Jenkins CI</td>
+</tr>
+<tr>
+<td><a href="https://about.gitlab.com/"><code>gitlab</code></a></td>
+<td>GitLab — デフォルトではスタンドアロンの Omnibus podman コンテナ（Kubernetes 不使用）、または Kubernetes クラスター上の実際の公式 Helm チャート</td>
+</tr>
+<tr>
+<td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
+<td>SUSE Application Collection</td>
+</tr>
+<tr>
+<td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
+<td>StackState 監視連携</td>
+</tr>
+<tr>
+<td><a href="https://www.trento-project.io/"><code>trento</code></a></td>
+<td>SAP インフラストラクチャ監視</td>
+</tr>
+<tr>
+<td><a href="https://prometheus.io/"><code>prometheus</code></a></td>
+<td>スタンドアロンの Prometheus サーバー（podman コンテナ、Kubernetes 不使用）— <code>smlm</code>/<code>uyuni</code> サーバー自身のバンドル済みエクスポーター（<code>smlm_monitoring_enabled</code>）またはカスタムの <code>prometheus_scrape_configs</code> ターゲットをスクレイピングする</td>
+</tr>
+<tr>
+<td><a href="https://grafana.com/"><code>grafana</code></a></td>
+<td>スタンドアロンの Grafana サーバー（podman コンテナ、Kubernetes 不使用）— Prometheus データソースを自動プロビジョニングし、オプションで <code>smlm</code>/<code>uyuni</code> サーバー自身のエクスポーター向けの実際の Grafana Labs コミュニティダッシュボードも設定する</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-ai"></a></p>
+<details open>
+<summary><strong>AI / ML</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://ollama.com/"><code>ollama</code></a></td>
+<td>ローカル LLM ランタイム</td>
+</tr>
+<tr>
+<td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
+<td>Ollama 経由で提供される DeepSeek モデル</td>
+</tr>
+<tr>
+<td><a href="https://www.swiss-ai.org/apertus"><code>apertus</code></a></td>
+<td>Ollama 経由で提供される Apertus（Swiss AI Initiative）モデル</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemini-api"><code>gemini</code></a></td>
+<td>Google Gemini API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.anthropic.com/"><code>anthropic</code></a></td>
+<td>Anthropic Claude API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openai.com/"><code>openai</code></a></td>
+<td>OpenAI API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.moonshot.ai/"><code>kimi</code></a></td>
+<td>Moonshot AI Kimi API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openwebui.com/"><code>open_webui</code></a></td>
+<td>Ollama / OpenAI 互換エンドポイント向けのチャットフロントエンド</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
+<td>Hermes Agent — Nous Research の自己改善型パーソナル AI エージェント（Telegram/Discord/Slack ボット + Web ダッシュボード）</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
+<td>SUSE 独自の Ollama + Open WebUI + Milvus AI スタック</td>
+</tr>
+<tr>
+<td><a href="https://milvus.io/"><code>milvus</code></a></td>
+<td>Milvus ベクトルデータベース（RAG/embedding 検索）</td>
+</tr>
+<tr>
+<td><a href="https://qdrant.tech/"><code>qdrant</code></a></td>
+<td>Qdrant ベクトルデータベース（RAG/embedding 検索）</td>
+</tr>
+<tr>
+<td><a href="https://weaviate.io/"><code>weaviate</code></a></td>
+<td>Weaviate ベクトルデータベース（RAG/embedding 検索）</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/gpu-operator"><code>gpu_operator</code></a></td>
+<td>NVIDIA GPU Operator（AI ワークロード向け GPU スケジューリング）</td>
+</tr>
+<tr>
+<td><a href="https://qwenlm.github.io/"><code>qwen</code></a></td>
+<td>Ollama 経由で提供される Qwen2.5 モデル</td>
+</tr>
+<tr>
+<td><a href="https://mistral.ai/"><code>mistral</code></a></td>
+<td>Ollama 経由で提供される Mistral モデル</td>
+</tr>
+<tr>
+<td><a href="https://github.com/meta-llama/codellama"><code>codellama</code></a></td>
+<td>Ollama 経由で提供される Code Llama モデル</td>
+</tr>
+<tr>
+<td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
+<td>Ollama 経由で提供される StarCoder2 モデル</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
+<td>（<code>install_phoebe --schema</code> を参照）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-virt"></a></p>
+<details open>
+<summary><strong>仮想化</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
+<td>SUSE Virtualization（Harvester/KubeVirt）ノードのプロビジョニング</td>
+</tr>
+<tr>
+<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
+<td>KIWI アプライアンスビルダー</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-demos"></a></p>
+<details open>
+<summary><strong>デモアプリケーション</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://wordpress.org/"><code>wordpress</code></a></td>
+<td>WordPress + MySQL デモアプリケーション</td>
+</tr>
+<tr>
+<td><a href="https://www.fluentd.org/"><code>fluentd</code></a></td>
+<td>ログ集約</td>
+</tr>
+<tr>
+<td><a href="https://www.list.org/"><code>mailman</code></a></td>
+<td>GNU Mailman 3 メーリングリスト管理 + Web インターフェース</td>
+</tr>
+<tr>
+<td><a href="https://www.mediagoblin.org/"><code>mediagoblin</code></a></td>
+<td>GNU MediaGoblin 連合型メディア公開プラットフォーム</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.com/NalaGinrut/colt"><code>colt</code></a></td>
+<td>Colt、GNU Artanis 上の git ベースのブログエンジン</td>
+</tr>
+<tr>
+<td><a href="https://codeberg.org/jjba23/wikimusic"><code>wikimusic</code></a></td>
+<td>WikiMusic、GNU Artanis 上の音楽ナレッジ CMS</td>
+</tr>
+<tr>
+<td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
+<td>Home Assistant ホームオートメーションプラットフォーム</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-games"></a></p>
+<details open>
+<summary><strong>ゲーム</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/Alzter/SuperTux-Classic"><code>supertux_classic</code></a></td>
+<td>SuperTux Classic、セルフホスト型オープンソースの Godot 製プラットフォーマー</td>
+</tr>
+<tr>
+<td><a href="https://github.com/edisgreat/skynet-simulator"><code>skynet_simulator</code></a></td>
+<td>Skynet Simulator、セルフホスト型オープンソースのブラウザパズル/放置ゲーム</td>
+</tr>
+<tr>
+<td><a href="https://github.com/leandrodreamer/BeepSaber"><code>open_saber</code></a></td>
+<td>Open Saber、セルフホスト型オープンソースのリズム/ブロック切断ゲーム</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p>新しいアドオンを追加するには：既存のものに倣って <code>scripts/install_&lt;name&gt;.py</code> を作成し（<code>addon_common</code> を読み込み、<code>load_definition()</code> で該当する JSON セクションを読み込み、SSH 経由で実際の作業を行う）、必要であれば <code>templates/addons/&lt;name&gt;/</code> にテンプレートを追加し、自分の JSON の <code>addons</code> 配列に <code>"&lt;name&gt;"</code> を記載する — <code>install_automation_node_scripts.sh</code> のデプロイループと Web UI の両方が自動的にそれを検出する。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="configuration-reference"></a></p>
+<h2 id="設定リファレンス">設定リファレンス</h2>
+<h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
+<p>各スクリプトが読み込むシステム全体のデフォルト値。パス、デフォルトの待機タイマー、パッケージリストを定義する。何をしているか分かっている場合を除き、<strong>編集しないこと</strong>。</p>
+<h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
+<p>自動化 VM 向けのノード固有の設定。セットアップ時に <code>/etc/lab_creation.cfg.example</code> からコピーされる。主な変数：</p>
+<table>
+<thead>
+<tr>
+<th>変数</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>KVM ハイパーバイザーのホスト名または IP</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(任意)</em> <a href="#multi-host-labs">マルチホストラボ</a>向けのハイパーバイザーのスペース区切りリスト。デフォルトは <code>REMOTE_HOST</code> のみ</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>リモートハイパーバイザー向けの libvirt URI</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>プロビジョニングされた VM に注入される SSH 公開鍵の内容</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>デフォルトの libvirt ネットワーク文字列</td>
+</tr>
+<tr>
+<td><code>REMOTE_DNS_SERVERS</code></td>
+<td>追加で更新する DNS サーバーのスペース区切りリスト</td>
+</tr>
+<tr>
+<td><code>delay_min</code></td>
+<td>プロビジョニング段階間の待機分数（遅いハードウェアでは増やす）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="usrlocalliblab_creation"><code>/usr/local/lib/lab_creation/</code></h3>
+<p>インストールされた Python ライブラリモジュール。自動化 VM 上でリポジトリから <code>install_automation_node_scripts.sh</code> を実行することで更新される。</p>
+<table>
+<thead>
+<tr>
+<th>ファイル</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lab_creation.py</code></td>
+<td>VM ライフサイクル、DNS、マルチホスト解決、オーケストレーションのヘルパー</td>
+</tr>
+<tr>
+<td><code>backends.py</code></td>
+<td><code>VMBackend</code> インターフェース + <code>LibvirtBackend</code>（VM の作成/削除/再起動、プロビジョニングファイルの転送）</td>
+</tr>
+<tr>
+<td><code>services.py</code></td>
+<td>DNS サービス管理</td>
+</tr>
+<tr>
+<td><code>spacecmd_common.py</code></td>
+<td><code>install_uyuni</code>/<code>install_smlm</code>/<code>install_client_registration</code> が使用する、共有の SUSE Multi-Linux Manager/Uyuni 自動化処理（アクティベーションキー、組織、RBAC、CLM、Ansible、SCAP/CVE）</td>
+</tr>
+<tr>
+<td><code>primary.py</code></td>
+<td>入力検証と設定の読み込み</td>
+</tr>
+<tr>
+<td><code>k8s.py</code></td>
+<td>Kubernetes クラスターディストリビューションのインターフェース（RKE2/K3s）</td>
+</tr>
+<tr>
+<td><code>addon_common.py</code></td>
+<td>すべての <code>install_*</code> アドオンが使用する共通の CLI 基盤（<code>--help</code>/<code>--version</code>/<code>--schema</code> のディスパッチ、スキーマ検証）</td>
+</tr>
+</tbody>
+</table>
+<p>4つの bash ヘルパー（<code>lab_creation.bash</code>、<code>k8s_functions.bash</code>、<code>primary_functions.bash</code>、<code>extensions.sh</code>）もこれらと並行して引き続きインストールされる — Python に移植されなかった唯一のアドオンである <code>install_ds389</code> のために、無期限に保持されている。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="testing"></a></p>
+<h2 id="テスト">テスト</h2>
+<p>各チェックは<strong>独立した使い捨ての <code>podman</code> コンテナ</strong>で実行される — あるチェックのクラッシュ、ハング、残留状態が他のチェックに影響することはない：</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p>ツリー全体の bash と Python の構文、スキーマ/Web UI の整合性、コアライブラリとオーケストレーションスクリプトそれぞれに対する SSH をモックしたユニットテスト、実機テストで見つかったバグに対する回帰テストをカバーする。新しいチェックを追加するには、実行可能なスクリプトを <code>tests/checks/</code> に置くだけでよい — 自動的に検出され、配線は不要。</p>
+<p>pre-commit フックに組み込まれており（クローンごとに一度有効化する。<a href="#contributing--developer-setup">貢献</a>を参照）、コミットのたびに自動的に実行され、<code>podman</code> がインストールされていない場合はコミットをブロックするのではなく、警告を出してスキップする。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
+<hr />
+<p><a id="contributing--developer-setup"></a></p>
+<h2 id="貢献--開発環境のセットアップ">貢献 / 開発環境のセットアップ</h2>
+<p>完全なガイド（開発環境のセットアップ、コーディング規約、アドオンの追加方法、PR プロセス）については <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong>（英語）を参照。このプロジェクトは <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CODE_OF_CONDUCT.md">Contributor Covenant 行動規範</a>に従っている。脆弱性の報告については <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> を参照。すべての push と pull request は <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml">CI</a> を通過する — Python 3.11 の構文/インポートチェック、各アドオンのスキーマ、<code>shellcheck</code>、そして下記の完全なコンテナ化テストスイート。</p>
+<h3 id="一度きりの-git-セットアップ">一度きりの Git セットアップ</h3>
+<p>リポジトリをクローンした後、次を実行する：</p>
+<pre><code class="language-shell">git config core.hooksPath .githooks
+</code></pre>
+<p>これにより <code>.githooks/</code> のフックが有効になり、以下を行う：
+- コミットのたびに完全な<a href="#testing">テストスイート</a>を実行する
+- スクリプトごとのバージョンスタンプを管理する（下記参照）</p>
+<h3 id="バージョニングの仕組み">バージョニングの仕組み</h3>
+<aside class="callout callout-note"><p>これは上記の Git フックによって完全に処理される — <code>__LABVERSION__</code> を手動で編集することは決してない。</p></aside>
+<p>各スクリプトには次のプレースホルダーが含まれる：</p>
+<pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
+</code></pre>
+<p><code>.githooks/</code> 内のフックがこのプレースホルダーを自動的に展開・復元する：</p>
+<table>
+<thead>
+<tr>
+<th>フック</th>
+<th>トリガー</th>
+<th>アクション</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>post-checkout</code></td>
+<td><code>git checkout</code> / <code>git switch</code></td>
+<td>各スクリプトの <code>__LABVERSION__</code> を、そのファイルを最後に変更したコミットのハッシュに置き換える</td>
+</tr>
+<tr>
+<td><code>post-merge</code></td>
+<td><code>git pull</code> / <code>git merge</code></td>
+<td>上記と同じ</td>
+</tr>
+<tr>
+<td><code>post-rewrite</code></td>
+<td><code>git rebase</code> / <code>git commit --amend</code></td>
+<td>上記と同じ</td>
+</tr>
+<tr>
+<td><code>pre-commit</code></td>
+<td><code>git commit</code></td>
+<td>コミットが書き込まれる前に、ステージされたスクリプト内の <code>__LABVERSION__</code> を復元し、ハッシュがリポジトリに保存されないようにする</td>
+</tr>
+</tbody>
+</table>
+<p>結果として：作業ツリー内の各スクリプトは <code>--version</code> を通じて自身のバージョンを表示し、リポジトリ自体は常にクリーンなプレースホルダーを保持する。<code>install_automation_node_scripts.sh</code> 経由でスクリプトをインストールする際は、<code>git log -1 --format=%h</code> を使って同じファイルごとのハッシュ置換がインストール時に適用される。</p>
+<h3 id="自動化-vm-へのスクリプトのインストール">自動化 VM へのスクリプトのインストール</h3>
+<p>自動化 VM 上のリポジトリのルートから（またはリポジトリをクローンした任意のマシンから）：</p>
+<pre><code class="language-shell">./install_automation_node_scripts.sh
+</code></pre>
+<p>これにより、既存のインストールがバックアップされ（タイムスタンプ付きの独自のアーカイブと、別途、自分自身のバックアッププロセスが保持するものの両方）、各スクリプト/ライブラリ/テンプレートがシステムパスにコピーされ、インストールされた各ファイルにバージョンハッシュがスタンプされる。</p>
+<h3 id="依存関係">依存関係</h3>
+<p>実行時（自動化 VM 上）：
+<code>python3.11</code>、<code>jq</code>、<code>ssh</code>、<code>rsync</code>、<code>nc</code>、<code>helm</code>、<code>kubectl</code>、<code>named</code>（BIND）</p>
+<p>ハイパーバイザーのセットアップにはさらに以下が必要：
+<code>virt-install</code>、<code>virsh</code>、<code>qemu-img</code>、<code>zypper</code>、<code>/var/lib/libvirt/images/sources/</code> 内の元となる QCOW2 イメージ</p>
+<p><a href="#testing">テストスイート</a>の実行にはさらに以下が必要：
+<code>podman</code></p>

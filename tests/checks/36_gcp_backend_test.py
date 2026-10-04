@@ -125,7 +125,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── list_used_macs() / check_or_generate_mac(): no MAC concept on GCE ─────
 check("list_used_macs() returns empty (GCE has no MAC concept this backend uses)",
       backend.list_used_macs() == ([], {}))
-# _cloud_no_mac(): dropped 2026-09-09 — no MAC concept, no generation, pure passthrough
+# _cloud_no_mac(): no MAC concept, no generation, pure passthrough
 mymac, network = backend.check_or_generate_mac("vm1", "", {"nodes": {"vm1": {}}})
 check("check_or_generate_mac() does NOT generate a MAC when none was given (nothing to generate for)",
       mymac == "" and network is None)
@@ -194,8 +194,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
     with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run):
         returned_ip = b3.create_vm("vm1", 2, 4096, 40, None, config_method="cloud-init", iso_image="debian-12")
 
-    check("create_vm() returns the real IP once the instance is confirmed running (2026-09-09 "
-          "contract)", returned_ip == "203.0.113.20")
+    check("create_vm() returns the real IP once the instance is confirmed running", returned_ip == "203.0.113.20")
     create_call = next(c for c in calls if "create" in c)
     check("create_vm() builds a genuine custom machine type from vm_cpu/vm_mem",
           "e2-custom-2-4096" in create_call)
@@ -218,7 +217,7 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
           "debian-cloud" in create_call and "labnet" in create_call and "labsub" in create_call)
 
     # ── cloud_instance_type: explicit override skips the custom-shape building entirely ──
-    # added 2026-09-10 per explicit user request — GCP has no static sizing table to override via
+    # GCP has no static sizing table to override via
     # config (its custom machine types are built live from vm_cpu/vm_mem), so cloud_instance_type
     # is the only override mechanism for this backend. See README's Compute backends table.
     b5 = backends.GCPBackend("labproj", "us-central1-a", lab_setup_path=tempfile_dir)

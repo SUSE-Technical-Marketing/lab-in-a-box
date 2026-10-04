@@ -42,10 +42,8 @@ def setup_struts_demo(hostname, templ_addons_loc, cfg):
     Mirrors setup_struts_demo (bash).
     """
     # struts_demo_ns/struts_demo_name are interpolated unquoted into remote
-    # kubectl commands below (and this script has no _validate() at all —
-    # found in code review 2026-09-05), so validate them here at runtime
-    # instead: a value with a shell metacharacter would otherwise reach a
-    # real remote shell unescaped.
+    # kubectl commands below. The script has no _validate(), so these values are validated here at
+    # runtime. A value with a shell metacharacter would otherwise reach the remote shell unescaped.
     ns = ac.require_k8s_name(cfg, "struts_demo_ns", "struts")
     name = ac.require_k8s_name(cfg, "struts_demo_name", "struts")
 

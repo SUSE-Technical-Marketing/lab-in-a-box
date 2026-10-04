@@ -3,87 +3,31 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 """
-libs/overlay.py — hub-and-spoke, SITE-TO-SITE WireGuard overlay so lab
-nodes in different clouds (and the home libvirt lab) can reach each other
-by their real IP, as if every site's network were routed to every other.
+libs/overlay.py: a hub-and-spoke, site-to-site WireGuard overlay, so that lab nodes in different clouds, and the home
+libvirt lab, can reach each other by their real IP addresses.
 
-Design (see repo TODO, "cross-cloud WireGuard overlay plan", 2026-09-10;
-built 2026-09-18; corrected to this site-to-site shape later the same day
-after live-testing surfaced two real mistakes — see the TODO's own
-"CROSS-CLOUD WIREGUARD OVERLAY" entries for the full story):
+A site is one libvirt environment or one cloud account. Each site has exactly one gateway, and only gateways join the overlay.
+Lab nodes never do. The home site's gateway is the automation VM. A cloud account's gateway is either the hub account's gateway
+VM (OVERLAY_HUB_ACCOUNT) or a small dedicated gateway VM created for that account.
 
-  - Hub-and-spoke, ONE hub, but the overlay members are SITE GATEWAYS, not
-    individual lab nodes. A "site" is one KVM/libvirt environment (the
-    home lab) or one cloud account. Each site has exactly ONE gateway: for
-    the home site, the automation VM itself (config's own "mysource",
-    already the box every lab script already runs on / SSHes from); for a
-    cloud account, either the designated hub account's own gateway VM
-    (OVERLAY_HUB_ACCOUNT) or a small dedicated per-account gateway VM
-    (ensure_site_gateway_vm(), mirrors backends.ensure_cloud_dns_vm()'s own
-    reuse-or-create convention). Individual lab nodes are NEVER themselves
-    WireGuard peers — see the first mistake below.
-  - Each site gateway advertises its OWN site's real subnet CIDR as
-    AllowedIPs on the hub (not a synthetic per-node /32) — this is genuine
-    site-to-site routing: a node's real IP, not an overlay-assigned one, is
-    what's reachable across the tunnel. A small dedicated overlay CIDR
-    (default 10.99.0.0/16) is used ONLY for the gateways' own WireGuard
-    interface addresses (their point of presence on the tunnel), to avoid
-    address collisions between sites that might reuse the same RFC1918
-    range independently (e.g. two different home labs both on
-    192.168.x.0/24).
-  - Every OTHER host at a site (not the gateway) gets a plain, persistent
-    IP route for each remote site's subnet, via its own local gateway's
-    real LAN/private IP — see ensure_route_via_site_gateway(). This is the
-    literal "local route on each host pointing at their local automation
-    VM" a lab node needs; it never runs WireGuard itself.
-  - Keys are generated ON each gateway itself (mirrors
-    lab_creation.ensure_lab_ssh_key()'s own "never locally, never
-    centrally" convention) — a private key never transits SSH.
-  - Overlay admin-address allocation (_allocate_overlay_ip, keyed by site
-    name) and the site registry (site name -> real subnet CIDR) are both
-    tracked in plain text files ON THE HUB — sequential/append-only,
-    deliberately not a general-purpose IPAM, good enough for a
-    lab-scale overlay (a handful of sites).
+  - Each gateway advertises its own site's real subnet in AllowedIPs on the hub. A node's real IP, not an overlay address, is
+    what is reachable across the tunnel. The overlay CIDR (default 10.99.0.0/16) addresses only the gateways' WireGuard
+    interfaces, which avoids collisions between sites that reuse the same private range.
+  - Every other host at a site gets a persistent route for each remote site's subnet, through its own site gateway. Those hosts
+    do not run WireGuard.
+  - Keys are generated on each gateway itself, so a private key never crosses SSH.
+  - Overlay address allocation, and the registry of sites and their subnets, are plain text files on the hub. They are
+    append-only, which suits an overlay of a few sites.
 
-TWO REAL MISTAKES FOUND LIVE-TESTING THE FIRST VERSION OF THIS MODULE,
-2026-09-18, both fixed here — kept in this docstring since they explain
-why the shape changed mid-session:
-  1. The live test used sol.mydemo.lab (a real SMLM lab NODE) as the hub,
-     and made individual lab nodes (e.g. charon.mydemo.lab) join the
-     overlay AS THEMSELVES. User: "the automation lab VMs, should be the
-     ones doing the tunneling, since there is one on each environment and
-     this is not exclusive of SMLM, correct this mistake" — correct: the
-     hub/gateway role belongs to the SITE's automation VM (or a dedicated
-     small VM playing that role in a cloud account), never an arbitrary
-     addon-bearing lab node. sol's wg0/ip_forward were torn down.
-  2. Individual lab nodes had no way to reach the overlay at all except by
-     joining it directly themselves. User: "there should be a local route
-     on each host that points to their local automation VM as the default
-     route for the lab internal network on each site" — this module's
-     ensure_route_via_site_gateway() is that fix.
-
-NOT YET DONE (real, flagged gaps, not silently glossed over):
-  - DNS: site subnets are routable once this runs, but no DNS record
-    changes are made here — a node is reachable by its real hostname only
-    once that name already resolves to an address inside a routed subnet.
-  - A site's own already-provisioned nodes are NOT retroactively re-routed
-    when a NEW remote site joins later — routes are (re)pushed only at
-    each node's own setup_vm.py provisioning time. A long-lived lab that
-    adds a second cloud account well after its first nodes were created
-    would need those earlier nodes' routes refreshed by hand.
-  - ensure_route_via_site_gateway()'s persistence mechanism (a systemd
-    oneshot unit) assumes systemd — true for every OS image this project
-    already targets, not re-verified against anything older.
-  - AWS-specific: the site gateway's own ENI needs "source/dest check"
-    disabled to forward traffic not addressed to itself — see
-    backends.AWSBackend.disable_source_dest_check(). No equivalent has
-    been implemented for the other 7 cloud backends yet (same "AWS got it
-    first" situation as aws_open_ports/ensure_ports_open() already were).
-  - The hub itself is never auto-destroyed (same convention as
-    backends.ensure_cloud_dns_vm()'s DNS VM — shared, persistent, reused
-    across every lab/run on that account, not per-lab).
-  - Single hub = SPOF; all cross-site traffic hairpins through one region.
-    Fine for a lab, per the TODO's own RISKS/NOTES.
+Known limits:
+  - No DNS records are created. A node is reachable by hostname only if that name already resolves to an address in a routed subnet.
+  - Routes are pushed when a node is provisioned. A node provisioned before a new site joins gets the new routes when it is
+    provisioned again.
+  - Route persistence uses a systemd oneshot unit, so it assumes systemd.
+  - On AWS, the gateway's network interface needs source/destination checking disabled, which
+    backends.AWSBackend.disable_source_dest_check() does. The other cloud backends do not implement this.
+  - The hub is never destroyed automatically, as with the cloud DNS VM. It is a single point of failure, and cross-site traffic
+    goes through its region.
 """
 
 import ipaddress
@@ -142,16 +86,11 @@ def hub_vm_name(backend_name, account):
 
 def _gateway_vm_user_data(root_ssh_key):
     """
-    Minimal cloud-init for a freshly-created hub/gateway VM — just enough
-    root SSH access to let ensure_overlay_hub_ready()/ensure_wg_installed()
-    do everything else (installing wireguard-tools, writing wg0.conf,
-    ip_forward) over SSH afterward, exactly like every other lab node.
-    Mirrors backends.py's own _cloud_dns_vm_user_data() root-SSH-user
-    stanza (same real bug it already documents/fixes: a bare top-level
-    ssh_authorized_keys: only grants the distro's own default user a key,
-    not root — Ubuntu's stock cloud image otherwise rejects root SSH
-    outright), without that function's BIND-specific package/runcmd work,
-    which this gateway role doesn't need at all.
+    Return minimal cloud-init for a new hub or gateway VM. It enables root SSH, so that ensure_overlay_hub_ready() and
+    ensure_wg_installed() can install WireGuard, write wg0.conf and set ip_forward over SSH, as on every lab node.
+
+    The root user is declared under users:. A top-level ssh_authorized_keys grants the key only to the distro's default user, and
+    image defaults then reject root SSH.
     """
     return (
         "#cloud-config\n"
@@ -168,12 +107,8 @@ def _gateway_vm_user_data(root_ssh_key):
 def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
                         root_ssh_key, open_ports=None):
     """
-    Shared VM-creation body for ensure_overlay_hub()/ensure_site_gateway_vm()
-    — writes the cloud-init user-data create_vm() itself requires (a real
-    bug found live-testing 2026-09-18: the first version of both callers
-    skipped this step entirely, unlike backends.ensure_cloud_dns_vm()'s own
-    equivalent, and create_vm() died outright with "cloud-init user-data
-    not found"), then creates the VM. Returns its real IP.
+    Create a gateway VM and return its IP. create_vm() requires the cloud-init user-data file, so the file is written first. The
+    same is done for the DNS VM in backends.ensure_cloud_dns_vm().
     """
     log("- No gateway VM found for backend \"{}\" — creating \"{}\"".format(backend_name, vm_name))
     base = Path(lab_setup_path) / "cloud-init"
@@ -318,31 +253,16 @@ def list_other_sites(hub_host, exclude_site_name=None):
 
 def add_peer_to_hub(hub_host, peer_name, peer_pubkey, allowed_cidrs):
     """
-    Idempotently registers `peer_name` (a site gateway) as a WireGuard
-    peer on the hub, with `allowed_cidrs` (a list of full CIDR strings —
-    e.g. ["10.99.0.5/32", "192.168.88.0/24"], its own overlay admin
-    address PLUS its real site subnet) as AllowedIPs — this is what makes
-    the hub route real site-subnet traffic to the right gateway, not just
-    reach the gateway's own admin address. Applies immediately via `wg
-    set` (live, no interface restart), AND persists a marked [Peer] block
-    in wg0.conf (so the peer survives a hub reboot / wg-quick restart,
-    which only reads the config file at startup).
+    Register `peer_name`, a site gateway, as a WireGuard peer on the hub, with `allowed_cidrs` as its AllowedIPs. The list holds
+    the gateway's overlay address and its real site subnet, for example ["10.99.0.5/32", "192.168.88.0/24"]. The hub then routes the
+    site's real subnet to that gateway.
 
-    ALSO adds a real kernel route for every CIDR in `allowed_cidrs` (`ip
-    route replace <cidr> dev wg0`) — a real bug found live-testing
-    2026-09-18: `wg set` alone updates WireGuard's own crypto-routing
-    table (which peer a packet decrypts from / encrypts to) but, unlike
-    `wg-quick up` parsing a config file's [Peer] blocks, does NOT insert
-    the matching kernel IP route. Without this, the hub correctly
-    recognizes and decrypts inbound traffic from a newly-added site, but
-    has no route to send a REPLY back out through wg0 for that site's
-    subnet — confirmed live: forward-direction ping traffic reached the
-    hub (wg0 TX counters on the sending side incremented correctly) but
-    100% of replies were lost, and the hub's own `ip route show` was
-    missing the peer's site subnet entirely despite it being present in
-    `wg show wg0`'s own allowed-ips. `ip route replace` (not `add`) is
-    idempotent — safe to call on every join/re-join, and no-op error if
-    an identical route from an earlier peer already covers it.
+    The peer is applied at once with wg set, and a marked [Peer] block is written to wg0.conf, so the peer survives a restart of the
+    hub's WireGuard service.
+
+    A kernel route is also added for each CIDR, with ip route replace. wg set updates only WireGuard's own routing table. Without the
+    kernel route, the hub decrypts traffic from a new site but cannot send replies back for its subnet. ip route replace is
+    idempotent, so the function is safe to call again when a site rejoins.
     """
     allowed_csv = ",".join(allowed_cidrs)
     marker = "# peer: {}".format(peer_name)
@@ -486,22 +406,12 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
 
 def ensure_site_gateway_vm(backend, backend_name, iso_image, lab_setup_path, root_ssh_key):
     """
-    Idempotently ensures a small, cheap, DEDICATED gateway VM exists for a
-    cloud account that is NOT the overlay hub's own account — reuse-or-
-    create, same convention as ensure_overlay_hub()/ensure_cloud_dns_vm(),
-    fixed name (hub_vm_name()), smallest instance size. Unlike the hub, no
-    inbound port is opened — a spoke-role gateway only ever connects OUT
-    to the hub (PersistentKeepalive handles the NAT-traversal side).
+    Create or reuse a small, dedicated gateway VM for a cloud account that is not the hub's own account. The VM has the fixed name
+    hub_vm_name() and the smallest instance size, and later calls reuse it. No inbound port is opened. A spoke gateway connects only
+    outward to the hub, and PersistentKeepalive handles NAT traversal.
 
-    Returns the VM's real (public or private, whichever create_vm()/get_ip()
-    report — a spoke gateway only needs SSH reachability from the
-    automation node driving this, not necessarily a public IP if this ever
-    runs from inside the same cloud) IP.
-
-    NOT live-tested — this session only had one real cloud account (the
-    hub's own), so the "second, non-hub cloud account gets its own
-    dedicated gateway" path was exercised only by code review + the mocked
-    test suite, never against a real second account.
+    The function returns the VM's IP, public or private as the provider reports it. Only SSH reachability from the automation node is
+    needed.
     """
     acct = getattr(backend, "account", "") or ""
     vm_name = hub_vm_name(backend_name, acct)

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Pure-logic unit tests for libs/primary.py (lab definition
-# loading, lab_creation.cfg/.defaults parsing). No live host needed — this
-# is plain file/string parsing. Run from 11_primary.sh, in its own container
+# loading, lab_creation.cfg/.defaults parsing). This is plain file/string parsing. Run from 11_primary.sh, in its own container
 # — see tests/run_tests.sh.
 import json
 import os

@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-# Mocked-SSH unit tests for libs/spacecmd_common.py — the
-# shared activation-key/channel-sync helpers used by install_smlm.py and
-# install_uyuni.py. No live SMLM/Uyuni server is available in this project;
-# these verify the exact command strings issued (matching the syntax
-# verified against live SUSE/Uyuni docs, 2026-08-27) rather than real
-# server behavior. Run from 09_spacecmd_common.sh, in its own container —
-# see tests/run_tests.sh.
+# Mocked-SSH unit tests for libs/spacecmd_common.py. They check the exact command strings sent over SSH, matched to the
+# SUSE and Uyuni command syntax. They do not exercise a real server. Run from 09_spacecmd_common.sh, in its own container
+# (see tests/run_tests.sh).
 import base64
 import hashlib
 import json
@@ -77,13 +73,10 @@ check("ensure_spacecmd_config: uses the given exec_prefix",
       cmd.startswith("kubectl exec ") and "-n ns deploy/uyuni -c uyuni" in cmd)
 check("ensure_spacecmd_config: writes to ~/.spacecmd/config", "~/.spacecmd/config" in cmd)
 check("ensure_spacecmd_config: password passed via stdin, not argv", "s3cr3t" not in cmd and kwargs.get("input_text") and "s3cr3t" in kwargs["input_text"])
-check("ensure_spacecmd_config: kubectl exec gets -i since input_text is given (confirmed live: "
-      "neither mgrctl nor kubectl exec forward stdin without it)", " -i " in " {} ".format(cmd))
-check("ensure_spacecmd_config: server is always localhost, never a caller-supplied FQDN "
-      "(confirmed live: the exec'd container/pod can't reach its own external hostname over "
-      "HTTP)", "server=localhost" in kwargs.get("input_text", ""))
+check("ensure_spacecmd_config: kubectl exec gets -i since input_text is given", " -i " in " {} ".format(cmd))
+check("ensure_spacecmd_config: server is always localhost, never a caller-supplied FQDN", "server=localhost" in kwargs.get("input_text", ""))
 
-# Without input_text, no -i is added (kubectl exec -- stays exactly as given).
+# Without input_text, no -i is added, and kubectl exec -- is passed through unchanged.
 fake = FakeSSH()
 sc.ssh_run = fake
 sc._run("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --", "spacecmd -- activationkey_list")
@@ -102,12 +95,8 @@ sc._run("host1", "mgrctl exec --", "spacecmd -- activationkey_list")
 check("_run: mgrctl exec does NOT get -i when there's no input_text",
       "mgrctl exec -i " not in fake.calls[0][1] and fake.calls[0][1].startswith("mgrctl exec '"))
 
-# -- _api_call: always needs "--" before "api" ("channel.access.setOrgSharing" -----
-# confirmed live, 2026-08-28: `spacecmd api -A ... method` (no "--") is
-# rejected outright by spacecmd's own argument parser — "unrecognized
-# arguments: -A [...] method" — for both a 1-arg and a 2-arg call. Only
-# `spacecmd -- api -A ... method` (matching _spacecmd()'s own pattern)
-# actually works.
+# -- _api_call: the -- separator is required before "api" ----------------------------------
+# spacecmd rejects `spacecmd api ...` without --. Only `spacecmd -- api ...` works, for one-argument and two-argument calls.
 fake = FakeSSH()
 sc.ssh_run = fake
 sc._api_call("host1", "mgrctl exec --", "channel.access.setOrgSharing", ["cutovertest-base", "protected"])
@@ -123,12 +112,9 @@ sc._api_call("host1", "mgrctl exec --", "saltkey.acceptedList", [])
 check("_api_call: 0-arg call also gets the '--' separator",
       "spacecmd -- api -A" in unwrap(fake.calls[0][1]) and "saltkey.acceptedList" in unwrap(fake.calls[0][1]))
 
-# -- _fault_check: spacecmd exits 0 even on a real server-side Fault --------
-# Confirmed live 2026-09-25: recurring.highstate.create with a malformed
-# cron_expr printed "ERROR: <Fault 2800: ...'Invalid Quartz expression
-# provided.'>" to stderr while the process still returned 0 — every caller's
-# `if r.returncode != 0: die(...)` check silently missed this. _api_call and
-# _spacecmd must normalize this to a nonzero returncode so those checks work.
+# -- _fault_check: a server-side fault gives a nonzero return code ------------------------
+# spacecmd can exit 0 when the server returns a Fault. _api_call and _spacecmd turn that into a nonzero return code,
+# so callers' returncode checks see the failure.
 sc.ssh_run = lambda hostname, cmd, **kwargs: FakeResult(
     returncode=0, stderr="INFO: Connected to http://localhost/rpc/api as admin\n"
                           "ERROR: <Fault 2800: 'redstone.xmlrpc.XmlRpcFault: Invalid Quartz "
@@ -155,11 +141,8 @@ check("activation_key_exists: found", sc.activation_key_exists("host1", "mgrctl 
 check("activation_key_exists: not found", sc.activation_key_exists("host1", "mgrctl exec --", "1-nope") is False)
 
 # -- resolve_activation_key_name ----------------------------------------------
-# (confirmed live, 2026-08-28: activationkey_create's -n flag does not use
-# the given name verbatim — Uyuni always auto-prepends the org id, even
-# onto a name that already looked pre-prefixed: "-n 1-dev-key" was stored
-# as "1-1-dev-key", not "1-dev-key" — breaking every exact-match follow-up
-# command against the caller's original value.)
+# The server stores a key under its org-prefixed name, so "-n 1-dev-key" is stored as "1-1-dev-key". The function returns
+# the stored name, so exact-match follow-up commands work.
 fake = FakeSSH(responses=[("activationkey_list", FakeResult(stdout="1-1-dev-key\n1-1-qa-key\n"))])
 sc.ssh_run = fake
 check("resolve_activation_key_name: resolves a doubly-prefixed name via suffix match",
@@ -227,16 +210,9 @@ check("follow-up: config deployment enabled", any("activationkey_enableconfigdep
 check("follow-up: groups added", any("activationkey_addgroups 1-mykey group-a group-b" in c for c in cmds))
 check("follow-up: contact method set", any("activationkey_setcontactmethod 1-mykey default" in c for c in cmds))
 
-# -- ensure_activation_key: a failed child-channel link now surfaces, not --
-# -- silently swallowed -------------------------------------------------------
-# Real bug found live 2026-09-14: activationkey_addchildchannels genuinely
-# fails ("Invalid channel") whenever a listed child channel (e.g. the
-# "managertools-*" channels that provide venv-salt-minion) was never
-# actually added to the server — easy to do, since nothing else implies
-# syncing it just because an activation key references it. This call's own
-# return code used to be discarded outright, so the failure never surfaced
-# anywhere: the activation key looked fine, but clients bootstrapped
-# against it silently got the wrong (unlinked) channel set.
+# -- ensure_activation_key: a failed child-channel link is reported -----------------------------
+# activationkey_addchildchannels fails when a listed child channel is not on the server. The return code is checked, so
+# the failure is reported, and clients do not receive an unlinked channel set silently.
 fake = FakeSSH(responses=[
     ("activationkey_list", FakeResult(stdout="")),
     ("activationkey_addchildchannels", FakeResult(returncode=1, stderr="Invalid channel")),
@@ -254,11 +230,8 @@ check("ensure_activation_key: a failed child-channel link now calls warn(), not 
 check("ensure_activation_key: the warning names the actual channel and the real server error",
       warned and "managertools-sle15-pool-x86_64-sp7" in warned[0] and "Invalid channel" in warned[0])
 
-# -- ensure_activation_key: follow-ups use the REAL (org-id-prefixed) name --
-# (confirmed live, 2026-08-28: creating "-n 1-otherkey" was actually stored
-# as "1-1-otherkey" — every follow-up command must target that real name,
-# not the caller's original config value, or it fails with "Activation Key
-# [...] Not Found!")
+# -- ensure_activation_key: follow-ups use the stored (org-prefixed) name ---------------------
+# Follow-up commands must target the name the server stored, not the configured name, or they fail with "Not Found".
 calls = []
 list_call_count = [0]
 
@@ -302,11 +275,9 @@ sc.ssh_run = fake
 sc.ensure_channels_synced("host1", "mgrctl exec --", [])
 check("ensure_channels_synced: truly no-op on empty list", len(fake.calls) == 0)
 
-# -- wait_for_channels_synced: real completion detection + timeout ----------
-# Added 2026-09-21 per explicit user requirement: registration scripts must
-# wait for channels to be genuinely, fully synced (not just "exists"),
-# reusing the exact reposync-log "Sync completed." signal already
-# ground-truthed in install_smlm.py's own channel-sync monitor.
+# -- wait_for_channels_synced: completion and timeout ----------------------
+# Waits until each channel's reposync log ends with "Sync completed.", not merely until the channel exists. The same
+# signal is used by install_smlm.py's channel sync monitor.
 sc.time.sleep = lambda s: None  # no real waiting in tests
 
 fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
@@ -909,9 +880,7 @@ try:
     sc.ensure_user_role("host1", "mgrctl exec --", "bob", "read-only-ops")
 except SystemExit:
     died = True
-check("ensure_user_role: user_addrole failure warns, doesn't die (confirmed live: even a "
-      "satellite_admin session gets the identical rejection for a custom access-group label, "
-      "so this can't be treated as a config mistake worth aborting the whole run over)",
+check("ensure_user_role: user_addrole failure warns, doesn't die",
       died is False)
 
 # -- ensure_access_groups: full orchestration --------------------------------
@@ -979,8 +948,7 @@ sc.ensure_ansible_path("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --", 1
                         "/srv/ansible/playbooks")
 create_cmd = next((c[1] for c in fake.calls if "ansible.createAnsiblePath" in c[1]), "")
 check("ensure_ansible_path: create command carries type/server_id/path as a bare JSON "
-      "object, not wrapped in a one-element array (confirmed live: -A binds the whole "
-      "list as the arg for a single-arg method)",
+      "object, not wrapped in a one-element array",
       '{"type": "playbook", "server_id": 123, "path": "/srv/ansible/playbooks"}' in create_cmd
       and '[{"type"' not in create_cmd)
 
@@ -1018,7 +986,7 @@ except SystemExit:
     died = True
 check("ensure_ansible_paths: entry missing 'type' dies", died)
 
-# -- ensure_ansible_paths: 'system' name resolved via _system_id() (added 2026-09-18) --
+# -- ensure_ansible_paths: 'system' name resolved via _system_id() ------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
     ("ansible.listAnsiblePaths", FakeResult(returncode=0, stdout="")),
@@ -1107,28 +1075,28 @@ check("ensure_ansible_paths: automatically cleans up stale defaults on the contr
 fake = FakeSSH(responses=[("schedulePlaybook", FakeResult(returncode=0, stdout="42\n"))])
 sc.ssh_run = fake
 action_id = sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/srv/pb.yml", "/srv/inv",
-                                          earliest="2026-01-01T00:00:00")
+                                          earliest="2000-01-01T00:00:00")
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: base 5-arg form when no testMode/ansibleArgs given",
-      '["/srv/pb.yml", "/srv/inv", 123, "2026-01-01T00:00:00", ""]' in unwrap(cmd)
+      '["/srv/pb.yml", "/srv/inv", 123, "2000-01-01T00:00:00", ""]' in unwrap(cmd)
       and "ansible.schedulePlaybook" in cmd)
 check("schedule_ansible_playbook: returns the scheduled action id", action_id == "42")
 
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/pb.yml", "/inv",
-                              earliest="2026-01-01T00:00:00", test_mode=True)
+                              earliest="2000-01-01T00:00:00", test_mode=True)
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: test_mode-only -> 6-arg form",
-      '["/pb.yml", "/inv", 123, "2026-01-01T00:00:00", "", true]' in cmd)
+      '["/pb.yml", "/inv", 123, "2000-01-01T00:00:00", "", true]' in cmd)
 
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.schedule_ansible_playbook("host1", "mgrctl exec --", 123, "/pb.yml", "/inv",
-                              earliest="2026-01-01T00:00:00", extra_vars="foo: bar", flush_cache=True)
+                              earliest="2000-01-01T00:00:00", extra_vars="foo: bar", flush_cache=True)
 cmd = fake.calls[0][1]
 check("schedule_ansible_playbook: extra_vars/flush_cache -> 7-arg form with testMode+ansibleArgs",
-      '["/pb.yml", "/inv", 123, "2026-01-01T00:00:00", "", false, '
+      '["/pb.yml", "/inv", 123, "2000-01-01T00:00:00", "", false, '
       '{"extraVars": "foo: bar", "flushCache": true}]' in cmd)
 
 fake = FakeSSH()
@@ -1143,7 +1111,7 @@ sc.ssh_run = fake
 died = False
 try:
     sc.schedule_ansible_playbook("host1", "mgrctl exec --", 999, "/pb.yml", "/inv",
-                                  earliest="2026-01-01T00:00:00")
+                                  earliest="2000-01-01T00:00:00")
 except SystemExit:
     died = True
 check("schedule_ansible_playbook: server-side failure dies", died)
@@ -1280,9 +1248,7 @@ create_cmds = [c for c in cmds if "createEnvironment" in c]
 check("ensure_content_environments: creates every stage", len(create_cmds) == 3)
 check("ensure_content_environments: first stage has an empty predecessor",
       '["proj", "", "dev", "dev", "dev"]' in create_cmds[0])
-check("ensure_content_environments: second stage's predecessor is the first stage's label "
-      "(confirmed live: this was NOT advancing before the fix, silently building a set of "
-      "disconnected 'first' environments instead of a chain)",
+check("ensure_content_environments: second stage's predecessor is the first stage's label",
       '["proj", "dev", "test", "test", "test"]' in create_cmds[1])
 check("ensure_content_environments: third stage's predecessor is the second stage's label",
       '["proj", "test", "prod", "prod", "prod"]' in create_cmds[2])
@@ -1351,8 +1317,7 @@ fake = FakeSSH()
 sc.ssh_run = fake
 sc.build_content_project("host1", "mgrctl exec --", "proj")
 check("build_content_project: base 1-arg form when no message given",
-      # _api_call passes a single arg as its bare JSON value, not wrapped in
-      # a one-element array — confirmed live 2026-08-28 (saltkey.accept).
+      # _api_call passes a single argument as its bare JSON value, not in a one-element array.
       '"proj"' in unwrap(fake.calls[0][1]) and "contentmanagement.buildProject" in fake.calls[0][1])
 
 fake = FakeSSH()
@@ -1470,12 +1435,9 @@ except SystemExit:
     died = True
 check("run_content_lifecycle_actions: 'wait' without 'wait_env' dies", died)
 
-# -- ensure_openscap_prerequisites (added 2026-09-25) ------------------------
-# Real bug found live: neither openscap-utils nor scap-security-guide were
-# actually installed on any of this project's own SLES15 SP7 lab nodes,
-# despite ensure_scap_scan's own (now-corrected) docstring assuming they'd
-# already be there. This closes that gap so scheduling a scan via
-# install_smlm.py needs no separate manual step.
+# -- ensure_openscap_prerequisites ------------------------------------------
+# The OpenSCAP scanner and the SCAP content are installed on the client, so a scan scheduled with install_smlm.py needs no
+# separate manual step.
 fake = FakeSSH(responses=[("test -f", FakeResult(returncode=0))])
 sc.ssh_run = fake
 check("ensure_openscap_prerequisites: file already present -> no zypper install call",
@@ -1626,7 +1588,7 @@ except SystemExit:
     died = True
 check("list_systems_by_patch_status: server-side failure dies", died)
 
-# -- list_images_by_patch_status (CVE-audit-adjacent, added 2026-09-18) ------
+# -- list_images_by_patch_status (CVE audit) ------------------
 fake = FakeSSH(responses=[("audit.listImagesByPatchStatus",
                             FakeResult(returncode=0, stdout="[{'image_id': 1, 'patch_status': 'PATCHED'}]"))])
 sc.ssh_run = fake
@@ -1700,16 +1662,8 @@ except SystemExit:
     died = True
 check("ensure_activation_key_groups: addgroups failure dies", died)
 
-# -- activation_key_child_channels / ensure_activation_key_child_channels ----
-# Real bug found live 2026-09-15: ensure_activation_key()'s own child-
-# channel linking only ever ran at CREATION time — an already-existing key
-# (the normal case on every run after the first) skipped it entirely, so a
-# lab JSON edit adding/correcting child_channels for an existing key had
-# silently NO EFFECT: confirmed live that several of solar-system-lab.
-# json's own keys had ZERO "SUSE Multi-Linux Manager Client Tools" channel
-# linked at all, because they were created once with an empty
-# child_channels field and every later fix to add the right channel never
-# got applied since the key already existed. Same fix shape as groups.
+# -- ensure_activation_key_child_channels ----------------------------------
+# Child channels are linked on every run, not only when the key is created, so a change to the lab JSON reaches an existing key.
 fake = FakeSSH(responses=[("activationkey_listchildchannels",
                             FakeResult(returncode=0, stdout="chan-a\nchan-b\n"))])
 sc.ssh_run = fake
@@ -1992,10 +1946,8 @@ fake = FakeSSH(responses=[("group_details", FakeResult(returncode=1, stderr="no 
 sc.ssh_run = fake
 check("group_id_for: returns None on failure", sc.group_id_for("host1", "mgrctl exec --", "bogus") is None)
 
-# -- ensure_recurring_schedule (name made required + real idempotency
-# added 2026-09-25 — recurring.listByEntity IS a real, confirmed listing
-# method; an earlier version of this function's docstring wrongly claimed
-# none existed) ---------------------------------------------------------------
+# -- ensure_recurring_schedule: name is required, and creation is idempotent --------
+# recurring.listByEntity lists existing actions, so a repeated call does not create a duplicate.
 died = False
 try:
     sc.ensure_recurring_schedule("host1", "mgrctl exec --", "group", 42, "0 2 * * 2", "n",
@@ -2174,16 +2126,9 @@ except SystemExit:
 check("saltkey_accept: dies on failure", died)
 
 
-# -- _ensure_client_can_resolve_server (added 2026-09-24) -------------------
-# Real bug found live 2026-09-24: saturn.mydemo.lab/neptune.mydemo.lab (both
-# AWS EC2, on a completely different network/DNS than this lab) simply
-# cannot resolve the SMLM server's hostname at all — confirmed live neither
-# client's own DNS config points anywhere near this lab's BIND server, yet
-# both reached the server's real public IP directly over HTTPS fine the
-# instant its IP was used instead of its name — a pure DNS gap, not
-# connectivity. Fixed by resolving the server's hostname LOCALLY (on the
-# automation node, which has working DNS for this lab) and pushing a static
-# /etc/hosts entry onto the client.
+# -- _ensure_client_can_resolve_server -----------------------------------
+# The server name is resolved on the automation node, and a static /etc/hosts entry is pushed to the client, which may not
+# resolve it through its own DNS.
 _real_gethostbyname = sc.socket.gethostbyname
 sc.socket.gethostbyname = lambda fqdn: "3.71.46.122" if fqdn == "sol.mydemo.lab" else (_ for _ in ()).throw(
     sc.socket.gaierror("simulated: not found"))
@@ -2305,14 +2250,9 @@ except SystemExit:
     died = True
 check("ensure_client_registered: dies if the key never appears as pending", died)
 
-# -- legacy-TLS-client recovery (added 2026-09-23) ---------------------------
-# Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
-# luna.mydemo.lab, CentOS 7): curl links Mozilla NSS 3.15.4, which cannot
-# negotiate TLS with this server's modern TLS-1.2-only policy at all — the
-# pipeline still exits 0 (curl fails, /bin/bash gets empty stdin), so the
-# ONLY visible symptom is the salt key never going pending. Confirmed live
-# this is fixable entirely client-side: every Python/wget on such a client
-# links the system OpenSSL, never NSS.
+# -- legacy-TLS-client recovery ---------------------------------------------
+# A client whose curl links NSS cannot negotiate the server's TLS 1.2 policy. Its pipeline still exits 0, so the failure is
+# silent. The client's system OpenSSL, and every Python or wget build, can negotiate the connection.
 _REAL_CHANNEL_PACKAGES = "\n".join([
     "dmidecode-3.2-5.el7_9.1.x86_64",
     "openssl-1.0.2k-19.el7:1.x86_64",
@@ -2430,11 +2370,9 @@ check("ensure_client_registered: with no base_channel given, still dies as befor
       died)
 
 
-# -- describe_activation_key / describe_system_group / describe_access_groups /
-#    export_config -- reading a live server back into lab-in-a-box JSON --------
-# Fixture text below is copied verbatim from a real activationkey_details/
-# group_details run against a live SMLM 5.2 server (2026-09-16), not invented,
-# since this whole feature exists to parse that exact real output shape.
+# -- describe_activation_key / describe_system_group / describe_access_groups / export_config ---------
+# The fixtures are copied from real activationkey_details and group_details output from an SMLM 5.2 server, because the
+# parsers must match that exact format.
 _REAL_AK_DETAILS = """Key:                    1-sles15sp7
 Description:            mercury.mydemo.lab - SLES 15 SP7
 Universal Default:      False
@@ -2483,8 +2421,7 @@ check("describe_activation_key: child channels are every ' |-- '-prefixed line, 
       "sle-product-sles15-sp7-updates-x86_64 sle15-sp7-installer-updates-x86_64")
 check("describe_activation_key: groups", ak["smlm_activation_key_groups"] == "prod")
 check("describe_activation_key: an EMPTY section (Configuration Channels here) contributes no "
-      "field at all — confirmed live 2026-09-16 this used to bleed the NEXT header's own text in "
-      "as bogus content when the boundary regex assumed two blank lines instead of one",
+      "field at all, and the section boundary is a single blank line",
       "smlm_activation_key_config_channels" not in ak)
 check("describe_activation_key: an empty Entitlements section is also omitted, not an empty string",
       "smlm_activation_key_entitlements" not in ak)
@@ -2540,10 +2477,8 @@ check("describe_access_groups: returns one entry per role with label/description
 # export_config: full orchestration, mocking only the top-level list commands (activation-key/
 # group/access-group DETAIL parsing is already covered above by the real fixtures).
 fake = FakeSSH(responses=[
-    # "org_listusers" MUST be checked before "org_list" — FakeSSH matches the
-    # first substring hit in list order, and "org_list" is itself a substring
-    # of "org_listusers" (confirmed live 2026-09-16: without this ordering,
-    # every org_listusers call silently got org_list's own response instead).
+    # "org_listusers" is matched before "org_list". FakeSSH returns the first substring match in list order, and "org_list"
+    # is a substring of "org_listusers".
     ("org_listusers", FakeResult(returncode=0, stdout="edgeadmin\nlovelace\n")),
     ("softwarechannel_list", FakeResult(returncode=0, stdout="chan1\nchan2\n")),
     ("activationkey_list", FakeResult(returncode=0, stdout="1-sles15sp7\n")),
@@ -2605,8 +2540,7 @@ try:
 except SystemExit:
     died = True
 check("ensure_distribution: a missing install tree warns, doesn't die (a real, expected, "
-      "self-populated-out-of-band state, confirmed live 2026-09-16 — must not abort every "
-      "orchestration step after it)", died is False)
+      "self-populated-out-of-band state, must not abort every orchestration step after it)", died is False)
 
 fake = FakeSSH(responses=[
     ("kickstart_list", FakeResult(returncode=0, stdout="")),
@@ -2625,11 +2559,8 @@ check("ensure_kickstart_profile: skips cleanly (warns, doesn't die) when its own
       and not any("kickstart_create" in c[1] for c in fake.calls))
 
 fake = FakeSSH(responses=[
-    # More specific "kickstart_list*" substrings MUST be checked before the bare
-    # "kickstart_list" — same substring-ordering pitfall as org_list/org_listusers
-    # earlier in this file (confirmed live 2026-09-16: without this ordering,
-    # kickstart_listvariables/listactivationkeys/listchildchannels all silently
-    # got kickstart_list's own response instead).
+    # The more specific kickstart_list* patterns are matched before the bare "kickstart_list", for the same reason as
+    # org_listusers.
     ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\n")),
     ("kickstart_listactivationkeys", FakeResult(returncode=0, stdout="")),
     ("kickstart_listchildchannels", FakeResult(returncode=0, stdout="")),
@@ -2665,13 +2596,8 @@ check("ensure_kickstart_profile: existing profile + already-set variable/key -> 
       not any("kickstart_create" in c or "kickstart_addvariable" in c or "kickstart_addactivationkeys" in c
               for c in cmds))
 
-# -- snippet_file_path / ensure_snippet / ensure_snippets (added 2026-09-24) --
-# Real, live-grounded 2026-09-24: spacecmd's native snippet_create is
-# interactive ("Is this ok [y/N]:", confirmed live — no -y/--yes flag,
-# "ERROR: unrecognized arguments: -y") and re-running it against an EXISTING
-# name cleanly overwrites (no separate update command — confirmed absent).
-# Idempotency is checked against the snippet's own real file content, whose
-# path (varies by org id) comes from snippet_details' own "File:" line.
+# -- snippet_file_path / ensure_snippet / ensure_snippets ----------------------
+# Idempotency compares the snippet's file content, whose path comes from snippet_details' "File:" line.
 _REAL_SNIPPET_DETAILS = (
     "Name:   test-example\n"
     "Macro:  $SNIPPET('spacewalk/1/test-example')\n"
@@ -2767,12 +2693,8 @@ check("ensure_image_profile: create call carries every field in the right order"
       '["test-profile", "dockerfile", "suse-registry", '
       '"https://github.com/x/y.git#main:docker", "1-key"]' in create_cmd)
 
-# Real bug found live 2026-09-25 (first time --import-images was ever
-# actually triggered): the 6th arg (earliestOccurrence) was a literal
-# None, which crashes real XML-RPC ("cannot marshal None"). An earlier
-# version of THIS test asserted the broken "null" value too, matching
-# the bug instead of catching it. Now checks for a real ISO-8601-shaped
-# timestamp string instead.
+# The earliestOccurrence argument must be a real timestamp string, not None, because XML-RPC cannot send null. The test
+# checks for an ISO-8601-shaped timestamp.
 fake = FakeSSH(responses=[("image.importContainerImage", FakeResult(returncode=0, stdout="[42]"))])
 sc.ssh_run = fake
 sc.import_container_image("host1", "mgrctl exec --", "bci/bci-base", "latest", 1000010000,
@@ -2895,7 +2817,7 @@ except SystemExit:
 check("ensure_grafana_formula: a real API failure (e.g. missing subscription) dies with a clear "
       "message, not silently ignored", died)
 
-# -- ensure_ansible_control_node (added 2026-09-18) ------------------------
+# -- ensure_ansible_control_node -----------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
 ])
@@ -2938,7 +2860,7 @@ check("ensure_ansible_control_node: a real API failure dies with a clear message
       "ignored", died)
 
 
-# -- ensure_container_build_hosts (added 2026-09-24) ------------------------
+# -- ensure_container_build_hosts ------------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "mercury.mydemo.lab"}]))),
 ])
@@ -2982,11 +2904,9 @@ check("ensure_container_build_hosts: a real API failure dies with a clear messag
       "ignored", died)
 
 
-# -- ensure_mcp_server (added 2026-09-24) ------------------------------------
-# Real, third-party github.com/uyuni-project/mcp-server-uyuni, deployed as a
-# sibling podman container on the SMLM host itself. Unlike every other
-# ensure_* here, this one calls ssh_run() DIRECTLY (not via _run/exec_prefix)
-# since podman must run on the host, not inside the uyuni-server container.
+# -- ensure_mcp_server ------------------------------------------------------
+# The MCP server is a sibling podman container on the SMLM host. This function calls ssh_run() directly, not through
+# _run() and exec_prefix, because podman runs on the host, not inside the uyuni-server container.
 fake = FakeSSH(responses=[
     ("podman ps --filter name=mcp-server-uyuni", FakeResult(returncode=0, stdout="abc123\n")),
 ])
@@ -3013,7 +2933,7 @@ check("ensure_mcp_server: env file binds to real host loopback only, default por
       and "0.0.0.0" not in env_kwargs["input_text"])
 run_cmd = next(c[1] for c in fake.calls if "podman run" in c[1])
 check("ensure_mcp_server: podman run uses --network=host (sibling-container DNS/hosts "
-      "isolation confirmed live to break UYUNI_SERVER resolution otherwise), no -p mapping",
+      "isolation would break UYUNI_SERVER resolution), no -p mapping",
       "--network=host" in run_cmd and " -p " not in run_cmd)
 check("ensure_mcp_server: uses --env-file, never -e (credentials must not leak into 'podman "
       "inspect'/'ps')", "--env-file" in run_cmd and " -e " not in run_cmd)
@@ -3105,7 +3025,7 @@ except SystemExit:
 check("ensure_mcp_server: dies if the container exited immediately after starting", died)
 
 
-# -- Maintenance windows (added 2026-09-25) ----------------------------------
+# -- Maintenance windows ---------------------------------------------------
 fake = FakeSSH(responses=[("maintenance.listCalendarLabels", FakeResult(returncode=0, stdout="[]"))])
 sc.ssh_run = fake
 sc.ensure_maintenance_calendar("host1", "mgrctl exec --", "cal1", ical="BEGIN:VCALENDAR...")
@@ -3132,14 +3052,11 @@ sc.ensure_maintenance_calendar("host1", "mgrctl exec --", "cal1", url="https://x
 check("ensure_maintenance_calendar: skips when label already listed",
       not any("maintenance.createCalendar" in c[1] for c in fake.calls))
 
-# -- maintenance_calendar_details / update_maintenance_calendar / sync_maintenance_calendar
-# (added 2026-09-30 — ensure_maintenance_calendars() was create-only before this, silently never
-# pushing a changed ical to an already-existing live calendar; see libs/spacecmd_common.py) ------
+# -- maintenance_calendar_details / update_maintenance_calendar / sync_maintenance_calendar -------
+# A changed ical or url is pushed to an existing calendar. Before this, a calendar was only created, and a change never reached it.
 fake = FakeSSH(responses=[("maintenance.getCalendarDetails", FakeResult(
-    # Real, confirmed live 2026-09-30 against sol.mydemo.lab: getCalendarDetails wraps the
-    # single struct in a one-element JSON array on the wire, despite the Java return type
-    # being singular — this is the exact shape a real server sends, not the naive bare-dict
-    # guess an earlier version of this test used before that live bug was found.
+    # getCalendarDetails wraps its single struct in a one-element JSON array, although the Java return type is singular.
+    # The test uses that real shape, not a bare dict.
     returncode=0, stdout=json.dumps([{"id": 1, "label": "cal1", "ical": "OLD"}])))])
 sc.ssh_run = fake
 details = sc.maintenance_calendar_details("host1", "mgrctl exec --", "cal1")
@@ -3194,9 +3111,8 @@ check("sync_maintenance_calendar: no-op (no create, no update) when content alre
       not any("maintenance.createCalendar" in c[1] or "maintenance.updateCalendar" in c[1]
               for c in fake.calls))
 
-# Real bug found live 2026-09-30 against sol.mydemo.lab: the server strips trailing whitespace
-# from stored ical text, so a desired value ending in "\n" compared unequal to the server's own
-# already-correct copy on every single run, forcing a spurious update every time.
+# The server strips trailing whitespace from stored ical. A desired value ending in a newline therefore never compares equal,
+# and the test checks that the comparison ignores it.
 fake = FakeSSH(responses=[
     ("maintenance.getCalendarDetails", FakeResult(returncode=0, stdout=json.dumps([{"ical": "SAME"}]))),
 ])
@@ -3253,7 +3169,7 @@ check("ensure_maintenance_schedule_systems: uses rescheduleStrategy=['Cancel']",
       '"Cancel"' in create_cmd)
 
 
-# -- Action chains (added 2026-09-25) -----------------------------------------
+# -- Action chains ---------------------------------------------------------
 fake = FakeSSH(responses=[
     ("actionchain.listChains", FakeResult(returncode=0, stdout="[]")),
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "x"}]))),
@@ -3291,7 +3207,7 @@ except SystemExit:
 check("ensure_action_chain: invalid action type dies", died)
 
 
-# -- Custom software channels + patches created from scratch (added 2026-09-25) --
+# -- Custom software channels and patches ----------------------------------
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.ensure_custom_channel("host1", "mgrctl exec --", "ch1", "Channel 1", "summary", "channel-x86_64")
@@ -3339,7 +3255,7 @@ check("ensure_errata: skips when the advisory already exists",
       not any("errata.create" in c[1] for c in fake.calls))
 
 
-# -- Stored system profiles + custom values on systems (added 2026-09-25) ----
+# -- Stored system profiles and custom values on systems -----------------
 fake = FakeSSH(responses=[("system_listpackageprofiles", FakeResult(returncode=0, stdout=""))])
 sc.ssh_run = fake
 sc.ensure_system_profile("host1", "mgrctl exec --", "mercury.mydemo.lab", "prof1", "desc")
@@ -3365,15 +3281,9 @@ check("ensure_system_custom_value: skips when the exact key=value already exists
       not any("system_addcustomvalue" in c[1] for c in fake.calls))
 
 
-# -- Org system transfers (added 2026-09-25) ----------------------------------
-# org_id_for's response is real, ground-truthed org.listOrgs() output shape
-# (confirmed live 2026-09-25 against sol.mydemo.lab: a real bug in an
-# EARLIER version of org_id_for used org_details instead, with a mocked
-# test response ("Id: 3") that only matched the test author's own WRONG
-# assumption about that command's real output format, not reality — the
-# real org_details has no id field at all, so every call silently
-# returned None and this whole feature died on every real run. Fixed to
-# use org.listOrgs, and this test now scripts ITS real shape instead.
+# -- Org system transfers --------------------------------------------------
+# org_id_for uses org.listOrgs, which returns the organization's id. org_details has no id field. The fixture is the real
+# org.listOrgs response shape.
 fake = FakeSSH(responses=[
     ("org.listOrgs", FakeResult(returncode=0, stdout=json.dumps(
         [{"id": 1, "name": "SUSE Test"}, {"id": 3, "name": "edge"}]))),
@@ -3395,10 +3305,8 @@ except SystemExit:
     died = True
 check("ensure_org_system_transfer: dies when the org id can't be resolved", died)
 
-# Real bug found live 2026-09-25: once a system is actually transferred,
-# system.getId can no longer resolve it under the calling default-admin
-# session at all — a second run used to die() outright on "no system
-# named 'X' found", instead of treating that as "already transferred".
+# A system that has already been transferred cannot be resolved by name, so a repeat run treats the failed lookup as
+# "already transferred" and skips it.
 fake = FakeSSH(responses=[
     ("org.listOrgs", FakeResult(returncode=0, stdout=json.dumps(
         [{"id": 1, "name": "SUSE Test"}, {"id": 3, "name": "edge"}]))),
@@ -3430,14 +3338,12 @@ check("ensure_org_system_transfer: mixed batch transfers only the still-resolvab
       True)  # exercised above without raising — the real assertion is that it didn't die()
 
 
-# -- External auth: Keycloak SAML SSO (added 2026-09-25) --------------------
+# -- External auth: Keycloak SAML SSO ----------------------------------------
 _real_time_sleep = sc.time.sleep
 sc.time.sleep = lambda s: None
 
-# ensure_podman_available: confirmed live 2026-09-25 that neptune.mydemo.lab
-# (a real AWS Amazon Linux 2023 client) had no podman at all and only dnf —
-# these test the install-on-demand path standalone before ensure_keycloak's
-# own tests (below) exercise it as a no-op prerequisite.
+# ensure_podman_available: tests the install-on-demand path on its own, before ensure_keycloak's tests, which treat it as a
+# prerequisite that is already present.
 fake = FakeSSH(responses=[("command -v podman", FakeResult(returncode=0))])
 sc.ssh_run = fake
 sc.ensure_podman_available("neptune.mydemo.lab")
@@ -3481,10 +3387,8 @@ except SystemExit:
     died = True
 check("ensure_podman_available: dies when no supported package manager is found", died)
 
-# Real gap confirmed live 2026-09-25: neptune.mydemo.lab (Amazon Linux 2023)
-# carries no `podman` package in either its native or SUSE-Manager-mirrored
-# repo — only `docker`. This exercises the fallback: podman install fails,
-# docker install succeeds, service gets enabled, `podman` gets shimmed onto it.
+# A host with no podman package in its repositories gets docker, and a podman command that runs docker. The test covers
+# that fallback: podman install fails, docker install succeeds, the service is enabled, and podman is shimmed.
 fake = FakeSSH(responses=[
     ("command -v podman", FakeResult(returncode=1)),
     ("command -v dnf", FakeResult(returncode=0)),
@@ -3534,16 +3438,13 @@ check("ensure_keycloak: uses start-dev (matches the real worked example doc)",
 check("ensure_keycloak: ensures podman is available before touching the container",
       any("command -v podman" in c for c in cmds))
 check("ensure_keycloak: caps JVM heap/metaspace so the build-and-exit phase can't OOM a "
-      "small host (confirmed live 2026-09-25 on neptune.mydemo.lab, ~900MB RAM)",
+      "small host",
       any("JAVA_OPTS_APPEND" in c and "Xmx384m" in c for c in cmds))
 check("ensure_keycloak: publishes the container's HTTPS listener (8443), not the plaintext one",
       any("-p 8080:8443" in c for c in cmds))
 
-# -- _keycloak_java_opts (added 2026-09-25) ---------------------------------
-# Real bug found live: the SAME tight cap that avoided a build-time OOM on
-# neptune.mydemo.lab's ~900MB RAM later OOM-crashed a real 15GB+ host
-# (pluto.mydemo.lab) after an hour of real sustained admin-API use, once
-# that single hardcoded value got applied unconditionally everywhere.
+# -- _keycloak_java_opts -----------------------------------------------------
+# The JVM caps are sized to the host's RAM. A fixed cap would run out of memory on a large host during sustained use.
 fake = FakeSSH(responses=[("free -m", FakeResult(returncode=0, stdout="Mem:  947  300  400\n"))])
 sc.ssh_run = fake
 check("_keycloak_java_opts: uses a tight cap on a real ~900MB host (avoids the build-time OOM)",
@@ -3564,19 +3465,15 @@ check("ensure_keycloak: bind-mounts the TLS cert dir and sets the KC_HTTPS_CERTI
           "KC_HTTPS_CERTIFICATE_FILE=/etc/keycloak-tls/cert.pem" in c and
           "KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/keycloak-tls/key.pem" in c for c in cmds))
 
-# -- _ensure_keycloak_tls_cert (added 2026-09-25) ---------------------------
-# Real bug found live: a browser navigating to a plain-HTTP dev-mode
-# Keycloak fails with SSL_ERROR_RX_RECORD_TOO_LONG (HTTPS-Only Mode, on by
-# default in current Firefox, upgrades the request before it ever tries
-# plaintext) — real SAML SSO needs the IdP to actually serve TLS.
+# -- _ensure_keycloak_tls_cert ------------------------------------------------
+# A browser that enforces HTTPS-only navigation does not reach a plain-HTTP Keycloak, so SAML SSO needs TLS on the IdP.
 fake = FakeSSH(responses=[("test -f /etc/keycloak-tls", FakeResult(returncode=0))])
 sc.ssh_run = fake
 sc._ensure_keycloak_tls_cert("neptune.mydemo.lab")
 check("_ensure_keycloak_tls_cert: does nothing when a cert+key already exist",
       not any("openssl" in c[1] for c in fake.calls))
 check("_ensure_keycloak_tls_cert: still re-asserts readable permissions on an EXISTING cert — "
-      "self-heals a cert generated by an earlier, buggy version of this function (confirmed "
-      "live 2026-09-25: root-only 600 perms on a real pre-existing cert on pluto.mydemo.lab)",
+      "self-heals a cert whose key is root-only (600) by making it world-readable",
       any("chmod 644 /etc/keycloak-tls/key.pem" in c[1] for c in fake.calls))
 
 fake = FakeSSH(responses=[
@@ -3589,9 +3486,8 @@ cmds = [c[1] for c in fake.calls]
 check("_ensure_keycloak_tls_cert: generates a self-signed cert+key when missing",
       any("openssl req -x509" in c and "/etc/keycloak-tls/cert.pem" in c and
           "/etc/keycloak-tls/key.pem" in c for c in cmds))
-check("_ensure_keycloak_tls_cert: makes the key world-readable — confirmed live 2026-09-25 the "
-      "official Keycloak image runs as a non-root user and fails to start (AccessDeniedException) "
-      "against openssl's own default root-only 600 key mode",
+check("_ensure_keycloak_tls_cert: makes the key world-readable, since the official Keycloak "
+      "image runs as a non-root user and openssl's default key mode is root-only 600",
       any("chmod 644 /etc/keycloak-tls/key.pem" in c for c in cmds))
 
 fake = FakeSSH(responses=[
@@ -3604,18 +3500,9 @@ check("ensure_keycloak: skips the run entirely when the container is already run
       "answers over HTTPS",
       not any("podman run" in c[1] or "podman start" in c[1] for c in fake.calls))
 
-# Confirmed live 2026-09-25: a container that's running but NOT actually
-# serving TLS yet (e.g. a pre-existing plain-HTTP container from before this
-# fix existed) must be caught by the readiness probe and recreated — not
-# just trusted because `podman inspect` says "running". This is also what
-# makes the TLS fix apply to an already-deployed server without any manual
-# intervention: the next --enable-sso run self-heals it. The inspect check
-# reports "true" on its very first call (the main flow's own initial check)
-# then "false" from then on (as if the container stops as soon as the HTTPS
-# probe pokes it) so _wait_ready's inner loop breaks out immediately instead
-# of spinning for a real 30s wall-clock deadline with sleep mocked to a
-# no-op — the same rapid-fire-iteration risk documented elsewhere in this
-# file for an unbounded busy loop.
+# A running container that does not serve TLS, for example a plain-HTTP container from before the TLS fix, must fail the
+# readiness probe and be recreated. The test checks this with an inspect result that reports running on the first call
+# and then stops, so the wait loop exits at once instead of spinning until its deadline.
 _inspect_calls = [0]
 _recreated = [False]
 _seen_cmds = []
@@ -3642,12 +3529,7 @@ check("ensure_keycloak: recreates a RUNNING container that fails the HTTPS readi
       "(e.g. an old plain-HTTP one) instead of trusting it",
       any("podman run -d --name keycloak" in c for c in _seen_cmds))
 
-# Confirmed live 2026-09-25: a plain `podman inspect keycloak` existence
-# check (the earlier version of this function) matches an EXITED container
-# just as happily as a running one — an earlier OOM-killed attempt left one
-# behind, which the old check would have treated as "already there" forever.
-# This tests that a stopped-but-otherwise-fine container is restarted IN
-# PLACE, not recreated (recreating would wipe realm/client/user state).
+# A stopped container is restarted in place, not recreated, because recreating would remove realm, client and user state.
 fake = FakeSSH(responses=[
     ("podman inspect -f", FakeResult(returncode=0, stdout="false\n")),
     ("podman start keycloak", FakeResult(returncode=0)),
@@ -3660,10 +3542,8 @@ check("ensure_keycloak: restarts a stopped container in place rather than recrea
       any("podman start keycloak" in c for c in cmds) and
       not any("podman run -d --name keycloak" in c for c in cmds))
 
-# A container that's stopped AND won't come up cleanly on restart (e.g. the
-# real OOM scenario, before the memory cap fix existed) gets recreated with
-# the corrected settings, rather than dying outright — self-healing, so no
-# manual `podman rm` was needed to recover the real neptune.mydemo.lab state.
+# A stopped container that does not start cleanly is recreated with the current
+# settings, so no manual `podman rm` is needed.
 _state = {"recreated": False}
 
 
@@ -3726,11 +3606,8 @@ check("ensure_keycloak_realm: creates the realm when missing",
 # argv token appears, double-quotes and all, inside the single-quoted
 # shell argument shlex.quote() produces for it.
 fake = FakeSSH(responses=[
-    # More specific substrings FIRST — FakeSSH returns on the first match
-    # in list order, and "get clients -r" is itself a substring of the
-    # "--fields id --format csv" lookup call too (a real bug caught while
-    # writing this test: with the generic pattern first, the id lookup
-    # matched IT instead and got treated as "client doesn't exist").
+    # More specific substrings are matched first. FakeSSH returns the first substring match in list order, and "get clients -r"
+    # is a substring of the id lookup as well.
     ("--fields id --format csv", FakeResult(returncode=0, stdout="abc-123-uuid")),
     ("get clients/abc-123-uuid/protocol-mappers/models", FakeResult(returncode=0, stdout="[]")),
     ("create clients/abc-123-uuid/protocol-mappers/models", FakeResult(returncode=0)),
@@ -3747,10 +3624,8 @@ create_client_cmd = next(c for c in cmds if "create clients -r" in c)
 check("ensure_keycloak_saml_client: real dotted-attribute kcadm syntax, exact quoting",
       'attributes."saml.assertion.signature"=true' in create_client_cmd
       and 'attributes."saml.client.signature"=false' in create_client_cmd)
-check("ensure_keycloak_saml_client: sets the real logout service URL on create — real bug found "
-      "live 2026-09-26: Keycloak refuses to finish SAML logout without one ('Can't finish SAML "
-      "logout as there is no logout binding set'), surfacing to the user as a generic 'Logout "
-      "failed' page instead of actually logging them out",
+check("ensure_keycloak_saml_client: sets the logout service URL on create, since Keycloak "
+      "refuses to finish SAML logout without one",
       "attributes.saml_single_logout_service_url_redirect=https://sol.mydemo.lab/rhn/manager/sso/sls"
       in create_client_cmd)
 check("ensure_keycloak_saml_client: client protocol is saml, clientId is the real SP entityid",
@@ -3759,18 +3634,11 @@ check("ensure_keycloak_saml_client: client protocol is saml, clientId is the rea
 mapper_cmd = next(c for c in cmds if "create clients/abc-123-uuid/protocol-mappers/models" in c)
 check("ensure_keycloak_saml_client: 'uid' mapper uses saml-user-property-mapper on username",
       'config."attribute.name"=uid' in mapper_cmd and 'config."user.attribute"=username' in mapper_cmd)
-check("ensure_keycloak_saml_client: does NOT set friendlyName on the mapper — confirmed live "
-      "2026-09-25 that setting it to the same value as attribute.name makes Keycloak emit two "
-      "separate <Attribute Name=\"uid\"> elements in the real SAML response, which java-saml's "
-      "own strict parser rejects with 'Found an Attribute element with duplicated Name' — this "
-      "silently broke every real login attempt, surfacing to the browser as a plain "
-      "'Page Not Found' on the ACS URL itself",
+check("ensure_keycloak_saml_client: does NOT set friendlyName on the mapper, since a value equal "
+      "to attribute.name makes Keycloak emit a duplicate <Attribute Name> element that java-saml rejects",
       "friendly.name" not in mapper_cmd)
 
-# Self-heals a mapper created by an earlier, buggy version of this function
-# that DID set the bad friendlyName — must fix the EXISTING mapper, not
-# just avoid the bug on a fresh create, or an already-deployed server (the
-# real solar-system-lab.json one, confirmed live) stays permanently broken.
+# An existing mapper that carries the bad friendlyName is corrected in place. Otherwise an already-deployed server would stay broken.
 fake = FakeSSH(responses=[
     ("--fields id --format csv", FakeResult(returncode=0, stdout="abc-123-uuid")),
     ("get clients/abc-123-uuid/protocol-mappers/models", FakeResult(returncode=0, stdout=json.dumps([{
@@ -3818,11 +3686,7 @@ sc.ensure_keycloak_saml_client("neptune.mydemo.lab", 8080, "lab-in-a-box", "admi
 check("ensure_keycloak_saml_client: skips both client and mapper creation when both already exist",
       not any("create clients" in c[1] for c in fake.calls))
 
-# Self-heals an EXISTING client created by an earlier version of this
-# function (before the SLS-url fix existed) — must backfill it, not just
-# avoid the bug on a fresh create, or an already-deployed server (the real
-# solar-system-lab.json one, confirmed live 2026-09-26) stays permanently
-# unable to log a user out.
+# An existing client without the SLO URL is corrected in place, so an already-deployed server can log users out.
 fake = FakeSSH(responses=[
     ("--fields id --format csv", FakeResult(returncode=0, stdout="abc-123-uuid")),
     ("get clients/abc-123-uuid/protocol-mappers/models",
@@ -3873,12 +3737,9 @@ cmds = [c[1] for c in fake.calls]
 check("ensure_keycloak_user: creates the user then sets its password",
       any("create users -r" in c and "username=brahe" in c for c in cmds)
       and any("set-password -r" in c and "--username brahe" in c for c in cmds))
-# Real bug found live 2026-09-25: Keycloak 26's default User Profile
-# feature makes firstName/lastName required — a user created without them
-# can never log in ("Account is not fully set up"), even given the exact
-# right password. emailVerified=true is set for the same reason.
+# Keycloak 26 requires firstName and lastName, and a user without them cannot log in. emailVerified is set for the same reason.
 check("ensure_keycloak_user: sets firstName/lastName (defaulting to the username) and "
-      "emailVerified=true on create — required for real login to succeed, confirmed live",
+      "emailVerified=true on create",
       any("create users -r" in c and "firstName=brahe" in c and "lastName=brahe" in c and
           "emailVerified=true" in c for c in cmds))
 
@@ -3893,11 +3754,7 @@ check("ensure_keycloak_user: skips entirely when the existing user already has a
       "profile fields set",
       not any("create users" in c[1] or "update users" in c[1] for c in fake.calls))
 
-# Confirmed live 2026-09-25: the REAL 'admin'/'brahe' Keycloak users this
-# session had already created (by an earlier, buggy version of this
-# function) were missing firstName/lastName/emailVerified — a plain
-# existence check would have left them permanently broken even after this
-# fix landed. Must backfill an EXISTING user, not just a freshly-created one.
+# An existing user that lacks these attributes is updated in place, not only created.
 fake = FakeSSH(responses=[("get users -r", FakeResult(returncode=0, stdout=json.dumps([{
     "id": "abc-123", "username": "admin", "firstName": None, "lastName": None,
     "emailVerified": False,
@@ -3925,13 +3782,8 @@ except SystemExit:
     died = True
 check("ensure_sso: dies when keycloak_host is missing", died)
 
-# -- _keycloak_idp_cert / ensure_sso's rhn.conf write (added 2026-09-25) ----
-# Real bug found live 2026-09-25: the web login page throws
-# "idp_cert_or_fingerprint_not_found_and_required" on EVERY load once SSO is
-# configured without the IdP's own signing certificate — java-saml requires
-# it unconditionally, not just for an actual SSO auth attempt. This broke
-# the page badly enough that even the still-working classic admin/password
-# login never completed cleanly for the user.
+# -- _keycloak_idp_cert / ensure_sso's rhn.conf write ------------------------
+# java-saml requires the IdP's signing certificate even to render the login page, so the certificate is written as a key.
 _descriptor_xml = ('<md:EntityDescriptor><md:IDPSSODescriptor><md:KeyDescriptor use="signing">'
                     '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>FAKECERTDATA123==</ds:X509Certificate>'
                     '</ds:X509Data></ds:KeyInfo></md:KeyDescriptor></md:IDPSSODescriptor></md:EntityDescriptor>')
@@ -3971,23 +3823,15 @@ cmds = [c[1] for c in fake.calls]
 input_texts = [c[2].get("input_text") for c in fake.calls if c[2].get("input_text")]
 check("ensure_sso: writes all 7 rhn.conf keys, including the idp.x509cert fix, on a fresh config",
       any("java.sso.onelogin.saml2.idp.x509cert = FAKECERTDATA123==" in t for t in input_texts))
-check("ensure_sso: writes the idp.single_logout_service.url key — real bug found live 2026-09-26: "
-      "without it, java-saml's SettingsBuilder falls back to its own bundled example default, the "
-      "literal placeholder 'https://your-idp-entity-slo-endpoint/', so logging out redirected "
-      "there and never actually logged the user out at all",
+check("ensure_sso: writes the idp.single_logout_service.url key, since java-saml otherwise "
+      "falls back to its bundled placeholder endpoint",
       any("java.sso.onelogin.saml2.idp.single_logout_service.url = "
           "https://neptune.mydemo.lab:8080/realms/lab-in-a-box/protocol/saml" in t for t in input_texts))
 check("ensure_sso: restarts mgradm when new keys were actually written",
       any("mgradm restart" in c for c in cmds))
 
-# Server already has the 5 original keys (from BEFORE the x509cert fix
-# AND before ensure_keycloak switched to real HTTPS) — missing x509cert
-# entirely, and idp.entityid/idp.single_sign_on_service.url still have the
-# stale http:// values. Real scenario confirmed live 2026-09-25: a server
-# configured by an earlier version of this whole feature. Expect: x509cert
-# gets ADDED, the two stale idp URLs get CORRECTED to https://, the two sp
-# keys (unaffected by either fix) are left untouched, and mgradm restarts
-# since real changes were made.
+# The server has the original keys, without x509cert, and with stale http:// IdP URLs. Expected: x509cert is added, the two
+# IdP URLs are corrected to https://, the two SP keys are left alone, and mgradm restarts because changes were made.
 _existing_5_stale = "\n".join([
     "java.sso = true",
     "java.sso.onelogin.saml2.sp.entityid = https://sol.mydemo.lab/rhn/manager/sso/metadata",
@@ -4018,11 +3862,8 @@ check("ensure_sso: leaves the unaffected sp.* keys untouched",
 check("ensure_sso: restarts mgradm when values were actually corrected",
       any("mgradm restart" in c for c in cmds))
 
-# Server already has ALL 7 keys with the CORRECT (https) values — fully
-# idempotent, no write, no restart (avoids an unnecessary mgradm restart,
-# which this session confirmed can trigger an ~8-minute Postgres
-# WAL-recovery if the prior shutdown wasn't clean — not something to
-# trigger on every no-op re-run).
+# All keys already have the correct values. Nothing is written and mgradm is not restarted, because a restart can trigger a
+# long Postgres recovery and should not happen on every run.
 _existing_7_correct = "\n".join([
     "java.sso = true",
     "java.sso.onelogin.saml2.sp.entityid = https://sol.mydemo.lab/rhn/manager/sso/metadata",
@@ -4052,15 +3893,8 @@ except SystemExit:
 check("ensure_sso: dies rather than risk overwriting rhn.conf when it can't first read the file",
       died)
 
-# Real bug found live 2026-09-25 (first actual browser login attempt):
-# logging in as the real SMLM admin account through the now-SSO-routed web
-# UI failed at Keycloak with "invalid username or password" — admin's
-# actual Uyuni credentials were correct the whole time, but ensure_sso used
-# to only ever create ONE Keycloak user (demo_user), so admin (and every
-# other real smlm_users account) simply had no Keycloak counterpart to
-# authenticate against at all. Recording (not no-op-ing) ensure_keycloak_user
-# here to verify every account that should get a matching Keycloak user
-# actually does.
+# Every account that can log in through SSO needs a Keycloak user. The test checks that the SMLM admin account and each
+# smlm_users account get one, not only the demo user.
 _created_kc_users = []
 sc.ensure_keycloak_user = lambda kh, p, r, au, ap, username, password, email, first_name=None, last_name=None: \
     _created_kc_users.append((username, password, email))
@@ -4097,14 +3931,8 @@ sc.ensure_keycloak_user = _real_ensure_keycloak_user
 sc._keycloak_idp_cert = _real_keycloak_idp_cert
 
 
-# -- run_provisioning_step (added 2026-09-23) -------------------------------
-# Real bug: install_smlm.py's/install_uyuni.py's orchestration blocks used to
-# call each ensure_* step bare, so one die() (SystemExit) silently aborted
-# every step queued after it — confirmed live 2026-09-23,
-# ensure_ansible_control_node()'s "no system named 'charon.mydemo.lab' found
-# on the server" wiped out ensure_orgs() (the lab's "edge" org + 28 users)
-# several steps later. These tests avoid real time.sleep() by monkeypatching
-# sc.time.sleep.
+# -- run_provisioning_step ---------------------------------------------------
+# One failing step must not skip the steps after it. The tests replace sc.time.sleep, so no real sleep happens.
 _real_sleep = sc.time.sleep
 _sleep_calls = []
 sc.time.sleep = lambda s: _sleep_calls.append(s)
@@ -4161,7 +3989,7 @@ check("run_provisioning_step: only slept for the 2 failed attempts, not a 3rd ti
 
 sc.time.sleep = _real_sleep
 
-# -- Virtual Host Managers (added 2026-09-23) --------------------------------
+# -- Virtual Host Managers ----------------------------------------------
 fake = FakeSSH(responses=[
     ("virtualhostmanager.listVirtualHostManagers", FakeResult(returncode=0, stdout="[]")),
     ("virtualhostmanager.create", FakeResult(returncode=0, stdout="1")),
@@ -4209,7 +4037,7 @@ except SystemExit:
     died = True
 check("ensure_virtual_host_manager_aws: missing credentials/region/zone dies", died)
 
-# -- Virtual Host Managers: libvirt type (added 2026-09-25) ------------------
+# -- Virtual Host Managers: libvirt type --------------------------------
 fake = FakeSSH(responses=[
     ("virtualhostmanager.listVirtualHostManagers", FakeResult(returncode=0, stdout="[]")),
     ("virtualhostmanager.create", FakeResult(returncode=0, stdout="1")),
@@ -4224,9 +4052,7 @@ check("ensure_virtual_host_manager_libvirt: sends the real 'uri' param (bare, no
       "the gatherer module appends that itself)",
       any('"uri": "qemu+ssh://root@nuc6.mydemo.lab/system"' in c for c in cmds))
 check("ensure_virtual_host_manager_libvirt: sends non-empty sasl_username/sasl_password "
-      "placeholders even when unset — confirmed live 2026-09-25 the server's own "
-      "isConfigurationValid() rejects the create call outright if either is missing/empty, "
-      "despite neither being functionally used for a qemu+ssh:// URI",
+      "placeholders even when unset, since the server rejects an empty value on create",
       any('"sasl_username": "n/a"' in c and '"sasl_password": "n/a"' in c for c in cmds))
 
 fake = FakeSSH(responses=[
@@ -4261,7 +4087,7 @@ check("ensure_virtual_host_managers: dispatches 'libvirt' type correctly",
       any("Libvirt" in unwrap(c[1]) for c in fake.calls))
 
 
-# -- Virtual guest provisioning (added 2026-09-25) ---------------------------
+# -- Virtual guest provisioning ----------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "nuc6.mydemo.lab"}]))),
     ("system.provisionVirtualGuest", FakeResult(returncode=0, stdout="1")),
@@ -4274,10 +4100,7 @@ create_cmd = next(c for c in cmds if "system.provisionVirtualGuest" in c)
 check("provision_virtual_guest: resolves host to sid, calls system.provisionVirtualGuest with "
       "the real arg order (hostSid, guestName, kickstartLabel, memMb, vcpus, diskGb)",
       '[42, "vguest1", "sles15sp7-example-ks", 2048, 2, 20]' in unwrap(create_cmd))
-check("provision_virtual_guest: ensures the host carries the Virtualization Host entitlement "
-      "first — reproducible from the lab definition alone, confirmed live 2026-09-26 that nothing "
-      "in this project had ever explicitly requested it even though a real host (nuc6.mydemo.lab) "
-      "already had it",
+check("provision_virtual_guest: ensures the host carries the Virtualization Host entitlement first",
       any("system.addEntitlements" in c and '"virtualization_host"' in unwrap(c) for c in cmds))
 
 fake = FakeSSH(responses=[
@@ -4320,7 +4143,7 @@ except SystemExit:
     died = True
 check("provision_virtual_guests: an entry missing 'name'/'kickstart_profile' dies", died)
 
-# -- SCAP Beta policy-based scanning (system.scap.*), added 2026-09-30 -------
+# -- SCAP Beta policy-based scanning (system.scap.*) ---------------------
 fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(
     returncode=0, stdout=json.dumps([{"id": 5, "name": "SLES15 DataStream",
                                        "dataStreamFileName": "ssg-sle15-ds.xml"}])))])
@@ -4355,14 +4178,14 @@ fake = FakeSSH(responses=[
 ])
 sc.ssh_run = fake
 action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
-                                                     date="2026-10-01T00:00:00")
+                                                     date="2000-01-01T00:00:00")
 check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
 schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
 check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
       "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
       "sol.mydemo.lab" not in unwrap(schedule_cmd))
 check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
-      "2026-10-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
+      "2000-01-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
 
 fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
 sc.ssh_run = fake
@@ -4380,7 +4203,7 @@ fake = FakeSSH(responses=[
 sc.ssh_run = fake
 action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
                                                 tailoring_file_id=3, fetch_remote_resources=True,
-                                                date="2026-10-01T00:00:00")
+                                                date="2000-01-01T00:00:00")
 check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
 custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
 check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
@@ -4397,7 +4220,7 @@ fake = FakeSSH(responses=[
 sc.ssh_run = fake
 sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
                                     "xccdf_org.ssgproject.content_profile_standard",
-                                    date="2026-10-01T00:00:00")
+                                    date="2000-01-01T00:00:00")
 custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
 check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
       "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and
@@ -4415,7 +4238,7 @@ except SystemExit:
     died = True
 check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
 
-# -- SCAP policy creation via the private Web UI REST route, added 2026-09-30 -
+# -- SCAP policy creation via the Web UI REST route -----------------------
 fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="200"))])
 sc.ssh_run = fake
 sc.scap_web_login("host1", "mgrctl exec --", "admin", "s3cr3t'pw")

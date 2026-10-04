@@ -64,8 +64,7 @@ def host_status(host, vm_img_loc):
     redundant loopback SSH hop: libvirt's own internal SSH client then
     prompts to accept a host key for "localhost"/"::1" (from that host's own
     point of view) that nothing has ever pre-accepted, and hangs
-    indefinitely waiting for interactive confirmation — exactly the hang
-    reported live on the real host (2026-08-27), since this script runs
+    indefinitely waiting for interactive confirmation. This script runs
     unattended via cron/systemd timer with nobody present to type "yes".
     Never raises — a query failure is reported per-host so one unreachable
     host doesn't blank the whole snapshot.

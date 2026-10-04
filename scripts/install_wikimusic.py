@@ -7,7 +7,7 @@
 #
 # JSON section: "wikimusic" — configurable keys:
 #   wikimusic_image   : [MANDATORY] a pre-built image reference for WikiMusic. Unlike Colt,
-#                       WikiMusic's own repo has NO Dockerfile at all (confirmed live 2026-09-05) —
+#                       WikiMusic's own repo has NO Dockerfile at all —
 #                       it's built via GNU Guix (channels.scm/manifest.scm) for reproducible
 #                       builds. Build one yourself first, e.g. via Guix's own Docker-image export:
 #                         git clone https://codeberg.org/jjba23/wikimusic.git && cd wikimusic
@@ -23,10 +23,6 @@
 # WikiMusic is database-backed (SQLite, per its own resources/migrations/sqlite directory) rather
 # than git-backed like Colt — the shared manifest's data_path is pointed at where that database
 # file needs to persist.
-#
-# NOT live-tested (no cluster, and no built WikiMusic image, available in this session) — the
-# guix pack invocation above is stated per Guix's own documented docker-export feature, not
-# independently verified against this specific project's manifest.scm.
 
 __version__ = "5fc5f69"
 

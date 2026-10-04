@@ -81,19 +81,13 @@ Run 'setup_lab.py --input-definition [json|yaml]' for the machine-readable schem
 
 class _RunReport:
     """
-    Accumulates per-node / per-cluster / per-addon outcomes during a
-    setup_lab() run so print_summary() can show, at a glance, what worked
-    and what still needs a fix — added because setup_lab.py previously
-    swallowed a failed node/addon with a single [WARN] line mid-run and
-    then just said "LAB setup completed", giving no end-of-run overview.
+    Collects the outcome of each node, cluster and addon during a setup_lab() run, so print_summary() can show what succeeded and what
+    needs a fix. Without it, a failed node or addon appeared only as a warning in the middle of the run.
 
-    Statuses: nodes  -> "created" | "reused" | "existing" | "FAILED"
-              clusters -> "ok" | "FAILED"
-              addons -> "ok" | "FAILED (exit N)"
+    Statuses: nodes are "created", "reused", "existing" or "FAILED". clusters are "ok" or "FAILED". addons are "ok" or "FAILED (exit N)".
 
-    warnings / errors are free-text lines (from the preflight and from
-    non-fatal failures during the run) re-surfaced in the summary so you
-    don't have to scroll back through the whole log to see what to fix.
+    Warnings and errors are free-text lines from the preflight and from non-fatal failures. The summary repeats them, so the log need
+    not be searched for what to fix.
     """
 
     def __init__(self):
@@ -252,27 +246,17 @@ def _merged_env(definition, config, defaults, vm_name):
 
 def validate_addon_configs(definition, json_file, issues_out=None):
     """
-    Run `install_<addon> --validate <json_file>` for every addon referenced
-    anywhere in the lab definition (kclusters[x].addons and nodes[x].addons —
-    see apps.collect_addon_names()), before any VM/cluster work starts.
+    Run `install_<addon> --validate <json_file>` for every addon in the lab definition: kclusters[x].addons and nodes[x].addons,
+    collected by apps.collect_addon_names(). This happens before any VM or cluster work starts.
 
-    Found in code review 2026-09-05: each addon's own Validator (vns/vport/
-    vver/vreq/...) checks were only ever reachable by an operator manually
-    running `install_<addon> --validate <file>` — setup_lab.py never called
-    it, so a bad addon-config value (say, an invalid namespace) surfaced
-    only once that addon actually ran, potentially deep into the pipeline
-    after VMs/clusters were already created. Wired in here as a genuine
-    preflight step instead, mirroring validate_lab_definition()'s own
-    "collect every issue, report once" style — one bad addon's config
-    should not leave a half-deployed lab behind it.
+    Each addon's validators check its configuration values, such as a namespace. Without this step, the checks run only when an operator
+    runs them by hand, and an invalid value surfaces after VMs and clusters already exist. The issues are collected and reported once,
+    as validate_lab_definition() does. One bad addon configuration does not leave a half-deployed lab.
 
-    An addon whose --validate has nothing to check (no _validate() of its
-    own — several addons are like this, see handle_common_args()'s own
-    docstring) always exits 0 here, same as running it by hand would.
+    An addon with nothing to validate exits 0, as it does when run by hand.
 
-    Returns True iff every addon validated clean. If issues_out is given, the
-    raw issue lines are appended to it (setup_lab.py folds them into the
-    end-of-run summary's Errors list).
+    Returns True if every addon validates. Raw issue lines are appended to issues_out when it is given. setup_lab.py adds them to the
+    Errors list of the summary.
     """
     addon_names = apps.collect_addon_names(definition)
     if not addon_names:
@@ -361,18 +345,11 @@ def phase_dns(definition, remote_dns_servers):
 
 def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg, log_prefix=None):
     """
-    One node's full create-VM flow: existing-host check, --keep reusability
-    check, destroy-before-recreate, provision. Extracted 2026-09-21 from
-    phase_create_vms()'s own sequential loop body so BOTH the sequential
-    and parallel paths share exactly one implementation — no behavior
-    drift between them.
+    Create one node's VM: check an existing host, check --keep reusability, destroy the VM if it must be recreated, then provision
+    it. phase_create_vms() runs this sequentially or in parallel, so both paths share one implementation.
 
-    log_prefix, when given, is set as this call's own per-thread log
-    prefix (see lab_creation.set_log_prefix()) for the duration of the
-    call, then cleared — used by the parallel path so concurrent workers'
-    log lines are attributable instead of racing on the shared ambient
-    indentation. The sequential path passes log_prefix=None (the default)
-    and gets EXACTLY the prior behavior, unchanged.
+    log_prefix, when given, is the per-thread log prefix for the duration of the call (see lab_creation.set_log_prefix()). It keeps the
+    output of concurrent workers attributable. The sequential path passes None.
     """
     if log_prefix is not None:
         lc.set_log_prefix(log_prefix)
@@ -387,22 +364,9 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
             return
 
         env = _merged_env(definition, config, defaults, vm_name)
-        # --keep's reusability check must ask whichever backend actually
-        # owns this VM (AWS, Harvester, libvirt...) via
-        # get_backend(for_existing=True) — NOT assume libvirt. Previously
-        # this hardcoded lc.locate_kvm_host()/lc.vm_is_reusable() (both
-        # libvirt-only), so a cloud node's keep-check silently printed a
-        # KVM-flavoured "not running on hypervisor (state: not found)" and
-        # concluded "will recreate" — a message that has nothing to do with
-        # the actual backend. A backend that can't even reach its own API
-        # (e.g. an expired AWS SSO token) must never be treated the same as
-        # "VM doesn't exist" — confirmed live 2026-09-15 this conflation
-        # came within one working AWS credential of destroying a real,
-        # hours-in-the-making production SMLM server (sol.mydemo.lab): the
-        # misleading "will recreate" never actually executed only because
-        # the AWS calls happened to fail too. Treat an unreachable backend
-        # as a hard per-node failure instead — same "continue, don't touch
-        # this node" contract as the provisioning try/except below.
+        # The --keep reusability check asks the backend that owns the VM, through get_backend(for_existing=True). It does not assume
+        # libvirt. A backend that cannot reach its own API is a failure for that node. It is never read as "VM does not exist", because
+        # that could destroy a running VM. The node is skipped, as in the provisioning error handling below.
         keep_reusable = False
         keep_backend_error = None
         if keep:
@@ -448,14 +412,8 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
             lc.error(msg)
             _report.add_error(msg)
 
-        # A single node's boot-wait timing out (check_ssh_conn's own die(),
-        # inside provision_vm()) must not abort the whole multi-node deploy —
-        # reported live 2026-09-01: one slow/failed node ("ERROR: retry
-        # limit ( 100 ) exceeded waiting for X to boot.") killed the entire
-        # run instead of continuing with the rest. Mirrors the destroy_vm()
-        # error handling just above: log and move on to the next node — but
-        # this is a genuine ERROR for that node (the whole point of --keep-
-        # going is that the OTHER nodes still get a chance), not a warning.
+        # A boot-wait timeout on one node is logged as an error for that node, and the run continues with the other nodes.
+        # Like destroy_vm() above, the error handling logs and moves on.
         try:
             provision_vm(definition, config, defaults, vm_name)
             _report.add_node(vm_name, "created")
@@ -476,27 +434,16 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
 
 def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
     """
-    parallel=0 (default): exactly the original sequential behavior, one
-    node at a time, in JSON declaration order — zero change in output or
-    timing from before this option existed.
+    Create the VMs for all nodes.
 
-    parallel=N>0: runs up to N nodes' _create_one_vm() concurrently via a
-    thread pool (these are I/O-bound SSH/subprocess calls, so threads are
-    enough — no need for multiprocessing). Added 2026-09-21, opt-in only,
-    after scoping the real shared-state hazards this requires fixing
-    first: DNS zone-file writes (libs/services.py's _dns_lock) and MAC
-    generation/conflict-resolution (libs/backends.py's _mac_lock) both do
-    a non-atomic read-then-write that two nodes racing concurrently could
-    genuinely corrupt — both are now serialized with a lock, held for the
-    whole critical section, so parallel VM creation is safe regardless of
-    what order threads happen to interleave in. Each worker gets its own
-    log prefix (see _create_one_vm()) so concurrent output stays
-    attributable instead of racing on the shared ambient indentation.
+    parallel=0, the default, creates one node at a time, in the order of the JSON file.
 
-    NOT parallelized here: existing-node/--keep bookkeeping order (each
-    node still resolves this independently, thread-safe either way) and
-    _report's own list.append() calls (safe under the GIL, no lock
-    needed — confirmed, not assumed).
+    parallel=N runs up to N nodes at once, through a thread pool. These are I/O-bound SSH and subprocess calls, so threads are enough. The
+    shared state that the workers touch is protected. DNS zone-file writes use libs/services.py's _dns_lock, and MAC generation and conflict
+    resolution use libs/backends.py's _mac_lock. Each lock is held for the whole critical section. Each worker has its own log prefix (see
+    _create_one_vm()).
+
+    The result list is not locked. list.append is atomic under the GIL, so no lock is needed there.
     """
     lc.log("Creating VMs")
     lc._level += 1
@@ -569,18 +516,8 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
 
 
 def _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg):
-    # NOT clu_cfg.get("addons") — clu_cfg comes from k8s.load_kclu_vars(),
-    # which deliberately keeps only scalar (str/int/float/bool) fields to
-    # mirror bash's own inability to hold an array in a simple shell
-    # variable (see its own docstring). "addons" is a list, so it was
-    # silently dropped there every time, and this function always saw an
-    # empty list — found live-testing install_ds389.py 2026-09-21: a
-    # kclusters.<name>.addons entry (documented in this repo's own
-    # CLAUDE.md as the correct way to configure cluster-level addons) has
-    # never actually installed anything through this path. Every real addon
-    # in solar-system-lab.json sidesteps this by using per-node addons[]
-    # instead (a separate mechanism, phase_vm_addons() below) — that's why
-    # this went unnoticed. Read the raw list straight from the definition.
+    # The cluster addons list is read from the definition, not from clu_cfg. load_kclu_vars() keeps only scalar fields, so a list is
+    # dropped there. Per-node addons use phase_vm_addons() instead.
     addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
     if not addons:
         lc.log("No Kubernetes cluster addons for \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
@@ -663,16 +600,8 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
 
 
 def phase_vm_addons(definition, json_file):
-    # A node whose OWN VM creation failed (phase_create_vms recorded it
-    # "FAILED" in _report) can never have its addons installed either — the
-    # host simply doesn't exist. Found live 2026-09-12: without this check,
-    # every addon on such a node still ran, each SSH-ing into a hostname
-    # with no DNS entry / nothing listening, and each addon script's own
-    # die() message ended up blaming something addon-specific (a wrong SCC
-    # product ID, "could not write spacecmd credentials", …) when the real,
-    # single root cause was simply "this node was never created" — already
-    # reported once in the Errors list from phase_create_vms. Skipping here
-    # avoids the noise and the misleading per-addon diagnostics entirely.
+    # A node whose VM creation failed has no host, so its addons are skipped. Each addon would otherwise fail with a misleading error.
+    # The creation failure is already listed in the Errors section of the summary.
     failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         addons = node_cfg.get("addons", [])

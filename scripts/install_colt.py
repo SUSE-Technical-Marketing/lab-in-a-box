@@ -7,7 +7,7 @@
 #
 # JSON section: "colt" — configurable keys:
 #   colt_image   : [MANDATORY] a pre-built image reference for Colt. Colt's own GitLab repo has a
-#                  real Dockerfile at its root (confirmed live 2026-09-05) but publishes no image
+#                  Dockerfile at its root but publishes no image
 #                  to any registry — build and push one yourself first, e.g.:
 #                    git clone https://gitlab.com/NalaGinrut/colt.git && cd colt
 #                    docker build -t <your-registry>/colt:latest . && docker push <your-registry>/colt:latest
@@ -20,8 +20,6 @@
 # install_wikimusic.py) — a single pod (git-backed content, no external database needed) with an
 # Ingress. See artanis_common.py's own module docstring for why colt_image is mandatory rather
 # than defaulting to a published image.
-#
-# NOT live-tested (no cluster, and no built Colt image, available in this session).
 
 __version__ = "5fc5f69"
 

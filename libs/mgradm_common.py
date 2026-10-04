@@ -1,21 +1,7 @@
 #!/usr/bin/env python3
-# Part of lab-in-a-box — shared mgradm/podman install mechanics used by BOTH
-# scripts/install_uyuni.py (Uyuni) and scripts/install_smlm.py's podman
-# deployment mode (SUSE Multi-Linux Manager). Moved here 2026-09-12 from
-# install_uyuni.py, where these two functions originally lived: install_smlm.py
-# used to do `from install_uyuni import ...` to reuse them, which worked in a
-# git checkout but broke the moment either script was actually deployed —
-# install_automation_node_scripts.sh deliberately strips the .py suffix from
-# every install_<addon> script (so setup_lab.py's addon dispatch and the
-# webui's discovery can look scripts up by their addon name), which makes the
-# deployed file un-importable as a Python module (`from install_uyuni import
-# ...` -> ModuleNotFoundError, confirmed live 2026-09-12 running setup_lab.py
-# for real). Per this project's own established convention (logic used by
-# more than one script belongs in libs/, not duplicated or cross-imported
-# between scripts), the fix is to live here instead — nothing else about
-# install_uyuni.py's own scope/behaviour changes; it still refers only to the
-# Uyuni project, it just now imports these two from a shared, product-neutral
-# library rather than defining them itself.
+# Part of lab-in-a-box. Shared mgradm and podman install mechanics, used by install_uyuni.py (Uyuni) and by the podman deployment
+# mode of install_smlm.py (SUSE Multi-Linux Manager). These functions live in libs/ because install_<addon> scripts are deployed
+# without their .py suffix, so one addon script cannot import another. Logic that more than one script uses belongs in libs/.
 # Author/s: Raul Mahiques
 # License: GPLv3
 import re
@@ -33,96 +19,28 @@ from lab_creation import ssh_run, die  # noqa: E402
 
 def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_interval=5):
     """
-    Run `mgradm install podman ...` while proactively neutralizing a
-    confirmed upstream mgradm/Uyuni-postgres-image race hit live
-    (2026-08-28, disposable VM on nuc6.mydemo.lab, mgradm 5.3.1, podman
-    5.0.3/netavark): `mgradm install podman` creates its "uyuni" podman
-    network with IPv6 enabled unconditionally (even actively deletes and
-    recreates an IPv4-only network to add IPv6 back — not something a
-    caller can opt out of), but the uyuni-db container's auto-generated
-    pg_hba.conf doesn't trust that IPv6 subnet, so uyuni-server's first DB
-    connection attempt fails and mgradm's own ~15s startup wait gives up —
-    aborting the ENTIRE install, not just the container start. Matches
-    (with different specifics) long-standing upstream reports of the same
-    underlying class of problem — e.g. uyuni-project/uyuni#10434, #10464 —
-    confirmed NOT fixed by any available mgradm/postgres-image version at
-    the time of testing (only one of each was available via the configured
-    repo/registry).
+    Run `mgradm install podman` in the background, and make the uyuni-db container's pg_hba.conf accept the server's first
+    connection.
 
-    An earlier version of this workaround waited for `mgradm install` to
-    fail, then patched pg_hba and did a plain `systemctl restart` on the
-    already-created (but empty) uyuni-server container. Confirmed live
-    (2026-08-28) that this is INSUFFICIENT: schema/org/admin bootstrap is
-    performed by `mgradm install` itself, as part of the one command that
-    just died — restarting the container only brings the Tomcat process
-    back up against a completely empty database (confirmed directly on
-    cutoveruyuni2.mydemo.lab: spacecmd login failed with "Invalid
-    credentials", and a direct `spacewalk-sql` query showed zero rows in
-    web_contact and zero tables at all — `\\dt` empty). Worse, `mgradm
-    install` cannot simply be re-run afterwards either: it refuses with
-    "Server is already initialized! Uninstall before attempting new
-    installation or use upgrade command" as soon as its containers/volumes
-    exist, even though nothing inside them was ever actually populated —
-    there is no supported way to resume a `mgradm install` that died
-    mid-bootstrap short of a full `mgradm uninstall` + reinstall.
+    mgradm's network enables IPv6, and the auto-generated pg_hba.conf of the uyuni-db container does not trust that IPv6 subnet.
+    The server's first database connection then fails, and mgradm gives up waiting, which aborts the whole install. Patching
+    pg_hba.conf after the failure is not enough, because mgradm performs the schema, organization and admin bootstrap itself. The
+    function patches the file as soon as uyuni-db accepts connections, before the server's first connection, so the install
+    completes in one command. The rule is a permissive lab-only entry, because the database is not reachable from outside the lab
+    network.
 
-    Fix: run the real `mgradm install` in the background, poll until
-    uyuni-db is actually accepting connections (`pg_isready`), and patch
-    pg_hba (same permissive entry as before — this is a lab-only server
-    behind the automation VM's own network, not internet-facing;
-    broadening trust here is not a materially different exposure than the
-    0.0.0.0:5432->5432/tcp port mapping mgradm itself already publishes)
-    the moment it does — before uyuni-server's first connection attempt,
-    not after. On a lucky/fast run where the race doesn't trigger, this is
-    a harmless no-op patch applied slightly early. Confirmed live to let
-    the ONE install command complete end-to-end (network + DB + schema +
-    org + admin), with no separate recovery/resume step needed.
+    The same timing applies to --health-on-failure=stop. The health-kill policy is relaxed as soon as the systemd drop-in
+    directory appears, while mgradm still waits for the container. Restarting the container is safe at that point, because the
+    bootstrap has not started.
 
-    Also pre-empts the health-kill crash-loop fixed in
-    ensure_server_container_active()/_relax_health_kill_policy(): that fix
-    only runs AFTER `mgradm install` itself finishes, but the same
-    --health-on-failure=stop policy can just as easily hit the container's
-    very first boot, WHILE `mgradm install` is still waiting on it —
-    confirmed live 2026-09-13 (fresh AWS instance, from-scratch SMLM
-    install): the container cycled starting/unhealthy indefinitely and
-    `mgradm install` itself never returned, timing out this function's own
-    900s wait instead of the pg_hba race. Same pattern as the pg_hba fix:
-    poll for the systemd drop-in directory mgradm creates, patch+reload+
-    restart once as soon as it exists, then keep waiting as before. Safe
-    to restart the container here — mgradm is still blocked on its own
-    internal wait for the container to report healthy at this point, so
-    its schema/org/admin bootstrap (the exec-based step a restart would
-    otherwise corrupt, per the history above) hasn't started yet.
+    timeout is 1800 seconds. The install continues after the core bootstrap with optional services, such as attestation and tftpd,
+    and that can take longer than 900 seconds.
 
-    `timeout` was raised from 900s to 1800s on 2026-09-14: once the
-    health-kill crash-loop above no longer aborts the container early,
-    `mgradm install` runs its full, longer sequence (core server bootstrap,
-    THEN a further pass setting up optional additional services —
-    attestation, hub-xmlrpc-api, saline, tftpd) end to end, which can
-    legitimately take longer than 900s in total.
+    A timeout does not always mean the install failed. The outer mgradm install process can exit after the core bootstrap has
+    finished, while it checks an optional image that the subscription is not entitled to. Before treating a timeout as a failure,
+    check `mgradm status` and `systemctl is-active spacewalk.target` on the host.
 
-    A separate, NOT fixed here, real anomaly confirmed the same day: this
-    function's own die() on timeout does not necessarily mean the install
-    actually failed. Live, `mgradm install`'s core bootstrap (DB schema,
-    org, admin user, every real spacewalk.target service) finished and
-    started successfully well inside 900s, but the outer `mgradm install`
-    process then died — with no error, no logged reason, and the wrapper's
-    own `; echo $? > rc_path` never executing — while checking an OPTIONAL
-    image (`proxy-tftpd`) this account's SCC entitlement doesn't cover,
-    even though that optional tftpd service was never enabled
-    (`--tftpd-enable` defaults off). Confirmed live that `podman pull` on
-    that exact image fails fast and cleanly ("requested access to the
-    resource is denied") — mgradm appears to mishandle that failure fatally
-    rather than skipping a disabled service's image, without flushing
-    whatever it was about to log. If this function ever dies with a
-    timeout again, check `mgradm status`/`systemctl is-active
-    spacewalk.target` on the host directly before assuming the install
-    itself failed — it may already be fully functional.
-
-    The database/container names here ("uyuni-db", "uyuni-server") are
-    mgradm's own fixed container names — identical regardless of which
-    product (Uyuni or SMLM) is being installed, since both use the same
-    underlying mgradm/podman tooling; not Uyuni-specific despite the name.
+    The names uyuni-db and uyuni-server are mgradm's fixed container names. They are the same for Uyuni and SMLM.
     """
     log_path = "/tmp/mgradm_install.log"
     rc_path = "/tmp/mgradm_install.rc"
@@ -184,74 +102,20 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
 
 def _relax_health_kill_policy(hostname, service_name="uyuni-server"):
     """
-    mgradm bakes `--health-on-failure=stop` into BOTH uyuni-server's AND
-    uyuni-db's systemd units (confirmed live 2026-09-13 for uyuni-server,
-    2026-09-14 for uyuni-db — same flag, same generated ExecStart shape,
-    just never checked on the DB side until it actually bit) — podman's OWN
-    default for --health-on-failure is "none"; mgradm opts into "stop"
-    deliberately, for both containers. Combined with each image's own tight
-    healthcheck thresholds, this kills the container on any 3 consecutive
-    failed checks, for any reason:
-      - uyuni-server, still legitimately warming up (Tomcat deploys fine
-        every cycle — confirmed via `systemctl status tomcat` inside the
-        container — it just isn't answering HTTP yet) can rack up 3
-        failures before it ever reaches "healthy" in the first place.
-      - uyuni-db, confirmed live 2026-09-14: postgres's own baked-in
-        healthcheck (Interval=10s, Timeout=5s, Retries=3) killed a
-        perfectly healthy, multi-hour-uptime database mid-operation —
-        confirmed via `podman inspect` and the unit's own generated
-        ExecStart both showing --health-on-failure=stop still active —
-        under sustained heavy write load from a long-running reposync (a
-        single query occasionally taking longer than the 5s timeout, 3
-        times in a row, is all it takes). Took the entire application down
-        for over 3 hours with zero automatic recovery (Restart=on-success
-        only retries a CLEAN exit, not this kind of kill) until a human
-        noticed and manually restarted it.
-    Either way, systemd's Restart=on-success (RestartUSec=100ms) then
-    brings the container straight back into the same failure window — an
-    infinite loop for uyuni-server's warm-up case, or just a long
-    unnoticed outage for uyuni-db's case, not the occasional one-off flake
-    ensure_server_container_active was originally written to recover from
-    via a plain restart (systemctl is-active barely ever reports non-
-    "active" because the restart is near-instant, so that retry path
-    never actually fires).
+    Remove the health-kill policy that mgradm sets on uyuni-server and uyuni-db, and raise the container's open-file limit.
 
-    Fix: mgradm's own custom.conf ships (uyuni-server) or CAN be created in
-    (uyuni-db — its own .service.d/ dir already exists with just
-    generated.conf, custom.conf just needs writing) an upgrade-safe
-    PODMAN_EXTRA_ARGS Environment= override point — it's spliced into the
-    `podman run` line right before the image name, so a later
-    --health-on-failure/--health-retries/--health-start-period here
-    overrides mgradm's own earlier ones on the same command line. Verified
-    live for uyuni-server: a container left alone with no health-triggered
-    kill reaches genuine "healthy" reliably ~2-3 minutes after start.
-    custom.conf is a static file — survives both `mgradm upgrade` (which
-    only rewrites generated.conf) and a plain reboot, for either service.
+    mgradm sets --health-on-failure=stop on both containers. With the image's own health thresholds, a container is killed after
+    three failed checks. uyuni-server can fail its checks while it is still starting. uyuni-db can be killed under heavy write load,
+    when one query runs longer than the health timeout. systemd then restarts the container into the same failure window, so the
+    restart does not recover it.
 
-    Also raises the container's own open-file ulimit as high as this host
-    allows, same override point — a real, previously-unresolved outage
-    recurred live 2026-09-22 (solar-system-lab.json, sol.mydemo.lab):
-    Tomcat's default 8192 nofile limit inside the uyuni-server container
-    was fully saturated (8188 open) under real concurrent load
-    (client_registration running against 14 nodes at once), and every
-    further connection failed with "Too many open files" —
-    `catalina.out`'s own repeated "Socket accept failed" traces. A plain
-    `systemctl restart` only papers over this (confirmed live: it doesn't
-    even do that reliably — this exact restart raced with uyuni-db
-    cycling too and left uyuni-server.service failed on a refused DB
-    connection, an unrelated ordering issue on top). Per the user's own
-    explicit instruction, this belongs in the setup process itself, not a
-    manual one-off fix.
+    The fix is a static custom.conf drop-in with a PODMAN_EXTRA_ARGS override. The option is spliced into the podman run command
+    before the image name, so its later --health-on-failure, --health-retries and --health-start-period values override mgradm's
+    own. A static drop-in survives mgradm upgrade and a reboot.
 
-    `--ulimit nofile=unlimited:unlimited` (Docker's own magic string) was
-    the first attempt here — confirmed live it is NOT accepted by this
-    podman version (4.9.5): "ulimit option ... requires name=SOFT:HARD,
-    failed to be parsed: strconv.ParseInt: parsing 'unlimited': invalid
-    syntax" — podman's `--ulimit` needs a real numeric SOFT:HARD pair, no
-    magic string. Uses 1048576 (the real kernel ceiling on this host, from
-    /proc/sys/fs/nr_open — going any higher would need a sysctl change
-    too, outside a single container's own ulimit) for both values instead,
-    the practical "unlimited" a container's own ulimit can actually reach.
+    The same override sets --ulimit nofile. Tomcat's default of 8192 open files saturates under concurrent client registration, so
+    the limit is raised to 1048576, the kernel ceiling on this host. podman does not accept the value "unlimited", so the numeric
+    form is used.
     """
     conf_dir = "/etc/systemd/system/{}.service.d".format(service_name)
     override = ('[Service]\nEnvironment="PODMAN_EXTRA_ARGS=--health-on-failure=none '
@@ -264,29 +128,15 @@ def _relax_health_kill_policy(hostname, service_name="uyuni-server"):
 
 def _raise_in_container_service_fd_limits(hostname):
     """
-    _relax_health_kill_policy()'s own --ulimit override only raises the
-    OUTER podman container's own file-descriptor limit — confirmed live
-    2026-09-22 this is NOT enough on its own: Tomcat's real java process
-    still reported the old 8192 limit (`/proc/<pid>/limits`) even with the
-    outer container ulimit confirmed at 1048576 (`podman exec ... ulimit
-    -n`), because Tomcat's own PACKAGE-SHIPPED systemd unit INSIDE the
-    container (/usr/lib/systemd/system/tomcat.service) bakes in its own
-    explicit LimitNOFILE=8192 — systemd always applies each unit's own
-    resource limits, regardless of whatever the parent process (the
-    container's own PID 1) inherited. salt-api.service has the identical
-    8192 cap for the same reason (real relevance here: salt-api handles
-    every registered client's own check-ins, and this lab's real workload
-    is 14 concurrently-registering nodes) — salt-master.service's own cap
-    (100000) is already generous enough to leave alone.
+    Raise the file-descriptor limit of the services inside the uyuni-server container.
 
-    /etc/systemd/system/ inside the container is NOT a named/persistent
-    volume (only its multi-user.target.wants and sockets.target.wants
-    SUBdirectories are, per mgradm's own generated ExecStart -v list) — a
-    drop-in written here does NOT survive a container restart/recreation,
-    unlike the OUTER host-level drop-in _relax_health_kill_policy writes.
-    This must be re-applied every time the container comes up, which is
-    exactly why this is called from ensure_server_container_active() itself
-    (right after confirming healthy), not a one-off setup step.
+    The --ulimit override of _relax_health_kill_policy() raises only the container's own limit. Tomcat's packaged systemd unit sets
+    LimitNOFILE=8192 itself, and systemd applies a unit's own limit regardless of its parent. salt-api has the same cap. salt-master's
+    own limit is already high enough.
+
+    The drop-in is written under /etc/systemd/system inside the container. That directory is not a persistent volume, so the drop-in
+    is lost when the container is recreated. This function is therefore called from ensure_server_container_active(), after the
+    container is confirmed healthy, and not only once at install.
     """
     override = "[Service]\nLimitNOFILE=1048576\n"
     for unit in ("tomcat.service", "salt-api.service"):
@@ -300,13 +150,9 @@ def _raise_in_container_service_fd_limits(hostname):
         ssh_run(hostname, "podman exec uyuni-server systemctl restart {}".format(unit), check=False)
 
 
-# mgradm's own fixed --publish list for uyuni-server (identical for a Uyuni
-# or an SMLM install — confirmed live from the real generated ExecStart:
-# -p 80:80 -p 443:443 -p 4505:4505 -p 4506:4506 -p 5556:5557 -p 9800:9800
-# -p 9187:9187 -p 9100:9100). netavark merges adjacent single-port
-# publishes into one range rule (4505+4506 -> "4505:4506", 5556+5557
-# already a range), so these are the exact --dport tokens that actually
-# appear in the host's iptables nat table, not the raw port list.
+# mgradm's fixed --publish list for uyuni-server, identical for Uyuni and SMLM: 80, 443, 4505, 4506, 5556 to 5557, 9800, 9187
+# and 9100. netavark merges adjacent ports into ranges, so these are the --dport values that appear in the host's iptables
+# nat table.
 _UYUNI_SERVER_DPORTS = frozenset(("80", "443", "4505:4506", "5556:5557", "9100", "9187", "9800"))
 
 _IPTABLES_DPORT_RE = re.compile(r"--dport (\S+)")
@@ -314,43 +160,19 @@ _IPTABLES_DPORT_RE = re.compile(r"--dport (\S+)")
 
 def _clean_stale_netavark_dnat_rules(hostname, container="uyuni-server"):
     """
-    Real bug found live 2026-09-22 (solar-system-lab.json, sol.mydemo.lab):
-    netavark does not reliably remove a container's own DNAT port-forwarding
-    rules from the host's iptables nat table when that container is
-    removed — including the ExecStartPre `podman rm --ignore --force`
-    mgradm's own systemd unit runs before every restart. Confirmed live:
-    after several restarts of uyuni-server.service (this project's own
-    retry loop below, plus manual troubleshooting that day), the nat
-    table held TWO sets of DNAT rules for the SAME published ports — one
-    for the CURRENT container's real IP, and one STALE set left over from
-    a PREVIOUS instance's now-nonexistent IP. iptables takes the FIRST
-    match in a chain, and the stale rule (added earlier, from the older
-    instance) sat ahead of the correct one — every external connection to
-    the real hostname got silently DNAT'd to a dead IP and refused
-    instantly (a fast, clean "connection refused", not a timeout — the
-    packet really was reaching the host, just being routed nowhere).
-    Every container-internal automation call in this project
-    (`podman exec`/`mgrctl exec`, which never traverses this NAT path at
-    all) kept working fine throughout, masking the problem completely
-    from this project's own automation until an operator tried to reach
-    the web UI directly from outside.
+    Remove stale DNAT rules for the server's published ports.
 
-    `podman network reload <container>` does NOT fix this — confirmed
-    live it only re-adds a correct rule alongside the stale one, never
-    removing it, since network reload only knows about the CURRENTLY-
-    TRACKED container, not whatever already-gone one the orphaned rule
-    still belongs to.
+    netavark does not always remove a container's port-forwarding rules from the host's iptables nat table when the container is
+    removed, including the `podman rm` that mgradm's unit runs before each restart. After several restarts the table can hold rules
+    for the current container's address and for an older address that no longer exists. iptables uses the first match, so the stale
+    rule wins, and connections from outside are refused.
 
-    Fix: read the container's own real current IP, then remove any DNAT
-    rule for one of its own known published ports (_UYUNI_SERVER_DPORTS)
-    whose target ISN'T that IP. Safe because this fixed SMLM/Uyuni port
-    set is never used by anything else on this host. Idempotent/
-    safe-to-call-always: a no-op if every DNAT rule already points at the
-    right IP (the normal case), so this is called unconditionally
-    whenever this project's own code confirms the container healthy,
-    turning what was a silent, host-external-only failure mode into
-    something that self-heals on every deploy/retry instead of
-    accumulating.
+    podman network reload does not fix this. It adds the current rule without removing the stale one.
+
+    The function reads the container's current IP, and removes any DNAT rule for one of the server's published ports
+    (_UYUNI_SERVER_DPORTS) whose target is a different address. Those ports are used only by this server, so removing their rules
+    affects nothing else. A rule that already points at the current address is left alone, so the function is safe to call on every
+    confirmed-healthy check.
     """
     r = ssh_run(hostname,
                 "podman inspect {} --format '{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}'"
@@ -377,37 +199,17 @@ def _clean_stale_netavark_dnat_rules(hostname, container="uyuni-server"):
 
 def ensure_server_container_active(hostname, timeout=600, poll_interval=15, max_restarts=3):
     """
-    Confirm the server container actually reaches podman's own "healthy"
-    state after the post-install reboot, retrying a plain `systemctl
-    restart` if it crashes along the way — die() if it never gets there.
+    Wait until the server container reports healthy after the post-install reboot. A plain `systemctl restart` is used when the
+    container fails along the way. The function dies if the container never becomes healthy.
 
-    Confirmed live (2026-08-28, disposable VM on nuc6.mydemo.lab), TWO
-    distinct failure modes on this reboot, independent of the pg_hba/IPv6
-    race above (that one is specific to the VERY FIRST start, right after
-    `mgradm install`, before postgres has ever accepted a connection at
-    all — these are both on a server that was already known-working moments
-    earlier, restarting after a reboot):
-      1. An immediate crash (systemd's `is-active` never leaves a non-
-         "active" state) — the original code printed "Uyuni available at:
-         ..." unconditionally here with no check at all, a confirmed false
-         success report.
-      2. A DELAYED crash: `is-active` reports "active" almost immediately
-         (podman's own --sdnotify=conmon integration ties that to "the
-         container process is alive", not to the app inside being ready),
-         but 2-3 minutes later the container's own healthcheck hits
-         "Error contacting Tomcat: HTTP 500" while the "rhn" webapp is
-         still deploying, and `--health-on-failure=stop` (set by mgradm
-         itself, not by us) kills the whole container — reproduced 3 times
-         in a row. A single is-active check right after restart, as this
-         function originally did, misses this entirely — it must keep
-         watching for podman's health to actually settle on "healthy", not
-         just for the service to have (re)started.
-    Both were recoverable with a plain `systemctl restart` — this just
-    needed to keep watching long enough to know one was needed.
+    Two failure modes occur after a reboot:
+      1. An immediate crash. systemd's is-active check never leaves a non-active state.
+      2. A delayed crash. is-active reports "active" almost at once, because podman's --sdnotify=conmon ties that state to the
+         container process being alive. Two to three minutes later the healthcheck fails while the rhn web application is still
+         deploying, and the health-kill policy stops the container.
 
-    "uyuni-server.service"/"uyuni-server" are mgradm's own fixed
-    service/container names, identical for a Uyuni or an SMLM install —
-    not Uyuni-specific despite the name.
+    The function therefore watches podman's health state, not only the service state. The names uyuni-server (service and container)
+    are mgradm's fixed names for Uyuni and SMLM alike.
     """
     _relax_health_kill_policy(hostname)
     _relax_health_kill_policy(hostname, "uyuni-db")

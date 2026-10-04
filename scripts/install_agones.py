@@ -16,9 +16,8 @@
 # deliberately does NOT attempt to taint/label any node; Agones' own chart falls back to running on
 # ordinary nodes when no dedicated pool exists (its own documented behavior, not a workaround).
 #
-# NOT live-tested (no dedicated game-server workload available in this session) — chart repo/name
-# and the ordinary-node fallback behavior verified against agones.dev's own install docs and the
-# chart's own README, 2026-09-05.
+# Chart repo and name, and the fallback behavior on ordinary nodes, follow agones.dev's install docs
+# and the chart's README.
 
 __version__ = "5fc5f69"
 

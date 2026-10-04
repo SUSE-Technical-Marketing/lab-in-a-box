@@ -105,9 +105,8 @@ check("run_validate: unreadable file -> exit code 1, not a crash", rc == 1)
 check("run_validate: reports the read failure as an [ERROR]", "[ERROR]" in buf.getvalue())
 
 # ── run_validate: format auto-detection (JSON vs YAML) ──────────────────────
-# Used to hardcode json.loads() directly, bypassing primary's JSON/YAML
-# auto-detection — a .yaml lab file would always be reported as unreadable/
-# unparseable even when valid. Covers the fix (primary.try_load_definition).
+# Validates through primary's JSON/YAML auto-detection (primary.try_load_definition). A .yaml
+# lab file must be accepted when it is valid.
 try:
     import yaml as _yaml_probe  # noqa: F401
     _has_yaml = True
@@ -237,9 +236,8 @@ check("handle_common_args: returns None (no exit) for an addon-specific argument
 
 
 # ── require_k8s_name(): runtime guard for values interpolated unquoted into
-# remote kubectl/shell commands (found in code review 2026-09-05 across
-# several install_<addon>.py scripts — Validator.vns()'s own format check
-# is never actually invoked by the real deploy pipeline, so this runs at
+# remote kubectl/shell commands. Validator.vns()'s format check is not invoked by the
+# deploy pipeline, so this runs at
 # the point of use instead) ──────────────────────────────────────────────
 check("require_k8s_name: a valid lowercase-alphanumeric-plus-hyphens value passes through unchanged",
       ac.require_k8s_name({"ns": "my-ns1"}, "ns", "default") == "my-ns1")

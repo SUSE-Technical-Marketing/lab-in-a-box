@@ -33,8 +33,7 @@ check("opensuse-leap 15.6 resolves to the Leap 15 profile", isinstance(p, khp.Op
 check("Leap 15 profile keeps the full package list (kubevirt-virtctl etc. included)",
       "kubevirt-virtctl" in p.packages and not p.unmapped_packages)
 check("Leap 15 profile installs fuse3 (guestmount/guestunmount's own fusermount3 "
-      "dependency — confirmed live 2026-08-30 missing on a Minimal-VM Cloud host, "
-      "see the packages list's own comment)",
+      "dependency; it is missing on a Minimal-VM Cloud host, see the packages list's own comment)",
       "fuse3" in p.packages)
 
 p = _profile_for({"ID": "opensuse-leap", "VERSION_ID": "16.0"})
@@ -92,12 +91,8 @@ def _run(rc_by_service, device_conn="", conn_ipv4=None):
     return fake_run
 
 
-# NOTE: this container's `python3` is 3.6 (unittest.mock's call.args/.kwargs
-# properties were only added in 3.8) — index call_args_list entries as plain
-# tuples (call[0] = positional-args tuple, call[0][0] = first positional
-# arg) rather than the newer .args/.kwargs attribute API, so this test
-# actually runs the checks below instead of silently comparing against
-# mock's own attribute-chaining sentinel objects.
+# The test container runs Python 3.6, where unittest.mock's call.args and call.kwargs do not exist. The call_args_list entries are
+# therefore indexed as tuples: call[0] is the positional tuple and call[0][0] is the first positional argument.
 p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
 with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0})) as m:
     p.configure_bridge("eth0", "br0")
@@ -108,12 +103,7 @@ with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0}
           not any(c[:3] == ["nmcli", "con", "down"] for c in calls))
 
 # ── configure_bridge(): migrating an existing static-IP connection ─────────
-# Regression test for a real bug found live 2026-08-29 on a real SLES 16
-# host: without this, the bridge is created with no IP of its own (nmcli
-# defaults to auto/DHCP) and the NIC's original connection is left active,
-# so the new bridge-slave connection never actually attaches — `nmcli con
-# up` reports success but the bridge stays stuck "activating (waiting for
-# ports)" forever, a completely non-functional bridge that looks fine.
+# The NIC's existing connection is migrated to the bridge. Otherwise the bridge gets no IP, and the slave connection never attaches.
 p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
 with mock.patch.object(subprocess, "run", side_effect=_run(
         {"NetworkManager": 0}, device_conn="lab-static",
@@ -133,7 +123,7 @@ with mock.patch.object(subprocess, "run", side_effect=_run(
     check("configure_bridge deactivates the old connection before adding the slave connection",
           down_idx < slave_idx)
 
-# A device with no pre-existing connection (nothing configured on it yet, or
+# A device with no existing connection (nothing configured on it yet, or
 # nmcli couldn't determine one) must not try to migrate a nonexistent config
 # or deactivate anything by name.
 p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
@@ -141,9 +131,9 @@ with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0}
     p.configure_bridge("eth0", "br0")
     calls = [c[0][0] for c in m.call_args_list]
     bridge_add = next(c for c in calls if c[:5] == ["nmcli", "con", "add", "type", "bridge"])
-    check("configure_bridge with no pre-existing connection creates a plain (DHCP-default) bridge",
+    check("configure_bridge with no existing connection creates a plain (DHCP-default) bridge",
           "ipv4.method" not in bridge_add)
-    check("configure_bridge with no pre-existing connection never calls 'nmcli con down'",
+    check("configure_bridge with no existing connection never calls 'nmcli con down'",
           not any(c[:3] == ["nmcli", "con", "down"] for c in calls))
 
 with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 1, "wickedd": 0})) as m, \
@@ -164,12 +154,8 @@ with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 1,
     check("configure_bridge raises when neither NetworkManager nor wicked is live", raised)
 
 
-# ── _SuseRegisteredProfile.register_repos(): regcode is required ───────────
-# Regression test for a real bug found live 2026-08-29: SUSEConnect fails
-# outright ("Please provide Registration Code", HTTP 401) against a
-# genuinely unregistered SLES host, but register_repos() previously only
-# ever added modules, silently assuming the base product was already
-# registered by some other means.
+# ── _SuseRegisteredProfile.register_repos(): the registration code is required ──
+# The base product is registered with the registration code before any module is added. Modules alone fail on an unregistered host.
 p = khp.SLES15Profile({"ID": "sles", "VERSION_ID": "15.6"})
 raised = False
 with mock.patch.object(subprocess, "run") as m:

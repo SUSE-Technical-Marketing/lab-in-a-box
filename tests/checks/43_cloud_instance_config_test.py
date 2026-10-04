@@ -2,8 +2,7 @@
 # Unit tests for libs/backends.py's _parse_sku_table() (the shared config-string parser behind
 # every cloud backend's *_INSTANCE_TYPES/*_SERVER_TYPES/*_PLANS override) and a real regression
 # check that LibvirtBackend.create_vm() accepts the new cloud_instance_type kwarg without
-# crashing — added 2026-09-10 per explicit user request that no cloud provider's sizing catalog
-# be a hardcoded ceiling. Per-backend override behavior (the config key actually replacing the
+# crashing. No cloud provider's sizing catalog is a hardcoded ceiling. Per-backend override behavior (the config key actually replacing the
 # table, cloud_instance_type actually bypassing auto-pick) is covered in each backend's own
 # 3X_*_backend_test.py instead of duplicated here. Run from
 # 43_cloud_instance_config.sh, in its own container — see tests/run_tests.sh.
@@ -77,9 +76,9 @@ check("_parse_sku_table() dies clearly when every entry is blank (no valid entri
 
 # ── Real regression check: LibvirtBackend.create_vm() must accept cloud_instance_type ──
 # setup_vm.py now unconditionally passes cloud_instance_type=... to every backend's create_vm(),
-# including libvirt (the default backend, absorbed and ignored) — a real near-miss caught before
-# it shipped: LibvirtBackend.create_vm() originally had NO **kwargs catch-all at all, so this
-# would have raised "unexpected keyword argument" for every single libvirt-backed VM.
+# including libvirt (the default backend, absorbed and ignored).
+# LibvirtBackend.create_vm() must accept **kwargs, or every libvirt-backed VM would raise
+# "unexpected keyword argument".
 import inspect  # noqa: E402
 sig = inspect.signature(backends.LibvirtBackend.create_vm)
 check("LibvirtBackend.create_vm() accepts cloud_instance_type as a real named parameter "

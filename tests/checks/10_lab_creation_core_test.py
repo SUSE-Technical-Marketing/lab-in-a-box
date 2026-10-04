@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # Mocked-subprocess unit tests for libs/lab_creation.py —
-# no live KVM host is available in this project. Covers: ssh_run/ssh_output
-# command shape, the multi-KVM-host resolve/locate/select logic (new in the
-# python port — bash only ever had one hypervisor), load_vm_vars merge
+# SSH and subprocess calls are mocked. Covers: ssh_run/ssh_output
+# command shape, the multi-KVM-host resolve/locate/select logic, load_vm_vars merge
 # order, and validate_lab_definition's preflight checks (with subprocess.run
 # mocked so this runs in a container with no virsh/ping/jq installed). Run
 # from 10_lab_creation_core.sh, in its own container — see tests/run_tests.sh.
@@ -99,9 +98,7 @@ fake = FakeRun(responses=[("cat /etc/hostname", FakeCompleted(stdout="  myhost\n
 lc.subprocess.run = fake
 check("ssh_output: strips stdout", lc.ssh_output("host1", "cat /etc/hostname") == "myhost")
 
-# ssh_run's optional `user` override (default stays "root") — added for
-# Harvester's default "rancher" admin user, whose root SSH is disabled by
-# Harvester's own default hardening.
+# ssh_run accepts a `user` override, which defaults to root. Harvester disables root SSH, so its nodes use another user.
 fake = FakeRun()
 lc.subprocess.run = fake
 lc.ssh_run("host1", "echo hi")
@@ -112,10 +109,8 @@ lc.subprocess.run = fake
 lc.ssh_run("host1", "echo hi", user="rancher")
 check("ssh_run: user= overrides the SSH login name", "rancher@host1" in fake.calls[0][0])
 
-# ── purge_known_host: shared fix for a real, repeatedly-found bug ───────────
-# Extracted 2026-09-05 after fixing the same "REMOTE HOST IDENTIFICATION HAS
-# CHANGED" bug in 3 separate places (a reused lab IP's stale host key made
-# ssh_run() refuse a genuinely-answering, freshly-created VM outright).
+# ── purge_known_host: stale host keys for reused addresses ──────────────────
+# A stale host key for a reused address makes ssh_run() refuse a new VM. The test checks that purge_known_host() removes it.
 fake = FakeRun()
 lc.subprocess.run = fake
 lc.purge_known_host("host1", "192.168.88.150")
@@ -331,12 +326,9 @@ targets.check_ssh_only_reachability = lambda node, timeout=5: True
 
 def _lab_def(data):
     """
-    Writes `data` to a temp .json file and wraps it in a primary.LabDefinition
-    pointed at that file — the same shape validate_lab_definition() actually
-    receives in production (via primary.load_definition()). validate_lab_definition()
-    no longer takes a separate path argument at all: it reads
-    definition.source_path for its banner and for delegating to each addon's
-    own `--validate` subprocess, so the fixture needs to carry that itself.
+    Write `data` to a temporary .json file and wrap the file in a primary.LabDefinition. The fixture has the same shape that
+    validate_lab_definition() receives in production, from primary.load_definition(). The validator reads definition.source_path for
+    its banner and for the per-addon --validate subprocesses, so the fixture carries that path.
     """
     f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     json.dump(data, f)
@@ -426,13 +418,8 @@ existing_reachable = _lab_def({
 check("validate_lab_definition: reachable 'existing' node passes",
       lc.validate_lab_definition(existing_reachable, single_host_cfg, "/iso", "/lab") is True)
 
-# ── backend-aware ISO_IMAGE check ────────────────────────────────────────────
-# Regression test for a real bug found live 2026-08-29: the ISO_IMAGE-exists-
-# on-the-hypervisor check ran for every node regardless of backend, even
-# though it's a purely libvirt concern — a Harvester-backed node (which
-# resolves its image by name inside the cluster, never touching any KVM
-# hypervisor's filesystem) failed preflight over an image that was never
-# supposed to exist there at all.
+# ── backend-aware ISO_IMAGE check ───────────────────────────────────────────
+# The ISO_IMAGE existence check applies only to libvirt. Other backends resolve images in their own environment.
 img_check_missing = FakeRun(responses=[
     ("echo ok", FakeCompleted(returncode=0, stdout="ok")),
     ("test -f", FakeCompleted(returncode=1)),
@@ -463,11 +450,8 @@ check("validate_lab_definition: common.backend=harvester (no per-node override) 
       lc.validate_lab_definition(harvester_via_common, single_host_cfg, "/iso", "/lab") is True)
 
 
-# ── a cloud-backend node's myip is deliberately empty — not a missing-field error ──
-# Added 2026-09-09 alongside create_vm()'s own real-IP return contract (see TODO): a cloud
-# node's real IP is only known once the provider assigns it at create time, so myip is left
-# empty in the JSON by design, not a mistake. libvirt/Harvester nodes are unaffected — they still
-# require myip exactly as before (the "baseline" tests above already cover that).
+# ── a cloud-backend node's myip may be empty ────────────────────────────────
+# A cloud node's IP is known only after the provider assigns it, so myip is left empty for it. libvirt and Harvester nodes still require myip.
 lc.subprocess.run = img_check_ok
 cloud_no_myip = _lab_def({
     "common": dict(base_common),
@@ -542,14 +526,8 @@ check("validate_lab_definition: cloud_account cloudtype vs. an explicit disagree
 primary.try_load_cloud_account = _orig_try_acct
 
 
-# ── common.ISO_IMAGE only required when a node lacks its own override ───────
-# Regression test for a real bug reported live 2026-09-01: a lab where every
-# node pins its own ISO_IMAGE never needs a common default at all, but
-# validate_lab_definition() rejected it outright. config_method="virt_customize"
-# on every node (same trick the harvester tests above use) keeps this test
-# scoped to the ISO_IMAGE-required logic — it skips the separate ignition/
-# combustion-template-existence checks that "" (the default config_method)
-# would otherwise also trigger.
+# ── common.ISO_IMAGE is required only when a node lacks its own override ────
+# A lab whose nodes all set their own ISO_IMAGE needs no common default. virt_customize is used on every node, so the test covers only the ISO_IMAGE rule.
 common_no_iso = dict(base_common)
 common_no_iso["ISO_IMAGE"] = ""
 # "echo ok" -> SSH reachability check for the image-exists-on-hypervisor
@@ -579,12 +557,8 @@ check("validate_lab_definition: empty common.ISO_IMAGE still fails when a node h
 
 
 # ── config_method="" (Ignition+Combustion) warns for a non-Micro image ──────
-# Regression test for a real bug reported live 2026-09-01: a node with
-# config_method="" (the default) and a plain SLES/Leap "kvm-and-xen" image
-# (not SLE Micro) never gets its static IP configured, since Ignition/
-# Combustion is silently a no-op on a guest with no ignition support built
-# in. This should warn (not error — a bad heuristic shouldn't block a
-# deploy), and only for the true Ignition-default case.
+# A node with config_method "" on a non-Micro image gets a warning, not an error, because the heuristic can be wrong.
+# The warning applies only to the true Ignition default.
 import io as _io
 from contextlib import redirect_stdout as _redirect_stdout
 
@@ -598,7 +572,7 @@ buf = _io.StringIO()
 with _redirect_stdout(buf):
     # Not asserting ok is True here: config_method="" (Ignition) also
     # requires real ignition/combustion template files to exist at
-    # lab_setup_path, a separate, pre-existing check unrelated to this
+    # lab_setup_path, a separate, existing check unrelated to this
     # fix — "/lab" (this test's fixture path) never has them, so this
     # particular lab genuinely fails preflight for that reason regardless.
     # What's under test is specifically that the mismatch gets flagged as
@@ -619,13 +593,8 @@ with _redirect_stdout(buf):
 check("validate_lab_definition: config_method='' + a genuine SLE Micro image warns about nothing",
       "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
 
-# config_method="cloud-init" on the same "kvm-and-xen" Minimal-VM image is
-# ALSO unsupported (that image family uses JeOS Firstboot, not cloud-init —
-# see _IMAGE_CONFIG_METHOD_SUPPORT's sources) — confirmed live 2026-09-02
-# against two real such images on nuc6 (neither has a cloud-init binary or
-# systemd unit), and the actual root cause of an unreachable VM reported the
-# same day. Unlike the config_method="" case above, switching to cloud-init
-# does NOT fix this image family — only virt_customize does.
+# cloud-init is not supported on the kvm-and-xen Minimal-VM image family, which uses JeOS Firstboot. The test expects a warning
+# for cloud-init on that image. Only virt_customize works for this family.
 lab_cloudinit_non_micro = _lab_def({
     "common": dict(base_common, **{
         "ISO_IMAGE": "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2",
@@ -655,13 +624,8 @@ with _redirect_stdout(buf):
 check("validate_lab_definition: an unrecognized ISO_IMAGE is never warned about",
       "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
 
-# Regression test for a real bug reported live 2026-09-03: the Debian
-# "nocloud variant" pattern was a bare "nocloud" substring match, which
-# false-positived on Alibaba's own "aliyun_2_1903_x64_20G_nocloud_alibase_
-# *.qcow2" naming ("nocloud" means something else in Alibaba's own build
-# pipeline there) — the image genuinely has cloud-init (confirmed live via
-# virt-cat), but the old pattern would have wrongly warned it's
-# virt_customize-only. Fixed by requiring "debian" alongside "nocloud".
+# The Debian nocloud pattern requires "debian" as well as "nocloud". Alibaba's nocloud images use the same word for another
+# purpose and do ship cloud-init, so "nocloud" alone must not match them.
 lab_cloudinit_aliyun = _lab_def({
     "common": dict(base_common, **{
         "ISO_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
@@ -693,10 +657,7 @@ check("validate_lab_definition: Debian's own nocloud variant (no cloud-init) sti
 
 
 # ── config_method enum validation ────────────────────────────────────────────
-# Regression test for a real bug reported live 2026-09-02: a lab.json with
-# config_method="virt-customize" (a "virt_customize" typo, hyphen instead of
-# underscore) matched none of create_vm()'s config_method branches, so it
-# silently never called virt-install at all — no VM, no error, anywhere.
+# A config_method that matches no create_vm() branch, such as virt-customize with a hyphen, must be reported.
 lab_bad_config_method = _lab_def({
     "common": base_common,
     "nodes": {"vm1": {"myip": "192.168.1.90", "config_method": "virt-customize"}},
@@ -706,12 +667,7 @@ check("validate_lab_definition: an invalid config_method value fails preflight",
 
 
 # ── installer-ISO vs. config_method mismatch ─────────────────────────────────
-# Regression test for a real bug reported live 2026-09-02: an ISO_IMAGE
-# ending in ".iso" (a genuine installer medium, e.g. an Ubuntu live-server
-# ISO) used with any config_method other than "install_iso" makes
-# copy_vm_image() `cp` + `qemu-img resize` it as if it were an existing
-# qcow2 disk — which fails hard ("Image is not in qcow2 format") regardless
-# of distro. This must be an ERROR (a guaranteed crash, not a heuristic).
+# An ISO_IMAGE ending in .iso used with any config_method other than install_iso fails in copy_vm_image(). It is an error.
 lab_iso_wrong_method = _lab_def({
     "common": base_common,
     "nodes": {"vm1": {
@@ -743,15 +699,8 @@ check("validate_lab_definition: an installer ISO with config_method=install_iso 
 
 
 # ── an explicit per-node config_method="" overrides a non-empty common ──────
-# Regression test for a real bug reported live 2026-09-02: a node's explicit
-# "config_method": "" (CLAUDE.md's own documented way to select Ignition+
-# Combustion) was indistinguishable from "key omitted" once run through
-# _empty(), so it silently fell back to inheriting a non-empty
-# common.config_method instead of actually applying "" — unlike the real
-# runtime path (load_vm_vars(), a plain per-node-always-overwrites merge),
-# which already got this right. Verified here via the image/method
-# compatibility warning: an SL-Micro node explicitly opting back into
-# Ignition+Combustion under a cloud-init-default common must NOT warn.
+# The compatibility check treats a per-node empty config_method as an explicit value. An SL Micro node that selects Ignition
+# under a cloud-init common does not warn.
 lab_explicit_empty_override = _lab_def({
     "common": dict(base_common, **{
         "ISO_IMAGE": "SL-Micro.x86_64-6.2-Default-qcow-GM.qcow2",
@@ -897,14 +846,8 @@ check("prepare_cloud_init defaults network_renderer to NetworkManager when the l
       "(SLE Micro/SLES/Leap's own default — unchanged behavior for every existing lab)",
       "renderer: NetworkManager" in rendered)
 
-# Real bug found live 2026-09-13: a real SLES 15 SP7 BYOS AMI on AWS booted
-# cleanly (cloud-init succeeded, sshd started, keys injected correctly —
-# confirmed via the instance's own console output) but was still completely
-# unreachable via SSH from outside — security group and network ACL both
-# confirmed correct via real AWS calls. Root-caused to SLES's own firewalld,
-# enabled by default on this AMI and silently dropping inbound traffic.
-# template_user-data's non-Ubuntu branch now disables it unconditionally
-# (harmless no-op on any image without firewalld, e.g. Debian/Amazon Linux).
+# The non-Ubuntu branch of template_user-data disables firewalld. SLES images enable it by default, and it drops inbound SSH.
+# The command is a no-op on images without firewalld.
 rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data disables firewalld via runcmd "
       "(real bug: a SLES BYOS AMI's default-enabled firewalld silently blocked inbound SSH "
@@ -916,16 +859,8 @@ check("prepare_cloud_init: an Ubuntu image's user-data does NOT get the firewall
       "(it has its own netplan runcmd instead, from the existing ubuntu branch)",
       "firewalld" not in rendered and "netplan apply" in rendered)
 
-# Second real bug found live 2026-09-13, same troubleshooting session: once
-# firewalld/security-group/routing were all fixed and the instance became
-# reachable, `mgradm install` itself still failed — "failed to compute
-# server FQDN: hostname: Name or service not known". Confirmed directly on
-# the real instance: `hostname -f` failed because /etc/hosts had no
-# self-referential entry for its own FQDN, and AWS's own VPC DNS resolver
-# has no knowledge of this lab's custom on-prem "mydemo.lab" zone. Fixed by
-# adding a guarded /etc/hosts append to BOTH branches' runcmd (idempotent,
-# same grep -qF-before-append convention already used elsewhere in this
-# project, e.g. add_to_dns()).
+# A guarded /etc/hosts entry for the FQDN is appended in the runcmd of both branches. Without it, mgradm cannot compute the server
+# FQDN, because the VPC DNS does not know the lab's own zone. The append is idempotent.
 rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data adds a self-referential /etc/hosts "
       "entry for its own FQDN (real bug: mgradm's own hostname -f failed without one, since "
@@ -939,21 +874,9 @@ check("prepare_cloud_init: an Ubuntu image's user-data gets the same self-refere
       'grep -qF "vm1.mydemo.lab" /etc/hosts || echo "127.0.0.1 vm1.mydemo.lab vm1" >> /etc/hosts'
       in rendered and "netplan apply" in rendered)
 
-# Third real bug found live 2026-09-14, same lab: a KVM SLES15 SP7 "Cloud"
-# image's own bundled cloud-init (an old python3.6-era build) crashes with
-# "TypeError: string indices must be integers" inside its own opensuse.py
-# distro module's route-writing code, and — reproduced directly via `cloud-
-# init devel net-convert`, WITHOUT that crash even — silently drops the
-# gateway route from /etc/sysconfig/network/routes regardless. The guest
-# ends up with an IP but no default route at all, so it (and anything
-# depending on it, like registering against a cloud-hosted SMLM server)
-# can't reach anything outside its own subnet. Not something this
-# project's own template's YAML shape can work around (confirmed the route
-# data IS present internally, correctly, right up to the point cloud-init
-# fails to actually write it) — fixed defensively in the non-Ubuntu
-# runcmd, independent of cloud-init's own (buggy) network-config renderer:
-# write wicked's routes file directly, and also apply the route immediately
-# at runtime, both idempotent/non-fatal, same style as the firewalld fix.
+# The SLES cloud-init build can drop the default gateway route when it writes the network configuration. The runcmd of the
+# non-Ubuntu branch therefore writes the wicked routes file directly, and applies the route at runtime. Both steps are idempotent
+# and non-fatal.
 rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data writes a default route into wicked's "
       "own routes file directly (real bug: this SLES image's bundled cloud-init silently drops "
@@ -998,12 +921,8 @@ check("prepare_cloud_init: a real static myip still gets the static template, un
       "dhcp4: false" in _render_network_config(dict(_base_vars))
       and "addresses:" in _render_network_config(dict(_base_vars)))
 
-# Real bug found live-testing AWSBackend, 2026-09-09 (see TODO), caught BEFORE it reached a real
-# cloud instance: a cloud backend leaves BOTH myip and mymac empty (see backends.py's
-# _cloud_no_mac()) — the original DHCP template matches its NIC by `macaddress: "${mymac}"`,
-# which renders an empty match when mymac is also empty and likely configures no interface at
-# all. The USB-delivery lab-host VM (myip empty, mymac real) must keep getting the ORIGINAL
-# mac-matched template unchanged — only "both empty" switches to the new name-glob template.
+# A cloud backend leaves both myip and mymac empty. The mac-matched DHCP template would then render an empty match, so the
+# name-glob template is used only when both are empty. The USB lab-host VM has a mymac and keeps the mac-matched template.
 cloud_vars = dict(_base_vars)
 cloud_vars["myip"] = ""
 cloud_vars["mymac"] = ""
@@ -1019,14 +938,8 @@ check("prepare_cloud_init: empty myip with a real mymac (the USB-delivery lab-ho
       "case) still gets the original macaddress-matched DHCP template, unaffected",
       "dhcp4: true" in rendered and 'macaddress: "52:54:00:aa:bb:cc"' in rendered)
 
-# Regression test for a real bug reported live 2026-09-02: setup_vm.py (the
-# only real caller) never puts "_vm_name" in the variables dict it passes —
-# it only ever has vm_name as a separate local — so template_meta-data's
-# "${_vm_name}" rendered empty for every cloud-init node's instance-id/
-# local-hostname. _base_vars above sets "_vm_name" explicitly, which would
-# have hidden this regression forever; this check omits it deliberately, to
-# exercise prepare_cloud_init()'s own caller contract instead of the test
-# fixture's.
+# setup_vm.py does not put _vm_name in the variables it passes to prepare_cloud_init(). This test omits _vm_name on purpose,
+# so the caller contract is tested, not the fixture's own _vm_name.
 vars_without_vm_name = dict(_base_vars)
 del vars_without_vm_name["_vm_name"]
 with tempfile.TemporaryDirectory() as tmp:
@@ -1042,13 +955,8 @@ check("prepare_cloud_init: instance-id/local-hostname are populated even when th
       "instance-id: vm1.mydemo.lab" in meta_data and "local-hostname: vm1.mydemo.lab" in meta_data)
 
 
-# ── check_ssh_only_reachability: must use 3.6-compatible subprocess.run() ───
-# Found in code review 2026-09-05: used capture_output=True, text=True --
-# Python 3.7+-only kwargs. This project's containerized test suite (and
-# even the real automation VM's own bare python3) runs Python 3.6, where
-# subprocess.run() rejects those two kwargs outright with a TypeError. Not
-# currently reachable from any bare-python3 entry point today, but a
-# landmine for a future one.
+# ── check_ssh_only_reachability: Python 3.6 subprocess arguments ─────────────
+# subprocess.run() is called with stdout=PIPE, stderr=PIPE and universal_newlines=True. The test suite runs on Python 3.6.
 def _py36_strict_run(args, **kwargs):
     if "capture_output" in kwargs or "text" in kwargs:
         raise TypeError("run() got an unexpected keyword argument (mimics Python 3.6)")
@@ -1067,14 +975,8 @@ check("check_ssh_only_reachability: still returns the correct True/False result 
       "once past that", result is True)
 
 
-# ── ensure_iso_install_tree: real bug found live 2026-09-17 ─────────────────
-# virt-install's --location with a bare hypervisor-local path fails with
-# "Cannot access install tree on remote connection" whenever virt-install
-# itself runs on a different host than the hypervisor (this project's own
-# default architecture) — it inspects the path on ITS OWN local filesystem,
-# never over the remote libvirt connection. Fixed by loop-mounting the ISO
-# ON the hypervisor and serving it over HTTP directly from there instead —
-# see the function's own docstring for the full story.
+# ── ensure_iso_install_tree ────────────────────────────────────────────────
+# A bare path given to --location fails when virt-install runs on another host. The ISO is mounted on the hypervisor and served over HTTP instead.
 fake = FakeRun(responses=[
     ("mountpoint -q", FakeCompleted(returncode=1)),   # not yet mounted
     ("systemctl is-active install-iso-server.service", FakeCompleted(returncode=1)),  # not yet running
@@ -1125,19 +1027,9 @@ except SystemExit:
 check("ensure_iso_install_tree: a real mount failure dies with a clear error naming the ISO/host", died)
 
 
-# ── prepare_virt_customize: /etc/hostname written directly ──────────────────
-# Real bug found live 2026-09-23 (solar-system-lab.json, venus.mydemo.lab,
-# SLES 16): libguestfs's own --hostname action writes the legacy SUSE
-# /etc/HOSTNAME (uppercase) on this image, not the modern systemd
-# /etc/hostname (lowercase) SLES 16 actually reads — confirmed live:
-# /etc/HOSTNAME had the correct value, /etc/hostname was a 0-byte file
-# dated to the base image's own build time, completely untouched. systemd
-# then reported "Static hostname: (unset)" and fell back to a wrong
-# transient hostname derived via reverse DNS (a separate, also-real DNS bug
-# — see 18_live_bugfixes_test.py's own DNSService.add_to_dns PTR test).
-# Fixed by writing /etc/hostname directly via --run-command, unconditionally
-# alongside --hostname (not instead of it), so it works regardless of which
-# per-distro assumption libguestfs's own --hostname gets wrong.
+# ── prepare_virt_customize: /etc/hostname is written directly ─────────────────
+# SLES 16 reads /etc/hostname, but libguestfs --hostname writes the legacy /etc/HOSTNAME. /etc/hostname is therefore written
+# directly with --run-command, in addition to --hostname.
 fake = FakeRun()
 lc.subprocess.run = fake
 with tempfile.TemporaryDirectory() as _tmp:
@@ -1155,7 +1047,7 @@ _vc_script = _vc_kwargs.get("input") or ""
 if isinstance(_vc_script, bytes):
     _vc_script = _vc_script.decode()
 check("prepare_virt_customize: the shipped hypervisor script is valid Python "
-      "(a real syntax bug here was caught this way live 2026-09-23)",
+      "(catches syntax errors in the generated script)",
       __import__("ast").parse(_vc_script) is not None if _vc_script else False)
 check("prepare_virt_customize: writes /etc/hostname directly via --run-command, not relying "
       "solely on --hostname (which libguestfs gets wrong for this image)",

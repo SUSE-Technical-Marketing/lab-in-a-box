@@ -54,9 +54,7 @@ from lab_creation import (  # noqa: E402
     yaml_scalar as _yaml_scalar,
 )
 
-# Real Harvester release-asset naming, confirmed via github.com/harvester/
-# harvester's own releases page — one ISO plus 3 separate boot files per
-# version, all under the same releases.rancher.com path.
+# Release assets for a Harvester version: one ISO and three boot files, all under releases.rancher.com.
 _RELEASE_BASE = "https://releases.rancher.com/harvester"
 _ASSETS = ("amd64.iso", "vmlinuz-amd64", "initrd-amd64", "rootfs-amd64.squashfs")
 
@@ -78,11 +76,7 @@ def _fetch_release_assets(version, dest_dir):
             die("failed to download {}: {}".format(url, e))
 
 
-# _yaml_scalar (used below) is lab_creation.yaml_scalar, imported above —
-# moved there 2026-09-05 after finding the identical unescaped-YAML-value
-# bug in lab_creation.prepare_install_iso()'s Ubuntu autoinstall
-# cloud-config, so both places share one implementation instead of two
-# copies of the same fix.
+# _yaml_scalar is lab_creation.yaml_scalar. The Harvester config and the install-ISO cloud-config use the same escaping.
 
 
 def _build_system_settings_block(cluster_cfg):
@@ -191,12 +185,8 @@ def _render_node_files(cluster_cfg, node, http_base, web_root):
         "harvester_system_settings_block": _build_system_settings_block(cluster_cfg),
         "harvester_os_extra_lines": _build_os_extra_lines(cluster_cfg),
         "harvester_install_extra_lines": _build_install_extra_lines(cluster_cfg, node),
-        # Required by Harvester itself for static IP, not merely
-        # recommended: confirmed live 2026-08-30, the installer's own
-        # config-validation step refuses to proceed at all ("Invalid
-        # configuration: DNS servers are required for static IP address")
-        # without this — dies below if the operator forgot it, rather than
-        # rendering a config that fails partway through a real install.
+        # Harvester requires DNS servers for a static IP. The installer refuses to proceed without them, so the function stops here
+        # rather than rendering a config that would fail during the install.
         "harvester_dns_nameservers_block": "\n".join(
             "  - {}".format(d) for d in (cluster_cfg.get("dns_nameservers") or
                                           die("cluster config has no 'dns_nameservers' — required by "
@@ -227,55 +217,25 @@ def _render_node_files(cluster_cfg, node, http_base, web_root):
 
 def _create_netboot_vm(node, cluster_cfg, config):
     """
-    Define and start a VM with an empty disk (boot.order=1) and a network
-    device (boot.order=2) — disk before network, so the first (empty-disk)
-    boot falls through to PXE and every boot after install uses the
-    freshly-installed disk instead. This is what makes the ISO-based
-    install path's reboot-loop workaround (install.poweroff + virsh
-    undefine/redefine) unnecessary here: no persistent kernel-boot override
-    is ever set on the domain.
+    Define and start a VM with an empty disk (boot.order=1) and a network device (boot.order=2). The disk comes first, so the
+    empty disk falls through to PXE, and later boots use the installed disk. The ISO-based install path needs no kernel-boot
+    override for this, because the domain never gets one.
 
-    Both boot.order values are required, not just the disk's: confirmed
-    live 2026-08-30 that giving the disk alone a boot.order (with `--boot
-    uefi,hd,network`'s device-order tokens left as-is) produces a domain
-    with NO usable network boot entry at all ("No bootable option or
-    device was found") — once any device specifies libvirt's per-device
-    boot.order, it takes over from the global <os><boot dev=.../> list
-    entirely, silently dropping the "hd,network" tokens on the floor. The
-    `--boot` flag below is now just "uefi" (firmware selection only); the
-    actual disk-before-network precedence comes entirely from the two
-    boot.order values.
+    Both boot.order values are needed. Once one device has a boot.order, libvirt uses per-device order and ignores the global
+    device list in --boot. The --boot flag here selects only the firmware, uefi.
 
-    Explicit non-secure-boot OVMF loader/nvram paths, not just "uefi":
-    confirmed live 2026-08-30 that virt-install's plain `--boot uefi`
-    shorthand auto-selected the SECURE BOOT OVMF variant for os-variant
-    "generic" on this host — the domain came up with secure-boot enabled,
-    which silently blocks loading ipxe.efi at all ("Access Denied": it
-    isn't signed with a certificate enrolled in this VM's Secure Boot DB).
-    harvester/ipxe-examples' own libvirt guide sidesteps this by pointing
-    at the plain (non "-ms-") OVMF files directly, which this mirrors.
+    The OVMF loader and NVRAM paths are set explicitly, to the non-Secure-Boot files. The plain --boot uefi shorthand picks the
+    Secure Boot variant on this host, which blocks loading ipxe.efi, because that file is not signed for the VM's Secure Boot
+    database.
     """
-    # cluster_cfg's own "hypervisor_*" keys take priority over
-    # lab_creation.cfg's REMOTE_HOST/VIRT_SRV/VM_IMG_LOC: a Harvester
-    # cluster is reasonably built on a different hypervisor than whatever
-    # host that shared config currently points at for "normal" lab VMs
-    # (confirmed a real, not hypothetical, concern live — this project's own
-    # automation VM had REMOTE_HOST pointed at an unrelated host during
-    # this feature's live test).
+    # The hypervisor_* keys in cluster_cfg take priority over REMOTE_HOST, VIRT_SRV and VM_IMG_LOC in lab_creation.cfg. A Harvester
+    # cluster can be built on a different hypervisor from the one that the shared config points at for ordinary lab VMs.
     remote_host = cluster_cfg.get("hypervisor_host") or config.get("REMOTE_HOST", "")
     virt_srv = cluster_cfg.get("hypervisor_virt_srv") or config.get("VIRT_SRV", "qemu:///system")
     vm_img_loc = cluster_cfg.get("vm_img_loc") or config.get("VM_IMG_LOC", "/var/lib/libvirt/images")
 
-    # Same known_hosts purge setup_lab.py/destroy_lab.py already do for every
-    # normal lab VM, applied here too: this project's lab IPs get reused
-    # across many disposable test VMs over time, so a stale host key from
-    # whatever PREVIOUSLY held this IP would otherwise make ssh_run() refuse
-    # to connect ("REMOTE HOST IDENTIFICATION HAS CHANGED") — confirmed live
-    # 2026-09-04, the first time anything in this script actually SSHed into
-    # a freshly-created node (_fetch_harvester_kubeconfig() below): the node
-    # itself was up and sshd was genuinely answering with a real host key,
-    # StrictHostKeyChecking=accept-new still refused it outright because an
-    # unrelated older VM's key for the same IP was already on file.
+    # Stale host keys are purged here, as in setup_lab.py. A reused lab IP can have a host key for another VM on file, and then
+    # StrictHostKeyChecking=accept-new refuses a connection to a node whose sshd is answering correctly.
     purge_known_host(node["ip"], node["name"])
 
     args = [
@@ -300,32 +260,14 @@ def _create_netboot_vm(node, cluster_cfg, config):
 
 def _fetch_harvester_kubeconfig(cluster_cfg, create_node):
     """
-    Fetch a real kubeconfig from the 'create' node once the cluster is
-    Active, so _apply_post_install_settings() below can reach it via
-    kubectl — mirrors libs/backends.py's HarvesterBackend, which also
-    expects a local kubeconfig file (HARVESTER_KUBECONFIG) rather than
-    reaching the cluster any other way.
+    Fetch the kubeconfig from the 'create' node once the cluster is Active, so that _apply_post_install_settings() can reach the
+    cluster through kubectl. Like HarvesterBackend, this uses a local kubeconfig file, HARVESTER_KUBECONFIG.
 
-    Harvester's default admin user is "rancher", not root — root SSH is
-    disabled by Harvester's own default hardening (confirmed live
-    2026-08-30 during HarvesterBackend's own live test: "PermitRootLogin
-    no, AllowGroups admin — root isn't in that group"). The kubeconfig
-    itself is the standard RKE2 path Harvester's underlying Kubernetes
-    distribution always writes — but "rancher" (though it has NOPASSWD:ALL
-    sudo — confirmed live 2026-09-04) can't read that root-owned 0600 file
-    directly; a first live-test attempt without `sudo` here got a plain
-    "Permission denied", not an SSH failure.
+    Harvester disables root SSH by default. The connection uses the "rancher" user, which has passwordless sudo. The kubeconfig is
+    root-owned with mode 0600, so it is read with sudo.
 
-    LIVE-TESTED 2026-09-04 against a real single-node cluster
-    (harvtest1.mydemo.lab, nuc6): the fetched kubeconfig's server: line was
-    genuinely https://127.0.0.1:6443 as assumed, the rewritten VIP:6443
-    address was genuinely reachable, and `kubectl get nodes` against it
-    came back Ready. Also surfaced a real, previously-latent gap this was
-    the first code path to ever trigger: _create_netboot_vm() never purged
-    stale known_hosts entries the way setup_lab.py/destroy_lab.py already
-    do for every normal lab VM — fixed there (see its own comment) once a
-    reused lab IP's old host key made ssh_run() refuse this connection
-    outright even though sshd was genuinely up and answering correctly.
+    The server address in the kubeconfig is 127.0.0.1. The function rewrites it to the cluster VIP, which the automation VM can
+    reach.
     """
     kubeconfig_text = ssh_run(
         create_node["ip"], "sudo cat /etc/rancher/rke2/rke2.yaml", user="rancher", capture=True).stdout
@@ -382,14 +324,9 @@ def main():
     cluster_cfg["_templ_addons_loc"] = defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
 
-    # Harvester's release assets are multi-GB (the ISO alone is ~7-8GB) —
-    # confirmed live 2026-08-30 that the default LAB_SETUP_PATH location can
-    # sit on a disk far too small for that (this project's own automation
-    # VM had well under 5GB free there). "web_root"/"http_base" let a
-    # deployment point this at wherever it actually keeps large source
-    # images and serves them over HTTP instead (e.g. the same tree
-    # ISO_LOC-based installs already use) — both default to today's
-    # LAB_SETUP_PATH-based behavior when omitted.
+    # Harvester release assets are several GB, and the default LAB_SETUP_PATH may not have room for them. web_root and http_base
+    # let a deployment serve large images from another location, such as the tree that ISO_LOC installs use. Both default to the
+    # LAB_SETUP_PATH behaviour when omitted.
     web_root = Path(cluster_cfg["web_root"]) if cluster_cfg.get("web_root") else \
         Path(lab_setup_path) / "harvester" / cluster_cfg["harvester_version"]
 
@@ -424,30 +361,15 @@ def main():
         "nodes": definition_nodes,
         "pxe": {
             "pxe_mode": "ipxe-uefi",
-            # NOT the same as hypervisor_bridge above: this is the
-            # interface PXEService's dnsmasq binds to on THIS automation
-            # VM (where it actually runs), not the hypervisor's own bridge
-            # name for the VM's network device — confirmed live 2026-08-30
-            # these are genuinely different values whenever the automation
-            # VM is itself a nested VM (its own interface, e.g. "eth1", is
-            # not the hypervisor's bridge name, e.g. "br0", even though
-            # both sit on the same L2 segment). No safe universal default;
-            # must be set explicitly to this automation VM's own real
-            # interface (check with `ip -o link show` on it).
+            # This is the interface that PXEService's dnsmasq binds to on the automation VM. It is not the hypervisor's bridge name
+            # (hypervisor_bridge), because a nested automation VM has its own interface name. Set it to the automation VM's own
+            # interface, as shown by `ip -o link show`.
             "pxe_bridge": cluster_cfg.get("pxe_bridge") or die(
                 "cluster config has no 'pxe_bridge' — set it to this automation VM's own "
                 "network interface name (see `ip -o link show`), not the hypervisor's bridge name"),
-            # "proxy" default, matching PXEService's own existing stance
-            # (its module docstring already calls this "the recommended
-            # default for 'don't take over DHCP'"): this project's lab
-            # bridges are commonly bridged straight onto the real physical
-            # LAN (confirmed live 2026-08-30 on nuc6 — br0 has the host's
-            # own eth0 enslaved to it), so a "full" dnsmasq would broadcast
-            # real IP leases to every device on that shared network, not
-            # just the netbooting test VM. Proxy mode only answers PXE-
-            # tagged requests and leaves real IP leasing to whatever real
-            # DHCP server already serves that LAN. Override to "full" only
-            # for a genuinely isolated bridge with no other DHCP server.
+            # The default mode is proxy, as in PXEService. Lab bridges are often bridged to the physical LAN, and a full dnsmasq would
+            # hand out leases to every device there. Proxy mode answers only PXE requests. Set "full" only for an isolated bridge with
+            # no other DHCP server.
             "pxe_dhcp_mode": cluster_cfg.get("dhcp_mode", "proxy"),
             "pxe_dhcp_range_start": cluster_cfg.get("dhcp_range_start"),
             "pxe_dhcp_range_end": cluster_cfg.get("dhcp_range_end"),

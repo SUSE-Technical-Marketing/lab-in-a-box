@@ -1,7 +1,6 @@
 #!/bin/bash
-# Regression tests for bugs found via live-host testing of the
-# python_migration cutover on disposable VMs (nuc6.mydemo.lab, 2026-08-28)
-# — mocked-SSH/subprocess here so they're covered without needing real
+# Regression tests for live-host bugs found during the python_migration cutover.
+# Mocked-SSH/subprocess here so they're covered without needing real
 # infrastructure going forward. Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit

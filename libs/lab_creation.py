@@ -44,20 +44,9 @@ _RESET  = "\033[0m"
 
 _level = 0  # current indentation depth (mirrors $_lvl in bash)
 
-# setup_lab.py's parallel VM-creation mode (2026-09-21) runs multiple nodes'
-# whole provisioning flow on separate threads, all calling into log() via
-# deeply-nested code (provision_vm, destroy_vm, DNS registration, ...) that
-# was never written to pass an explicit level= through — it all relies on
-# this ambient module-level _level. Under real concurrency, "_level += 1" /
-# "_level -= 1" (scattered across ~20 call sites in this file and the
-# scripts that drive it) is a non-atomic shared-state race: not just
-# cosmetic interleaving, the indentation depth itself can end up
-# permanently wrong for the rest of the run. Rather than rewrite every
-# nested call site to thread an explicit level through (invasive, easy to
-# miss one), a parallel worker sets a per-thread prefix instead — when set,
-# it REPLACES the shared-_level-based indentation entirely for log() calls
-# on that thread, sidestepping the race without touching any of those ~20
-# sites or any nested caller.
+# Log indentation uses a module-level level counter. Parallel VM creation runs several nodes on threads, and a shared
+# counter updated from them races. A worker thread therefore sets a per-thread prefix, which log() uses in place of the
+# shared level for that thread.
 _thread_local = threading.local()
 
 
@@ -144,20 +133,13 @@ def _empty(value):
 
 
 def yaml_scalar(value):
-    """Render a Python value as a YAML scalar for hand-built YAML config
-    blocks — bool/int/float unquoted, everything else double-quoted.
-    Deliberately simple (flat scalars only, no nested structures) — same
-    "operator pre-configures it, we don't own the semantics" stance as
-    HARVESTER_NETWORK/Multus in libs/backends.py.
+    """
+    Render a Python value as a YAML scalar for hand-built YAML configuration blocks. Booleans, ints and floats are unquoted.
+    Everything else is double-quoted.
 
-    A string value's own backslash/quote/newline characters are escaped
-    per YAML's double-quoted-scalar rules — confirmed live 2026-09-05
-    (first in scripts/setup_harvester_cluster.py, moved here 2026-09-05
-    after finding the identical bug in prepare_install_iso()'s Ubuntu
-    autoinstall cloud-config below) that without this, a value containing
-    so much as an embedded quote silently corrupts the rendered YAML, and
-    one with an embedded colon+newline can inject entirely new, unrelated
-    top-level keys into the document.
+    Only flat scalars are supported. A string's backslash, quote and newline characters are escaped with YAML's double-quoted
+    rules. Without escaping, an embedded quote corrupts the rendered YAML, and an embedded colon with a newline can add unrelated
+    top-level keys.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -189,61 +171,25 @@ def resolve_install_type(install_type, iso_image):
     return itype
 
 
-# Vendor-documented (or live-confirmed) provisioning-method support per image
-# family, matched against ISO_IMAGE by filename — used only to warn, never to
-# block: an image matching nothing below is left alone, since this is a
-# best-effort heuristic, not a guarantee (same convention as
-# resolve_install_type() above).
+# Known provisioning-method support per image family, matched against ISO_IMAGE by filename. It is used only to warn, never
+# to block. An image that matches nothing is left alone, because this is a heuristic, as resolve_install_type() is.
 #
-# Sources:
-#   - SLES Minimal VM variants — https://documentation.suse.com/smart/virtualization-cloud/html/minimal-vm/index.html:
-#     the plain "kvm-and-xen" variant (this project's own ISO_LOC images,
-#     e.g. "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2") uses JeOS
-#     Firstboot — not cloud-init and not Ignition. Only the separate "for
-#     OpenStack" variant ships cloud-init, which is why this pattern
-#     requires "kvm-and-xen" specifically rather than matching any
-#     "Minimal-VM" filename. Confirmed live 2026-09-02 via virt-ls/virt-cat
-#     against two real such images on nuc6: neither has a cloud-init binary
-#     or systemd unit. openSUSE Leap ships an identically-named
-#     "openSUSE-Leap-15.x-Minimal-VM.x86_64-kvm-and-xen.qcow2" image from the
-#     same build pipeline, so the same pattern (not distro-specific) covers
-#     it too rather than needing a separate Leap entry.
-#   - SLE Micro (5.x/6.x) Ignition+Combustion — https://documentation.suse.com/sle-micro/5.2/html/SLE-Micro-all/cha-images-combustion.html
-#   - RHEL/CentOS/CentOS Stream/Rocky Linux/AlmaLinux 8, 9, 10 "GenericCloud"
-#     images ship cloud-init pre-installed and enabled —
-#     https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/configuring_and_managing_cloud-init_for_rhel_9/introduction-to-cloud-init_cloud-content ,
-#     https://wiki.almalinux.org/cloud/Generic-cloud.html ,
-#     https://docs.rockylinux.org/10/guides/virtualization/cloud-init/01_fundamentals/
-#     (a plain/minimal ISO install of any of these does NOT have cloud-init
-#     by default — this heuristic assumes the pre-built qcow2/kvm image this
-#     project actually deploys via config_method=cloud-init, matching how
-#     ISO_IMAGE is used everywhere else in this project).
-#   - CentOS/RHEL 7: no positive vendor confirmation either way for
-#     cloud-init; this project's own CLAUDE.md already recommends
-#     virt_customize for it, so it's scoped that narrowly here too.
-#   - CentOS/RHEL 6: EOL November 2020; upstream cloud-init packaging for
-#     el6 was dropped around 2019 — https://forum.proxmox.com/threads/cloud-init-build-on-centos-6.55832/
-#   - Debian 10+ official cloud images — https://cloud.debian.org/images/cloud/:
-#     the "generic" variant ships cloud-init; the "nocloud" variant
-#     deliberately does NOT run cloud-init at all (boots straight to a root
-#     prompt), so it's matched separately, before the general Debian rule.
-#     That pattern requires "debian" alongside "nocloud" (not just "nocloud"
-#     alone) — confirmed live 2026-09-03 that a bare "nocloud" substring
-#     match false-positived on an unrelated image, Alibaba's own
-#     "aliyun_2_1903_x64_20G_nocloud_alibase_*.qcow2" naming (its "nocloud"
-#     means something else in Alibaba's own build pipeline — the image
-#     genuinely has cloud-init, confirmed via virt-cat on the real file).
-#   - Fedora Cloud Base images (28+) ship cloud-init —
-#     https://fedoramagazine.org/setting-up-a-vm-on-fedora-server-using-cloud-images-and-virt-install-version-3/
-#   - Ubuntu server/cloud images have shipped cloud-init since 18.04 LTS (and
-#     informally earlier) — https://help.ubuntu.com/community/CloudInit
-#   - Alibaba Cloud Linux (Aliyun Linux) 2/3 "alibase" images ship cloud-init
-#     — confirmed live 2026-09-03 via virt-cat against a real
-#     aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2.
+# Families:
+#   - SLES Minimal VM, kvm-and-xen variant: JeOS Firstboot, not cloud-init or Ignition. The OpenStack variant ships cloud-init,
+#     so the pattern requires kvm-and-xen. openSUSE Leap's Minimal-VM kvm-and-xen image is covered by the same pattern.
+#   - SLE Micro 5.x and 6.x: Ignition and Combustion.
+#   - RHEL, CentOS, CentOS Stream, Rocky and AlmaLinux 8, 9 and 10 GenericCloud images: cloud-init, pre-installed and enabled.
+#     The heuristic assumes the pre-built qcow2 image that config_method=cloud-init deploys. A plain ISO install has no cloud-init.
+#   - CentOS and RHEL 7: no cloud-init confirmation either way. virt_customize is the method used for these.
+#   - CentOS and RHEL 6: end of life, and cloud-init packages for el6 are no longer built.
+#   - Debian 10 and later cloud images: the generic variant ships cloud-init. The nocloud variant does not run it, so it is
+#     matched first. The pattern requires "debian" together with "nocloud", because Alibaba's own nocloud images do ship cloud-init.
+#   - Fedora Cloud Base 28 and later: cloud-init.
+#   - Ubuntu server and cloud images, 18.04 LTS and later: cloud-init.
+#   - Alibaba Cloud Linux 2 and 3 alibase images: cloud-init.
 #
-# "virt_customize" edits the qcow2 filesystem directly (no in-guest agent
-# required), so it works against essentially any image — included in every
-# entry below and never itself a reason to warn.
+# virt_customize edits the qcow2 filesystem directly and needs no agent in the guest, so it works on almost any image. It is
+# included in every entry below and never causes a warning by itself.
 _IMAGE_CONFIG_METHOD_SUPPORT = (
     (r"el6|rhel-?6|centos-?6", "RHEL/CentOS 6 (EOL — cloud-init not packaged upstream)", {"virt_customize"}),
     (r"el7|rhel-?7|centos-?7", "RHEL/CentOS 7", {"virt_customize"}),
@@ -279,55 +225,22 @@ def _supported_config_methods(iso_image):
 def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_node=None,
                             vm_img_loc=None, issues_out=None):
     """
-    Preflight-validate an already-loaded lab definition. Mirrors
-    validate_lab_definition (bash), generalized to resolve a KVM host per
-    node (new in the python port — bash only ever had one hypervisor).
+    Preflight-validate an already loaded lab definition. Prints a full report of errors and warnings, and returns True when
+    there are no errors. Warnings never block.
 
-    Call before setup_lab.py / setup_vm.py begins work. Prints a full issue
-    report (errors + warnings) and returns True iff there were no errors —
-    mirrors the bash function's 0/1 return code (warnings never block).
+    Call it before setup_lab.py or setup_vm.py starts work. A KVM host is resolved for each node, as creation would do.
 
     Args:
-        definition     : the lab definition, already loaded by the caller
-                          (primary.load_definition()) — a LabDefinition (see
-                          primary.py), so it already knows its own source
-                          path (definition.source_path), used below for the
-                          preflight banner and for delegating to each
-                          addon's own `install_<addon> --validate <path>`
-                          subprocess (a separate process, which necessarily
-                          re-reads the file itself — that's unrelated to,
-                          and not fixed by, this function not re-reading it
-                          in-process). No separate path parameter needed:
-                          this function validates definition's CONTENT and
-                          never re-reads or re-parses the file itself (the
-                          bash version re-read it here since it had no
-                          in-memory representation to reuse; the python
-                          port doesn't need to repeat that I/O, or even
-                          accept the path twice over).
-        config         : lab_creation.cfg dict (REMOTE_HOST, VIRT_SRV, KVM_HOSTS, …) —
-                          used to resolve_kvm_host() each node, same resolution
-                          that will place it when actually created.
-        iso_loc         : source image directory on the hypervisor (ISO_LOC) —
-                          identical path on every KVM host, by design.
-        lab_setup_path  : ignition/combustion/cloud-init/install_iso template tree
-                          on the automation VM (LAB_SETUP_PATH).
-        target_node     : optional single VM hostname to restrict per-node/per-
-                          kcluster checks to (mirrors the optional 2nd bash arg).
-        vm_img_loc      : passed through to resolve_kvm_host()'s select_kvm_host()
-                          resource probing when KVM_HOSTS has more than one host.
+        definition     : the lab definition, loaded by the caller with primary.load_definition(). It carries source_path, which
+                         the preflight banner shows and which the per-addon --validate subprocesses read.
+        config         : lab_creation.cfg as a dict (REMOTE_HOST, VIRT_SRV, KVM_HOSTS and so on). Used to resolve each node's host.
+        iso_loc        : source image directory on the hypervisor (ISO_LOC). The path is the same on every KVM host.
+        lab_setup_path : template tree on the automation VM (LAB_SETUP_PATH) for ignition, combustion, cloud-init and install_iso.
+        target_node    : optional single VM hostname. Limits the per-node and per-kcluster checks to that node.
+        vm_img_loc     : passed to select_kvm_host() when KVM_HOSTS lists more than one host, for resource probing.
 
-    NOTE: the bash version also computes a `_known_addons` list (via `command -v
-    install_rancher` + a directory listing, falling back to `compgen -c`) that
-    is assigned but never read anywhere in the function — verified with grep,
-    dropped here as dead code with no behavioural effect.
-
-    NOTE: the bash version iterates nodes/kclusters via `while read <<< "$var"`
-    (a here-string), which runs the loop body once with an empty value even
-    when $var is empty — bash:117 lacked the `[[ -z ... ]] && continue` guard
-    the other two here-string loops in this function already had, so a lab
-    with an empty "nodes" object would get a spurious "nodes.: 'myip' is
-    required" error. Fixed in both bash (added the guard) and here (a plain
-    Python loop over an empty list simply doesn't iterate).
+    The function validates the definition's contents and does not re-read the file. Empty collections are skipped, so an empty
+    nodes object is not reported as an error.
     """
     issues = []
     counts = {"errors": 0, "warnings": 0}
@@ -436,12 +349,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         mymac = _jq_or(node_cfg.get("mymac"))
         kcluster = _jq_or(node_cfg.get("kcluster"))
 
-        # A cloud-backend node's real IP is only known once the provider assigns it at create
-        # time — myip is deliberately left empty for one in the JSON (see README), not a missing-
-        # field mistake. Added 2026-09-09 alongside create_vm()'s own real-IP return contract —
-        # see TODO. Every other backend (libvirt/Harvester) keeps requiring it exactly as before.
-        # cloud_account: validate the referenced account file, and let its
-        # cloudtype stand in for the `backend` field (which becomes optional).
+        # A cloud-backend node's real IP is assigned by the provider at create time. myip is left empty for such a node in the
+        # JSON, which is valid. Every other backend requires it.
+        # cloud_account: validate the referenced account file. Its cloudtype replaces the backend field, which becomes optional.
         cloud_account = _jq_or(node_cfg.get("cloud_account")) or _jq_or(common.get("cloud_account"))
         account_cloudtype = None
         if not _empty(cloud_account):
@@ -488,28 +398,15 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             err("nodes.{}: backend '{}' is invalid — must be one of: {}".format(
                 node, node_backend, ", ".join(sorted(BACKENDS))))
 
-        # A per-node "config_method": "" is a meaningful, explicit override
-        # (bash/CLAUDE.md's own convention: empty string IS the value that
-        # selects Ignition+Combustion) — it must win over a non-empty
-        # common.config_method, not be treated as "unset" and fall through
-        # to it. _empty() can't make that distinction (both "absent" and
-        # "explicitly empty" look identical after it), so this checks key
-        # presence directly instead — matching load_vm_vars()'s own plain
-        # per-node-always-overwrites merge (the actual runtime behavior).
-        # Confirmed live 2026-09-02: without this, a node explicitly opting
-        # back into Ignition+Combustion under a cloud-init-default `common`
-        # silently kept inheriting "cloud-init" for every check below.
+        # A per-node config_method set to "" is an explicit value that selects Ignition and Combustion, so it overrides a
+        # non-empty common value. Key presence is checked, because an empty value and an absent key must be told apart.
         if "config_method" in node_cfg:
             eff_config_method = _jq_or(node_cfg.get("config_method"))
         else:
             eff_config_method = _jq_or(common.get("config_method"))
 
-        # Mirrors scripts/lab_schema's config_method enum. An unrecognized
-        # value (e.g. a "virt_customize" typo'd as "virt-customize") isn't
-        # rejected by create_vm() either — none of its config_method
-        # branches match, so it silently skips virt-install entirely and
-        # never defines the VM at all, with no error anywhere. Confirmed
-        # live 2026-09-02 against a real lab.json with exactly this typo.
+        # config_method must be one of the values in scripts/lab_schema's enum. An unknown value, such as virt-customize typed
+        # with a hyphen, matches no branch in create_vm(), so the VM is never defined. There is no error for that case.
         if not _empty(eff_config_method) and eff_config_method not in (
                 "cloud-init", "virt_customize", "install_iso"):
             err("nodes.{}: config_method '{}' is invalid — must be one of: "
@@ -519,17 +416,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         node_iso = _jq_or(node_cfg.get("ISO_IMAGE"))
         eff_iso = node_iso if not _empty(node_iso) else iso
 
-        # An ISO_IMAGE ending in ".iso" is a genuine installer medium, not a
-        # pre-built bootable disk — every config_method except "install_iso"
-        # treats ISO_IMAGE as an existing disk to `cp` + `qemu-img resize`
-        # (copy_vm_image()), which fails hard on real ISO9660 content
-        # regardless of distro: reported live 2026-09-02 as "qemu-img: ...
-        # Image is not in qcow2 format" for an Ubuntu live-server .iso used
-        # with the inherited config_method="cloud-init" default. This is a
-        # deterministic crash, not a heuristic, so it's an error rather than
-        # a warning — and it takes priority over (suppresses) the softer
-        # image/method compatibility warning below, which would otherwise
-        # also fire and just add noise on top of the real problem.
+        # An ISO_IMAGE that ends in .iso is an installer medium, not a bootable disk. Every config_method except install_iso copies
+        # ISO_IMAGE and resizes it with qemu-img, which fails on ISO9660 content. This is an error. It replaces the softer
+        # image-compatibility warning below, which would only repeat it.
         iso_is_installer_medium = not _empty(eff_iso) and str(eff_iso).lower().endswith(".iso")
         if iso_is_installer_medium and (eff_config_method or "") != "install_iso":
             err("nodes.{}: ISO_IMAGE '{}' is an installer ISO but config_method is '{}' — "
@@ -729,12 +618,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     from targets import is_existing_node as _is_existing_node
 
     def _uses_libvirt(node):
-        # ISO_IMAGE existence only means anything against a libvirt
-        # hypervisor's own ISO_LOC — non-libvirt backends (e.g. Harvester,
-        # any cloud) resolve images by name in their own environment instead
-        # and never touch this path at all. Confirmed live (2026-08-29):
-        # without this, a Harvester-backed node failed preflight over an
-        # ISO_IMAGE that was never supposed to exist on any KVM hypervisor.
+        # The ISO_IMAGE existence check applies only to libvirt backends, which use the hypervisor's ISO_LOC. Other backends
+        # resolve images by name in their own environment, so the check is skipped for them.
         if _account_cloudtype_for(node):
             return False  # a cloud_account always means a cloud backend
         node_backend = _jq_or((nodes.get(node) or {}).get("backend")) or _jq_or(common.get("backend"))
@@ -757,8 +642,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # ── 6b. Hypervisor: VM_DSK must not be smaller than the source image ──────
     # `qemu-img resize` (run at copy time by every non-install_iso config_method)
     # fails outright if asked to shrink an image below its own virtual size —
-    # reported live as "qemu-img: Use the --shrink option to perform a shrink
-    # operation." / a hard provisioning error for a node with a too-small VM_DSK.
+    # qemu-img reports "Use the --shrink option to perform a shrink operation." as a hard
+    # provisioning error for a node with a too-small VM_DSK.
     # Rather than let that surface mid-run, detect it here: bump the node's
     # VM_DSK up to the image's real virtual size (in memory only — the on-disk
     # lab file is untouched) and record a warning so the summary shows it.
@@ -898,18 +783,16 @@ _SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
 
 def ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="root"):
     """
-    Run a shell command on a remote host via SSH (root by default).
+    Run a shell command on a remote host over SSH, as root by default.
 
     Args:
-        hostname   : Target host (IP or FQDN).
-        cmd        : Shell command string to execute remotely.
-        check      : Raise RuntimeError on non-zero exit code.
-        input_text : Text to send to the remote command's stdin.
-        capture    : If True, capture stdout+stderr instead of streaming.
-        user       : Remote SSH user — override when the target doesn't
-                     allow root login (e.g. Harvester's default "rancher"
-                     user; root SSH is disabled by Harvester's own default
-                     hardening, confirmed live 2026-08-30).
+        hostname   : target host (IP or FQDN).
+        cmd        : shell command string to run remotely.
+        check      : raise RuntimeError on a non-zero exit code.
+        input_text : text sent to the remote command's stdin.
+        capture    : if True, capture stdout and stderr instead of streaming them.
+        user       : remote SSH user. Override it when the target does not allow root login, for example Harvester's "rancher"
+                     user, because Harvester disables root SSH by default.
 
     Returns:
         subprocess.CompletedProcess
@@ -918,7 +801,7 @@ def ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="roo
 
     # Quiet-by-default: when the caller isn't explicitly capturing and debug is
     # off, capture the output internally and only print it if the command fails
-    # or looks like it emitted a warning/error. debug on -> stream live, as before.
+    # or looks like it emitted a warning/error. debug on -> stream live.
     # A caller that passes capture=True is unaffected (it reads .stdout itself).
     quiet = (not capture) and (not _DEBUG)
     result = subprocess.run(
@@ -983,24 +866,11 @@ def scp_to(hostname, local_path, remote_path, user="root"):
 
 def purge_known_host(*names):
     """
-    Remove any stale SSH host-key entries for the given hostname(s)/IP(s)
-    from this user's known_hosts, before the first real connection to a
-    freshly (re)created VM. This project's lab IPs get reused across many
-    disposable test VMs over time — without this, ssh_run()'s
-    StrictHostKeyChecking=accept-new still refuses a brand-new VM outright
-    ("REMOTE HOST IDENTIFICATION HAS CHANGED") whenever its address was
-    previously held by any other VM, even though the new one is genuinely
-    up and answering correctly.
+    Remove stale SSH host-key entries for the given hostnames or IPs from this user's known_hosts, before the first connection
+    to a newly created VM. Lab IPs are reused across VMs. With StrictHostKeyChecking=accept-new, ssh still refuses a new VM whose
+    address was held by another VM before, so the old entry must be removed first.
 
-    Extracted 2026-09-05 after fixing the same class of bug in 3 separate
-    places (setup_lab.py/destroy_lab.py already had this inline;
-    setup_harvester_cluster.py's _create_netboot_vm() and
-    build_lab_usb.py's lab-host VM bootstrap both needed it added) — past
-    the point where duplicating it a 4th time made sense.
-
-    Best-effort: a name with no existing entry is a silent no-op (matches
-    ssh-keygen's own exit-code-1-on-nothing-to-remove behavior), never
-    raises.
+    Best effort. A name with no entry is a silent no-op, and the function never raises.
     """
     known_hosts = str(Path.home() / ".ssh" / "known_hosts")
     for name in names:
@@ -1020,30 +890,17 @@ def _has_local_binary(binary):
 
 def run_libvirt_tool(binary, remote_host, virt_srv, args, **kwargs):
     """
-    Run `<binary> --connect <virt_srv> <args...>` — binary is "virsh" or
-    "virt-install". Prefers the local binary, exactly today's behavior
-    everywhere it's already installed (the bare automation VM host always
-    has it — zero change there). Falls back to plain SSH to `remote_host`,
-    running the same command against the hypervisor's own local libvirt
-    socket (qemu:///system), when no local binary exists.
+    Run `<binary> --connect <virt_srv> <args...>`, where binary is "virsh" or "virt-install". The local binary is used when it is
+    installed, which is the case on the automation VM. When it is not installed, the command runs over SSH to `remote_host`,
+    against the hypervisor's own libvirt socket, qemu:///system.
 
-    Why this exists: confirmed live (2026-08-29) that a thin ssh+rsync-only
-    runtime (the MCP endpoint's container) can't just `zypper install
-    libvirt-client virt-install` its way to parity — virt-install pulls a
-    genuinely heavy GTK/libvirt-python dependency tree that filled the
-    automation VM's own disk mid-build, and SUSE's minimal BCI repos don't
-    carry these packages at all. This project's own philosophy is already
-    "reach remote hosts over SSH" (ssh_run() everywhere else) — a thin
-    client shouldn't need a full local libvirt stack just to reach a
-    hypervisor it already talks to over SSH for every other operation, so
-    this gives virsh/virt-install the same SSH-first treatment instead of
-    forcing every runtime environment to carry one.
+    A thin client, such as the MCP endpoint's container, cannot install libvirt-client and virt-install. Those pull a large GTK and
+    libvirt-python tree that SUSE's minimal repositories do not carry. This lets such a client reach the hypervisor over SSH, as
+    every other operation does.
 
-    Mirrors subprocess.run's kwarg surface (capture_output/text/stdout=
-    PIPE-or-DEVNULL/check) and returns a subprocess.CompletedProcess (or
-    ssh_run's equivalent), so it drops in unchanged at any existing
-    subprocess.run([binary, "--connect", virt_srv, ...], **kwargs) call
-    site.
+    Accepts the same keyword arguments as subprocess.run (capture_output, text, stdout, check) and returns a
+    subprocess.CompletedProcess, or the ssh_run equivalent. It can replace a subprocess.run([binary, "--connect", virt_srv, ...])
+    call directly.
     """
     if _has_local_binary(binary):
         return subprocess.run([binary, "--connect", virt_srv] + list(args), **kwargs)
@@ -1062,35 +919,17 @@ _INSTALL_ISO_HTTP_PORT = 8890
 
 def ensure_iso_install_tree(remote_host, iso_loc, iso_image):
     """
-    Idempotently loop-mounts `iso_image` (already present at
-    `{iso_loc}/{iso_image}` on `remote_host`, the KVM hypervisor) read-only
-    and serves it over HTTP directly from `remote_host` itself, so
-    virt-install's `--location` can reach it as a real HTTP install tree.
-    Returns the http:// URL to pass as `--location`.
+    Mount `iso_image`, which is at `{iso_loc}/{iso_image}` on `remote_host`, read-only, and serve it over HTTP from the
+    hypervisor. The return value is the http:// URL to pass to virt-install's --location.
 
-    Confirmed live 2026-09-17: `--location <bare filesystem path>` fails
-    with "Cannot access install tree on remote connection" whenever
-    virt-install itself runs on a DIFFERENT host than the hypervisor (this
-    project's own default architecture: automation VM -> qemu+ssh ->
-    hypervisor) — virt-install inspects the path on ITS OWN local
-    filesystem to extract the installer's kernel/initrd, never over the
-    remote libvirt connection. This is a real, general gap in every
-    `--location`-based install (kickstart/autoyast/preseed via
-    config_method "install_iso"), not specific to any one distro — Ubuntu's
-    own autoinstall branch sidesteps it entirely by using `--cdrom`
-    instead (no filesystem inspection needed), and its own comment right
-    above that code already flagged this exact `--location` limitation
-    before this function existed to actually fix it.
+    A bare filesystem path fails with "Cannot access install tree on remote connection" whenever virt-install runs on a host other
+    than the hypervisor. virt-install reads the path on its own filesystem to find the installer's kernel and initrd, not over the
+    remote connection. This affects every --location install (kickstart, autoyast and preseed). Ubuntu's autoinstall uses --cdrom
+    and does not need this.
 
-    Mount and HTTP server are both idempotent (skip if already present) and
-    SHARED across every ISO ever installed this way — one small
-    `python3 -m http.server` systemd unit on the hypervisor, serving
-    `{iso_loc}/.mounted-isos/` (every mounted ISO gets its own subdirectory
-    under there, named after the ISO's own filename), not one server per
-    ISO. The loop mount is also persisted in /etc/fstab with `nofail` (a
-    single, exact-line, dedup-checked append — never blocks a hypervisor
-    reboot if the ISO/mount ever goes missing) so it survives a hypervisor
-    reboot without needing this function to run again first.
+    The mount and the HTTP server are idempotent and shared. One python3 -m http.server unit on the hypervisor serves
+    {iso_loc}/.mounted-isos/, with a subdirectory for each mounted ISO. The mount is persisted in /etc/fstab with nofail, so it
+    survives a reboot, and a missing ISO never blocks the boot.
     """
     mount_dir = "{}/.mounted-isos/{}".format(iso_loc, iso_image)
     iso_path = "{}/{}".format(iso_loc, iso_image)
@@ -1485,8 +1324,7 @@ def resolve_kvm_host(definition, vm_name, config, vm_img_loc=None):
     Precedence: an explicit nodes[vm_name].kvm_host override wins; otherwise
     select_kvm_host() picks one from KVM_HOSTS. With zero or one configured
     host (today's single-hypervisor setups, or KVM_HOSTS unset), no
-    selection logic runs at all — the sole host is used directly, same as
-    before this feature existed.
+    selection logic runs at all — the sole host is used directly.
 
     Returns (remote_host, virt_srv).
     """
@@ -1754,42 +1592,19 @@ def prepare_ignition_combustion(
 
 def prepare_cloud_init(vm_name, lab_setup_path, variables):
     """
-    Create cloud-init user-data, network-config, and meta-data files. Mirrors
-    prepare_cloud-init (bash).
+    Create the cloud-init user-data, network-config and meta-data files, with the same behaviour as the bash
+    prepare_cloud-init.
 
-    variables : dict of values available to the templates via process_template
-                (mirrors the shell variables visible during bash's eval/
-                heredoc expansion). ROOT_SSH_KEY is always overridden with the
-                local machine's own pubkey here — mirrors bash's local
-                `ROOT_SSH_KEY=$(cat /root/.ssh/id_rsa.pub)` reassignment inside
-                this function, which shadows whatever ROOT_SSH_KEY held before.
-                network_renderer defaults to "NetworkManager" (SLE Micro/SLES/
-                Leap's own default network stack) when the lab JSON doesn't set
-                it — confirmed live 2026-08-30 that hardcoding NetworkManager
-                here silently produced a guest with ZERO configured interfaces
-                (not even DHCP fallback) on an Ubuntu Server guest, which
-                defaults to systemd-networkd instead; template_network-config
-                now takes the renderer from this variable instead of a literal.
+    variables : dict of values available to the templates through process_template. ROOT_SSH_KEY is always replaced with the local
+                machine's public key. network_renderer defaults to "NetworkManager", the default of SLE Micro, SLES and Leap. It is
+                set from the lab JSON, because systemd-networkd is the default on Ubuntu, and a hardcoded value leaves the guest with
+                no interfaces.
 
-                An empty/omitted `myip` selects template_network-config-dhcp
-                instead of the static-addressing template — every existing
-                lab node always sets myip, so this is purely additive; it
-                exists for the USB-delivery lab-host VM, whose own IP is
-                unknown at build time (unlike every other node this project
-                creates, provisioned with a real, known address baked in).
+    An empty or omitted `myip` selects template_network-config-dhcp, instead of the static template. That is used for the
+    USB-delivery lab-host VM, whose IP is not known when it is built.
 
-                `_vm_name` is always injected here (overriding anything the
-                caller passed under that key): bash's version ran in the same
-                shell as its caller, so template_user-data/template_meta-data
-                referencing `${_vm_name}` just saw whatever the enclosing
-                loop's global `_vm_name` already held — no explicit passing
-                needed. This function's caller (setup_vm.py) never puts
-                `_vm_name` in the `env` dict it builds (it only ever reads
-                `vm_name` as a separate local), so every cloud-init node's
-                instance-id/local-hostname/fqdn/hostname silently rendered
-                empty until this was added — confirmed live 2026-09-02 by
-                reading a real generated *_meta-data/*_user-data pair off
-                the automation VM.
+    `_vm_name` is always set from the vm_name argument. It overrides any value the caller passed, so the templates' ${_vm_name}
+    references resolve. Without it, the instance-id, local-hostname, fqdn and hostname render empty.
     """
     base = Path(lab_setup_path) / "cloud-init"
     log("- Create cloud-init files for \"{}{}{}\"".format(_RED, vm_name, _RESET))
@@ -1798,12 +1613,8 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
     render_vars["ROOT_SSH_KEY"] = Path("/root/.ssh/id_rsa.pub").read_text().strip()
     render_vars["network_renderer"] = render_vars.get("network_renderer") or "NetworkManager"
     dhcp = not (render_vars.get("myip") or "").strip()
-    # A cloud backend leaves BOTH myip and mymac empty (see _cloud_no_mac()'s own docstring in
-    # backends.py) — template_network-config-dhcp matches its NIC by `macaddress: "${mymac}"`,
-    # which would render an empty match and likely configure no interface at all. Found and fixed
-    # 2026-09-09, live-testing AWSBackend, before it ever reached a real instance: a name-glob-
-    # based sibling template is used instead whenever mymac is ALSO empty — the USB-delivery lab-
-    # host VM (myip empty, mymac known) still gets the original mac-matched template unchanged.
+    # A cloud backend leaves both myip and mymac empty. template_network-config-dhcp matches its NIC by mac address, which an empty
+    # value would not match. In that case a name-glob template is used instead. A node that has a mymac keeps the mac-matched template.
     no_mac = not (render_vars.get("mymac") or "").strip()
     for kind in ("user-data", "network-config", "meta-data"):
         if kind == "network-config" and dhcp:
@@ -1817,14 +1628,8 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
 
 # ── virt-customize ───────────────────────────────────────────────────────────
 #
-# NOTE: an earlier, local-execution design (_virt_ls/_virt_cat/_vc_detect_net_type/
-# _vc_detect_iface/_vc_net_config, using virt-ls/virt-cat directly from the
-# automation VM) lived here and was removed — verified via grep that none of
-# them were called anywhere (not even from prepare_virt_customize below, and
-# not from webui/). It was superseded by the current design, which generates a
-# fully self-contained script (embedding its own vls/vcat/detect_net/etc.) and
-# runs it entirely on the hypervisor over SSH, since virt-customize/virt-ls
-# need to run where the qcow2 image actually lives.
+# The helper is a self-contained script. It embeds its own ls, cat and network-detection functions and runs entirely on the
+# hypervisor over SSH, because virt-customize and virt-ls must run where the qcow2 image lives.
 
 def prepare_virt_customize_for_vm(
     remote_host, vm_img_loc, vm_name, myip, mymask, mygw, mydns, mydomain, mymac,
@@ -2096,20 +1901,9 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
     vc = ["virt-customize","-a",img,"--hostname",vmname,
           "--upload","{}:/tmp/.vc_rc".format(cred_f)]
 
-    # Real bug found live 2026-09-23 (solar-system-lab.json, venus.mydemo.lab,
-    # SLES 16): libguestfs's own --hostname action writes the LEGACY SUSE
-    # /etc/HOSTNAME (uppercase) on this image, not the modern systemd
-    # /etc/hostname (lowercase) SLES 16 actually reads — confirmed live:
-    # /etc/HOSTNAME had the correct value, /etc/hostname was a 0-byte file
-    # dated to the base image's own build time, completely untouched.
-    # systemd then reported "Static hostname: (unset)" and fell back to
-    # whatever transient hostname it could derive another way (reverse DNS,
-    # in this case landing on a stale record from a previous VM that once
-    # held the same IP — see services.py's own _dns_remove_ptr_for_octet for
-    # that half of the same incident). Writing /etc/hostname directly here,
-    # unconditionally alongside --hostname (not instead of it — some distros
-    # DO need the legacy file too), fixes this regardless of which per-distro
-    # assumption libguestfs's own --hostname implementation gets wrong.
+    # SLES 16 reads /etc/hostname (lowercase), but libguestfs --hostname writes the legacy /etc/HOSTNAME on this image. Without
+    # /etc/hostname the static hostname stays unset, and systemd falls back to a name from reverse DNS. The file is written
+    # directly, in addition to --hostname, because some distributions still read the legacy file.
     vc += ["--run-command", "echo {} > /etc/hostname".format(vmname)]
 
     if pass_type == "plain":
@@ -2257,16 +2051,8 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
         vc += ["--run-command", "mkdir -p /etc/cloud"]
         vc += ["--upload", "{}:/etc/cloud/cloud-init.disabled".format(ci_dis_f)]
 
-    # SUSE JeOS appliance images (confirmed live 2026-08-29 on
-    # SLES-16.0-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2) ship an interactive
-    # jeos-firstboot wizard (keyboard layout, locale, etc.) that runs on the
-    # console on first boot and BLOCKS there indefinitely in any headless,
-    # unattended deployment — there's no one at the console to answer it.
-    # Confirmed via a live screenshot: the VM never reached multi-user.target
-    # (SSH kept rejecting with "System is booting up") because it was stuck
-    # showing a "Select keyboard layout" dialog. Disabled unconditionally,
-    # like cloud-init above — harmless (`|| true`) on any image that doesn't
-    # ship these units at all.
+    # SUSE JeOS appliance images ship a jeos-firstboot wizard that runs on the console at first boot. Without a console it waits
+    # forever, so the unit is disabled, as cloud-init is. The disable uses || true, so an image without the unit is unaffected.
     vc += ["--run-command",
            "systemctl disable jeos-firstboot.service jeos-firstboot-snapshot.service 2>/dev/null || true"]
 
@@ -2295,33 +2081,17 @@ def prepare_install_iso(
     root_pwd_hash, root_ssh_key=None,
 ):
     """
-    Render the answer file (AutoYaST/Kickstart/Preseed/autoinstall) for a VM.
-    Mirrors prepare_install_iso (bash).
+    Render the answer file for an install_iso VM: AutoYaST, Kickstart, Preseed or autoinstall. This matches the bash
+    prepare_install_iso.
 
-    The rendered file is written to lab_setup_path/install_iso/, already
-    served over HTTP by the automation VM's web server — nothing needs to be
-    copied to the hypervisor.
+    The file is written to lab_setup_path/install_iso/, which the automation VM's web server already serves over HTTP, so nothing
+    is copied to the hypervisor.
 
-    NOTE on ROOT_SSH_KEY vs ROOT_SSH_PUBKEY: previously the kickstart/autoyast
-    templates echoed the raw `ROOT_SSH_KEY` config value straight into
-    authorized_keys, on the assumption that admins keep it in sync with their
-    real ~/.ssh/id_rsa.pub — confirmed live 2026-09-17 that this assumption
-    doesn't hold in practice (this environment's own lab_creation.cfg
-    ROOT_SSH_KEY had drifted from the automation VM's actual id_rsa.pub,
-    silently baking an unusable key into every kickstart/autoyast install —
-    the VM would provision successfully but be permanently SSH-unreachable,
-    "Permission denied (publickey)"). All four install types now use
-    ROOT_SSH_PUBKEY instead, which always falls through to the automation
-    VM's real, current ~/.ssh/id_rsa.pub (see below) unless root_ssh_key
-    points at an actual, existing key-PATH override — matching how ignition/
-    combustion/cloud-init already behave. ROOT_SSH_KEY itself is kept as a
-    render var only for backward compatibility with any custom templates
-    that might still reference it.
+    ROOT_SSH_PUBKEY is used by all four install types. It defaults to the automation VM's own ~/.ssh/id_rsa.pub, unless root_ssh_key
+    names an existing key file. ROOT_SSH_KEY is provided only as a render variable, for custom templates that refer
+    to it. It is not written to authorized_keys, because it can differ from the real key.
 
-    NOTE on ROOT_PWD_HASH: bash used to escape '$' in the hash before this
-    point — verified empirically (see lab_creation.bash's prepare_install_iso)
-    that this corrupted the hash. Fixed in bash; the raw hash is used
-    directly here, with no escaping needed at all.
+    ROOT_PWD_HASH is used as it is. The hash contains '$', and it is not escaped.
     """
     itype = resolve_install_type(install_type, iso_image)
 
@@ -2379,36 +2149,14 @@ def prepare_install_iso(
             "  late-commands:\n"
             "    - mkdir -p /target/etc/ssh/sshd_config.d\n"
             "    - printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /target/etc/ssh/sshd_config.d/99-lab.conf\n"
-            # No `identity:` section above (it would force a separate default
-            # user this project doesn't want — root-only access is the
-            # point) — but `identity` is also autoinstall's only mechanism
-            # for setting /etc/hostname at install time, so without it
-            # curtin leaves the installed system's hostname at whatever the
-            # live installer environment defaulted to ("localhost", not even
-            # "ubuntu") — confirmed live 2026-09-03 (`hostname` inside the
-            # freshly-installed, fully-reachable VM read back "localhost").
-            # meta-data's local-hostname doesn't help either: it's a
-            # cloud-init concept, and cloud-init's own NoCloud datasource
-            # (the seed cdrom) is detached again right after this install
-            # finishes, so nothing ever re-reads it on a later real boot.
-            # Set directly instead, the same way the sshd config above is.
-            # vm_name is quoted here (found in code review 2026-09-05) —
-            # this late-command runs as a real shell command inside the
-            # target, and vm_name (a lab.json node hostname) is never
-            # validated against shell metacharacters anywhere in this
-            # codebase.
+            # The autoinstall config has no identity section, because that would create a default user. identity is the only
+            # autoinstall setting for /etc/hostname, so the hostname is set by this late command instead. meta-data's local-hostname
+            # does not apply here, because the NoCloud seed is detached before the first real boot.
+            # vm_name is quoted, because this late command runs as a shell command in the target.
             "    - echo \"{vm_name}\" > /target/etc/hostname\n"
         ).format(
-            # mymac/myip/mymask/mygw/mydns/mydomain/root_pwd_hash/
-            # root_ssh_pubkey are all bare (myip/mymask/mygw/mydns/mydomain
-            # not even hand-quoted) YAML scalars in this hand-built
-            # #cloud-config document — found in code review 2026-09-05,
-            # confirmed live by direct execution: a mydomain value with an
-            # embedded colon+newline injected two new, unrelated top-level
-            # keys straight into the rendered YAML, the exact same bug
-            # already found and fixed in setup_harvester_cluster.py's own
-            # hand-built YAML. yaml_scalar() escapes each value correctly
-            # regardless of which one a lab.json author gets creative with.
+            # The values of the hand-built #cloud-config document are escaped with yaml_scalar(), so a value containing a colon or
+            # newline cannot add keys to the document.
             mymac=yaml_scalar(mymac), mycidr=yaml_scalar("{}/{}".format(myip, mymask)),
             mygw=yaml_scalar(mygw), mydns=yaml_scalar(mydns), mydomain=yaml_scalar(mydomain),
             root_pwd_hash=yaml_scalar(root_pwd_hash), root_ssh_pubkey=yaml_scalar(root_ssh_pubkey),
@@ -2438,17 +2186,10 @@ def prepare_install_iso(
 
 def setup_helm(hostname, clu_name, online=False, automation_host="automation"):
     """
-    Install Helm on a remote K8s node (mirrors setup_helm).
+    Install Helm on a remote Kubernetes node, as the bash setup_helm does.
 
-    online=True  → downloads directly from GitHub.
-    online=False → downloads from a local automation VM.
-
-    NOTE: default is False (offline/automation-VM path) to match bash's real
-    default — bash checks `[[ "$online" == "1" ]]`, and the `online` JSON
-    field is absent from every real lab config found in this repo, so an
-    unset bash variable (empty string) takes the offline branch. An earlier
-    version of this function defaulted to True, inverting that behaviour for
-    any caller that didn't explicitly pass online=.
+    online=True downloads directly from GitHub. online=False downloads from the automation VM. The default is False, which matches
+    the bash behaviour when the `online` field is absent.
     """
     log("Setting up Helm on cluster '{}'".format(clu_name))
     if online:
@@ -2493,14 +2234,8 @@ def process_template(template_file, variables):
     script = 'eval "cat <<EOF\n$(cat {})\nEOF\n"'.format(shlex.quote(str(template_file)))
     env = os.environ.copy()
     env.update({k: "" if v is None else str(v) for k, v in variables.items()})
-    # stdout=PIPE/stderr=PIPE/universal_newlines=True, not capture_output=/
-    # text= (both Python 3.7+ only): confirmed live 2026-08-30 that this
-    # function had never actually been exercised by any test until
-    # 30_setup_harvester_cluster_test.py's template-rendering checks —
-    # tests/run_tests.sh's own container python3 is 3.6.15 (see
-    # 09_spacecmd_common_test.py's mock.call notes for the same interpreter),
-    # so capture_output/text raised TypeError there even though real
-    # production (python3.11 everywhere) was never affected.
+    # stdout=PIPE, stderr=PIPE and universal_newlines=True, because capture_output and text need Python 3.7 or later, and the
+    # test suite runs on 3.6.
     result = subprocess.run(["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              universal_newlines=True, env=env)
     if result.returncode != 0:
