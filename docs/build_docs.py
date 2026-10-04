@@ -21,6 +21,7 @@ REPO_URL = "https://github.com/SUSE-Technical-Marketing/lab-in-a-box"
 
 PAGES = [
     ("index.html", "index.html", "English"),
+    ("ar.html", "ar.html", "العربية"),
     ("de.html", "de.html", "Deutsch"),
     ("es.html", "es.html", "Español"),
     ("fr.html", "fr.html", "Français"),
