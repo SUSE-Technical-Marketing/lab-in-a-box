@@ -6,7 +6,7 @@
 <title>lab-in-a-box · 日本語</title>
 <meta name="description" content="lab-in-a-box は、単一の JSON または YAML ファイルから完全なラボを構築します。記述した VM、DNS、Kubernetes クラスター、アドオンを作成します。VM は自前の KVM ホスト、Harvester、または 8 つのパブリッククラウドのいずれでも動作し、同じファイルがどこでも使えます。">
 <meta name="theme-color" content="#12a99d">
-<link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <script type="importmap">
 {
@@ -210,15 +210,15 @@ footer.site {
 <body>
 <a id="top" class="anchor-top"></a>
 <div class="topbar-wrap"><header class="topbar">
-<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
+<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
 <div class="topbar-right"><nav aria-label="Documentation"><a href="index.html">English</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html" aria-current="page">日本語</a><a href="pt-BR.html">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html">Web UI</a></nav>
 <button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>
 </header></div>
 <section class="opening">
-<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
+<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
 <p class="eyebrow">IT labs, deployed automatically</p>
-<h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · 日本語</h1>
+<h1><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · 日本語</h1>
 <p class="lead"><strong>lab-in-a-box</strong> は、単一の JSON または YAML ファイルから完全なラボを構築します。記述した VM、DNS、Kubernetes クラスター、アドオンを作成します。VM は自前の KVM ホスト、Harvester、または 8 つのパブリッククラウドのいずれでも動作し、同じファイルがどこでも使えます。</p>
 <div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
@@ -233,7 +233,7 @@ footer.site {
 <p align="center"><em>JSON または YAML ファイルを1つ用意するだけ。VM、DNS、Kubernetes、アドオンがすべて配線された、動作するラボが手に入る。</em></p>
 
 <p align="center" float="left">
-  <kbd><img src="../media/NUC.jpg" width="400" alt="このプロジェクトの開発・テストに使われた NUC の一台。" /></kbd>
+  <kbd><img src="media/NUC.jpg" width="400" alt="このプロジェクトの開発・テストに使われた NUC の一台。" /></kbd>
 </p>
 
 
@@ -291,7 +291,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 
 
 <p>このシステムは <strong>2階層アーキテクチャ</strong> を中心に構築されている：</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="../media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="../media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="../media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="ハイパーバイザーノード">ハイパーバイザーノード</h3>
 <p>KVM/QEMU を実行する1台以上の物理・ベアメタルマシン。それぞれがラボの VM をホストし、<code>/var/lib/libvirt/images/sources/</code> に元となる QCOW2 イメージを保持する。NUC、ワークステーション、あるいは KVM を実行できる任意の x86_64 マシンであればよい。1台では容量が足りないラボは <strong>複数の KVM ホスト</strong> にまたがることができる — 詳細は下記の<a href="#multi-host-labs">マルチホストラボ</a>を参照。</p>
 <h3 id="自動化-vm">自動化 VM</h3>
@@ -312,7 +312,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 <h2 id="動作の仕組み">動作の仕組み</h2>
 <h3 id="デプロイパイプライン">デプロイパイプライン</h3>
 <p><code>setup_lab.py</code> は固定されたフェーズの順序で実行される。<code>kclusters</code> セクションを持たない VM のみのラボでは、Kubernetes 専用の2つのフェーズは完全にスキップされる：</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="../media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="vm-のプロビジョニング">VM のプロビジョニング</h3>
 <p>各 VM は次の手順で作成される：
 1. どの KVM ホストに属するかを解決する（明示的な <code>kvm_host</code> フィールド、または空き容量による自動選択 — <a href="#multi-host-labs">マルチホストラボ</a>を参照）
@@ -355,7 +355,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 </table>
 <h3 id="vm-バックエンド">VM バックエンド</h3>
 <p>どのハイパーバイザー技術が実際にノードを作成するかは、ノードごとに一度だけ解決される差し替え可能な <code>VMBackend</code> インターフェースによって決まる（そのノードの設定で <code>backend: harvester</code> を指定すると <code>HarvesterBackend</code> が選ばれ、それ以外はデフォルトで <code>LibvirtBackend</code> が使われる）。どのアドオンやオーケストレーションスクリプトも、解決されたバックエンドがどちらであっても同じ方法でやり取りする：</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="../media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-のセットアップ">Kubernetes のセットアップ</h3>
 <p>VM が立ち上がると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールする。RKE2 と K3s の両方をサポートする。クラスターの準備が整うと、そのアドオンが順番に実行される。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードがプロビジョニングされた後に実行される。</p>
 <h3 id="マルチホストラボ">マルチホストラボ</h3>
@@ -381,7 +381,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 <hr />
 <p><a id="quick-start"></a></p>
 <h2 id="クイックスタート">クイックスタート</h2>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="../media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="必要条件">必要条件</h3>
 <ul>
 <li>KVM を実行できるマシン（Intel VT-x または AMD-V が有効）</li>
@@ -534,7 +534,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><a id="lab-definition-format"></a></p>
 <h2 id="ラボ定義フォーマット">ラボ定義フォーマット</h2>
 <p>ラボは JSON または YAML ファイルとして定義される（自動検出 — 下記の注記を参照）。現在のフォーマットは、ラボごとに複数の Kubernetes クラスター（<code>kclusters</code>）をサポートしている。従来のシングルクラスター形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照。</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="../media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
     &quot;node101.mydemo.lab&quot;: {

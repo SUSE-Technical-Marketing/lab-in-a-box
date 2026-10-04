@@ -6,7 +6,7 @@
 <title>lab-in-a-box · Português (Brasil)</title>
 <meta name="description" content="lab-in-a-box cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os add-ons que você descreve. As VMs">
 <meta name="theme-color" content="#12a99d">
-<link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <script type="importmap">
 {
@@ -210,15 +210,15 @@ footer.site {
 <body>
 <a id="top" class="anchor-top"></a>
 <div class="topbar-wrap"><header class="topbar">
-<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
+<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
 <div class="topbar-right"><nav aria-label="Documentation"><a href="index.html">English</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html" aria-current="page">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html">Web UI</a></nav>
 <button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>
 </header></div>
 <section class="opening">
-<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
+<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
 <p class="eyebrow">IT labs, deployed automatically</p>
-<h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Português (Brasil)</h1>
+<h1><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Português (Brasil)</h1>
 <p class="lead"><strong>lab-in-a-box</strong> cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os add-ons que você descreve. As VMs podem rodar em seus próprios hosts KVM, no Harvester ou em qualquer uma de oito nuvens públicas, e o mesmo arquivo funciona em todas.</p>
 <div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
@@ -233,7 +233,7 @@ footer.site {
 <p align="center"><em>Aponte para um arquivo JSON ou YAML. Receba de volta um laboratório funcionando — VMs, DNS, Kubernetes e add-ons, tudo conectado.</em></p>
 
 <p align="center" float="left">
-  <kbd><img src="../media/NUC.jpg" width="400" alt="Um dos NUCs usados para desenvolver e testar este projeto." /></kbd>
+  <kbd><img src="media/NUC.jpg" width="400" alt="Um dos NUCs usados para desenvolver e testar este projeto." /></kbd>
 </p>
 
 
@@ -291,7 +291,7 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 
 
 <p>O sistema é construído em torno de uma <strong>arquitetura de dois níveis</strong>:</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="../media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="../media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="../media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="nós-hipervisor">Nó(s) hipervisor</h3>
 <p>Uma ou mais máquinas físicas (bare-metal) executando KVM/QEMU. Cada uma hospeda as VMs do laboratório e guarda as imagens QCOW2 de origem em <code>/var/lib/libvirt/images/sources/</code>. Um NUC, uma workstation, ou qualquer máquina x86_64 capaz de rodar KVM serve. Laboratórios que precisam de mais capacidade do que uma única máquina podem se espalhar por <strong>múltiplos hosts KVM</strong> — veja <a href="#multi-host-labs">laboratórios multi-host</a> abaixo.</p>
 <h3 id="vm-de-automação">VM de automação</h3>
@@ -312,7 +312,7 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 <h2 id="como-funciona">Como funciona</h2>
 <h3 id="pipeline-de-implantação">Pipeline de implantação</h3>
 <p>O <code>setup_lab.py</code> executa uma sequência fixa de fases; as duas fases exclusivas do Kubernetes são completamente ignoradas em um laboratório somente de VMs (sem a seção <code>kclusters</code>):</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="../media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="provisionamento-de-vms">Provisionamento de VMs</h3>
 <p>Cada VM é criada assim:
 1. Resolvendo a qual host KVM ela pertence (o campo explícito <code>kvm_host</code>, ou autosseleção por capacidade livre — veja <a href="#multi-host-labs">laboratórios multi-host</a>)
@@ -355,7 +355,7 @@ Ignition+Combustion (SLE Micro), cloud-init (openSUSE/Ubuntu), `virt-customize` 
 </table>
 <h3 id="backends-de-vm">Backends de VM</h3>
 <p>Qual tecnologia de hipervisor realmente cria um nó é decidido por uma interface <code>VMBackend</code> intercambiável, resolvida uma vez por nó (<code>backend: harvester</code> na configuração daquele nó seleciona o <code>HarvesterBackend</code>; qualquer outro valor usa o <code>LibvirtBackend</code> por padrão) — todo add-on e script de orquestração conversa com o backend resolvido da mesma forma, seja ele qual for:</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="../media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="configuração-do-kubernetes">Configuração do Kubernetes</h3>
 <p>Depois que as VMs estão de pé, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. Tanto RKE2 quanto K3s são suportados. Assim que um cluster está pronto, seus add-ons rodam em sequência; add-ons de nível de VM (associados a um único nó em vez de a um cluster) rodam depois que aquele nó é provisionado.</p>
 <h3 id="laboratórios-multi-host">Laboratórios multi-host</h3>
@@ -381,7 +381,7 @@ Um laboratório não fica limitado a um único hipervisor. Defina <code>KVM_HOST
 <hr />
 <p><a id="quick-start"></a></p>
 <h2 id="início-rápido">Início rápido</h2>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="../media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="requisitos">Requisitos</h3>
 <ul>
 <li>Uma máquina capaz de rodar KVM (Intel VT-x ou AMD-V habilitado)</li>
@@ -534,7 +534,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><a id="lab-definition-format"></a></p>
 <h2 id="formato-de-definição-do-laboratório">Formato de definição do laboratório</h2>
 <p>Laboratórios são definidos como arquivos JSON ou YAML (detectado automaticamente — veja a nota abaixo). O formato atual suporta múltiplos clusters Kubernetes por laboratório (<code>kclusters</code>); veja <code>examples/cluster.json.template</code> para o formato legado de cluster único (<code>cluster</code>).</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="../media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
     &quot;node101.mydemo.lab&quot;: {

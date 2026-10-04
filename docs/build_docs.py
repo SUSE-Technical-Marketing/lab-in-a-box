@@ -10,11 +10,13 @@ Diagrams: the Mermaid blocks in docs/src/ are swapped for the brand SVGs in medi
 """
 import html
 import re
+import shutil
 import sys
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent
 SOURCE = DOCS / "src"
+MEDIA = DOCS.parent / "media"
 REPO_URL = "https://github.com/SUSE-Technical-Marketing/lab-in-a-box"
 
 PAGES = [
@@ -309,8 +311,8 @@ def figure(name, alt):
     alt = html.escape(alt, quote=True)
     return (
         '<figure class="diagram">'
-        f'<img class="diagram--light" src="../media/diagrams/{name}.svg" alt="{alt}" loading="lazy">'
-        f'<img class="diagram--dark" src="../media/diagrams/{name}-dark.svg" alt="" aria-hidden="true" loading="lazy">'
+        f'<img class="diagram--light" src="media/diagrams/{name}.svg" alt="{alt}" loading="lazy">'
+        f'<img class="diagram--dark" src="media/diagrams/{name}-dark.svg" alt="" aria-hidden="true" loading="lazy">'
         "</figure>"
     )
 
@@ -351,8 +353,8 @@ def nav_html(current_out):
 
 def lockups(alt_light="lab-in-a-box"):
     return (
-        f'<img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="{alt_light}">'
-        '<img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true">'
+        f'<img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="{alt_light}">'
+        '<img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true">'
     )
 
 
@@ -375,7 +377,7 @@ def page(title, lead, body, current_out, mermaid):
             html.escape(re.sub(r"<[^>]+>", "", lead).strip()[:160], quote=True)
         ),
         '<meta name="theme-color" content="#12a99d">',
-        '<link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">',
+        '<link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">',
         FONTS,
         IMPORT_MAP,
         f"<style>{STYLE}</style>",
@@ -391,7 +393,7 @@ def page(title, lead, body, current_out, mermaid):
         '<section class="opening">',
         (
             '<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube">'
-            '<img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>'
+            '<img src="media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>'
         ),
         '<div class="opening-text">',
         '<p class="eyebrow">IT labs, deployed automatically</p>',
@@ -417,7 +419,17 @@ def page(title, lead, body, current_out, mermaid):
     ])
 
 
+def publish_media():
+    """Copy the brand SVGs, diagram SVGs and the NUC photo under docs/media/: GitHub Pages serves docs/ as the site root."""
+    for sub in ("brand", "diagrams"):
+        target = DOCS / "media" / sub
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(MEDIA / sub, target)
+    shutil.copy2(MEDIA / "NUC.jpg", DOCS / "media" / "NUC.jpg")
+
+
 def build():
+    publish_media()
     for source, out, label in PAGES:
         body = (SOURCE / source).read_text(encoding="utf-8")
         lead, body = split_lead(body)

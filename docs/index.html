@@ -6,7 +6,7 @@
 <title>lab-in-a-box</title>
 <meta name="description" content="lab-in-a-box builds complete labs from a single JSON or YAML file: the VMs, DNS, Kubernetes clusters and add-ons you describe. The VMs can run on your own KVM h">
 <meta name="theme-color" content="#12a99d">
-<link rel="icon" href="../media/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <script type="importmap">
 {
@@ -210,15 +210,15 @@ footer.site {
 <body>
 <a id="top" class="anchor-top"></a>
 <div class="topbar-wrap"><header class="topbar">
-<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
+<a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
 <div class="topbar-right"><nav aria-label="Documentation"><a href="index.html" aria-current="page">English</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html">Web UI</a></nav>
 <button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>
 </header></div>
 <section class="opening">
-<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
+<div id="hero" role="img" aria-label="lab-in-a-box logo as a rotating 3D cube"><img src="media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>
 <div class="opening-text">
 <p class="eyebrow">IT labs, deployed automatically</p>
-<h1><img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></h1>
+<h1><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></h1>
 <p class="lead"><strong>lab-in-a-box</strong> builds complete labs from a single JSON or YAML file: the VMs, DNS, Kubernetes clusters and add-ons you describe. The VMs can run on your own KVM hosts, on Harvester, or on any of eight public clouds, and the same file works across them.</p>
 <div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
@@ -261,7 +261,7 @@ footer.site {
 
 
 <p>The system is built around a <strong>two-tier architecture</strong>:</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="../media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="../media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="../media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="hypervisor-nodes">Hypervisor node(s)</h3>
 <p>One or more physical/bare-metal machines running KVM/QEMU. Each hosts lab VMs and holds QCOW2 source images in <code>/var/lib/libvirt/images/sources/</code>. A NUC, a workstation, or any x86_64 machine capable of running KVM will do. Labs that need more capacity than one box can span <strong>multiple KVM hosts</strong> — see <a href="#multi-host-labs">multi-host labs</a> below.</p>
 <h3 id="automation-vm">Automation VM</h3>
@@ -281,7 +281,7 @@ footer.site {
 <h2 id="how-it-works">How it works</h2>
 <h3 id="deploy-pipeline">Deploy pipeline</h3>
 <p><code>setup_lab.py</code> runs a fixed sequence of phases; the two Kubernetes-only phases are skipped entirely for a VM-only lab (no <code>kclusters</code> section):</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="../media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="vm-provisioning">VM provisioning</h3>
 <p>Each VM is created by:
 1. Resolving which KVM host it belongs on (the explicit <code>kvm_host</code> field, or auto-selected by free capacity — see <a href="#multi-host-labs">multi-host labs</a>)
@@ -374,7 +374,7 @@ footer.site {
 </tr>
 </tbody>
 </table>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="../media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
 <p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported. Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
@@ -387,7 +387,7 @@ footer.site {
 <p>Nodes that don't specify <code>kvm_host</code> and boxes with only one configured host behave exactly as before this feature existed — nothing changes for a single-hypervisor lab.</p>
 <h3 id="cross-cloud-wireguard-overlay">Cross-cloud WireGuard overlay</h3>
 <p>A cloud lab node generally cannot reach another cloud account's private network, or the home libvirt lab, over the network at all — each is its own isolated VPC/network. <code>common.overlay: true</code> in the lab JSON routes this lab's SITES to each other, site-to-site, by their real subnets, over a hub-and-spoke WireGuard overlay (<code>libs/overlay.py</code>):</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/overlay.svg" alt="Cross-cloud WireGuard overlay: site gateways connect to a hub; nodes route through their own gateway" loading="lazy"><img class="diagram--dark" src="../media/diagrams/overlay-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/overlay.svg" alt="Cross-cloud WireGuard overlay: site gateways connect to a hub; nodes route through their own gateway" loading="lazy"><img class="diagram--dark" src="media/diagrams/overlay-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <p>Only each site's own gateway ever joins the overlay itself — never an individual lab node. A "site" is the home libvirt lab or one cloud account; its gateway is either the home site's own automation VM (<code>mysource</code> in <code>/etc/lab_creation.cfg</code>) or, for a cloud account, a small dedicated VM auto-created/reused there (<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>, the same naming convention as the cloud DNS VM). Every OTHER node just gets a plain, persistent local route to each other site's real subnet, via its own site's gateway — that's the whole mechanism, no per-node WireGuard membership at all.</p>
 <p><code>OVERLAY_HUB_ACCOUNT</code> (required, in <code>/etc/lab_creation.cfg</code>) names the cloud account whose gateway VM is the hub — the one site with a stable public IP everyone else connects to. <code>OVERLAY_CIDR</code> (default <code>10.99.0.0/16</code>) is used only for the gateways' own point-of-presence addresses on the tunnel, not for routing real traffic; <code>OVERLAY_WG_PORT</code> (default <code>51820</code>) is the hub's listen port. Joining/leaving and route-pushing happen automatically as part of <code>setup_vm.py</code> — nothing else to run by hand.</p>
 <p><strong>Known gaps:</strong> no DNS changes are made (a node is reachable by its real hostname once that name resolves into a now-routed subnet, not before); a site's already-provisioned nodes aren't retroactively re-routed when a new remote site joins later, only refreshed at each node's own provisioning time; AWS needs its site gateway's "source/dest check" disabled to forward traffic (handled automatically) — no equivalent exists yet for the other 7 cloud backends.</p>
@@ -404,7 +404,7 @@ footer.site {
 
 <hr />
 <h2 id="quick-start">Quick Start</h2>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="../media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="requirements">Requirements</h3>
 <ul>
 <li>A machine capable of running KVM (Intel VT-x or AMD-V enabled)</li>
@@ -553,7 +553,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">Lab definition format</h2>
 <p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>).</p>
-<figure class="diagram"><img class="diagram--light" src="../media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="../media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>A <code>.yaml</code>/<code>.yml</code> file works too — the format is auto-detected from the extension (or by falling back to YAML if a file isn't valid JSON), the same way through <code>setup_lab.py</code>'s preflight check, <code>install_&lt;addon&gt; --validate</code>, and every addon's own load path. YAML input requires <code>pyyaml</code> (<code>pip install pyyaml</code>) on the automation VM; without it you get a clear error telling you to install it, not a silent JSON-only failure.</p></aside>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
