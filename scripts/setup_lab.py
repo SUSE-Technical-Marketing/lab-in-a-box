@@ -508,7 +508,9 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if node_cfg.get("kcluster") != clu_name:
             continue
-        if node_cfg.get("INSTALL_RKE2_TYPE", "server") == "agent":
+        # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
+        node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
+        if node_type == "agent":
             token, rancher1_ip = distro.install_agent(vm_name, clu_name, clu_cfg, token, rancher1_ip)
         else:
             token, rancher1_ip = distro.install_server(vm_name, clu_name, clu_cfg, token=token, rancher1_ip=rancher1_ip)

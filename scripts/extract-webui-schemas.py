@@ -12,6 +12,9 @@ def extract_addon_schemas():
     schemas = {}
     addon_list = []
 
+    # Addons that are infrastructure/internal, not user-facing
+    skip_addons = {"pxe"}
+
     # Find all install_*.py scripts
     addon_scripts = sorted(scripts_dir.glob("install_*.py"))
 
@@ -19,6 +22,11 @@ def extract_addon_schemas():
 
     for script_path in addon_scripts:
         addon_name = script_path.stem.replace("install_", "")
+
+        # Skip internal infrastructure addons
+        if addon_name in skip_addons:
+            print(f"  ⊘ {addon_name}: infrastructure only", file=sys.stderr)
+            continue
 
         try:
             result = subprocess.run(
