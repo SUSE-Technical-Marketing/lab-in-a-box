@@ -1,0 +1,1361 @@
+<blockquote>
+<p><em>这是社区翻译版本。权威来源是英文的 <a href="index.html">README.md</a>，其内容可能比本页面更新。</em></p>
+</blockquote>
+<p align="center"><em>指向一个 JSON 或 YAML 文件，得到一个可用的实验环境——虚拟机、DNS、Kubernetes 和插件，一应俱全。</em></p>
+
+<p align="center" float="left">
+  <kbd><img src="../media/NUC.jpg" width="400" alt="用于开发和测试本项目的其中一台 NUC。" /></kbd>
+</p>
+
+<p><strong>lab-in-a-box</strong> 只需一个 JSON 或 YAML 文件，即可构建完整的实验环境：您所描述的虚拟机、DNS、Kubernetes 集群和附加组件。虚拟机可以运行在您自己的 KVM 主机、Harvester 或八大公有云中的任意一个上，同一个文件在所有环境中通用。</p>
+<h2 id="为什么选择-lab-in-a-box">为什么选择 lab-in-a-box？</h2>
+<table>
+<tr>
+<td width="50%" valign="top">
+
+`setup_lab.py` · **一个 JSON/YAML 文件，一条命令。**
+以声明式方式描述虚拟机、Kubernetes 集群（RKE2/K3s）和插件；它会按正确的顺序把一切都构建出来。
+
+`install_<addon>` · **65 个开箱即用的插件。**
+Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni（激活密钥、RBAC、Content Lifecycle Management、Ansible 集成等）、用于安全培训的漏洞演示应用，以及更多。
+
+[`lab-builder`](#web-ui-lab-builder) · **动态 Web 界面。**
+直接根据各插件自身的 schema 生成表单——只要给脚本加一个字段，界面无需任何前端改动即可识别它。
+
+</td>
+<td width="50%" valign="top">
+
+`KVM_HOSTS` · **支持多台虚拟化主机。**
+一份实验环境定义可以把虚拟机分布到多台 KVM 主机上，既可以根据空闲 CPU/内存/磁盘自动选择，也可以按节点固定指定。
+
+`podman` · **完全容器化的测试套件。**
+每项检查都在各自独立的一次性容器中运行，并接入了 pre-commit 钩子。
+
+`config_method` · **可插拔的系统配置方式。**
+Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-customize`（用于不支持 cloud-init/Ignition 的老旧发行版），或基于脚本的 ISO 安装（AutoYaST/Kickstart/Preseed/AutoInstall）。
+
+</td>
+</tr>
+</table>
+
+<hr />
+<h2 id="目录">目录</h2>
+<ul>
+<li><a href="#architecture">架构</a></li>
+<li><a href="#how-it-works">工作原理</a></li>
+<li><a href="#quick-start">快速开始</a></li>
+<li><a href="#web-ui-lab-builder">Web 界面（lab-builder）</a></li>
+<li><a href="#lab-definition-format">实验环境定义格式</a></li>
+<li><a href="#examples">示例</a></li>
+<li><a href="#step-by-step-walkthroughs">分步教程</a></li>
+<li><a href="#available-commands">可用命令</a></li>
+<li><a href="#available-addons">可用插件</a></li>
+<li><a href="#configuration-reference">配置参考</a></li>
+<li><a href="#testing">测试</a></li>
+<li><a href="#contributing--developer-setup">贡献 / 开发环境搭建</a></li>
+</ul>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="architecture"></a></p>
+<h2 id="架构">架构</h2>
+<p align="center" float="left">
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram1-dark.svg"><img src="../media/diagram1.svg" width="800" alt="架构概览图"/></picture></kbd>
+  <kbd><picture><source media="(prefers-color-scheme: dark)" srcset="media/diagram2-dark.svg"><img src="../media/diagram2.svg" width="800" alt="网络与服务图"/></picture></kbd>
+</p>
+
+<p>整个系统围绕<strong>双层架构</strong>构建：</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;操作者的客户端&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;虚拟化主机节点 — KVM/QEMU&quot;]
+        AutoVM[&quot;自动化虚拟机&lt;br/&gt;DNS · HTTP · 脚本 · Web UI&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;实验环境虚拟机&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;实验环境虚拟机&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;实验环境虚拟机&quot;]
+    end
+</pre>
+<h3 id="虚拟化主机节点">虚拟化主机节点</h3>
+<p>一台或多台运行 KVM/QEMU 的物理裸机。每台主机都承载实验环境的虚拟机，并在 <code>/var/lib/libvirt/images/sources/</code> 中保存源 QCOW2 镜像。一台 NUC、一台工作站，或任何能够运行 KVM 的 x86_64 机器都可以胜任。需要超出单台机器容量的实验环境，可以跨越<strong>多台 KVM 主机</strong>——详见下文的<a href="#multi-host-labs">多主机实验环境</a>。</p>
+<h3 id="自动化虚拟机">自动化虚拟机</h3>
+<p>运行在虚拟化主机上的一台小型虚拟机，充当整个实验环境的控制平面。它提供：</p>
+<ul>
+<li><strong>DNS</strong> —— BIND（<code>named</code>）负责解析实验环境的域名并转发外部请求，因此任何指向它的客户端都能解析实验环境中的所有主机名</li>
+<li><strong>HTTP</strong> —— 在 <code>/srv/www/htdocs/lab_creation/</code> 下提供系统配置文件（Ignition、Combustion、cloud-init）</li>
+<li><strong>脚本</strong> —— 所有实验环境管理命令都安装在 <code>/usr/local/bin/</code></li>
+<li><strong>Web 界面</strong>（可选）—— <a href="#web-ui-lab-builder">lab-builder</a>，一个基于浏览器的 lab.json 设计工具</li>
+</ul>
+<p>所有用户命令都在<strong>自动化虚拟机上</strong>执行。它通过 SSH 连接到虚拟化主机和已创建的虚拟机。初始配置完成后，无需再直接访问虚拟化主机。</p>
+<h3 id="底层实现">底层实现</h3>
+<p>命令行工具和每个插件都用 Python 3.11 编写，位于 <code>libs/</code> 和 <code>scripts/</code> 中，安装到 <code>/usr/local/lib/lab_creation/</code>——围绕一小组共享库模块（<code>lab_creation.py</code>、<code>backends.py</code>、<code>services.py</code>、<code>spacecmd_common.py</code> 等）组织，而不是互相依赖。虚拟机的创建通过一个可插拔的 <code>VMBackend</code> 接口（目前是 <code>LibvirtBackend</code>）实现，这样同一套编排代码将来可以在不改动插件的情况下支持其他虚拟化后端（KubeVirt、Harvester）。有一个遗留插件（<code>install_ds389</code>）仍是纯 bash 实现——它早于 Python 移植，且在 bash 时代就已经损坏，所以不值得移植。这些插件所取代的 bash 时代实现被归档保留在 <code>legacy_bash/</code> 下。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="how-it-works"></a></p>
+<h2 id="工作原理">工作原理</h2>
+<h3 id="部署流水线">部署流水线</h3>
+<p><code>setup_lab.py</code> 按固定的阶段顺序执行；对于纯虚拟机实验环境（没有 <code>kclusters</code> 部分），两个仅与 Kubernetes 相关的阶段会被完全跳过：</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;有 kclusters&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;无 kclusters&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;有 kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;无 kclusters&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="虚拟机配置">虚拟机配置</h3>
+<p>每台虚拟机按以下步骤创建：
+1. 确定它属于哪台 KVM 主机（显式的 <code>kvm_host</code> 字段，或根据空闲容量自动选择——参见<a href="#multi-host-labs">多主机实验环境</a>）
+2. 在该主机上复制并调整源 QCOW2 镜像的大小
+3. 根据 <code>config_method</code> 从模板生成系统配置文件
+4. 在 BIND 中注册一条 DNS 记录
+5. 通过 SSH 在虚拟化主机上执行 <code>virt-install</code>
+6. 等待 SSH 变为可用</p>
+<p>系统配置方式由实验环境 JSON 中的 <code>config_method</code>（按节点或在 <code>common</code> 中）控制：</p>
+<table>
+<thead>
+<tr>
+<th>值</th>
+<th>方式</th>
+<th>适用于</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(空，默认)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>cloud-init ISO</td>
+<td>openSUSE Leap、Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>直接在虚拟化主机上修改 QCOW2（<code>virt-customize</code>）——客户机无需支持 Ignition/cloud-init</td>
+<td>CentOS 7、旧版 Debian/RHEL，或任何不支持 Ignition/cloud-init 的镜像</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>从真正的安装 ISO 进行脚本化安装（根据 <code>install_type</code> 选择 AutoYaST、Kickstart、Preseed 或 AutoInstall）</td>
+<td>没有其他配置方式的发行版</td>
+</tr>
+</tbody>
+</table>
+<h3 id="虚拟机后端">虚拟机后端</h3>
+<p>究竟由哪种虚拟化技术来创建一个节点，取决于一个可插拔的 <code>VMBackend</code> 接口，每个节点解析一次（该节点配置中的 <code>backend: harvester</code> 会选择 <code>HarvesterBackend</code>；其他情况默认使用 <code>LibvirtBackend</code>）——无论解析出的是哪个后端，每个插件和编排脚本都以同样的方式与它交互：</p>
+<pre class="mermaid">graph TD
+    SV[&quot;setup_vm.py / setup_lab.py&quot;] --&gt; GB[&quot;backends.get_backend()&quot;]
+    GB -- &quot;默认&quot; --&gt; LB[&quot;LibvirtBackend&quot;]
+    GB -- &quot;backend: harvester&quot; --&gt; HB[&quot;HarvesterBackend&quot;]
+    LB --&gt; KVM[&quot;KVM 虚拟化主机上的&lt;br/&gt;virt-install / virsh&quot;]
+    HB --&gt; KV[&quot;Harvester 集群上的&lt;br/&gt;KubeVirt VirtualMachine&quot;]
+</pre>
+<h3 id="kubernetes-配置">Kubernetes 配置</h3>
+<p>虚拟机启动后，<code>setup_lab.py</code> 会根据 JSON 中的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes。RKE2 和 K3s 均受支持。集群就绪后，其插件会依次运行；虚拟机级别的插件（绑定到单个节点而非集群）会在该节点配置完成后运行。</p>
+<h3 id="多主机实验环境">多主机实验环境</h3>
+<p><a id="multi-host-labs"></a>
+一个实验环境并不局限于单台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
+<pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
+</code></pre>
+<p>之后，对于实验环境 JSON 中的每个节点，你可以：
+- <strong>显式固定</strong>——在该节点的配置中设置 <code>"kvm_host": "hv2.mydemo.lab"</code>，或者
+- <strong>让其自动选择</strong>——省略 <code>kvm_host</code>；该节点会被分配到当前拥有足够空闲 CPU/内存/磁盘的已配置主机上（通过 SSH 实时探测）。</p>
+<p>未指定 <code>kvm_host</code> 的节点，以及只配置了一台主机的环境，其行为与该功能出现之前完全一致——对单主机实验环境而言没有任何变化。</p>
+<h3 id="库加载顺序">库加载顺序</h3>
+<p>每个脚本按以下顺序加载配置：</p>
+<ol>
+<li><code>/etc/lab_creation.defaults</code> —— 系统级默认值、路径、软件包列表</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code> —— 输入验证、配置加载</li>
+<li><code>/etc/lab_creation.cfg</code> —— 节点特定设置（<code>REMOTE_HOST</code>、<code>ROOT_SSH_KEY</code>、<code>VIRT_SRV</code>、<code>KVM_HOSTS</code> 等）</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code> —— 虚拟机、DNS 和编排相关函数</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code> —— Kubernetes 集群相关函数</li>
+</ol>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="quick-start"></a></p>
+<h2 id="快速开始">快速开始</h2>
+<pre class="mermaid">flowchart TD
+    S1[&quot;1. 准备虚拟化主机的操作系统&quot;] --&gt; S2[&quot;2. 引导安装配置脚本&quot;]
+    S2 --&gt; S3[&quot;3. 配置并运行 KVM 节点安装程序&quot;]
+    S3 --&gt; S4[&quot;4. 配置自动化虚拟机&quot;]
+    S4 --&gt; S5[&quot;5. 让客户端 DNS 指向自动化虚拟机&quot;]
+    S5 --&gt; S6[&quot;6. 构建你的第一个实验环境&quot;]
+</pre>
+<h3 id="前提条件">前提条件</h3>
+<ul>
+<li>一台能够运行 KVM 的机器（已启用 Intel VT-x 或 AMD-V）</li>
+<li>用于下载软件包和镜像的互联网访问（或本地镜像源）</li>
+<li>将所选操作系统的 QCOW2 镜像放置在虚拟化主机的 <code>/var/lib/libvirt/images/sources/</code> 中</li>
+</ul>
+<aside class="callout callout-important"><p>自动化虚拟机需要专门的 <code>python3.11</code>——工具链明确固定使用该版本。大多数发行版会额外自带一个更旧的默认 <code>python3</code>；如果缺少 <code>python3.11</code>，安装脚本会拒绝继续执行。</p></aside>
+<p>已测试过的镜像：
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> —— 推荐，配合 Ignition+Combustion 使用
+- openSUSE Leap Micro —— 受支持，配合 cloud-init 使用</p>
+<h3 id="第-1-步--准备虚拟化主机的操作系统">第 1 步 —— 准备虚拟化主机的操作系统</h3>
+<p>在硬件上安装 SLES（或其他支持 KVM 的 Linux）。安装过程中，请选择：
+- <strong>网络</strong>：创建一个绑定到主网卡、带静态 IP 的网桥接口（<code>br0</code>）
+- <strong>系统角色</strong>：KVM Virtualization Host</p>
+<details>
+<summary>在 Linux 上制作可启动 U 盘</summary>
+
+
+<pre><code class="language-shell"># 插入 U 盘之前：
+cat /proc/partitions &gt; /tmp/partb4
+
+# 插入 U 盘后：
+cat /proc/partitions &gt; /tmp/parta
+
+# 找到新出现的设备：
+diff /tmp/part*
+</code></pre>
+
+
+<aside class="callout callout-warning"><p>下面的命令会<strong>销毁目标设备上的所有数据</strong>。执行前请务必将 <code>sdX</code> 与上面 <code>diff</code> 的输出仔细核对。</p></aside>
+
+
+<pre><code class="language-shell"># 写入 ISO（将 sdX 替换为你自己的设备）：
+dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
+</code></pre>
+
+
+</details>
+
+<h3 id="第-2-步--引导安装配置脚本">第 2 步 —— 引导安装配置脚本</h3>
+<p>在任意一台可以通过 SSH 访问虚拟化主机的 Linux 机器上：</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>这会将配置脚本下载到 <code>/var/tmp/setup_demo_server/</code>。</p>
+<h3 id="第-3-步--配置并运行-kvm-节点安装程序">第 3 步 —— 配置并运行 KVM 节点安装程序</h3>
+<p><a id="step-3--configure-and-run-the-kvm-node-setup"></a></p>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p><code>lab.cfg</code> 中的关键设置：</p>
+<table>
+<thead>
+<tr>
+<th>设置项</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ROOT_PWD_HASH</code></td>
+<td>root 密码哈希——使用 <code>mkpasswd --method=SHA-512 --stdin</code> 生成</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_PUB_KEY</code></td>
+<td>用于免密码访问的 SSH 公钥</td>
+</tr>
+<tr>
+<td><code>AUTOMATION_HOSTNAME</code></td>
+<td>自动化虚拟机的主机名（例如 <code>automation.mydemo.lab</code>）</td>
+</tr>
+<tr>
+<td><code>_QCOW_IMAGE</code></td>
+<td>源 QCOW2 镜像的文件名</td>
+</tr>
+<tr>
+<td>网络设置</td>
+<td>实验环境网络的 IP、网关、子网掩码、DNS</td>
+</tr>
+</tbody>
+</table>
+<p>然后运行安装程序（将 <code>&lt;IP&gt;</code> 替换为你的虚拟化主机 IP，本地运行则省略）：</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>这会配置好自动化虚拟机并启动所有必需的服务。</p>
+<h3 id="第-4-步--配置自动化虚拟机">第 4 步 —— 配置自动化虚拟机</h3>
+<p>通过 SSH 连接到自动化虚拟机并安装实验环境脚本：</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<p><code>lab_creation.cfg</code> 中的关键设置：</p>
+<table>
+<thead>
+<tr>
+<th>设置项</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>（主）KVM 虚拟化主机的主机名或 IP</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(可选)</em> 以空格分隔的额外虚拟化主机列表，用于<a href="#multi-host-labs">多主机实验环境</a></td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>注入到虚拟机中的 SSH 公钥内容</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>libvirt 连接 URI（例如 <code>qemu+ssh://root@hypervisor/system</code>）</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>虚拟机使用的默认 libvirt 网络（例如 <code>bridge=br0</code>）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="第-5-步--让客户端-dns-指向自动化虚拟机">第 5 步 —— 让客户端 DNS 指向自动化虚拟机</h3>
+<p><a id="step-5--point-your-client-dns-at-the-automation-vm"></a></p>
+<p>为了让主机名能从你的桌面解析：</p>
+<pre><code class="language-shell"># Linux（NetworkManager）：
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# 或添加到 /etc/resolv.conf：
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="第-6-步--构建你的第一个实验环境">第 6 步 —— 构建你的第一个实验环境</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>更多起点请参见下面的<a href="#examples">示例</a>，或者打开 <a href="#web-ui-lab-builder">Web 界面</a>，无需手写 JSON。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="web-ui-lab-builder"></a></p>
+<h2 id="web-界面lab-builder">Web 界面（lab-builder）</h2>
+<p>一个基于浏览器的 <code>lab.json</code> 设计工具，能在运行时<strong>自省项目自身的 Python 库</strong>——它对任何插件都没有硬编码的了解。选择一个组件，界面就会直接根据该组件自身的 schema 生成表单；给脚本加一个字段，界面无需任何前端改动即可显示它。</p>
+<pre><code class="language-shell"># 最快的体验方式——除 Python 外没有任何依赖：
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>关于生产环境部署（Apache，或独立于 init 系统的 systemd 服务，外加通过幂等生成的自签名证书实现的 HTTPS），请参阅 <strong><a href="webui.html">README.webui.md</a></strong>——其中涵盖了全部三种部署模式、HTTP API 以及故障排查。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="lab-definition-format"></a></p>
+<h2 id="实验环境定义格式">实验环境定义格式</h2>
+<p>实验环境以 JSON 或 YAML 文件的形式定义（自动检测格式 —— 见下方说明）。当前格式支持每个实验环境包含多个 Kubernetes 集群（<code>kclusters</code>）；旧版单集群格式（<code>cluster</code>）请参见 <code>examples/cluster.json.template</code>。</p>
+<pre class="mermaid">graph TD
+    Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;每台虚拟机：myip、mymac、kcluster、addons...&quot;]
+    Lab --&gt; Common[&quot;common&lt;br/&gt;共享默认值：ISO_IMAGE、VM_MEM、VM_DSK...&quot;]
+    Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type、clu_rel、mydomain、addons&quot;]
+    Lab --&gt; AddonSections[&quot;每个插件一个部分&lt;br/&gt;例如 rancher、longhorn&quot;]
+    Nodes -. &quot;kcluster&quot; .-&gt; KClusters
+    KClusters -. &quot;addons&quot; .-&gt; AddonSections
+    Nodes -. &quot;addons&quot; .-&gt; AddonSections
+</pre>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;node101.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.101&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; 或 &quot;agent&quot;
+      &quot;kcluster&quot;: &quot;cluster1&quot;           // 该节点属于哪个 kclusters 条目
+    },
+    &quot;node102.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.102&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;kcluster&quot;: &quot;cluster1&quot;
+    }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;:     &quot;24576&quot;,
+    &quot;VM_DSK&quot;:     &quot;80&quot;,
+    &quot;VM_CPU&quot;:     &quot;6&quot;,
+    &quot;VM_BOOT&quot;:    &quot;uefi&quot;,             // uefi（默认）、firmware=bios、bios、uefi=off
+    &quot;mymask&quot;:     &quot;24&quot;,
+    &quot;mygw&quot;:       &quot;192.168.88.1&quot;,
+    &quot;mydns&quot;:      &quot;192.168.88.73&quot;,
+    &quot;mynet_reverse&quot;: &quot;88.168.192&quot;
+  },
+  &quot;kclusters&quot;: {
+    &quot;cluster1&quot;: {
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; 或 &quot;k3s&quot;
+      &quot;clu_rel&quot;:   &quot;stable&quot;,
+      &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
+      &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
+    }
+  },
+  &quot;rancher&quot;: {
+    &quot;rancher_shorthn&quot;:   &quot;rancher&quot;,
+    &quot;rancher_rel&quot;:       &quot;rancher-prime&quot;,
+    &quot;rancher_repo_url&quot;:  &quot;https://charts.rancher.com/server-charts/prime&quot;,
+    &quot;rancher_helm_rel&quot;:  &quot;rancher&quot;,
+    &quot;rancher_helm_chart&quot;: &quot;rancher-prime/rancher&quot;,
+    &quot;rancher_Version&quot;:   &quot;--version 2.13.3&quot;,
+    &quot;cert_manager_ver&quot;:  &quot;--version v1.14.4&quot;
+  }
+}
+</code></pre>
+<details>
+<summary>同一个实验环境，用 YAML 表示</summary>
+
+
+<pre><code class="language-yaml">nodes:
+  node101.mydemo.lab:
+    myip: &quot;192.168.88.101&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c1&quot;
+    INSTALL_RKE2_TYPE: server   # &quot;server&quot; 或 &quot;agent&quot;
+    kcluster: cluster1          # 该节点属于哪个 kclusters 条目
+  node102.mydemo.lab:
+    myip: &quot;192.168.88.102&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c2&quot;
+    INSTALL_RKE2_TYPE: agent
+    kcluster: cluster1
+
+common:
+  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  VM_MEM: &quot;24576&quot;
+  VM_DSK: &quot;80&quot;
+  VM_CPU: &quot;6&quot;
+  VM_BOOT: uefi                # uefi（默认）、firmware=bios、bios、uefi=off
+  mymask: &quot;24&quot;
+  mygw: &quot;192.168.88.1&quot;
+  mydns: &quot;192.168.88.73&quot;
+  mynet_reverse: &quot;88.168.192&quot;
+
+kclusters:
+  cluster1:
+    clu_type: rke2              # &quot;rke2&quot; 或 &quot;k3s&quot;
+    clu_rel: stable
+    mydomain: mydemo.lab
+    addons: [rancher, longhorn]
+
+rancher:
+  rancher_shorthn: rancher
+  rancher_rel: rancher-prime
+  rancher_repo_url: https://charts.rancher.com/server-charts/prime
+  rancher_helm_rel: rancher
+  rancher_helm_chart: rancher-prime/rancher
+  rancher_Version: &quot;--version 2.13.3&quot;
+  cert_manager_ver: &quot;--version v1.14.4&quot;
+</code></pre>
+
+
+</details>
+
+<p>节点级别的可选字段：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>addons</code></td>
+<td>仅针对该虚拟机运行的插件脚本列表</td>
+</tr>
+<tr>
+<td><code>config_method</code></td>
+<td>覆盖系统配置方式（<code>cloud-init</code>、<code>virt_customize</code>、<code>install_iso</code>）</td>
+</tr>
+<tr>
+<td><code>kvm_host</code></td>
+<td>在<a href="#multi-host-labs">多主机实验环境</a>中将该虚拟机固定到特定的虚拟化主机</td>
+</tr>
+<tr>
+<td><code>extra_dsk</code></td>
+<td>要挂载的额外磁盘——<code>"/dev/sdb"</code>，或使用 <code>"/dev/sdb,bus=scsi"</code> 为该磁盘覆盖默认总线类型</td>
+</tr>
+<tr>
+<td><code>salt_states</code></td>
+<td>要应用的 Salt state（仅限 cloud-init 方式）</td>
+</tr>
+</tbody>
+</table>
+<p>kcluster 的可选字段：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgm_node</code></td>
+<td>运行集群插件安装程序的节点主机名；默认为第一个服务器节点</td>
+</tr>
+</tbody>
+</table>
+<p>每个插件脚本还支持 <code>--schema</code>（<code>--input-definition</code> 的别名），它会以机器可读的 JSON 或 YAML 格式输出自身的配置键——这与 <a href="#web-ui-lab-builder">Web 界面</a>读取以构建表单的 schema 完全相同：</p>
+<pre><code class="language-shell">install_longhorn --schema
+setup_lab.py --input-definition yaml   # 基础拓扑 schema（common/nodes/kclusters）
+</code></pre>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="examples"></a></p>
+<h2 id="示例">示例</h2>
+<h3 id="最小的单虚拟机实验环境">最小的单虚拟机实验环境</h3>
+<p>尽可能小的实验环境——一台虚拟机，不含 Kubernetes：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
+    &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
+  }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py standalone.json
+</code></pre>
+<h3 id="rke2--rancher--longhornhello-world-集群">RKE2 + Rancher + Longhorn（"hello world" 集群）</h3>
+<p>一个包含管理平台和分布式存储的双节点集群——完整示例见上文的<a href="#lab-definition-format">实验环境定义格式</a>。</p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+# 之后重新运行，跳过任何已启动且可访问的虚拟机：
+setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<h3 id="将一个集群分布到两台主机上">将一个集群分布到两台主机上</h3>
+<p>把服务器固定到一台虚拟化主机，让代理节点自动选择空间充足的<a href="#multi-host-labs">已配置主机</a>：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;srv1.mydemo.lab&quot;:   { &quot;myip&quot;: &quot;192.168.88.10&quot;, &quot;kvm_host&quot;: &quot;hv1.mydemo.lab&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
+}
+</code></pre>
+<h3 id="suse-multi-linux-manageruyuni服务器--一台已注册的客户端">SUSE Multi-Linux Manager（Uyuni）服务器 + 一台已注册的客户端</h3>
+<p>启动一台带有激活密钥的 Uyuni 服务器，然后将第二台虚拟机注册为它的 Salt 客户端——完整功能集（<code>orgs</code>、RBAC、Content Lifecycle Management、Ansible 集成等）请参见<a href="#available-addons">可用插件</a>：</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
+    &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;uyuni&quot;: {
+    &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
+    &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
+  },
+  &quot;client_registration&quot;: {
+    &quot;client_registration_server_type&quot;: &quot;uyuni&quot;,
+    &quot;client_registration_server&quot;: &quot;uyuni.mydemo.lab&quot;,
+    &quot;client_registration_activation_key&quot;: &quot;1-lab-clients&quot;
+  }
+}
+</code></pre>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="step-by-step-walkthroughs"></a></p>
+<h2 id="分步教程">分步教程</h2>
+<p>上面的<a href="#examples">示例</a>是可直接复制粘贴的起点。下面三个教程会从头到尾完整走一遍真实场景——运行什么、每一步会发生什么，以及如何验证它确实生效了。下面出现的每个 JSON 字段和命令形式都与本项目自身的测试套件（<code>tests/run_tests.sh</code>）及源码保持一致。</p>
+<aside class="callout callout-tip"><p>教程 2 和 3 都经过<strong>实机测试</strong>——是在真实的服务器/硬件上运行的，而不仅仅是孤立验证。</p></aside>
+<h3 id="教程-1--你的第一个集群rke2--rancher--longhorn">教程 1 —— 你的第一个集群：RKE2 + Rancher + Longhorn</h3>
+<p>目标：两台 SLE Micro 虚拟机、一个 RKE2 集群、用于管理的 Rancher、用于存储的 Longhorn——最终可以通过浏览器访问。</p>
+<ol>
+<li><strong>编写实验环境文件。</strong> 保存为 <code>rancher-cluster.json</code>（将 IP/网络调整为你自己的实验环境域名）：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>构建它：</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
+<p><code>setup_lab.py</code> 会在做任何其他事情之前自动对文件进行预检——错误的 IP、指向不存在的 <code>kcluster</code> 的引用、缺失的 <code>ISO_IMAGE</code> 等类似错误都会被检测出来并打印（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是执行到一半才失败。一个正确的文件会打印 <code>✓ Preflight passed</code>，然后直接进入构建阶段。</p>
+<p>按顺序，它会：把两个节点都注册到 DNS → 创建两台虚拟机（复制 QCOW2 镜像、生成 Combustion 文件、启动、等待 SSH）→ 在 <code>node101</code> 上以 server 身份安装 RKE2，然后在 <code>node102</code> 上以 agent 身份安装 → 在集群的管理节点（<code>mgm_node</code>，默认为第一个服务器节点——此处为 <code>node101</code>）上安装 <code>rancher</code> 和 <code>longhorn</code>。带 Rancher 的双节点集群通常需要 15–25 分钟；其中大部分时间花在 RKE2 的引导过程和 Rancher 自身的 Helm 安装上。</p>
+<ol start="3">
+<li><strong>验证 DNS 是否可以解析</strong>（在你自己的桌面上，前提是<a href="#step-5--point-your-client-dns-at-the-automation-vm">已将其指向自动化虚拟机的 DNS</a>）：</li>
+</ol>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
+<p>两者都应返回 <code>192.168.88.101</code>（Rancher 的 ingress 主机名是 <code>rancher_shorthn</code> 的值 <code>rancher</code>，位于集群的 <code>mydomain</code> 之下）。</p>
+<ol start="4">
+<li>
+<p><strong>登录。</strong> 访问 <code>https://rancher.mydemo.lab</code>（自签名证书——浏览器会警告一次），使用自动化虚拟机上 <code>/etc/lab_creation.cfg</code> 中的 <code>rancher_initial_pwd</code> 登录。</p>
+</li>
+<li>
+<p><strong>无需重建全部即可迭代。</strong> 修改了某个节点的配置，或某台虚拟机崩溃了？加上 <code>--keep</code> 重新运行：任何已存在、与其定义的 IP/MAC 匹配且可通过 SSH 访问的虚拟机都会被保留不动；只有实际缺失或损坏的部分才会被（重新）创建：</p>
+</li>
+</ol>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<ol start="6">
+<li>完成后<strong>销毁</strong>它：</li>
+</ol>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
+<h3 id="教程-2--带有已注册客户端的-suse-multi-linux-manageruyuni服务器">教程 2 —— 带有已注册客户端的 SUSE Multi-Linux Manager（Uyuni）服务器</h3>
+<p>目标：一台拥有真实激活密钥的 Uyuni 服务器，以及一台将自身注册为其 Salt 托管客户端的第二台虚拟机。已针对真实 Uyuni 服务器完成<strong>端到端实机测试</strong>。</p>
+<ol>
+<li><strong>编写实验环境文件</strong>——一个节点用于 Uyuni 服务器，另一个用于客户端：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>构建它：</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
+<p>虚拟机级别的插件（<code>uyuni</code> 和 <code>client_registration</code> 都绑定到节点而非集群，因为这里没有 <code>kclusters</code> 部分）会在各自的节点启动后运行。<code>install_uyuni</code> 启动服务器，等待它变为可访问，然后创建激活密钥。随后 <code>install_client_registration</code> 会针对该服务器为 <code>client1</code> 完成引导——安装引导脚本并运行它，然后定期轮询，直到新 minion 的 Salt 密钥显示为待处理状态，再将其接受。</p>
+<ol start="3">
+<li><strong>验证客户端确实已注册。</strong> 通过 SSH 连接到 Uyuni 服务器并直接查询：</li>
+</ol>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
+<p><code>client1.mydemo.lab</code> 应该出现在列表中。</p>
+<ol start="4">
+<li>使用 <code>uyuni_admin</code>/<code>uyuni_password</code> <strong>登录 Web 界面</strong>（<code>https://uyuni.mydemo.lab</code>），以可视化方式查看同样的信息、浏览激活密钥，或运行一次 highstate。</li>
+</ol>
+<p>已知的上游小问题（并非本项目的 bug，记录于此以防你遇到）：<code>salt-transactional-update</code> 自身的软件包升级脚本片段可能会在客户端的 <code>/etc/salt/minion.d/transactional_update.conf</code> 中留下重复的 YAML 键，导致 <code>salt-minion</code> 陷入崩溃循环，直到手动去除重复项为止。本仓库中的代码不会触碰这个文件。</p>
+<h3 id="教程-3--nat-模式下的自动化虚拟机单网卡笔记本电脑作为虚拟化主机">教程 3 —— NAT 模式下的自动化虚拟机（单网卡笔记本电脑作为虚拟化主机）</h3>
+<p>目标：在没有多余网卡可用于网桥的主机上引导自动化虚拟机——转而使用由 libvirt 管理的私有网络，并将特定端口通过 DNAT 从主机自身的真实 IP 转发进来。已在一次性的嵌套虚拟机上完成<strong>端到端实机测试</strong>。</p>
+<p>如果你不启用它，这不会改变<a href="#quick-start">默认快速开始</a>流程的任何内容——<code>_network_mode</code> 默认是 <code>"bridge"</code>，与所有现有配置逐字节保持一致。</p>
+<ol>
+<li><strong>在 <code>lab.cfg</code> 中</strong>（快速开始的<a href="#step-3--configure-and-run-the-kvm-node-setup">第 3 步</a>），设置：</li>
+</ol>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # 图中所示为默认值——一个新的 libvirt 虚拟网络，不是你主机真正的局域网
+_nat_network_cidr="192.168.150.0/24" # 图中所示为默认值
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # 图中所示为默认值——“&lt;宿主机真实 IP 上的端口&gt;:&lt;automation VM 上的端口&gt;/&lt;协议&gt;”
+</code></pre>
+<p>这会把<strong>宿主机自身真实、可从外部访问的 IP</strong>（<code>&lt;外部端口&gt;</code>）上的 22/80/443 端口，转发到 <strong>automation VM 的私有 NAT 地址</strong>（<code>&lt;内部端口&gt;</code>）上的相同端口——此时这个私有网络里唯一在监听的就是 automation VM，所以这里的“内部”始终指“在 automation VM 上”。（下面的第 5 步会复用同样的 <code>&lt;外部端口&gt;:&lt;内部端口&gt;/&lt;协议&gt;</code> 语法，把端口转发到某个<em>实验室</em>虚拟机上——前提是这台虚拟机已经存在；届时“内部”指的是那台虚拟机自己的私有 NAT 地址，而不是 automation VM 的。）</p>
+<ol start="2">
+<li><strong>像往常一样运行安装程序：</strong></li>
+</ol>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
+<p>这会定义 libvirt 网络 <code>labnat</code>（NAT 模式，DHCP/网关由 libvirt 自身处理——与 libvirt 内置的 <code>default</code> 网络机制相同，只是使用了本项目自己的名称/CIDR）来代替网桥，然后在其上创建自动化虚拟机，为其分配该私有网段内的静态 IP，最后将上述三个端口通过 DNAT 从主机自身的真实 IP 转发进来。</p>
+<ol start="3">
+<li><strong>在虚拟化主机上验证网络和转发规则是否存在</strong>：</li>
+</ol>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # 指向自动化虚拟机私有 IP 的 DNAT 规则
+iptables -L LAB_PORTFWD_FWD -n -v            # FORWARD 链中对应的 ACCEPT 规则
+</code></pre>
+<ol start="4">
+<li><strong>从虚拟化主机外部访问自动化虚拟机</strong>，使用的是虚拟化主机自身的真实 IP——而不是自动化虚拟机那个从其他任何地方都无法路由到的私有地址 <code>192.168.150.x</code>：</li>
+</ol>
+<pre><code class="language-shell">ssh root@&lt;虚拟化主机的真实IP&gt;          # 通过 DNAT 转发到自动化虚拟机的 SSH（22 端口）
+</code></pre>
+<p>80 和 443 端口默认也会被转发（用于系统配置文件的 HTTP 服务器，以及在你配置好 <a href="#web-ui-lab-builder">Web 界面</a>之后的 HTTPS 监听端口)——同样可以通过虚拟化主机的真实 IP 访问。</p>
+<ol start="5">
+<li><strong>为某台实验环境虚拟机添加端口转发</strong>，而不仅仅是自动化虚拟机本身：给该节点添加一个 <code>forwarded_ports</code> 字段，并在 <code>common.services</code> 中启用一次 <code>portforward</code> 服务：</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…common 的其余部分照常配置" }
+}
+</code></pre>
+<p>一旦实验环境中任意一个节点首次声明了 <code>forwarded_ports</code>，<code>setup_lab.py</code>/<code>setup_vm.py</code> 就会以同样的方式，将这两个端口通过 DNAT 从虚拟化主机的真实 IP 转发进来。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="available-commands"></a></p>
+<h2 id="可用命令">可用命令</h2>
+<p>所有命令都在<strong>自动化虚拟机上</strong>运行，并以实验环境定义的 JSON 文件作为第一个参数。</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_lab.py [--keep] &lt;lab.json&gt;</code></td>
+<td>创建所有虚拟机，搭建 Kubernetes 集群，并按顺序安装每个集群级和虚拟机级插件。<code>--keep</code> 会跳过任何已存在、与定义的 IP/MAC 匹配且可通过 SSH 访问的虚拟机——不使用该选项时，每台虚拟机都会被销毁并重新创建。</td>
+</tr>
+<tr>
+<td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>创建或重新创建单台虚拟机</td>
+</tr>
+<tr>
+<td><code>destroy_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>销毁单台虚拟机</td>
+</tr>
+<tr>
+<td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
+<td>销毁一个实验环境中的所有虚拟机</td>
+</tr>
+</tbody>
+</table>
+<p>每个命令和每个 <code>install_&lt;addon&gt;</code> 脚本都支持：</p>
+<pre><code class="language-shell">setup_lab.py --version              # 打印已安装的版本
+install_longhorn --schema           # 打印该插件的配置 schema（JSON 格式）
+install_longhorn --schema yaml      # ……或 YAML 格式
+</code></pre>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="available-addons"></a></p>
+<h2 id="可用插件">可用插件</h2>
+<p>插件通过名称在 kcluster 或节点的 <code>addons</code> 数组中被引用。对应的 <code>install_&lt;name&gt;</code> 脚本必须位于 <code>PATH</code> 中。</p>
+<p><sub>快速跳转: <a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub></p>
+<p><a id="addons-k8s"></a></p>
+<details open>
+<summary><strong>Kubernetes 平台与 GitOps</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
+<td>SUSE Rancher Prime Kubernetes 管理平台</td>
+</tr>
+<tr>
+<td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
+<td>SUSE Longhorn 分布式块存储</td>
+</tr>
+<tr>
+<td><a href="https://goharbor.io/"><code>harbor</code></a></td>
+<td>容器镜像仓库</td>
+</tr>
+<tr>
+<td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
+<td>Argo CD GitOps 控制器</td>
+</tr>
+<tr>
+<td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
+<td>Kubernetes 策略引擎</td>
+</tr>
+<tr>
+<td><a href="https://istio.io/"><code>istio</code></a></td>
+<td>服务网格</td>
+</tr>
+<tr>
+<td><a href="https://linkerd.io/"><code>linkerd</code></a></td>
+<td>服务网格</td>
+</tr>
+<tr>
+<td><a href="https://traefik.io/"><code>traefik</code></a></td>
+<td>Ingress 控制器</td>
+</tr>
+<tr>
+<td><a href="https://nginx.org/"><code>nginx</code></a></td>
+<td>Ingress 控制器 / 反向代理</td>
+</tr>
+<tr>
+<td><a href="https://coredns.io/"><code>coredns</code></a></td>
+<td>集群 DNS</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
+<td>Kubernetes 集群证书轮换</td>
+</tr>
+<tr>
+<td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
+<td>面向云原生工作负载的数据编排/缓存</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/suse-observability/"><code>suse_observability</code></a></td>
+<td>SUSE Observability（基于 StackState 的指标/追踪/拓扑）</td>
+</tr>
+<tr>
+<td><a href="https://agones.dev/"><code>agones</code></a></td>
+<td>专用游戏服务器托管/伸缩（agones.dev）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-security"></a></p>
+<details open>
+<summary><strong>安全与合规</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>neuvector</code></a></td>
+<td>SUSE NeuVector 容器安全平台</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/testing/testing"><code>nv_testing</code></a></td>
+<td>NeuVector 安全测试工作负载（nginx/node/redis pod）</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>nv-demo-helm</code></a></td>
+<td>基于 Helm 的 NeuVector 演示工作负载</td>
+</tr>
+<tr>
+<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
+<td>OpenSCAP/ComplianceAsCode 操作器</td>
+</tr>
+<tr>
+<td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
+<td>身份与访问管理</td>
+</tr>
+<tr>
+<td><a href="https://kagent.dev/"><code>kagent</code></a></td>
+<td>面向 Kubernetes 的智能体式 AI 安全助手</td>
+</tr>
+<tr>
+<td><code>insecure_app</code></td>
+<td>故意存在漏洞的 Web 应用（用于演示/培训）</td>
+</tr>
+<tr>
+<td><a href="https://struts.apache.org/"><code>struts_demo</code></a></td>
+<td>存在漏洞的 Apache Struts2 演示应用（CVE-2017-5638）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-suma"></a></p>
+<details open>
+<summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.uyuni-project.org/"><code>uyuni</code></a></td>
+<td>Uyuni 服务器（上游）：激活密钥、组织、RBAC、Content Lifecycle Management、Ansible 集成、SCAP/CVE 审计、dev/QA/prod 环境拓扑——完整字段列表见 <code>install_uyuni --schema</code></td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
+<td>SUSE Multi-Linux Manager 服务器——与 <code>uyuni</code> 相同的功能集，通过 Kubernetes/Helm 部署</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
+<td>SMLM 代理</td>
+</tr>
+<tr>
+<td><code>client_registration</code></td>
+<td>将任意虚拟机注册为现有 <code>uyuni</code>/<code>smlm</code> 服务器的 Salt 客户端（激活密钥引导 + salt 密钥接受）</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>suma</code></a></td>
+<td>SUSE Multi-Linux Manager（SUMA），通过 <code>mgradm</code> 直接安装在操作系统上——不基于 Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
+<td>配置一个真实的 Ansible 控制节点：安装 <code>ansible-core</code>，推送示例 playbook 以及一个查询 <code>uyuni</code>/<code>smlm</code> 自身系统列表的动态清单脚本，并设置对实验室其余节点的 SSH 访问。与 <code>uyuni</code>/<code>smlm</code> 自身的 <code>*_ansible_control_nodes</code> 字段配合，启用服务器端的"Ansible Control Node"授权</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-storage"></a></p>
+<details open>
+<summary><strong>存储与数据库</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://mariadb.org/"><code>mariadb</code></a></td>
+<td>MariaDB 数据库——Kubernetes（无 Helm 清单）或直接安装在操作系统上；操作系统原生路径（<code>libs/db_common.py</code>）也被其他需要在同一主机上使用配套数据库的插件（<code>nextcloud</code>、<code>seafile</code>）直接复用</td>
+</tr>
+<tr>
+<td><a href="https://www.postgresql.org/"><code>postgresql</code></a></td>
+<td>PostgreSQL 数据库——Kubernetes（Helm）或直接安装在操作系统上；操作系统原生路径（<code>libs/db_common.py</code>）也被其他需要在同一主机上使用配套数据库的插件（例如 <code>nextcloud</code>）直接复用</td>
+</tr>
+<tr>
+<td><a href="https://www.openldap.org/"><code>openldap</code></a></td>
+<td>OpenLDAP 目录服务</td>
+</tr>
+<tr>
+<td><a href="https://www.port389.org/"><code>ds389</code></a></td>
+<td>389 Directory Server（LDAP）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-collaboration"></a></p>
+<details open>
+<summary><strong>协作与文件共享</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://nextcloud.com/"><code>nextcloud</code></a></td>
+<td>Nextcloud——默认使用独立的 podman 容器（不依赖 Kubernetes，也是唯一支持离线（air-gap）应用安装的模式），或在 Kubernetes 集群上使用真实的社区 Helm chart；可选的 Talk/Groupware/Flow/Assistant 应用，以及 ONLYOFFICE/Euro-Office/Collabora 文档编辑集成</td>
+</tr>
+<tr>
+<td><a href="https://www.seafile.com/"><code>seafile</code></a></td>
+<td>Seafile——默认使用独立的 podman 容器（不依赖 Kubernetes），或在 Kubernetes 集群上使用真实的官方 Helm chart</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-cicd"></a></p>
+<details open>
+<summary><strong>CI/CD 与开发者工具</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.jenkins.io/"><code>jenkins</code></a></td>
+<td>Jenkins CI</td>
+</tr>
+<tr>
+<td><a href="https://about.gitlab.com/"><code>gitlab</code></a></td>
+<td>GitLab——默认使用独立的 Omnibus podman 容器（不依赖 Kubernetes），或在 Kubernetes 集群上使用真实的官方 Helm chart</td>
+</tr>
+<tr>
+<td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
+<td>SUSE Application Collection</td>
+</tr>
+<tr>
+<td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
+<td>StackState 监控集成</td>
+</tr>
+<tr>
+<td><a href="https://www.trento-project.io/"><code>trento</code></a></td>
+<td>SAP 基础设施监控</td>
+</tr>
+<tr>
+<td><a href="https://prometheus.io/"><code>prometheus</code></a></td>
+<td>独立的 Prometheus 服务器（podman 容器，不依赖 Kubernetes）——抓取 <code>smlm</code>/<code>uyuni</code> 服务器自带的导出器（<code>smlm_monitoring_enabled</code>）或任意自定义的 <code>prometheus_scrape_configs</code> 目标</td>
+</tr>
+<tr>
+<td><a href="https://grafana.com/"><code>grafana</code></a></td>
+<td>独立的 Grafana 服务器（podman 容器，不依赖 Kubernetes）——自动配置 Prometheus 数据源，并可选地为 <code>smlm</code>/<code>uyuni</code> 服务器自带的导出器配置真实的 Grafana Labs 社区仪表盘</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-ai"></a></p>
+<details open>
+<summary><strong>AI / ML</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://ollama.com/"><code>ollama</code></a></td>
+<td>本地 LLM 运行时</td>
+</tr>
+<tr>
+<td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
+<td>通过 Ollama 提供的 DeepSeek 模型</td>
+</tr>
+<tr>
+<td><a href="https://www.swiss-ai.org/apertus"><code>apertus</code></a></td>
+<td>通过 Ollama 提供的 Apertus（Swiss AI Initiative）模型</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemini-api"><code>gemini</code></a></td>
+<td>Google Gemini API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.anthropic.com/"><code>anthropic</code></a></td>
+<td>Anthropic Claude API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openai.com/"><code>openai</code></a></td>
+<td>OpenAI API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.moonshot.ai/"><code>kimi</code></a></td>
+<td>Moonshot AI Kimi API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openwebui.com/"><code>open_webui</code></a></td>
+<td>面向 Ollama / 兼容 OpenAI 端点的聊天前端</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
+<td>Hermes Agent——Nous Research 出品的自我进化型个人 AI 代理（Telegram/Discord/Slack 机器人 + Web 仪表盘）</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
+<td>SUSE 自研的 Ollama + Open WebUI + Milvus AI 技术栈</td>
+</tr>
+<tr>
+<td><a href="https://milvus.io/"><code>milvus</code></a></td>
+<td>Milvus 向量数据库（RAG/embedding 检索）</td>
+</tr>
+<tr>
+<td><a href="https://qdrant.tech/"><code>qdrant</code></a></td>
+<td>Qdrant 向量数据库（RAG/embedding 检索）</td>
+</tr>
+<tr>
+<td><a href="https://weaviate.io/"><code>weaviate</code></a></td>
+<td>Weaviate 向量数据库（RAG/embedding 检索）</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/gpu-operator"><code>gpu_operator</code></a></td>
+<td>NVIDIA GPU Operator（面向 AI 工作负载的 GPU 调度）</td>
+</tr>
+<tr>
+<td><a href="https://qwenlm.github.io/"><code>qwen</code></a></td>
+<td>通过 Ollama 提供的 Qwen2.5 模型</td>
+</tr>
+<tr>
+<td><a href="https://mistral.ai/"><code>mistral</code></a></td>
+<td>通过 Ollama 提供的 Mistral 模型</td>
+</tr>
+<tr>
+<td><a href="https://github.com/meta-llama/codellama"><code>codellama</code></a></td>
+<td>通过 Ollama 提供的 Code Llama 模型</td>
+</tr>
+<tr>
+<td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
+<td>通过 Ollama 提供的 StarCoder2 模型</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
+<td>（参见 <code>install_phoebe --schema</code>）</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-virt"></a></p>
+<details open>
+<summary><strong>虚拟化</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
+<td>SUSE Virtualization（Harvester/KubeVirt）节点配置</td>
+</tr>
+<tr>
+<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
+<td>KIWI 镜像构建工具</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-demos"></a></p>
+<details open>
+<summary><strong>演示应用</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://wordpress.org/"><code>wordpress</code></a></td>
+<td>WordPress + MySQL 演示应用</td>
+</tr>
+<tr>
+<td><a href="https://www.fluentd.org/"><code>fluentd</code></a></td>
+<td>日志聚合</td>
+</tr>
+<tr>
+<td><a href="https://www.list.org/"><code>mailman</code></a></td>
+<td>GNU Mailman 3 邮件列表管理 + Web 界面</td>
+</tr>
+<tr>
+<td><a href="https://www.mediagoblin.org/"><code>mediagoblin</code></a></td>
+<td>GNU MediaGoblin 联邦式媒体发布平台</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.com/NalaGinrut/colt"><code>colt</code></a></td>
+<td>Colt，基于 GNU Artanis 的 git 后端博客引擎</td>
+</tr>
+<tr>
+<td><a href="https://codeberg.org/jjba23/wikimusic"><code>wikimusic</code></a></td>
+<td>WikiMusic，基于 GNU Artanis 的音乐知识 CMS</td>
+</tr>
+<tr>
+<td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
+<td>Home Assistant 家庭自动化平台</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-games"></a></p>
+<details open>
+<summary><strong>游戏</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>插件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/Alzter/SuperTux-Classic"><code>supertux_classic</code></a></td>
+<td>SuperTux Classic，一款自托管的开源 Godot 平台跳跃游戏</td>
+</tr>
+<tr>
+<td><a href="https://github.com/edisgreat/skynet-simulator"><code>skynet_simulator</code></a></td>
+<td>Skynet Simulator，一款自托管的开源浏览器解谜/放置类游戏</td>
+</tr>
+<tr>
+<td><a href="https://github.com/leandrodreamer/BeepSaber"><code>open_saber</code></a></td>
+<td>Open Saber，一款自托管的开源节奏/切方块游戏</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p>要添加一个新插件：参照现有插件的模式创建 <code>scripts/install_&lt;name&gt;.py</code>（引入 <code>addon_common</code>，通过 <code>load_definition()</code> 加载相应的 JSON 部分，通过 SSH 完成实际工作），如有需要在 <code>templates/addons/&lt;name&gt;/</code> 下添加模板，并在你的 JSON 的 <code>addons</code> 数组中引用 <code>"&lt;name&gt;"</code>——<code>install_automation_node_scripts.sh</code> 的部署循环和 Web 界面都会自动发现它。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="configuration-reference"></a></p>
+<h2 id="配置参考">配置参考</h2>
+<h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
+<p>由每个脚本加载的系统级默认值。定义了路径、默认等待计时器和软件包列表。除非你清楚自己在做什么，否则<strong>不要编辑</strong>。</p>
+<h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
+<p>自动化虚拟机的节点特定配置。在配置过程中从 <code>/etc/lab_creation.cfg.example</code> 复制而来。关键变量：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>KVM 虚拟化主机的主机名或 IP</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(可选)</em> 用于<a href="#multi-host-labs">多主机实验环境</a>的、以空格分隔的虚拟化主机列表；默认仅为 <code>REMOTE_HOST</code></td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>用于远程虚拟化主机的 libvirt URI</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>注入到已配置虚拟机中的 SSH 公钥内容</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>默认的 libvirt 网络字符串</td>
+</tr>
+<tr>
+<td><code>REMOTE_DNS_SERVERS</code></td>
+<td>需要更新的额外 DNS 服务器列表，以空格分隔</td>
+</tr>
+<tr>
+<td><code>delay_min</code></td>
+<td>各配置阶段之间的等待分钟数（在较慢的硬件上应增大）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="usrlocalliblab_creation"><code>/usr/local/lib/lab_creation/</code></h3>
+<p>已安装的 Python 库模块。在自动化虚拟机上从仓库运行 <code>install_automation_node_scripts.sh</code> 即可更新。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lab_creation.py</code></td>
+<td>虚拟机生命周期、DNS、多主机解析以及编排相关的辅助函数</td>
+</tr>
+<tr>
+<td><code>backends.py</code></td>
+<td><code>VMBackend</code> 接口 + <code>LibvirtBackend</code>（创建/删除/重启虚拟机、推送配置文件）</td>
+</tr>
+<tr>
+<td><code>services.py</code></td>
+<td>DNS 服务管理</td>
+</tr>
+<tr>
+<td><code>spacecmd_common.py</code></td>
+<td>被 <code>install_uyuni</code>/<code>install_smlm</code>/<code>install_client_registration</code> 使用的共享 SUSE Multi-Linux Manager/Uyuni 自动化逻辑（激活密钥、组织、RBAC、CLM、Ansible、SCAP/CVE）</td>
+</tr>
+<tr>
+<td><code>primary.py</code></td>
+<td>输入验证与配置加载</td>
+</tr>
+<tr>
+<td><code>k8s.py</code></td>
+<td>Kubernetes 集群发行版接口（RKE2/K3s）</td>
+</tr>
+<tr>
+<td><code>addon_common.py</code></td>
+<td>每个 <code>install_*</code> 插件共用的 CLI 基础设施（<code>--help</code>/<code>--version</code>/<code>--schema</code> 分发、schema 校验）</td>
+</tr>
+</tbody>
+</table>
+<p>四个 bash 辅助脚本（<code>lab_creation.bash</code>、<code>k8s_functions.bash</code>、<code>primary_functions.bash</code>、<code>extensions.sh</code>）也仍与这些文件一同安装——为了 <code>install_ds389</code>（唯一从未移植到 Python 的插件）而被无限期保留。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="testing"></a></p>
+<h2 id="测试">测试</h2>
+<p>每项检查都在其<strong>自己独立的一次性 <code>podman</code> 容器</strong>中运行——某一项检查的崩溃、挂起或残留状态都不会影响到任何其他检查：</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p>覆盖整个代码树的 bash 和 Python 语法、schema/Web 界面一致性、针对每个核心库和编排脚本的模拟 SSH 单元测试，以及针对实机测试中发现的 bug 的回归测试。要添加一项新检查，只需在 <code>tests/checks/</code> 中放入一个可执行脚本——它会被自动发现，无需额外接线。</p>
+<p>已接入 pre-commit 钩子（每个克隆仓库启用一次，参见<a href="#contributing--developer-setup">贡献</a>）——它会在每次提交时自动运行，如果未安装 <code>podman</code>，会给出警告并跳过，而不是阻止提交。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<p><a id="contributing--developer-setup"></a></p>
+<h2 id="贡献--开发环境搭建">贡献 / 开发环境搭建</h2>
+<p>完整指南（开发环境搭建、编码规范、如何添加插件、PR 流程）请参见 <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong>（英文）。本项目遵循 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CODE_OF_CONDUCT.md">Contributor Covenant 行为准则</a>；报告漏洞请参见 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a>。每一次 push 和 pull request 都会经过 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml">CI</a>——Python 3.11 语法/导入检查、每个插件的 schema 检查、<code>shellcheck</code>，以及下文完整的容器化测试套件。</p>
+<h3 id="一次性-git-设置">一次性 git 设置</h3>
+<p>克隆仓库后，运行：</p>
+<pre><code class="language-shell">git config core.hooksPath .githooks
+</code></pre>
+<p>这会启用 <code>.githooks/</code> 中的钩子，它们会：
+- 在每次提交前运行完整的<a href="#testing">测试套件</a>
+- 管理按脚本的版本戳记（见下文）</p>
+<h3 id="版本管理的工作原理">版本管理的工作原理</h3>
+<aside class="callout callout-note"><p>这完全由上述 git 钩子处理——你永远不需要手动编辑 <code>__LABVERSION__</code>。</p></aside>
+<p>每个脚本都包含如下占位符：</p>
+<pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
+</code></pre>
+<p><code>.githooks/</code> 中的钩子会自动展开并恢复这个占位符：</p>
+<table>
+<thead>
+<tr>
+<th>钩子</th>
+<th>触发条件</th>
+<th>动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>post-checkout</code></td>
+<td><code>git checkout</code> / <code>git switch</code></td>
+<td>将每个脚本中的 <code>__LABVERSION__</code> 替换为最后一次修改该文件的提交哈希</td>
+</tr>
+<tr>
+<td><code>post-merge</code></td>
+<td><code>git pull</code> / <code>git merge</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>post-rewrite</code></td>
+<td><code>git rebase</code> / <code>git commit --amend</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>pre-commit</code></td>
+<td><code>git commit</code></td>
+<td>在提交写入之前，恢复任何已暂存脚本中的 <code>__LABVERSION__</code>，确保哈希值永远不会被存储进仓库</td>
+</tr>
+</tbody>
+</table>
+<p>最终效果：你工作目录中的每个脚本都可以通过 <code>--version</code> 显示自己的版本号，而仓库本身始终只保存干净的占位符。通过 <code>install_automation_node_scripts.sh</code> 安装脚本时，会在安装期间使用 <code>git log -1 --format=%h</code> 应用相同的按文件哈希替换。</p>
+<h3 id="将脚本安装到自动化虚拟机">将脚本安装到自动化虚拟机</h3>
+<p>在自动化虚拟机上（或任何克隆了该仓库的机器上）的仓库根目录下：</p>
+<pre><code class="language-shell">./install_automation_node_scripts.sh
+</code></pre>
+<p>这会备份现有的安装（既包括它自己生成的带时间戳的归档文件，也包括你自己的备份流程另外保留的内容），将每个脚本/库/模板复制到其系统路径，并为每个已安装的文件打上版本哈希戳记。</p>
+<h3 id="依赖项">依赖项</h3>
+<p>运行时（自动化虚拟机上）：
+<code>python3.11</code>、<code>jq</code>、<code>ssh</code>、<code>rsync</code>、<code>nc</code>、<code>helm</code>、<code>kubectl</code>、<code>named</code>（BIND）</p>
+<p>虚拟化主机的配置还需要：
+<code>virt-install</code>、<code>virsh</code>、<code>qemu-img</code>、<code>zypper</code>，以及位于 <code>/var/lib/libvirt/images/sources/</code> 中的源 QCOW2 镜像</p>
+<p>运行<a href="#testing">测试套件</a>还需要：
+<code>podman</code></p>
