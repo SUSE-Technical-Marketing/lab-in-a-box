@@ -28,7 +28,8 @@ PAGES = [
     ("ja.html", "ja.html", "日本語"),
     ("pt-BR.html", "pt-BR.html", "Português (Brasil)"),
     ("zh-CN.html", "zh-CN.html", "简体中文"),
-    ("webui.html", "webui.html", "Web UI"),
+    ("webui.html", "webui.html", "Web UI Guide"),
+    (None, "lab-builder/", "🚀 Try Lab Builder"),
 ]
 
 # Mermaid marker (node id that never gets translated) -> [(diagram file, English alt text), ...]
@@ -431,6 +432,8 @@ def publish_media():
 def build():
     publish_media()
     for source, out, label in PAGES:
+        if source is None:
+            continue
         body = (SOURCE / source).read_text(encoding="utf-8")
         lead, body = split_lead(body)
         body = swap_diagrams(body)

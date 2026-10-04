@@ -47,13 +47,16 @@ jobs:
           mkdir -p /tmp/gh-pages/lab-builder
           # Copy documentation as root
           cp -r docs/* /tmp/gh-pages/
-          # Copy static webui to /lab-builder/
+          # Copy static webui to /lab-builder/ with all dependencies
           cp webui/htdocs/lab-builder-static.html /tmp/gh-pages/lab-builder/index.html
           cp webui/htdocs/schema.json /tmp/gh-pages/lab-builder/
           cp webui/htdocs/style.css /tmp/gh-pages/lab-builder/
           cp webui/htdocs/theme.js /tmp/gh-pages/lab-builder/
           cp webui/htdocs/app.js /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/static-app.js /tmp/gh-pages/lab-builder/
+          cp -r webui/htdocs/vendor /tmp/gh-pages/lab-builder/
+          cp webui/htdocs/*.svg /tmp/gh-pages/lab-builder/
+          cp webui/htdocs/*.png /tmp/gh-pages/lab-builder/
+          cp webui/htdocs/*.ico /tmp/gh-pages/lab-builder/
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
