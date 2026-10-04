@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
-# Targeted regression test for the 2026-09-13 uyuni-server crash-loop fix
-# (libs/mgradm_common.py's _relax_health_kill_policy): mgradm bakes
-# --health-on-failure=stop with a zero start-period into the systemd unit it
-# generates, which killed the container mid-warm-up before it ever reached
-# "healthy" — confirmed live (real AWS SMLM 5.2.0 install) via a manually-held
-# container that DID reach "healthy" once nothing was killing it. The fix
-# overrides mgradm's own custom.conf PODMAN_EXTRA_ARGS extension point.
+# Regression tests for _relax_health_kill_policy() in libs/mgradm_common.py. mgradm sets --health-on-failure=stop with a zero
+# start period, which can kill the container during warm-up. The fix overrides mgradm's custom.conf PODMAN_EXTRA_ARGS.
 # Run from 50_mgradm_health_kill_fix.sh, in its own container.
 import shlex
 import sys
@@ -73,17 +68,8 @@ check("reloads systemd so the drop-in actually takes effect",
 check("conf path itself is shell-quoted (defensive, even though it's a fixed literal)",
       shlex.quote("/etc/systemd/system/uyuni-server.service.d/custom.conf") in out)
 
-# ── _relax_health_kill_policy also works for uyuni-db, not just the server —
-# real bug found live 2026-09-14: mgradm bakes the identical
-# --health-on-failure=stop into uyuni-db's own systemd unit too, and its
-# baked-in healthcheck (Interval=10s, Timeout=5s, Retries=3) killed a
-# perfectly healthy, multi-hour-uptime database mid-operation under
-# sustained heavy write load (a long-running reposync) — taking the whole
-# application down for 3+ hours with no automatic recovery, since this
-# project's original fix only ever patched uyuni-server's copy of the
-# identical flag. Unlike uyuni-server, uyuni-db's own .service.d/ directory
-# ships with only generated.conf (no empty custom.conf placeholder already
-# there) — the fix must create the directory, not just the file.
+# ── _relax_health_kill_policy: uyuni-db as well as uyuni-server ──────────────
+# uyuni-db has the same health-kill flag. Its .service.d/ directory holds only generated.conf, so the fix creates the directory.
 rec_db = _Rec()
 mgradm_common.ssh_run = rec_db
 mgradm_common._relax_health_kill_policy("vm1", "uyuni-db")
@@ -100,13 +86,8 @@ check("uyuni-db also gets the raised open-file ulimit (applied via the same shar
       "this live so far)",
       "--ulimit nofile=1048576:1048576" in out_db)
 
-# ── _raise_in_container_service_fd_limits: the OUTER container ulimit fix
-# above is NOT enough on its own — confirmed live 2026-09-22 that Tomcat's
-# real java process still reported the old 8192 limit even with the outer
-# container ulimit confirmed at 1048576, because Tomcat's own
-# package-shipped systemd unit INSIDE the container bakes in its own
-# explicit LimitNOFILE=8192, which always wins over whatever the parent
-# process (the container's own PID 1) inherited.
+# ── _raise_in_container_service_fd_limits: services inside the container ──────
+# The container's own ulimit does not reach Tomcat, because Tomcat's packaged unit sets LimitNOFILE=8192, and that limit takes precedence.
 rec_incontainer = _Rec()
 mgradm_common.ssh_run = rec_incontainer
 mgradm_common._raise_in_container_service_fd_limits("vm1")
@@ -130,17 +111,9 @@ check("restarts both patched services so the new limit actually applies to a run
       "podman exec uyuni-server systemctl restart tomcat.service" in out_incontainer
       and "podman exec uyuni-server systemctl restart salt-api.service" in out_incontainer)
 
-# ── _clean_stale_netavark_dnat_rules: real bug found live 2026-09-22 —────────
-# netavark doesn't reliably remove a container's own DNAT port-forwarding
-# rules when it's removed, so after several restarts the nat table held
-# BOTH a stale rule set (pointing at a previous, now-dead container IP)
-# and the correct one — iptables takes the FIRST match, and the stale one
-# (added earlier) won every time, silently refusing every external
-# connection to the real hostname while every container-internal
-# automation call (which never traverses this NAT path) kept working,
-# masking the problem entirely until an operator tried the web UI
-# directly. `podman network reload` does NOT fix this (confirmed live —
-# it only adds another correct rule alongside the stale one).
+# ── _clean_stale_netavark_dnat_rules: stale DNAT rules ──────────────────────
+# Stale DNAT rules from earlier containers can sit ahead of the current rule and refuse external connections. The function removes them.
+# podman network reload does not fix this, because it adds a rule without removing the stale one.
 _REAL_NAT_RULESET = "\n".join([
     "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 80 -j DNAT --to-destination 10.89.0.6:80",
     "-A NETAVARK-DN-3AE499F176F7F -p tcp -m tcp --dport 443 -j DNAT --to-destination 10.89.0.6:443",
@@ -229,13 +202,9 @@ check("ensure_server_container_active ALSO checks for stale netavark DNAT rules 
       "podman inspect uyuni-server --format" in out2 and "NetworkSettings.Networks" in out2
       and "iptables -t nat -S" in out2)
 
-# ── run_install_with_pg_hba_guard also pre-empts the SAME crash-loop on the
-# very first boot, WHILE mgradm install is still running — confirmed live
-# 2026-09-13 (fresh AWS instance, from-scratch SMLM install) that the fix
-# inside ensure_server_container_active() is too late for this case: it
-# only runs after mgradm install itself returns, but mgradm install can
-# itself get stuck forever waiting on a container that never reaches
-# "healthy" because of this exact bug.
+# ── run_install_with_pg_hba_guard: the health-kill policy during the install ─
+# The health-kill policy is relaxed while mgradm install is still running. ensure_server_container_active() runs only after the install
+# returns, so it is too late for a first boot that would otherwise never become healthy.
 class _RecRc(_Rec):
     def __call__(self, host, cmd, **kw):
         r = super().__call__(host, cmd, **kw)
