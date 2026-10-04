@@ -1,37 +1,26 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install GNU Mailman 3 (mailing-list management + web interface)
+# Part of lab-in-a-box. Installs GNU Mailman 3, the mailing-list manager with its web interface.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# JSON section: "mailman" — configurable keys:
-#   mailman_ns          : [OPTIONAL] namespace (default: mailman)
-#   mailman_shorthn     : [OPTIONAL] hostname prefix for mailman-web's ingress (default: mailman)
-#   mailman_version     : [OPTIONAL] maxking/mailman-core & mailman-web image tag (default: 0.5)
-#   mailman_admin_user  : [OPTIONAL] admin username (default: admin)
-#   mailman_admin_email : [OPTIONAL] admin email (default: admin@lab.local)
+# JSON section: "mailman"
+#   mailman_ns          : namespace (default mailman)
+#   mailman_shorthn     : hostname prefix for the mailman-web ingress (default mailman)
+#   mailman_version     : tag of the maxking/mailman-core and mailman-web images (default 0.5)
+#   mailman_admin_user  : admin username (default admin)
+#   mailman_admin_email : admin e-mail (default admin@lab.local)
 #
-# Deploys the real, official maxking/docker-mailman image set (mailman-core, mailman-web) plus a
-# Postgres database, translated from that project's own documented docker-compose topology into
-# plain Kubernetes manifests (no official Helm chart is currently published for Mailman 3 itself —
-# confirmed live 2026-09-05; a community Helm chart exists, danil-smirnov/mailman-helm-chart, but
-# isn't published to a fetchable chart repo URL this addon could `helm repo add`, so this uses raw
-# manifests instead, same pattern as install_nv_testing.py/install_games.py).
+# The addon deploys the official maxking/docker-mailman images, mailman-core and mailman-web, with a PostgreSQL database. The
+# topology follows that project's docker-compose file, written as plain Kubernetes manifests. No official Helm chart exists for Mailman 3.
 #
-# Secrets (HyperKitty API key, Django SECRET_KEY, Postgres password) are generated once and stored
-# in a "mailman-secrets" Kubernetes Secret — idempotent (checked before generating, so a re-run of
-# this addon doesn't rotate credentials and break an already-running deployment).
+# The secrets (the HyperKitty API key, the Django SECRET_KEY and the PostgreSQL password) are created once, in the mailman-secrets
+# Secret. A re-run keeps them, so a running deployment is not broken by rotation.
 #
-# KNOWN LIMITATION, confirmed against the community Helm chart's own notes rather than discovered
-# the hard way: Mailman's host-key whitelisting mechanism doesn't play well with dynamic Kubernetes
-# pod IPs/hostnames on a pod restart — this addon does not attempt to work around that; expect to
-# need a manual fix if mailman-core's REST connection to mailman-web (or vice versa) starts
-# refusing a previously-trusted host after a pod reschedule.
+# Known limitation: Mailman's host-key allowlist does not handle changing pod addresses. After a pod is rescheduled, the REST connection
+# between mailman-core and mailman-web can be refused, and a manual fix is needed.
 #
-# NOT live-tested (no cluster available in this session) — image names/tags/env vars verified
-# against maxking/docker-mailman's own documented compose file, 2026-09-05, not guessed. This
-# lab-sized topology uses emptyDir (not PersistentVolumeClaims) for all data — deliberately
-# ephemeral/quick-demo, not durable; add real PVCs (and a StorageClass — confirmed elsewhere in
-# this project that a bare RKE2 cluster has none by default) before relying on this beyond a demo.
+# All data uses emptyDir volumes, so it is ephemeral and suited to a demonstration. For durable data, use PersistentVolumeClaims and a
+# StorageClass, which a bare RKE2 cluster does not have by default.
 
 __version__ = "5fc5f69"
 

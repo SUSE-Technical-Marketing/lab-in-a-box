@@ -1,93 +1,43 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install Hermes Agent (Nous Research's
-# self-improving personal AI agent) on Kubernetes
+# Part of lab-in-a-box. Installs Hermes Agent, Nous Research's personal AI agent, on Kubernetes.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Project: https://github.com/NousResearch/hermes-agent (Nous Research, MIT)
+# Project: https://github.com/NousResearch/hermes-agent (MIT)
 #
-# Hermes Agent has NO published container image (its own docker-compose.yml
-# uses `build: .` against the repo's real Dockerfile — confirmed live
-# 2026-09-21 by reading both files directly) — so, per explicit user
-# request, THIS addon builds the image itself rather than requiring an
-# operator-supplied one (contrast with install_colt.py's own "operator
-# must build+push their own image" stance for a similar no-published-image
-# project). The build is a real multi-stage one (a pinned-SQLite compile,
-# Node 26, Python 3.13, Playwright) — it runs LOCALLY on the automation VM
-# (a plain subprocess `git clone` + `podman build` + `podman push`, no SSH),
-# not on the target Kubernetes node, since podman is already a confirmed
-# automation-VM package (see this repo's own CLAUDE.md "Dependencies"
-# section) while a k8s worker node has no such guarantee and shouldn't be
-# made to compete with the cluster's own workloads for a heavy build.
+# The project publishes no container image, so this addon builds one. The build runs on the automation VM with podman, and the image is
+# pushed to hermes_registry. The Dockerfile is the project's own. The build is multi-stage: a pinned SQLite, Node 26, Python 3.13 and
+# Playwright.
 #
-# Deployment shape: gateway (the actual bot — Telegram/Discord/Slack/etc.,
-# outbound-only, no Service/Ingress needed) and dashboard (a local web
-# UI for credential/config management) as two containers in ONE pod,
-# sharing one PersistentVolumeClaim at /opt/data (Hermes' own real,
-# confirmed mount path for ~/.hermes — its conversation history, memory,
-# skills, and session database all live there). Real env var names below
-# (OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, HERMES_DASHBOARD_BASIC_AUTH_*,
-# ...) are ground-truthed directly against the project's own
-# website/docs/reference/environment-variables.md, fetched raw — not
-# guessed. The dashboard's real "username/password provider... quickest
-# option for a backend on a trusted LAN" (its own doc's exact words) is
-# wired up by default rather than left open, addressing that same doc's
-# own explicit warning that an unauthenticated non-loopback bind is unsafe.
+# Deployment: one pod with two containers. gateway is the bot. It connects outbound to the messaging platform, so it needs no Service or
+# Ingress. dashboard is a local web UI for credentials and configuration. Both share one PersistentVolumeClaim at /opt/data, which holds
+# the conversation history, memory, skills and session database. The dashboard uses basic authentication by default, because the project
+# warns against an unauthenticated bind on a non-loopback address.
 #
-# JSON section: "hermes" — configurable keys:
-#   hermes_registry          : [MANDATORY] registry to push the built image to (e.g.
-#                               "registry.mydemo.lab" or a real per-cluster registry from this
-#                               project's own "harbor" addon) — must already be reachable from
-#                               BOTH the automation VM (to push) and the target cluster (to pull).
-#   hermes_git_ref            : [OPTIONAL] git ref (branch/tag/commit) of NousResearch/hermes-agent
-#                               to build (default: "main" — the project publishes no tagged
-#                               releases as of this addon's own research, only a rolling main;
-#                               pin a real commit SHA here for reproducibility across re-installs).
-#   hermes_image_tag          : [OPTIONAL] tag for the built image (default: hermes_git_ref itself)
-#   hermes_ns                 : [OPTIONAL] namespace (default: hermes)
-#   hermes_shorthn             : [OPTIONAL] dashboard ingress hostname prefix (default: hermes)
-#   hermes_llm_provider        : [OPTIONAL] "openrouter" (default) | "openai" | "anthropic" — which
-#                               real env var (OPENROUTER_API_KEY / OPENAI_API_KEY /
-#                               ANTHROPIC_API_KEY) the API key below is injected as.
-#   hermes_llm_api_key         : [MANDATORY unless hermes_account/credential store provides it]
-#                               API key for hermes_llm_provider.
-#   hermes_telegram_token      : [OPTIONAL] Telegram bot token (from @BotFather) — the real
-#                               TELEGRAM_BOT_TOKEN env var. Leave unset to run Hermes without any
-#                               messaging platform wired up yet (still deployable, just not
-#                               reachable from anywhere until a platform is configured, matching
-#                               Hermes' own "hermes gateway setup" being a later, separate step).
-#   hermes_telegram_allowed_users : [OPTIONAL] comma-separated Telegram user IDs allowed to use the
-#                               bot (the real TELEGRAM_ALLOWED_USERS env var) — strongly
-#                               recommended whenever hermes_telegram_token is set; an unrestricted
-#                               bot token left fully open is a real, avoidable exposure.
-#   hermes_account             : [OPTIONAL] name of an encrypted credential_kind "hermes" file
-#                               under /etc/lab_creation/credentials/ (see README's Credentials
-#                               section) to read hermes_llm_api_key/hermes_telegram_token/
-#                               hermes_dashboard_password from instead of this section's own
-#                               plaintext fields — auto-discovered if exactly one "hermes"
-#                               credential file exists and this is left unset. The plaintext
-#                               fields above remain fully valid either way (setup_credentials.py's
-#                               default-to-credential-store-but-allow-plaintext convention).
-#   hermes_dashboard_user       : [OPTIONAL] dashboard basic-auth username (default: admin)
-#   hermes_dashboard_password   : [OPTIONAL] dashboard basic-auth password — the real
-#                               HERMES_DASHBOARD_BASIC_AUTH_PASSWORD env var. A random one is
-#                               generated and printed if left unset everywhere (plaintext field,
-#                               credential store, AND this field) rather than deploying an
-#                               unauthenticated dashboard.
-#   hermes_storage_size         : [OPTIONAL] PVC size for /opt/data (default: 5Gi)
-#   hermes_storage_class        : [OPTIONAL] StorageClass name (default: cluster's own default —
-#                               see install_open_webui.py's own note: a bare RKE2 cluster has NO
-#                               default StorageClass; install one first, e.g. this project's own
-#                               "longhorn" addon)
-#
-# NOT live-tested — no real Kubernetes cluster with outbound internet access (needed for the
-# image build's own package/Playwright downloads) was available in this session to build+push+
-# deploy against. The image-build command construction, manifest shape, and every env var name
-# are ground-truthed against the real upstream repo (Dockerfile, docker-compose.yml, and the
-# environment-variables reference doc, all fetched raw), not guessed — but the full pipeline
-# end to end has only been exercised via the mocked test suite.
+# JSON section: "hermes"
+#   hermes_registry               : [MANDATORY] registry to push the built image to, for example registry.mydemo.lab or the registry of the
+#                                   harbor addon. The automation VM must reach it to push, and the cluster must reach it to pull.
+#   hermes_git_ref                : git ref of NousResearch/hermes-agent to build (default main). The project has no tagged releases, so
+#                                   pin a commit SHA for reproducible builds.
+#   hermes_image_tag              : tag of the built image (default: hermes_git_ref)
+#   hermes_ns                     : namespace (default hermes)
+#   hermes_shorthn                : dashboard ingress hostname prefix (default hermes)
+#   hermes_llm_provider           : "openrouter" (default), "openai" or "anthropic". The API key is set as OPENROUTER_API_KEY,
+#                                   OPENAI_API_KEY or ANTHROPIC_API_KEY to match.
+#   hermes_llm_api_key            : API key for the provider. Required, unless the credential store provides it.
+#   hermes_telegram_token         : Telegram bot token from @BotFather, set as TELEGRAM_BOT_TOKEN. Unset, Hermes runs without a messaging platform.
+#   hermes_telegram_allowed_users : comma-separated Telegram user IDs, set as TELEGRAM_ALLOWED_USERS. Set it whenever a bot token is set.
+#   hermes_account                : name of an encrypted credential file of kind "hermes" under /etc/lab_creation/credentials/ for
+#                                   hermes_llm_api_key, hermes_telegram_token and hermes_dashboard_password. It is auto-discovered when exactly
+#                                   one such file exists and this is unset. The plaintext fields remain valid.
+#   hermes_dashboard_user         : dashboard basic-auth user (default admin)
+#   hermes_dashboard_password     : dashboard basic-auth password. When it is unset everywhere, a random one is generated and printed, so
+#                                   the dashboard is never deployed open.
+#   hermes_storage_size           : PersistentVolumeClaim size for /opt/data (default 5Gi)
+#   hermes_storage_class          : StorageClass (default: the cluster's own default). A bare RKE2 cluster has none, so install one first,
+#                                   for example with the longhorn addon.
 
-__version__ = "__LABVERSION__"
+__version__ = "0d70beb"
 
 PLUGIN = {
     "name": "hermes",

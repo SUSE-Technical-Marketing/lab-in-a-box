@@ -1,80 +1,37 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install 389 Directory Server (LDAP) on
-# Kubernetes
+# Part of lab-in-a-box. Installs 389 Directory Server (LDAP) on Kubernetes.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Project: https://github.com/389ds/ds-container (389 Directory Server
-# project, quay.io/389ds/dirsrv)
+# Project: https://github.com/389ds/ds-container (389 Directory Server project, quay.io/389ds/dirsrv)
 #
-# The bash version of this addon (install_ds389, still present unported) was
-# fundamentally broken and never did anything real — it called a function
-# (load_ds389_vars) that doesn't exist anywhere in the codebase, and its own
-# setup_ds389() body was a verbatim copy-paste of install_longhorn's
-# installer. python_migration deliberately skipped porting it rather than
-# faithfully reproducing a crash or inventing behavior (see
-# MIGRATION_TODO.md, 2026-08-10). THIS is that invented behavior, written
-# fresh per explicit user request (2026-09-21) rather than ported from
-# anything — every technical detail below (image, env vars, ports, mount
-# paths, the required chown init container) is ground-truthed against the
-# 389ds/ds-container repo's own kustomize manifests and its
-# howto-deploy-389ds-on-openshift.html doc, fetched raw, not guessed.
+# The technical details, which are the image, the environment variables, the ports, the mount paths and the required chown init container,
+# come from the ds-container repository's Kustomize manifests and its OpenShift deployment guide.
 #
-# Deployment shape: a real StatefulSet (not Deployment) with a per-pod
-# volumeClaimTemplate, matching upstream's own explicit recommendation —
-# "A StatefulSet is used instead of Deployment kind. It provides guarantees
-# about the ordering and uniqueness of the Pods." An initContainer does
-# `chown -R 389:389 /data` before dirsrv starts, exactly as upstream's own
-# sample does — required because dscontainer otherwise can't create its own
-# subdirectories on a freshly-mounted, root-owned volume. Exposed via two
-# Services: a headless ClusterIP one (required as the StatefulSet's own
-# serviceName) and a NodePort one for LDAP (389) and LDAPS (636) — no
-# Ingress, since LDAP isn't HTTP. Upstream's OpenShift doc also covers an
-# SCC/anyuid grant and a dedicated ServiceAccount — both purely
-# OpenShift-specific (Security Context Constraints don't exist on plain
-# Kubernetes) and deliberately omitted here, since every other addon in
-# this repo targets RKE2/K3s, not OpenShift.
+# Deployment: a StatefulSet with a volumeClaimTemplate for each pod, as the upstream guide recommends. An initContainer runs chown -R 389:389
+# /data before dirsrv starts. This is required, because dscontainer cannot create its subdirectories on a freshly mounted, root-owned volume.
+# The pod is exposed by two Services: a headless ClusterIP one, which the StatefulSet requires as its serviceName, and a NodePort one for LDAP
+# (389) and LDAPS (636). No Ingress is used, because LDAP is not HTTP. The OpenShift-specific parts of the guide, the SCC grant and the
+# dedicated ServiceAccount, are omitted, because Security Context Constraints do not exist on plain Kubernetes.
 #
-# JSON section: "ds389" — configurable keys:
-#   ds389_ns              : [OPTIONAL] Kubernetes namespace                (default: ds389)
-#   ds389_name             : [OPTIONAL] StatefulSet/Service base name       (default: dirsrv)
-#   ds389_image             : [OPTIONAL] container image                    (default:
-#                             quay.io/389ds/dirsrv:latest — the real, actively-published
-#                             upstream image; :c9s is the CentOS-Stream-9-based alternative tag)
-#   ds389_basedn            : [OPTIONAL] LDAP suffix/basedn — the real DS_SUFFIX_NAME env var
-#                             (default: derived from the cluster's own mydomain, e.g.
-#                             "mydemo.lab" -> "dc=mydemo,dc=lab"; falls back to
-#                             "dc=lab,dc=local" if mydomain is somehow unavailable). Upstream
-#                             itself creates NO backends/suffixes by default — this only sets
-#                             the basedn recorded in the instance's dsrc file for later use by
-#                             dsconf/dsctl, it does not create the suffix's actual entries.
-#   ds389_dm_password        : [OPTIONAL] cn=Directory Manager's password — the real
-#                             DS_DM_PASSWORD env var (default: auto-generated and printed;
-#                             upstream's own default is a container-internal random password
-#                             only visible in the pod's setup log, which is far less usable for
-#                             automation, so this addon generates and surfaces one instead)
-#   ds389_account            : [OPTIONAL] name of an encrypted credential_kind "ds389" file
-#                             under /etc/lab_creation/credentials/ (see README's Credentials
-#                             section) to read ds389_dm_password from instead of this section's
-#                             own plaintext field — auto-discovered if exactly one "ds389"
-#                             credential file exists and this is left unset. The plaintext
-#                             field above remains fully valid either way.
-#   ds389_storage_size       : [OPTIONAL] per-pod PVC size                  (default: 5Gi)
-#   ds389_storage_class      : [OPTIONAL] StorageClass name                 (default: cluster's
-#                             own default — see install_open_webui.py's own note: a bare RKE2
-#                             cluster has NO default StorageClass; install one first, e.g. this
-#                             project's own "longhorn" addon)
-#   ds389_ldap_nodeport       : [OPTIONAL] NodePort for plaintext LDAP        (default: 30389 —
-#                             upstream's own example value)
-#   ds389_ldaps_nodeport      : [OPTIONAL] NodePort for LDAPS                 (default: 30636 —
-#                             upstream's own example value)
-#
-# NOT live-tested — no real Kubernetes cluster was available in this session to deploy
-# against. The manifest shape, image reference, env var names, and mount paths are all
-# ground-truthed against the real upstream repo/doc (see above), but the full pipeline end to
-# end has only been exercised via the mocked test suite.
+# JSON section: "ds389"
+#   ds389_ns              : Kubernetes namespace (default ds389)
+#   ds389_name            : StatefulSet and Service base name (default dirsrv)
+#   ds389_image           : container image (default quay.io/389ds/dirsrv:latest). The c9s tag is the CentOS Stream 9 based alternative.
+#   ds389_basedn          : LDAP suffix, set as DS_SUFFIX_NAME (default derived from the cluster's mydomain, for example mydemo.lab becomes
+#                           dc=mydemo,dc=lab; falls back to dc=lab,dc=local). The image creates no suffix by default. This value is recorded
+#                           in the instance's dsrc file for dsconf and dsctl, and the suffix's entries are not created.
+#   ds389_dm_password     : password of cn=Directory Manager, set as DS_DM_PASSWORD (default: generated and printed). The image's own default is
+#                           a random password visible only in the pod's log, so the addon generates one instead.
+#   ds389_account         : name of an encrypted credential file of kind "ds389" under /etc/lab_creation/credentials/ to read ds389_dm_password
+#                           from. It is auto-discovered when exactly one such file exists and this is unset.
+#   ds389_storage_size    : per-pod PersistentVolumeClaim size (default 5Gi)
+#   ds389_storage_class   : StorageClass (default: the cluster's own default). A bare RKE2 cluster has none, so install one first, for example
+#                           with the longhorn addon.
+#   ds389_ldap_nodeport   : NodePort for plaintext LDAP (default 30389, the upstream example value)
+#   ds389_ldaps_nodeport  : NodePort for LDAPS (default 30636, the upstream example value)
 
-__version__ = "__LABVERSION__"
+__version__ = "0e92abe"
 
 PLUGIN = {
     "name": "ds389",
@@ -170,15 +127,10 @@ spec:
       labels:
         app: {name}
     spec:
-      # fsGroup only exists at the POD level (v1.PodSecurityContext), not
-      # per-container (v1.SecurityContext) — a real API rejection caught
-      # live-testing this addon 2026-09-21 ("strict decoding error: unknown
-      # field ...containers[0].securityContext.fsGroup"), even though
-      # upstream's own doc sample nests it under the container the same
-      # (wrong) way. Left at pod level only (not also set on runAsUser)
-      # since a pod-level runAsUser would default onto the initContainer
-      # below too, which needs to run as root to chown the volume in the
-      # first place.
+      # fsGroup is a pod-level field (v1.PodSecurityContext). Kubernetes rejects it
+      # under containers[].securityContext, so it is set only here. The pod-level
+      # runAsUser is not set, because the initContainer below runs as root to
+      # chown the volume.
       securityContext:
         fsGroup: 389
       initContainers:
@@ -291,7 +243,7 @@ def setup_ds389(hostname, mydomain, cfg):
     print("cn=Directory Manager password: {}".format(dm_password))
     print("LDAP:  ldap://<any cluster node>:{}".format(ldap_nodeport))
     print("LDAPS: ldaps://<any cluster node>:{}".format(ldaps_nodeport))
-    print("LDAPS uses a self-signed cert (upstream's own default, confirmed live 2026-09-21) — "
+    print("LDAPS uses a self-signed cert (upstream's default) — "
           "a client that verifies certs (most do by default) needs LDAPTLS_REQCERT=never or a "
           "real cert dropped in /data/tls/ (see upstream's own doc) until one is configured.")
     print("No backends/suffixes are created automatically — use dsconf/dsctl inside the pod "
