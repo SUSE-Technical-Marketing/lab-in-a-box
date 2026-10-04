@@ -71,6 +71,12 @@ def build_static_html(schemas, base_schema, files):
     head = extract_head(html_content)
     body = extract_body(html_content)
 
+    # Update description for static version
+    body = body.replace(
+        "Forms generated live from each component's <code>--schema</code>. Nothing here is hard&#8209;coded.",
+        "Static webui: schemas embedded at build time. Run locally with <code>webui/run-local.py</code> for live updates."
+    )
+
     # Build the embedded schemas
     schemas_json = json.dumps(schemas)
     base_schema_json = json.dumps(base_schema or {})
