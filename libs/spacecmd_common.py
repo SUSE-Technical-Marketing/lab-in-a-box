@@ -219,15 +219,8 @@ def ensure_activation_key(hostname, exec_prefix, cfg, prefix):
 
     child_channels = (k("_child_channels") or "").split()
     if child_channels:
-        # Confirmed live 2026-09-14: this genuinely fails ("Invalid channel")
-        # whenever a listed child channel isn't actually on the server yet —
-        # e.g. the "managertools-*" channels that provide venv-salt-minion,
-        # easy to reference here without ever having added them via
-        # mgr-sync (they're not implied by their own base product channel).
-        # _spacecmd()'s own return code used to be silently discarded, so
-        # this failure never surfaced anywhere — activation keys looked
-        # created and fine, but clients bootstrapped against them got the
-        # wrong (unlinked) channel set with no visible error at all.
+        # The call fails if a listed child channel is not on the server, for example a managertools channel
+        # that was never enabled with mgr-sync. The return code is checked, so the failure is reported.
         r = _spacecmd(hostname, exec_prefix, "activationkey_addchildchannels {} {}".format(
             shlex.quote(key_name), " ".join(shlex.quote(c) for c in child_channels)))
         if r.returncode != 0:
@@ -757,16 +750,10 @@ def ensure_snippets(hostname, exec_prefix, cfg, prefix):
 
 
 # ── Image management (Images -> Stores/Profiles/Build/Import) ──────────────
-# Confirmed live 2026-09-16 against a real SMLM 5.2 server: spacecmd has NO
-# native subcommand for any of this (confirmed by the exact same "Could not
-# find method" probing technique used for access.*/ansible.* elsewhere in
-# this module) — every call here goes through the raw 'api' passthrough,
-# against three separate handler classes found the same way: image.store.*
-# (ImageStoreHandler), image.profile.* (ImageProfileHandler), and the
-# unprefixed image.* (ImageInfoHandler, e.g. importContainerImage/
-# scheduleImageBuild). image.store.create/image.profile.create both
-# confirmed live: return `[<numeric id>]` (a one-element LIST, not a bare
-# int) on success.
+# These calls go through the raw api passthrough. spacecmd has no native subcommand for them. They use three
+# handler namespaces: image.store.* (ImageStoreHandler), image.profile.* (ImageProfileHandler), and the
+# unprefixed image.* (ImageInfoHandler, for importContainerImage and scheduleImageBuild). image.store.create and
+# image.profile.create return a one-element list holding the numeric id.
 
 def image_store_exists(hostname, exec_prefix, label):
     """
@@ -1514,16 +1501,9 @@ def remove_ansible_path(hostname, exec_prefix, path_id):
         die("could not remove ansible path id {}: {}".format(path_id, (r.stderr or r.stdout or "").strip()))
 
 
-# SMLM/Uyuni's own real, confirmed-live behavior (2026-09-18): enabling the
-# "Ansible Control Node" entitlement on a system auto-creates exactly these
-# two AnsiblePath entries, pointing at locations that exist on NO control
-# node this project ever provisions (install_ansible_control_node.py always
-# uses /srv/ansible/... — see that script's own JSON schema doc). Left in
-# place, they're a real, reported trap: SMLM's own "Ansible > Schedule
-# Playbook" flow can pick one of these broken defaults instead of a real,
-# working path registered by ensure_ansible_paths() below, and fail with a
-# confusing "error processing the inventory" message that has nothing to do
-# with the actual inventory script.
+# Enabling the Ansible Control Node entitlement makes the server create two default AnsiblePath entries. They point at
+# locations that do not exist on the control nodes this project provisions, which use /srv/ansible/. The Schedule Playbook
+# flow can select a default path instead of a registered one and then fail. ensure_ansible_paths() removes the defaults.
 _STALE_DEFAULT_ANSIBLE_PATHS = {("/etc/ansible/hosts", "inventory"), ("/etc/ansible/playbooks", "playbook")}
 
 
@@ -2054,23 +2034,11 @@ def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labe
 
 
 # ─── SCAP Beta policy-based scanning (system.scap.*) — examples ─────────────
-# The 5 functions below wrap the real, confirmed Beta methods discussed in
-# list_images_by_patch_status()'s own 2026-09-25 correction comment above.
-# Ground-truthed 2026-09-30 directly against the real API reference pages
-# (documentation.suse.com/multi-linux-manager/5.2/api/docs/api/system.scap.html),
-# every parameter name/type/order and struct field below quoted from there,
-# not guessed. All 5 require the acting user (whichever account exec_prefix
-# authenticates as) to have beta features enabled in their own Web UI
-# account preferences first (validateBetaFeatureEnabled() in the real
-# handler) — no XML-RPC toggle exists for that setting, so it's a one-time,
-# by-hand Web UI step. listPolicies/listScapContent/listTailoringFiles are
-# READ-ONLY (no create* counterpart exists anywhere in the handler — those
-# catalog objects can only be uploaded through the Web UI), so the intended
-# real-world flow is: upload content/a policy/a tailoring file once via the
-# Web UI, use these 3 list functions to find its real numeric id, then
-# trigger a scan with one of the 2 schedule functions below. NOT
-# live-tested (no server available in this project's dev/CI environment
-# with beta features enabled).
+# The five functions below wrap the Beta system.scap methods. Parameter names and structure follow the 5.2 API reference.
+# The acting user must enable beta features in the Web UI account preferences. The XML-RPC API has no toggle for that.
+# listPolicies, listScapContent and listTailoringFiles are read-only. Their catalog objects are uploaded through the Web UI.
+# The usual flow is to upload the content, policy or tailoring file in the Web UI, use the list functions to find its
+# numeric id, and then trigger a scan with one of the two schedule functions.
 
 def list_scap_content(hostname, exec_prefix):
     """
@@ -2204,38 +2172,15 @@ def schedule_beta_xccdf_scan_custom(hostname, exec_prefix, systems, scap_content
     return action_id
 
 
-# ─── SCAP policy creation (private Web UI REST route, not XML-RPC) ──────────
-# CORRECTION to this file's own SCAP Beta comment above ("no create* API
-# exists... catalog objects can only be uploaded through the Web UI"): that
-# claim was about the system.scap XML-RPC namespace specifically, re-verified
-# 2026-09-30 to be complete and accurate — a full listing of that namespace's
-# methods really does contain zero create/upload methods. But the Web UI
-# ITSELF is not unreachable — it's a real REST route
-# (com.suse.manager.webui.controllers.ScapAuditController.java, ground-truthed
-# directly against the uyuni-project/uyuni source, not guessed), and it's
-# automatable: POST /rhn/manager/api/audit/scap/policy/create takes plain
-# JSON (ScapPolicyJson.java's real field names below), and — critically —
-# every /rhn/manager/api/* route, including the login route itself, is in
-# Uyuni's own real, confirmed CSRF-exemption whitelist
-# (BaseAuthenticationService.java's/PxtAuthenticationService.java's
-# POST_UNPROTECTED_URIS set literally contains "/rhn/manager/api/") — so a
-# plain session cookie from a scripted login is enough, no CSRF token
-# scraping needed. This is still a PRIVATE, internal web-app API, not a
-# documented/versioned public one like system.scap's own XML-RPC surface —
-# it could change across releases without a deprecation notice, an explicit,
-# real caveat, not a hedge.
+# ─── SCAP policy creation (Web UI REST route, not XML-RPC) ──────────
+# Policy creation has no XML-RPC method. The Web UI exposes it as a REST route, POST /rhn/manager/api/audit/scap/policy/create,
+# which takes JSON with the ScapPolicyJson field names. Every /rhn/manager/api/* route is exempt from CSRF checks, so a
+# session cookie from a scripted login is enough. This is a private, internal API, not a versioned public one, and it may
+# change between releases.
 #
-# SCAP CONTENT and TAILORING FILE upload go through the SAME controller
-# (createScapContent/createTailoringFile, both real multipart POST routes:
-# /rhn/manager/api/audit/scap/content/create takes fields name/description/
-# scapFile ("-ds.xml")/xccdfFile ("-xccdf.xml", same base name as scapFile);
-# /rhn/manager/api/audit/scap/tailoring-file/create takes name/description/
-# tailoring_file) — NOT implemented here: unlike a policy (a plain JSON
-# reference to ids), content/tailoring files need real DataStream/XCCDF/
-# tailoring XML files staged onto the SAME container spacecmd itself execs
-# into before they can be uploaded from there, and no kubectl-cp/mgrctl-cp
-# equivalent exists yet anywhere in this project to do that staging —
-# flagged as a real, separate follow-up, not silently skipped.
+# Content and tailoring files are uploaded through the same controller as multipart POST requests. This module does not
+# upload them. The files would first have to be copied into the container that spacecmd runs in, and this project has no
+# helper for that copy yet.
 
 _SCAP_WEB_COOKIE_JAR = "/tmp/lab-in-a-box-scap-session.jar"
 
@@ -2733,27 +2678,11 @@ def _system_id(hostname, exec_prefix, target_system):
 
 
 # ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────
-# No spacecmd-native subcommand exists (confirmed live 2026-09-23, same
-# "no vhm_*/virtualhostmanager_* command" probing technique used elsewhere in
-# this module for access.*/ansible.*) — every call here goes through the raw
-# 'api' passthrough, against the real virtualhostmanager.* namespace
-# (ground-truthed directly against Uyuni's own Java source,
-# java/core/.../frontend/xmlrpc/virtualhostmanager/VirtualHostManagerHandler.java):
-# create(sessionKey, label, moduleName, Map<String,String> parameters) -> int.
+# These calls go through the api passthrough. spacecmd has no native subcommand for them. They use the
+# virtualhostmanager.* namespace, where create(sessionKey, label, moduleName, parameters) returns an int.
 #
-# moduleName for AWS/EC2 is the real gatherer module's own name, "AmazonEC2"
-# — confirmed from TWO independent sources: (1) the actual Python worker
-# module shipped in uyuni-project/virtual-host-gatherer is
-# gatherer/modules/AmazonEC2.py, class AmazonEC2, with
-# DEFAULT_PARAMETERS = {"access_key_id", "secret_access_key", "region",
-# "zone"} (those 4 are the real dict keys `parameters` must carry — quoted
-# directly from that source); (2) Uyuni's own WebUI
-# (web/html/src/manager/systems/virtualhostmanager/virtualhostmanager.tsx)
-# keys its "Amazon EC2" label off the literal id "amazonec2" — the module
-# name it POSTs is `this.props.type.toLowerCase()`, i.e. "AmazonEC2"
-# lowercased, confirming "AmazonEC2" (not "aws"/"Ec2"/anything else) is the
-# real moduleName the server expects. Only AWS/EC2 is implemented here — no
-# other module's own real parameter keys have been ground-truthed.
+# For AWS, moduleName is "AmazonEC2", the gatherer's class name. Its parameters are access_key_id, secret_access_key,
+# region and zone. The Web UI sends the same name. Only the AWS module is implemented here.
 
 def virtual_host_manager_exists(hostname, exec_prefix, label):
     """
@@ -3054,9 +2983,8 @@ def _stage_channel_package_on_client(hostname, exec_prefix, channel, pkg_name, c
     nvr = _channel_package_nvr(hostname, exec_prefix, channel, pkg_name)
     if not nvr:
         return None
-    # NVR-EA has an optional ":<epoch>" between release and arch (e.g.
-    # "openssl-1.0.2k-19.el7:1.x86_64") that the real .rpm FILENAME never
-    # includes — confirmed live 2026-09-23 against the actual on-disk path.
+    # The NVR-EA can contain an optional ":<epoch>" between the release and the architecture, for example
+    # "openssl-1.0.2k-19.el7:1.x86_64". The .rpm file name does not include the epoch.
     filename = re.sub(r":\d+\.", ".", nvr) + ".rpm"
     r = _run(hostname, exec_prefix, "find /var/spacewalk/packages -iname {}".format(shlex.quote(filename)),
              check=False, capture=True)
@@ -3170,58 +3098,28 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
                               reactivation_key=None, retry_limit=30, retry_interval=10, base_channel=None,
                               profile_name=None, server_ip=None):
     """
-    Register client_hostname as a Salt client of the Uyuni/SMLM server
-    reached via (hostname, exec_prefix), using an activation key the caller
-    has already ensured exists (see ensure_activation_key). Idempotent: a
-    no-op if client_hostname's key is already accepted. Minion ID is assumed
-    to equal client_hostname (this project's own FQDN convention — see
-    module docstring).
+    Register client_hostname as a Salt client of the Uyuni or SMLM server reached through (hostname, exec_prefix). The
+    registration uses an activation key that the caller has already created with ensure_activation_key(). The function is
+    idempotent: it does nothing when the client's key is already accepted. The minion ID is client_hostname, unless profile_name is
+    given.
 
-    Steps: generate a bootstrap script for this specific activation key on
-    the server (confirmed live, 2026-08-28: /pub/bootstrap/bootstrap.sh does
-    NOT exist by default — 404 — until generated, either via the Web UI's
-    "Bootstrap Script" page or, as done here, `mgr-bootstrap
-    --activation-keys=<key>`; a stock `curl .../bootstrap.sh` against a
-    freshly-installed server just downloads the server's own login-page
-    HTML, which then fails loudly as a shell script), then run that script
-    on the client over SSH (not exec_prefix — the client is a plain SSH
-    target, unrelated to the server's own container/host wrapper), then
-    poll the server's pending-key list until the client's minion ID appears
-    (or retry_limit is exhausted), then accept it. The generated script is
-    named after the activation key (not the shared default "bootstrap.sh")
-    so multiple keys don't clobber each other's script on repeat use —
-    mgr-bootstrap itself only supports one key per generated script.
+    The steps are:
+      1. Generate a bootstrap script for this activation key on the server, with mgr-bootstrap --activation-keys=<key>. The file
+         /pub/bootstrap/bootstrap.sh does not exist until a script is generated. A fetch from a fresh server returns the login page
+         instead. The script is named after the activation key, so several keys do not overwrite each other's script.
+      2. Run the script on the client over SSH. The client is a plain SSH target, not part of the server's exec_prefix.
+      3. Poll the server's pending-key list until the minion ID appears, up to retry_limit attempts.
+      4. Accept the key.
 
-    base_channel (optional): the activation key's own base software
-    channel label — passed through to _try_wget_legacy_bootstrap() as a
-    place to stage packages from (wget, openssl/openssl-libs) if the
-    client's own curl can't reach this server at all. See that function's
-    own docstring for the real, confirmed-live incident (CentOS 7) this
-    exists for. Omit it and that whole recovery path is simply skipped —
-    the original curl-only behavior, unchanged.
+    base_channel, optional, names the activation key's base software channel. Packages for the TLS fallback are staged from it, as
+    described in _try_wget_legacy_bootstrap(). Without it, that fallback is skipped.
 
-    profile_name (optional): the system's name in SMLM/Uyuni, passed to the
-    bootstrap script as PROFILENAME — which writes it as the salt minion ID
-    (and the susemanager profile_name grain) instead of the client's own
-    hostname. The salt-key checks below then look for that ID; SSH still
-    targets client_hostname.
+    profile_name, optional, is the system's name on the server. It is passed to the bootstrap script as PROFILENAME, which sets it
+    as the minion ID. The key checks then look for that ID, while SSH still targets client_hostname.
 
-    Real bug found live 2026-09-24 (solar-system-lab.json, saturn.mydemo.lab
-    / neptune.mydemo.lab, both AWS EC2): a client on a completely different
-    network (AWS's own VPC DNS, or systemd-resolved's stub resolver) simply
-    cannot resolve server_fqdn at all — confirmed live neither client's own
-    /etc/resolv.conf points anywhere near this lab's BIND server, and
-    `getent hosts` for it came back empty on both. Confirmed live this is
-    PURELY a DNS gap, not a connectivity or firewall one: both clients
-    reached the server's real public IP directly over HTTPS (curl got a
-    real 200) the instant its IP was used instead of its name. Fixed by
-    resolving server_fqdn locally (this function always runs on the
-    automation node, which DOES have working DNS for this lab) and pushing
-    a static /etc/hosts entry onto the client BEFORE any bootstrap attempt
-    — this fixes every later step that needs to reach the server by name
-    (the initial script fetch, bootstrap.sh's own internal checks, and the
-    eventual real salt-minion connection), on ANY client whose own DNS
-    can't reach this lab, not just AWS ones specifically.
+    A client on another network may not resolve server_fqdn through its own DNS. The function therefore first writes a static
+    /etc/hosts entry for the server on the client, through _ensure_client_can_resolve_server(), before any bootstrap attempt. That
+    covers the script fetch, the checks inside the bootstrap, and the later salt connection.
     """
     minion_id = profile_name or client_hostname
     if saltkey_accepted(hostname, exec_prefix, minion_id):
@@ -3250,31 +3148,11 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
         env += " PROFILENAME={}".format(shlex.quote(profile_name))
     if reactivation_key:
         env += " REACTIVATION_KEY={}".format(shlex.quote(reactivation_key))
-    # Real bug found + reproduced live 2026-09-23 (solar-system-lab.json,
-    # luna.mydemo.lab, CentOS 7): a plain `curl -Sks <url> | /bin/bash` can
-    # fail on an OLD client with NO server-side change able to fix it —
-    # CentOS 7's stock curl 7.29.0 links Mozilla NSS 3.15.4 (~2014), which
-    # cannot negotiate TLS with this server's modern TLS-1.2-only, ECDHE
-    # cipher policy at all ("SSL_ERROR_NO_CYPHER_OVERLAP", confirmed via
-    # `curl -v`). Because the pipeline still exits 0 (curl fails, /bin/bash
-    # just receives empty stdin and does nothing), this used to silently
-    # skip straight to the 300s "waiting for salt key" poll below and die
-    # with a misleading "never appeared as pending" — no indication the
-    # real problem was TLS, not connectivity.
-    #
-    # Confirmed live on that same box that this is fixable WITHOUT touching
-    # the server or its TLS policy at all: the box's own OpenSSL 1.0.1e
-    # negotiates the exact same https://<server>/... endpoint fine (`openssl
-    # s_client -tls1_2` succeeds) — curl's NSS backend is the only thing
-    # that can't. Every Python interpreter's ssl module always links the
-    # system OpenSSL, never NSS, so falling back to a Python-based fetch
-    # when curl fails works on any client old enough to hit this, with no
-    # new package install required (CentOS 7 ships python2 by default,
-    # confirmed live: `urllib2.urlopen()` fetches the real script fine, no
-    # explicit unverified-context call needed since Python 2.7.5's urllib2
-    # doesn't verify HTTPS certs at all — matching curl's own -k here).
-    # Tried python3 first (in case a future/other client is python3-only
-    # and needs the explicit unverified context 3.x's urllib requires).
+    # On an old client, a plain `curl -Sks <url> | /bin/bash` can fail with no server-side change able to fix it. CentOS 7's
+    # curl links NSS, which cannot negotiate the server's TLS 1.2 policy. The pipeline still exits 0, so the failure is silent
+    # and the later salt-key poll times out. The system OpenSSL can negotiate the same endpoint. Python's ssl module always uses
+    # the system OpenSSL, so the fallback fetches the script with Python. It tries python3 first, then python2. Certificates are
+    # not verified, matching curl -k.
     bootstrap_url = "https://{}/pub/bootstrap/{}".format(server_fqdn, script_name)
     bootstrap_cmd = (
         "_url={url}\n"
@@ -3316,15 +3194,8 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
         print("  '{}' is already accepted".format(client_hostname))
         return
     if not appeared:
-        # See _try_wget_legacy_bootstrap()'s own docstring for the real,
-        # confirmed-live incident this recovers from: a curl/NSS TLS
-        # failure exits the pipeline as if nothing went wrong (empty stdin
-        # into /bin/bash), so the ONLY visible symptom is this same
-        # timeout — nothing about the bootstrap_cmd run above tells us in
-        # advance whether it's worth attempting. Cheap and safe to just try
-        # it: a no-op within a couple seconds for a client that doesn't
-        # need it (curl already worked fine, or there's no base_channel to
-        # stage anything from).
+        # See _try_wget_legacy_bootstrap(). A curl TLS failure exits the pipeline as if nothing went wrong, so the only symptom
+        # is the timeout. The fallback is cheap, and it does nothing when the client does not need it.
         if base_channel and _try_wget_legacy_bootstrap(
                 hostname, exec_prefix, client_hostname, server_fqdn, script_name, env, base_channel):
             appeared = _wait_for_pending_key()
@@ -3343,37 +3214,22 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
 
 
 # ── Config export: read a live server back into lab-in-a-box JSON ──────────
-# Added 2026-09-16 at the user's explicit request ("generate a lab
-# definition based on the configuration of an existing server") — the
-# reverse of every ensure_* function above: read-only spacecmd/API calls,
-# parsed back into the exact <prefix>_* field shapes ensure_activation_keys/
-# ensure_system_groups/ensure_access_groups/ensure_orgs already consume, so
-# the result can be pasted straight into a lab JSON's "smlm"/"uyuni" section.
-# Two real, confirmed-live API gaps limit what's recoverable, documented
-# where they bite below rather than silently guessed around:
-#   - passwords are one-way hashed server-side — a re-imported user/org
-#     admin always needs a real password filled in by hand.
-#   - a custom access group's own member list isn't queryable for any org
-#     other than the CALLING session's own (user.getDetails/access.listRoles
-#     are both hard org-scoped, even for a satellite_admin — see
-#     ensure_user_role()'s own docstring for the identical constraint on
-#     the write side) — so smlm_access_groups' `users` field is exported
-#     only for the org this session is currently authenticated as.
+# These are the reverse of the ensure_* functions. They run read-only calls and parse the results into the <prefix>_* shapes
+# that the ensure_* functions consume, so the output can be pasted into a lab JSON file.
+# Limits:
+#   - Passwords are stored as one-way hashes. A user or org admin imported this way needs its password filled in by hand.
+#   - A custom access group's member list is queryable only for the organization of the calling session. The users field is
+#     therefore exported only for that organization.
 
 def describe_activation_key(hostname, exec_prefix, key_name, prefix):
     """
-    Reads one activation key's live configuration via spacecmd's native
-    activationkey_details and returns it as a dict using the same
-    <prefix>_activation_key* field names ensure_activation_key() consumes —
-    a direct, valid entry for <prefix>_activation_keys.
+    Read one activation key's configuration with activationkey_details and return it as a dict, using the same
+    <prefix>_activation_key* field names that ensure_activation_key() reads. The result is a valid entry for
+    <prefix>_activation_keys.
 
-    `key_name` is the key's real, org-id-prefixed label as spacecmd knows
-    it (e.g. "1-sles15sp7", confirmed live: activationkey_create's own
-    org-id-prefixing, see ensure_activation_key()'s neighboring code) — the
-    returned <prefix>_activation_key value has that numeric prefix stripped
-    back off, matching what a lab JSON actually specifies (the prefix is
-    applied server-side at creation time, never part of the caller's own
-    input).
+    key_name is the key's label as the server stores it, including the numeric organization prefix, for example "1-sles15sp7". The
+    returned value has that prefix removed, because the prefix is applied by the server at creation time and is not part of the
+    lab JSON.
     """
     text = _spacecmd(hostname, exec_prefix, "activationkey_details {}".format(
         shlex.quote(key_name))).stdout or ""
@@ -3383,12 +3239,8 @@ def describe_activation_key(hostname, exec_prefix, key_name, prefix):
         return m.group(1).strip() if m else ""
 
     def section(header):
-        # Stop at the next section header (a line immediately followed by a
-        # dashes-only line) or end of string, NOT at the first blank line —
-        # confirmed live 2026-09-16 that an EMPTY section (e.g. "Configuration
-        # Channels" with nothing under it) is followed by only ONE blank line
-        # before the next header, not two, so a "\n\n" stop bled straight
-        # into the next header's own text.
+        # The section ends at the next header, a line followed by a dashes-only line, or at the end of the string. It does not
+        # end at a blank line, because an empty section is followed by only one blank line.
         m = re.search(r"^{}\n-+\n(.*?)(?=\n[A-Za-z][^\n]*\n-+\n|\Z)".format(re.escape(header)),
                        text, re.MULTILINE | re.DOTALL)
         return [line.strip() for line in (m.group(1).splitlines() if m else []) if line.strip()]
@@ -3567,18 +3419,8 @@ def export_config(hostname, exec_prefix, admin, password, prefix):
     return result
 
 
-# ─── Maintenance windows (calendars + schedules) ────────────────────────────
-# Ground-truthed 2026-09-25 directly against the exact installed server
-# version's own Java source — spacewalk-java-5.2.19-0 (confirmed via `rpm -q
-# spacewalk-java` on sol.mydemo.lab), NOT the uyuni-project/uyuni GitHub
-# repo's master branch, which is bleeding-edge/unreleased and can genuinely
-# differ from what's actually running (see run_scap_scans' own note below
-# for a case where an EARLIER research pass in this same module drew the
-# wrong conclusion for exactly this reason). MaintenanceHandler.java is
-# byte-identical between master and this exact tag, so no version-skew risk
-# here specifically. No spacecmd-native subcommand exists (no maintenance.py
-# in spacecmd's source tree) — every call goes through the 'api' passthrough
-# against the real maintenance.* namespace.
+# ─── Maintenance windows (calendars and schedules) ────────────────────────────
+# The calls go through the api passthrough, against the maintenance.* namespace. spacecmd has no native subcommand for it.
 
 def ensure_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=None):
     """
@@ -3607,23 +3449,12 @@ def ensure_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=Non
 
 def maintenance_calendar_details(hostname, exec_prefix, label):
     """
-    Returns the real maintenance.getCalendarDetails(sessionKey, label) struct
-    (id/orgId/label/ical, plus url if the calendar was created from one) —
-    ground-truthed directly against MaintenanceHandler.java/
-    MaintenanceCalendarSerializer.java (same spacewalk-java-5.2.19 release
-    already confirmed installed on sol.mydemo.lab — see this section's own
-    top comment), NOT the public API doc page alone. Returns None if the
-    calendar doesn't exist (real API throws EntityNotExistsFaultException,
-    surfacing here as a non-zero returncode) — used by
-    sync_maintenance_calendar() to decide create vs. update vs. no-op.
+    Return the maintenance.getCalendarDetails struct for `label`: id, orgId, label and ical, plus url if the calendar was
+    created from one. Returns None if the calendar does not exist. The server then raises an error, which surfaces here as a
+    non-zero return code. sync_maintenance_calendar() uses the result to decide between create, update and no change.
 
-    Real bug found live 2026-09-30 against sol.mydemo.lab: despite
-    MaintenanceHandler.java's own Java return type being the singular
-    MaintenanceCalendar (not a list), spacecmd's 'api' passthrough actually
-    hands back a ONE-ELEMENT JSON ARRAY wrapping that single struct on the
-    wire — confirmed directly against a real response, not assumed from the
-    Java signature alone. Unwrapped here so every caller gets the plain
-    struct.
+    The server's JSON response for this call is a one-element array that wraps the struct. The function unwraps it, so callers
+    get the plain struct.
     """
     r = _api_call(hostname, exec_prefix, "maintenance.getCalendarDetails", [label])
     if r.returncode != 0:
@@ -3682,14 +3513,8 @@ def sync_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=None,
         return
     current = existing.get("ical") if ical else existing.get("url")
     desired = ical or url
-    # .rstrip(), not ==: real bug found live 2026-09-30 against sol.mydemo.lab — the server
-    # itself strips trailing whitespace/newlines from stored ical text (confirmed: a value
-    # with a trailing "\n" was round-tripped through updateCalendar/getCalendarDetails without
-    # one), so a caller-provided ical ending in "\n" compared unequal to the server's own
-    # already-correct copy on EVERY run, causing update_maintenance_calendar() to fire a
-    # spurious update every single time instead of being a genuine no-op — trailing whitespace
-    # carries no meaning in iCalendar (RFC 5545) either way, so this is a safe normalization,
-    # not a loosened comparison.
+    # ical text is compared after .rstrip(). The server strips trailing whitespace from stored ical, so a value that ends in a
+    # newline would never compare equal and would trigger an update on every run. Trailing whitespace has no meaning in iCalendar.
     if (current or "").rstrip() == (desired or "").rstrip():
         print("  Maintenance calendar '{}' already has the desired content — leaving it alone".format(label))
         return
@@ -3699,11 +3524,9 @@ def sync_maintenance_calendar(hostname, exec_prefix, label, ical=None, url=None,
 
 def ensure_maintenance_calendars(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_maintenance_calendars: a list of {label, ical, url}
-    dicts, synced (not just created) via sync_maintenance_calendar() —
-    upgraded 2026-09-30 from create-only so an edit to an already-deployed
-    calendar's schedule in the lab JSON actually reaches an already-existing
-    live server on the next normal run, not just a fresh install.
+    Orchestrate <prefix>_maintenance_calendars, a list of {label, ical, url} dicts. Each calendar is synced with
+    sync_maintenance_calendar(), so a change to an existing calendar's schedule in the lab JSON reaches the server on the next
+    run. Calendars are not only created.
     """
     for entry in cfg.get("{}_maintenance_calendars".format(prefix)) or []:
         label = entry.get("label")
@@ -3777,10 +3600,7 @@ def ensure_maintenance_schedules(hostname, exec_prefix, cfg, prefix):
 
 
 # ─── Action chains ───────────────────────────────────────────────────────────
-# Ground-truthed 2026-09-25 against the exact installed spacewalk-java-5.2.19-0
-# tag (ActionChainHandler.java differs from master only in an internal
-# constant-reference detail, not any method signature — confirmed by diff).
-# No spacecmd-native subcommand exists for this namespace either.
+# No spacecmd-native subcommand exists for this namespace. The calls go through the api passthrough.
 
 def ensure_action_chain(hostname, exec_prefix, label, actions):
     """
@@ -3847,15 +3667,9 @@ def ensure_action_chains(hostname, exec_prefix, cfg, prefix):
         ensure_action_chain(hostname, exec_prefix, label, actions)
 
 
-# ─── Custom software channels, packages, and patches created from scratch ──
-# Ground-truthed 2026-09-25 against the exact installed spacewalk-java-5.2.19-0
-# tag — ChannelSoftwareHandler.java/ErrataHandler.java are both byte-identical
-# to master for the specific methods used here (channel.software.create,
-# errata.create), confirmed by diff. Package upload uses the real rhnpush
-# client tool (client/tools/mgr-push in the real source) — there is no plain
-# XML-RPC struct call for binary package upload; rhnpush speaks its own
-# multipart protocol to the same server. Confirmed present inside the
-# uyuni-server container as the 'rhnpush' package (SUSE build).
+# ─── Custom software channels, packages and patches ─────────────────────────
+# Package upload uses the rhnpush client tool, which speaks its own multipart protocol, so there is no plain XML-RPC call
+# for it. rhnpush is installed in the uyuni-server container.
 
 def ensure_custom_channel(hostname, exec_prefix, label, name, summary, arch_label,
                            parent_label="", checksum_type="sha256"):
@@ -4133,11 +3947,8 @@ def ensure_patches(hostname, exec_prefix, cfg, prefix):
         ensure_errata(hostname, exec_prefix, channel_label, advisory_name, entry)
 
 
-# ─── Image builds (distinct from image IMPORTS, already implemented above) ─
-# Ground-truthed 2026-09-25 against the exact installed spacewalk-java-5.2.19-0
-# tag (ImageInfoHandler.java's scheduleImageBuild — confirmed present with
-# this exact signature by diffing the tagged source against master, which
-# matched for this method).
+# ─── Image builds (distinct from image imports) ─────────────────────────────
+# scheduleImageBuild is called through the api passthrough, with the parameters the handler takes.
 
 def ensure_image_build(hostname, exec_prefix, profile_label, build_host_id, version="latest"):
     """
@@ -4260,17 +4071,10 @@ def ensure_system_custom_values(hostname, exec_prefix, cfg, prefix):
 
 def org_id_for(hostname, exec_prefix, org_name):
     """
-    Numeric org id lookup by name via org.listOrgs (real, confirmed method
-    — org.listOrgs() takes no args and returns a list of
-    {id, name, active_users, systems, system_groups, trusts} structs).
-    Real bug found live 2026-09-25: an earlier version of this function
-    used spacecmd's own org_details instead, heuristically regexing an
-    "Id:" line out of its output — confirmed live that org_details' real
-    output has NO id field at all (just Name/Active Users/Systems/Trusts/
-    System Groups/Activation Keys/Kickstart Profiles/Configuration
-    Channels), so that regex could never match anything; every call
-    silently returned None, and every caller (ensure_org_system_transfer)
-    died as a result. Returns None if no org named `org_name` is found.
+    Return the numeric id of the organization named `org_name`, from org.listOrgs. That call takes no arguments and returns a
+    list of {id, name, active_users, systems, system_groups, trusts} structs. Returns None if no organization has that name.
+
+    spacecmd's org_details output does not include an id field, so the id cannot be parsed from it.
     """
     r = _api_call(hostname, exec_prefix, "org.listOrgs", [])
     if r.returncode != 0:
@@ -4287,29 +4091,13 @@ def org_id_for(hostname, exec_prefix, org_name):
 
 def ensure_org_system_transfer(hostname, exec_prefix, to_org, systems):
     """
-    Moves already-registered `systems` (hostnames) into `to_org` via
-    org.transferSystems — real method (confirmed against the exact
-    installed spacewalk-java-5.2.19-0 tag's OrgHandler.java, byte-identical
-    to master for this method), requires the acting admin to be an org
-    admin AND the source/destination orgs to already be in a trust
-    relationship (ensure_org_trust(), already implemented — this function
-    doesn't establish it itself, same ordering-is-the-caller's-job
-    convention as image builds' build host).
+    Move already registered `systems`, given by hostname, into `to_org` with org.transferSystems. The acting administrator must
+    be an administrator of the organization, and the source and destination organizations must already trust each other. Use
+    ensure_org_trust() first. This function does not create the trust.
 
-    Idempotency correction (2026-09-25): an earlier version of this
-    docstring claimed re-transferring an already-transferred system was a
-    harmless no-op — confirmed WRONG live. Once a system is actually moved
-    to a different org, system.getId (used to resolve its sid) becomes
-    scoped to THAT org and the calling default-admin session can no longer
-    see it at all — a second run died outright with "no system named 'X'
-    found on the server" for every system already transferred, since
-    there's no cross-org system.getId visibility for a plain org admin.
-    Real transferSystems' own apidoc doesn't expose a "list this org's
-    systems by name" alternative either. Given this function's own real,
-    narrow use case (explicit, already-verified-to-exist system names), a
-    resolution failure here is treated as "already transferred" — skipped
-    with a message, not die()'d — rather than blocking the rest of
-    install_smlm.py's run on every repeat invocation.
+    Once a system has been moved, the default administrator's session can no longer look it up by name. A repeat run therefore
+    cannot resolve it. The function treats a failed lookup as "already transferred", logs a message, and skips the system instead
+    of stopping the install.
     """
     to_org_id = org_id_for(hostname, exec_prefix, to_org)
     if to_org_id is None:
@@ -4353,33 +4141,19 @@ def ensure_org_system_transfers(hostname, exec_prefix, cfg, prefix):
 
 
 # ─── External authentication (SAML 2.0 SSO via Keycloak) ────────────────────
-# Ground-truthed 2026-09-25 directly against the real, current
-# uyuni-project.org docs (auth-methods-sso.html + its worked
-# auth-methods-sso-example.html): Uyuni's own SSO support is SAML 2.0, NOT
-# OIDC (that's a SEPARATE, newer surface — web.oidc.* in rhn.conf, used by
-# the Uyuni MCP Server's own optional OAuth mode, ensure_mcp_server above —
-# do not confuse the two). Real, confirmed rhn.conf keys:
+# Uyuni's SSO is SAML 2.0. The OIDC settings (web.oidc.* in rhn.conf) belong to the MCP server's optional OAuth mode, which is
+# a separate feature. The rhn.conf keys this module writes are:
 #   java.sso = true
 #   java.sso.onelogin.saml2.sp.entityid = https://<smlm-fqdn>/rhn/manager/sso/metadata
 #   java.sso.onelogin.saml2.sp.assertion_consumer_service.url = https://<smlm-fqdn>/rhn/manager/sso/acs
-#   java.sso.onelogin.saml2.idp.entityid = http://<keycloak-fqdn>:<port>/realms/<realm>
-#   java.sso.onelogin.saml2.idp.single_sign_on_service.url = http://<keycloak-fqdn>:<port>/realms/<realm>/protocol/saml
-# Real, confirmed prerequisite from the same docs: every Uyuni user SSO will
-# ever map to must already exist locally BEFORE enabling this (SSO maps an
-# incoming SAML "uid" attribute to an EXISTING username, it doesn't create
-# accounts) — callers should run this after ensure_users()/ensure_orgs().
+#   java.sso.onelogin.saml2.idp.entityid = https://<keycloak-fqdn>:<port>/realms/<realm>
+#   java.sso.onelogin.saml2.idp.single_sign_on_service.url = https://<keycloak-fqdn>:<port>/realms/<realm>/protocol/saml
+# SSO maps the SAML uid attribute to an existing Uyuni username. It does not create accounts. The users must exist before SSO
+# is enabled, so callers run this after ensure_users() and ensure_orgs().
 #
-# Keycloak itself is deployed as its own standalone podman container on a
-# SEPARATE host (`keycloak_host` — a real AWS node in this project, chosen
-# for a real public IP the SMLM server's browser-redirect SAML flow can
-# reach), not on the SMLM server itself — same "host-level podman, SSH
-# directly to it, exec_prefix only applies to the SMLM server" shape as
-# ensure_mcp_server, generalized to a second, independent host. Configured
-# via kcadm.sh (Keycloak's own bundled admin CLI, run through `podman exec`
-# on that host) — a realm, a SAML client (id = the sp entityid above,
-# redirect URI = the ACS url above), a "uid" SAML attribute mapper (the
-# real, confirmed requirement — the IdP must emit a SAML attribute literally
-# named "uid" carrying the Uyuni username), and one demo user.
+# Keycloak runs as a standalone podman container on keycloak_host, a separate host that the browser can reach. It is configured
+# with kcadm.sh, through podman exec on that host. The configuration is a realm, a SAML client whose id is the SP entity id, a
+# "uid" attribute mapper, and the demo user.
 
 
 _PM_INSTALL = {
@@ -4395,24 +4169,15 @@ _DOCKER_PKG = {"dnf": "docker", "zypper": "docker", "apt-get": "docker.io"}
 
 def ensure_podman_available(host):
     """
-    Idempotently ensures a `podman`-compatible command is on PATH on `host`
-    — installing the real podman package via whichever of dnf/zypper/apt-get
-    is actually present there (checked by command existence, not by
-    guessing the OS from /etc/os-release, since this can point at ANY real
-    host the operator names). Falls back to installing `docker` and
-    shimming a `podman` command onto it when the podman package itself
-    isn't available: confirmed live 2026-09-25 that neptune.mydemo.lab (a
-    real AWS Amazon Linux 2023 client in this project) carries no `podman`
-    package at all in EITHER its native amazonlinux repo or the
-    SUSE-Manager-mirrored one (only its `containers-common-extra`
-    dependency) — `docker` genuinely is packaged there. The shim is safe
-    because every call this module makes against "podman" (`run -d --name`,
-    `exec ... sh -c`, `inspect`, `cp`) uses argument syntax that's identical
-    between the two CLIs for the subset used here. Dies with a clear
-    message if neither podman nor docker can be installed anywhere — unlike
-    ensure_rhnpush_available's own "warn and skip" stance, a container
-    runtime isn't optional here (the whole SSO feature needs one to deploy
-    Keycloak at all).
+    Ensure a podman-compatible command is on PATH on `host`. The function checks which of dnf, zypper and apt-get exists on
+    the host, and installs podman with it. It does not guess the operating system from /etc/os-release.
+
+    Some hosts, such as Amazon Linux 2023, have no podman package in their repositories. There the function installs docker and
+    creates a podman command that runs docker. The calls this module makes (run -d --name, exec, inspect and cp) have the same
+    syntax in both CLIs.
+
+    The function dies if neither podman nor docker can be installed. A container runtime is required for SSO, which deploys
+    Keycloak in a container.
     """
     r = ssh_run(host, "command -v podman", check=False)
     if r.returncode == 0:
@@ -4443,41 +4208,21 @@ def ensure_podman_available(host):
 
 def _ensure_keycloak_tls_cert(keycloak_host):
     """
-    Idempotently generates a self-signed TLS cert+key on `keycloak_host` at
-    a fixed path (/etc/keycloak-tls/{cert,key}.pem), persisted OUTSIDE the
-    container (bind-mounted in by ensure_keycloak) so it survives a
-    container recreate.
+    Ensure a self-signed TLS certificate and key exist on `keycloak_host` at /etc/keycloak-tls/cert.pem and key.pem. They
+    are kept on the host, outside the container, and ensure_keycloak() bind-mounts them in, so they survive a container
+    recreation.
 
-    Real bug found live 2026-09-25: a browser navigating to a plain-HTTP
-    dev-mode Keycloak (this function's own pre-2026-09-25 default) fails
-    with SSL_ERROR_RX_RECORD_TOO_LONG — modern browsers' HTTPS-Only Mode
-    (on by default in current Firefox) silently upgrades the navigation to
-    https:// before ever trying http://, so the plain-HTTP listener never
-    even gets a chance to respond in plaintext. Real SAML SSO needs actual
-    TLS on the IdP, not just a workaround on the browser side — a
-    self-signed cert is enough for this lab (no public CA involved on
-    either end of a SAML redirect), unlike a cert a normal HTTPS visitor
-    would need to trust.
+    Browsers that enforce HTTPS-only navigation do not reach a plain-HTTP Keycloak, so Keycloak serves HTTPS. A self-signed certificate
+    is enough for this lab, because no public CA is involved in the SAML redirect.
 
-    A second real bug, found live immediately after the first fix: the
-    official Keycloak image runs as a non-root container user, which
-    `openssl`'s own default file modes (dir 700, key 600, both owned by
-    root since this command runs as root over SSH) leave unable to read
-    the bind-mounted key — Keycloak then fails to start at all ("Failed to
-    load 'https-key-' material: AccessDeniedException"). World-readable
-    (644/755) is an acceptable trade for a throwaway self-signed lab cert
-    with no real secret value, and simpler/more portable than discovering
-    the container's exact UID to chown to instead.
+    The key is world-readable (644 for the certificate, 755 for the directory). The official Keycloak image runs as a non-root user,
+    which must read the mounted key, and the root-owned openssl defaults would block it.
     """
     r = ssh_run(keycloak_host, "test -f /etc/keycloak-tls/cert.pem && test -f /etc/keycloak-tls/key.pem",
                 check=False)
     if r.returncode == 0:
-        # Cheap, idempotent, and self-healing for a cert generated by an
-        # earlier, buggy version of this function (confirmed live
-        # 2026-09-25: a real pre-existing cert on pluto.mydemo.lab had
-        # root-only 600 permissions from before the fix below existed) —
-        # always re-assert readable permissions rather than trusting
-        # mere existence to mean "correctly readable too".
+        # Re-assert readable permissions on every call. A certificate created by an earlier version can have root-only modes,
+        # so existence alone is not enough.
         ssh_run(keycloak_host, "chmod 755 /etc/keycloak-tls; "
                 "chmod 644 /etc/keycloak-tls/key.pem /etc/keycloak-tls/cert.pem", check=False)
         return
@@ -4497,20 +4242,10 @@ def _ensure_keycloak_tls_cert(keycloak_host):
 
 def _keycloak_java_opts(keycloak_host):
     """
-    Picks JVM heap/metaspace caps for the Keycloak container, sized to
-    `keycloak_host`'s ACTUAL total RAM (`free -m`) rather than one fixed
-    value for every host. Real bug found live 2026-09-25: a single
-    hardcoded tight cap (-Xmx384m -XX:MaxMetaspaceSize=128m — sized to
-    avoid a build-time OOM on neptune.mydemo.lab's ~900MB RAM) got applied
-    unconditionally to EVERY deployment, including pluto.mydemo.lab's
-    15GB+ host — where that same tight Metaspace cap, fine for the short
-    build-and-exit phase, ran out roughly an hour into real sustained
-    admin-API usage (realm/client/user creation via kcadm) and crashed
-    with "OutOfMemoryError: Metaspace", taking the whole container down
-    silently between one `--enable-sso` run and the browser actually being
-    used. A host with only ~900MB total (the exact scenario the tight cap
-    was FOR) still gets it; anything with more headroom gets generous caps
-    that won't starve under real, sustained use.
+    Pick the JVM heap and metaspace caps for the Keycloak container, sized to the host's total RAM as reported by free -m.
+    One fixed value for every host fails in one of two ways. A cap sized for a small host causes an out-of-memory kill during the
+    Quarkus build step on that host, and it also starves a large host during sustained admin-API use. Sizing from the host's RAM
+    avoids both.
     """
     r = ssh_run(keycloak_host, "free -m", check=False, capture=True)
     total_mb = 0
@@ -4525,46 +4260,16 @@ def _keycloak_java_opts(keycloak_host):
 
 def ensure_keycloak(keycloak_host, port, realm, admin_user, admin_password):
     """
-    Idempotently deploys Keycloak (quay.io/keycloak/keycloak, real official
-    image) as a standalone podman container on `keycloak_host`, in dev mode
-    (start-dev — matches the real worked example doc; a production
-    deployment would still want a real DB this lab has no use for) but
-    served over real HTTPS (self-signed cert from
-    _ensure_keycloak_tls_cert(), see its own docstring for the real
-    browser-side bug this fixes) — `port` is published to the container's
-    HTTPS listener (8443), not its plaintext one (8080), which stays
-    internal-only (kcadm, run via `podman exec`, still reaches it over
-    plain http://localhost:8080 from inside the container — see _kcadm()).
-    Ensures podman itself is present first (ensure_podman_available() —
-    confirmed live 2026-09-25 this can't just be assumed, see that
-    function's own docstring).
+    Idempotently deploy Keycloak, the official quay.io/keycloak/keycloak image, as a standalone podman container on
+    `keycloak_host`. It runs in dev mode, but is served over HTTPS with the certificate from _ensure_keycloak_tls_cert(). `port` is
+    published to the container's HTTPS listener, port 8443. The plain HTTP listener on 8080 stays inside the container, and kcadm
+    reaches it there through _kcadm(). The function ensures podman is present first, with ensure_podman_available().
 
-    Checks the container's actual RUNNING state (`podman inspect -f
-    {{.State.Running}}`), not just that a container object by this name
-    exists — `podman inspect` alone would also match a STOPPED/crashed
-    container (confirmed live 2026-09-25: an earlier OOM-killed attempt
-    left an Exited "keycloak" container behind, which a plain existence
-    check would have wrongly treated as "already there" forever after). A
-    running OR restarted container is still required to pass the real
-    HTTPS readiness probe below before this function trusts it — an
-    earlier version of this function returned early on "already running"
-    without that check, which would have left a pre-existing plain-HTTP
-    container (from before the TLS fix above existed) silently unfixed
-    forever; now ANY container that fails the probe (never started TLS,
-    OOM-killed mid-build, or genuinely still starting past the deadline)
-    falls through to a full recreate with the current, correct config —
-    self-healing, no manual intervention needed to pick up a fix like this
-    one. Caps JVM heap/metaspace explicitly via JAVA_OPTS_APPEND, SIZED TO
-    THE HOST (see _keycloak_java_opts()'s own docstring for the real
-    two-part bug this fixes: Keycloak's default, auto-sized from the
-    container's cgroup memory i.e. the WHOLE host, OOM-killed the Quarkus
-    build-and-exit phase on a real ~900MB AWS node; a single fixed tight
-    cap applied everywhere then OOM-crashed a real 15GB+ host instead,
-    just later — after an hour of real sustained admin-API use rather than
-    at build time). Waits (up to 120s — the build-and-exit phase on a
-    small VM genuinely takes longer than a generous-looking 60s) for the
-    realm endpoint to answer before returning, so callers can immediately
-    run kcadm against it.
+    It checks the container's running state with podman inspect -f {{.State.Running}}. A stopped or crashed container is
+    recreated. A container that is running but fails the HTTPS readiness probe is also recreated, so an older plain-HTTP container
+    is replaced on the next run. The JVM caps are set through JAVA_OPTS_APPEND, sized to the host by _keycloak_java_opts(). The
+    function waits up to 120 seconds for the realm endpoint to answer, because the build step on a small VM can take a minute or
+    more. Callers can run kcadm against Keycloak as soon as the function returns.
     """
     ensure_podman_available(keycloak_host)
 
@@ -4616,12 +4321,8 @@ def ensure_keycloak(keycloak_host, port, realm, admin_user, admin_password):
         print("  Keycloak container on '{}' is running but not answering over HTTPS — recreating it".format(
             keycloak_host))
     elif exists:
-        # Container exists but isn't running (e.g. a prior OOM kill —
-        # confirmed live 2026-09-25). Try restarting it in place first, so a
-        # HEALTHY-but-stopped container isn't needlessly recreated (which
-        # would wipe any realm/client/user already configured below); only
-        # fall back to a full recreate (picks up the corrected memory/TLS
-        # settings above) if that doesn't come up cleanly.
+        # Restart a stopped container in place first, so a healthy container is not recreated and its configuration is kept.
+        # Recreate it only when the restart does not bring it up cleanly.
         r2 = ssh_run(keycloak_host, "podman start keycloak", check=False, capture=True)
         if r2.returncode == 0 and _wait_ready(120):
             print("  Restarted the existing (stopped) Keycloak container on '{}'".format(keycloak_host))
@@ -4668,19 +4369,13 @@ def ensure_keycloak_realm(keycloak_host, port, realm, admin_user, admin_password
 def _ensure_keycloak_client_sls_url(keycloak_host, port, admin_user, admin_password, realm,
                                      client_id, sls_url):
     """
-    Self-heals an EXISTING SAML client (created by an earlier version of
-    ensure_keycloak_saml_client, before the SLS-url fix existed) that's
-    missing its saml_single_logout_service_url_redirect attribute — see
-    ensure_keycloak_saml_client's own docstring for the real "Logout
-    failed" bug this fixes. A plain existence check alone would leave an
-    already-deployed client (the real solar-system-lab.json one,
-    confirmed live 2026-09-26) permanently broken for logout.
+    Add the saml_single_logout_service_url_redirect attribute to an existing SAML client that lacks it. Clients created by an
+    earlier version of ensure_keycloak_saml_client() did not have this attribute. Without it, Keycloak shows a "Logout failed"
+    page instead of logging the user out. A plain existence check would leave such a client broken, so this function corrects it
+    in place.
     """
-    # NOT using kcadm's own --fields filter here — confirmed live 2026-09-26
-    # that `--fields attributes` (a nested-object field) silently returns
-    # an empty {} rather than the real content, unlike a top-level scalar
-    # or list field (e.g. --fields defaultClientScopes, used elsewhere in
-    # this module, works fine). Fetching the full client object instead.
+    # The full client object is fetched, without a --fields filter. A nested field such as attributes is returned empty when
+    # a --fields filter selects it.
     r = _kcadm(keycloak_host, port, admin_user, admin_password, None,
                "get clients -r {} -q clientId={}".format(shlex.quote(realm), shlex.quote(client_id)))
     if r.returncode != 0 or not (r.stdout or "").strip():
@@ -4707,32 +4402,14 @@ def _ensure_keycloak_client_sls_url(keycloak_host, port, admin_user, admin_passw
 def ensure_keycloak_saml_client(keycloak_host, port, realm, admin_user, admin_password,
                                  client_id, redirect_uri, sls_url=None):
     """
-    Idempotently creates a SAML client in `realm` (client_id = the real
-    Uyuni SP entityid, e.g. "https://sol.mydemo.lab/rhn/manager/sso/metadata"
-    — confirmed real convention from the worked example doc) with a "uid"
-    SAML attribute mapper (protocolMapper "saml-user-property-mapper",
-    mapping the Keycloak user's own username property to a SAML attribute
-    literally named "uid" — the real, confirmed requirement). Signature
-    settings (assertion signing on, RSA_SHA1, Key ID key-name format,
-    client signature NOT required) match the worked example doc's own
-    documented client settings, expressed as the client's real "attributes"
-    map (samlAssertionSignature/samlSignatureAlgorithm/
-    samlSignatureKeyNameTransformer/samlClientSignature — Keycloak's own
-    real admin REST attribute keys for these SAML client toggles).
+    Idempotently create a SAML client in `realm`. The client_id is the Uyuni service-provider entity id, for example
+    "https://sol.mydemo.lab/rhn/manager/sso/metadata". The client has a "uid" SAML attribute mapper, which is
+    saml-user-property-mapper and maps the user's username to an attribute named uid. Assertion signing is on, with RSA_SHA1, the
+    Key ID key-name format, and no required client signature. The attributes are Keycloak's own names for these SAML settings.
 
-    `sls_url` (Uyuni's real Single Logout Service endpoint, confirmed
-    against SSOController.java's own route table: GET /manager/sso/sls,
-    a DIFFERENT endpoint from the ACS one used for login) sets the
-    client's `saml_single_logout_service_url_redirect` attribute — real
-    bug found live 2026-09-26: without it, Keycloak throws "Can't finish
-    SAML logout as there is no logout binding set" and shows the user a
-    generic "Logout failed" page instead of actually logging them out,
-    even though the SP-side SLO redirect itself (idp.single_logout_
-    service.url in rhn.conf, see ensure_sso's own docstring for that half
-    of this same real bug) was already reaching Keycloak correctly.
-    Optional/omitted for backward compatibility with any caller that
-    doesn't have a hostname to derive it from, but ensure_sso always
-    passes it.
+    sls_url is the Uyuni Single Logout Service endpoint, GET /manager/sso/sls. It is separate from the assertion consumer endpoint
+    used for login. It is set as saml_single_logout_service_url_redirect. Keycloak fails logout without it. The argument is
+    optional, and ensure_sso() always passes it.
     """
     r = _kcadm(keycloak_host, port, admin_user, admin_password, None,
                "get clients -r {} -q clientId={}".format(shlex.quote(realm), shlex.quote(client_id)))
@@ -4743,18 +4420,9 @@ def ensure_keycloak_saml_client(keycloak_host, port, realm, admin_user, admin_pa
             _ensure_keycloak_client_sls_url(keycloak_host, port, admin_user, admin_password, realm,
                                              client_id, sls_url)
     else:
-        # kcadm's own real syntax for a dotted key INSIDE a nested map (as
-        # opposed to a dotted PATH) is to quote just that key segment in
-        # double quotes within the "-s" value, e.g.
-        # `-s 'attributes."saml.assertion.signature"=true'` — shlex.quote()
-        # on the whole "-s value" string below produces exactly that (it
-        # wraps the double-quote-containing string in single quotes),
-        # avoiding the unreadable/likely-wrong manual quote-nesting an
-        # earlier version of this function used. `saml_single_logout_
-        # service_url_redirect` has no dots in its own name, so it's set
-        # as a plain dotted PATH (attributes.<key>=value) instead —
-        # confirmed live both forms persist correctly, this one just
-        # doesn't need the extra quoting the dotted-name keys do.
+        # kcadm takes a dotted key inside a nested map as a quoted segment within -s, for example
+        # -s 'attributes."saml.assertion.signature"=true'. shlex.quote() on the whole -s value produces that form.
+        # saml_single_logout_service_url_redirect has no dots, so it is set as a plain dotted path, attributes.<key>=value.
         args = [
             "create", "clients", "-r", realm,
             "-s", "clientId={}".format(client_id),
@@ -4812,20 +4480,8 @@ def ensure_keycloak_saml_client(keycloak_host, port, realm, admin_user, admin_pa
             return
         print("  Keycloak SAML client '{}' already has its 'uid' attribute mapper".format(client_id))
         return
-    # NOT setting config."friendly.name" — real bug found live 2026-09-25
-    # (first actual browser SSO login attempt): setting it to the exact
-    # same value as attribute.name ("uid") makes Keycloak emit TWO
-    # separate <saml:Attribute Name="uid"> elements in the real assertion
-    # (one via the attribute name, one via the friendly name) instead of
-    # one element carrying both, which java-saml's own strict parser
-    # (SamlResponse.getAttributes()) rejects outright with "Found an
-    # Attribute element with duplicated Name" — caught by getACS()'s
-    # generic exception handler, which then returns null, which Spark
-    # renders as a plain "Page Not Found" on the ACS URL itself, with
-    # nothing in the browser to suggest a SAML-level cause at all. Dropping
-    # friendlyName entirely is safe: SSOController.getACS() (the only
-    # consumer) reads attributes purely by their Name field and never
-    # looks at FriendlyName.
+    # friendly.name is not set. Setting it to the same value as attribute.name makes Keycloak emit two Attribute elements with
+    # the same Name, and the SAML parser rejects that. SSOController reads attributes by Name only, so FriendlyName is not needed.
     args = [
         "create", "clients/{}/protocol-mappers/models".format(client_uuid), "-r", realm,
         "-s", "name=uid",
@@ -4845,32 +4501,13 @@ def ensure_keycloak_saml_client(keycloak_host, port, realm, admin_user, admin_pa
 def ensure_keycloak_user(keycloak_host, port, realm, admin_user, admin_password, username, password, email,
                           first_name=None, last_name=None):
     """
-    Idempotently creates one Keycloak user + password in `realm`.
+    Idempotently create one Keycloak user with a password in `realm`. Keycloak 26's default user profile requires firstName and
+    lastName. A user without them cannot log in, even with the right password. first_name and last_name are optional and default
+    to the username, because only the presence of a non-empty value matters here. emailVerified is set to true, because an
+    unverified email address causes the same login failure.
 
-    Real bug found live 2026-09-25 (first actual admin login attempt):
-    Keycloak 26's default "User Profile" feature makes firstName/lastName
-    REQUIRED user attributes — a user created without them (this
-    function's own pre-2026-09-25 create call) can never actually log in,
-    failing with "Account is not fully set up" even given the exact right
-    password; requiredActions was confirmed empty and enabled=true, so
-    this isn't a requiredAction/disabled-account issue, it's the profile
-    validation itself. `first_name`/`last_name` are optional (real values
-    exist for a proper `smlm_users` entry, see ensure_sso's own caller
-    code) and default to `username` itself when not given (e.g. for the
-    real SMLM admin account, which has no separate name fields anywhere)
-    — the exact VALUE doesn't matter for this lab's SSO purposes, only
-    that the required attribute is non-empty. `emailVerified=true` is set
-    for the same reason: an unverified email address on a fresh user is
-    otherwise a second, separate way the same "Account is not fully set
-    up" failure can happen.
-
-    An EXISTING user (created by an earlier, buggy version of this
-    function before the fields above existed) is backfilled in place —
-    not just left alone — if it's missing any of them: confirmed live
-    2026-09-25 that a plain existence check would have left the real
-    'admin'/'brahe' Keycloak accounts permanently unable to log in even
-    after this fix landed, since they already existed and this function
-    used to treat that as nothing left to do.
+    An existing user that lacks any of these attributes is updated in place, so accounts created by an earlier version of this
+    function can log in.
     """
     r = _kcadm(keycloak_host, port, admin_user, admin_password, None,
                "get users -r {} -q username={}".format(shlex.quote(realm), shlex.quote(username)))
@@ -4941,69 +4578,31 @@ def _keycloak_idp_cert(keycloak_host, port, realm):
 
 def ensure_sso(hostname, exec_prefix, cfg, prefix):
     """
-    Orchestrates <prefix>_sso: deploys Keycloak on a separate host and
-    wires this server up to it for real SAML 2.0 SSO. No-op if the field
-    is unset. Fields:
-      "keycloak_host"   : required — a DIFFERENT, real, externally-reachable
-                          host (this project's own AWS nodes are the
-                          intended fit, since the SAML browser-redirect
-                          flow needs both this server and Keycloak reachable
-                          from wherever the browser is)
-      "keycloak_port"   : optional, default 8080
-      "realm"           : optional, default "lab-in-a-box"
-      "admin_user"/"admin_password" : Keycloak's OWN admin account, optional,
-                          default "admin"/"admin" (dev-mode default, matches
-                          the real worked example doc)
-      "demo_user"/"demo_password"/"demo_email" : one EXTRA Keycloak user to
-                          create beyond the ones this function already
-                          creates automatically (the real SMLM admin
-                          account, and every <prefix>_users entry with a
-                          real password — see the real "admin login fails
-                          with invalid username/password" bug fixed below)
-                          — MUST also already exist as a real Uyuni user
-                          with this exact username (see this function's
-                          own module-level note: SSO maps to an existing
-                          account, it never creates one)
+    Orchestrate <prefix>_sso, which deploys Keycloak on a separate host and connects this server to it for SAML 2.0 single
+    sign-on. The function does nothing if the field is unset. Fields:
 
-    Ends by setting java.sso=true and the java.sso.onelogin.saml2.* keys in
-    /etc/rhn/rhn.conf (INSIDE the container, via exec_prefix — same file
-    ensure_patch_api_allowlisted already edits) and running `mgradm
-    restart` (a HOST-level command, run via a raw ssh_run to `hostname` —
-    NOT through exec_prefix, since mgradm orchestrates the containers from
-    outside them) so the new SSO config actually takes effect.
+      "keycloak_host"   required. A separate host that the browser can reach, because the SAML redirect goes through the browser.
+      "keycloak_port"   optional, default 8080.
+      "realm"           optional, default "lab-in-a-box".
+      "admin_user" and "admin_password"   Keycloak's own admin account. Optional, default "admin" and "admin".
+      "demo_user", "demo_password" and "demo_email"   one extra Keycloak user, beyond the users the function creates
+                        automatically. That user must also exist as a Uyuni user with the same username, because SSO maps to an
+                        existing account and never creates one.
 
-    Real bug found live 2026-09-25 (first time the web UI login page was
-    actually loaded after enabling SSO): java-saml unconditionally requires
-    the IdP's own signing certificate (or a fingerprint) even to just
-    RENDER the login page's SSO option — omitting
-    java.sso.onelogin.saml2.idp.x509cert throws "Invalid settings:
-    idp_cert_or_fingerprint_not_found_and_required" on every single page
-    load (visible in catalina.out), which broke the page badly enough that
-    the classic admin/password login (which DOES still succeed underneath,
-    confirmed by "LOCAL AUTH SUCCESS: [admin]" in the same log) never
-    completed cleanly for the user. Fixed by fetching the real cert from
-    Keycloak's own SAML IdP metadata endpoint (see _keycloak_idp_cert())
-    and writing it as a 6th rhn.conf key.
+    The function sets java.sso=true and the java.sso.onelogin.saml2.* keys in /etc/rhn/rhn.conf inside the container, through
+    exec_prefix. Then it runs mgradm restart on the host, through a raw SSH command. The restart is a host-level command, not an
+    exec_prefix command, because mgradm manages the containers from outside them.
 
-    Idempotent PER KEY AND PER VALUE, not just presence-of-the-feature: an
-    earlier version of this function only checked whether a bare
-    "java.sso " line existed at all before appending ALL keys as a block
-    — which would have permanently skipped a key added later (like
-    x509cert above) on any already-configured server. A later version
-    fixed that but only checked key PRESENCE, not value correctness — which
-    would have left stale http:// idp.entityid/idp.single_sign_on_service
-    URLs in place forever after ensure_keycloak switched to real HTTPS
-    (see its own docstring), since the KEYS still existed, just with the
-    wrong VALUES. Each of the 6 keys is now checked, and corrected in
-    place (not just appended) if its existing value doesn't match.
+    java-saml needs the IdP's signing certificate to render the login page. Without it, every page load fails, and the classic
+    login behind it cannot complete. The certificate is fetched from Keycloak's SAML IdP metadata, by _keycloak_idp_cert(), and
+    written as the sixth key.
+
+    Each of the six keys is checked on its own, and a value that differs from the expected one is corrected in place. A key
+    that is present but has an outdated value, such as an http:// URL after the switch to HTTPS, is therefore fixed.
     """
     field = "{}_sso".format(prefix)
     if cfg.get(field) is None:
-        # NOT `if not cfg.get(field): return` — {} would be a legitimate
-        # "enable with every default" value if this had any (it doesn't;
-        # keycloak_host has no default and is required), but the check
-        # must still be presence, not truthiness, matching the same real
-        # bug already caught once this session for smlm_mcp_server.
+        # The check tests for presence, not truthiness, so that an empty mapping counts as a value.
         return
     sso = cfg[field]
     keycloak_host = sso.get("keycloak_host")
@@ -5023,23 +4622,9 @@ def ensure_sso(hostname, exec_prefix, cfg, prefix):
     ensure_keycloak_saml_client(keycloak_host, port, realm, admin_user, admin_password,
                                  sp_entityid, acs_url, sls_url)
 
-    # Real bug found live 2026-09-25 (first actual login attempt): SSO maps
-    # an incoming SAML "uid" to an EXISTING Uyuni account — see this
-    # function's own module-level note — but that account must ALSO exist
-    # as a real Keycloak user able to authenticate there, and this
-    # function used to only ever create ONE such user (`demo_user`).
-    # Once SSO is enabled the web UI's login form goes through Keycloak
-    # for everyone, including the real SMLM admin account itself — which
-    # had no Keycloak counterpart, so logging in as admin correctly failed
-    # at Keycloak with "invalid username or password" (the admin/password
-    # PAIR was never wrong; the account just didn't exist on the IdP side
-    # at all). Fixed by creating a Keycloak user for every account that can
-    # plausibly need to log in through this SSO: the real SMLM admin
-    # account (smlm_admin_user/smlm_admin_pass, same fields/defaults
-    # `main()` itself uses to seed the server — see install_smlm.py) and
-    # every <prefix>_users entry that has a real password (a "pam": true
-    # entry authenticates against the OS directly, a wholly separate
-    # mechanism from SAML SSO, so has no Keycloak counterpart to create).
+    # Once SSO is on, the login form sends everyone through Keycloak, including the SMLM admin account. Each account that can
+    # log in through SSO therefore needs a Keycloak user with a password: the SMLM admin account, and each <prefix>_users entry
+    # that has a password. A PAM entry authenticates through the OS, so it has no Keycloak user.
     smlm_admin_user = cfg.get("{}_admin_user".format(prefix)) or "admin"
     smlm_admin_pass = cfg.get("{}_admin_pass".format(prefix)) or "Smlm12345"
     ensure_keycloak_user(keycloak_host, port, realm, admin_user, admin_password,
@@ -5067,15 +4652,8 @@ def ensure_sso(hostname, exec_prefix, cfg, prefix):
     idp_cert = _keycloak_idp_cert(keycloak_host, port, realm)
     idp_entityid = "https://{}:{}/realms/{}".format(keycloak_host, port, realm)
     idp_sso_url = "https://{}:{}/realms/{}/protocol/saml".format(keycloak_host, port, realm)
-    # Keycloak uses this SAME endpoint for both SSO and SLO bindings —
-    # confirmed live 2026-09-26 against its own real SAML IdP descriptor
-    # (<md:SingleLogoutService .../> and <md:SingleSignOnService .../>
-    # both list the identical Location). Real bug fixed here: without an
-    # explicit idp.single_logout_service.url, java-saml's SettingsBuilder
-    # silently falls back to its own bundled example default — the
-    # literal placeholder "https://your-idp-entity-slo-endpoint/" — so
-    # logging out redirected to a URL that has never existed anywhere,
-    # and consequently never actually logged the user out at all.
+    # Keycloak uses the same endpoint for SSO and SLO. The SLO URL is set explicitly. Otherwise java-saml falls back to a
+    # placeholder URL, and logout never reaches Keycloak.
     idp_slo_url = idp_sso_url
     desired = [
         ("java.sso", "java.sso = true"),
@@ -5092,15 +4670,8 @@ def ensure_sso(hostname, exec_prefix, cfg, prefix):
         ("java.sso.onelogin.saml2.idp.x509cert",
          "java.sso.onelogin.saml2.idp.x509cert = {}".format(idp_cert)),
     ]
-    # Corrects both a MISSING key and a key present with the WRONG value —
-    # confirmed live 2026-09-25 this matters, not just in theory: switching
-    # Keycloak from plain HTTP to real TLS (see ensure_keycloak's own
-    # docstring) changed idp.entityid/idp.single_sign_on_service.url from
-    # http:// to https://, so a server already configured by an earlier
-    # version of this function has the right KEYS but the WRONG VALUES —
-    # a presence-only check (an earlier version of this function) would
-    # have left the stale http:// values in place forever, breaking real
-    # SAML validation even after the container itself self-healed to TLS.
+    # Each of the six keys is checked for presence and for its value. When the scheme changes, for example from http to https,
+    # an existing key with an outdated value is corrected in place.
     r = _run(hostname, exec_prefix, "cat /etc/rhn/rhn.conf", check=False, capture=True)
     if r.returncode != 0 or not (r.stdout or "").strip():
         # Overwriting the whole file below on a failed/empty read would
@@ -5140,40 +4711,20 @@ def ensure_sso(hostname, exec_prefix, cfg, prefix):
 
 
 # ─── Virtual-guest provisioning (autoinstallation on a virtualization host) ──
-# Ground-truthed 2026-09-25: system.provisionVirtualGuest is a real, confirmed
-# SystemHandler method (found in SystemHandlerTest.java's own
-# testProvisionVirtualGuest — no separate provisioning-only handler class
-# exists). `hostSid` is the numeric system id of an ALREADY-REGISTERED Uyuni
-# client that Salt/libvirt recognizes as a virtualization host — a genuinely
-# DIFFERENT thing from a Virtual Host Manager (which only discovers/tracks
-# host+guest inventory from an external source, AWS/vCenter/Libvirt, and
-# has no bearing on whether THIS method will work); the two are related in
-# this project's own usage only in that the SAME real host (nuc6.mydemo.lab)
-# is used for both, not because one requires the other.
+# system.provisionVirtualGuest is a SystemHandler method. hostSid is the numeric id of a registered client that is a
+# virtualization host. This is separate from a Virtual Host Manager, which only tracks inventory and does not affect this call.
 
 def provision_virtual_guest(hostname, exec_prefix, host_system, guest_name, kickstart_profile,
                              memory_mb, vcpus, disk_gb):
     """
-    Provisions a new virtual guest on `host_system` (a hostname, resolved
-    to its numeric sid via _system_id() — confirmed it must already be a
-    registered Uyuni client with virtualization capability) via
-    system.provisionVirtualGuest, autoinstalling it from `kickstart_profile`
-    (a name reference into <prefix>_kickstart_profiles, already
-    implemented). NOT idempotency-checked — provisioning a guest is
-    inherently one-shot, real work (creates a real new VM), same class as
-    image builds/imports; not part of the automatic ensure_* flow.
+    Provision a new virtual guest on `host_system` through system.provisionVirtualGuest, which autoinstalls it from
+    `kickstart_profile`, a name reference into <prefix>_kickstart_profiles. host_system is a hostname. It is resolved to its numeric
+    id with _system_id(), and the system must already be registered and capable of virtualization.
 
-    Ensures `host_system` carries the real "virtualization_host"
-    entitlement first (system.addEntitlements — same "quietly ignored if
-    already present" idempotent call already used by
-    ensure_ansible_control_node/ensure_container_build_hosts), so this is
-    fully reproducible from the lab definition file alone: confirmed live
-    2026-09-26 that nuc6.mydemo.lab already carried this entitlement (a
-    prior provisionVirtualGuest call may have granted it as a side
-    effect, or the operator's own earlier v guests, but nothing in this
-    project's own code had ever explicitly asked for it — meaning a truly
-    fresh deployment against a system that never happened to pick it up
-    that way would have failed here with no clear reason).
+    Provisioning creates a real VM, so it is one-shot work and is not idempotent. The automatic ensure_* flow does not run it.
+
+    The function first ensures that host_system has the virtualization_host entitlement, with system.addEntitlements, so the
+    lab definition alone is enough to reproduce the setup. That call ignores an entitlement the system already has.
     """
     host_sid = _system_id(hostname, exec_prefix, host_system)
     r = _api_call(hostname, exec_prefix, "system.addEntitlements", [host_sid, ["virtualization_host"]])
