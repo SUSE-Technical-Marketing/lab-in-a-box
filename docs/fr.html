@@ -362,10 +362,7 @@ Un lab n'est pas limité à un seul hyperviseur. Définissez <code>KVM_HOSTS</co
 <li>Un accès Internet (ou un miroir local) pour télécharger paquets et images</li>
 <li>Une image QCOW2 pour l'OS choisi, placée dans <code>/var/lib/libvirt/images/sources/</code> sur l'hyperviseur</li>
 </ul>
-<blockquote>
-<p>[!IMPORTANT]
-La VM d'automatisation a spécifiquement besoin de <code>python3.11</code> — la chaîne d'outils y est explicitement fixée. La plupart des distributions fournissent par ailleurs un <code>python3</code> par défaut plus ancien ; le script d'installation refuse de continuer si <code>python3.11</code> est absent.</p>
-</blockquote>
+<aside class="callout callout-important"><p>La VM d'automatisation a spécifiquement besoin de <code>python3.11</code> — la chaîne d'outils y est explicitement fixée. La plupart des distributions fournissent par ailleurs un <code>python3</code> par défaut plus ancien ; le script d'installation refuse de continuer si <code>python3.11</code> est absent.</p></aside>
 <p>Images testées :
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recommandé, utilisé avec Ignition+Combustion
 - openSUSE Leap Micro — pris en charge, utilisé avec cloud-init</p>
@@ -388,8 +385,7 @@ diff /tmp/part*
 </code></pre>
 
 
-> [!WARNING]
-> La commande suivante **détruit toutes les données** du périphérique cible. Vérifiez bien `sdX` par rapport à la sortie de `diff` ci-dessus avant de l'exécuter.
+<aside class="callout callout-warning"><p>La commande suivante <strong>détruit toutes les données</strong> du périphérique cible. Vérifiez bien <code>sdX</code> par rapport à la sortie de <code>diff</code> ci-dessus avant de l'exécuter.</p></aside>
 
 
 <pre><code class="language-shell"># Écrivez l'ISO (remplacez sdX par votre périphérique) :
@@ -726,10 +722,7 @@ setup_lab.py --keep rancher-cluster.json
 <p><a id="step-by-step-walkthroughs"></a></p>
 <h2 id="guides-pas-à-pas">Guides pas à pas</h2>
 <p>Les <a href="#examples">Exemples</a> ci-dessus sont des points de départ à copier-coller. Ces trois guides parcourent des scénarios réels et complets de bout en bout — quoi exécuter, ce qui se passe à chaque étape, et comment vérifier que cela a bien fonctionné. Chaque champ JSON et chaque forme de commande ci-dessous correspond à la propre suite de tests de ce projet (<code>tests/run_tests.sh</code>) et à son code source.</p>
-<blockquote>
-<p>[!TIP]
-Les guides 2 et 3 sont <strong>testés en conditions réelles</strong> — exécutés sur un vrai serveur/matériel, pas seulement vérifiés de façon isolée.</p>
-</blockquote>
+<aside class="callout callout-tip"><p>Les guides 2 et 3 sont <strong>testés en conditions réelles</strong> — exécutés sur un vrai serveur/matériel, pas seulement vérifiés de façon isolée.</p></aside>
 <h3 id="guide-1--votre-premier-cluster--rke2--rancher--longhorn">Guide 1 — Votre premier cluster : RKE2 + Rancher + Longhorn</h3>
 <p>Objectif : deux VM SLE Micro, un cluster RKE2, Rancher pour la gestion, Longhorn pour le stockage — accessible depuis votre navigateur à la fin.</p>
 <ol>
@@ -1489,10 +1482,7 @@ install_longhorn --schema yaml      # ...ou YAML
 - exécutent la <a href="#testing">suite de tests</a> complète avant chaque commit
 - gèrent l'horodatage de version par script (voir ci-dessous)</p>
 <h3 id="fonctionnement-du-versionnage">Fonctionnement du versionnage</h3>
-<blockquote>
-<p>[!NOTE]
-Ceci est entièrement géré par les hooks git ci-dessus — vous ne modifiez jamais <code>__LABVERSION__</code> à la main.</p>
-</blockquote>
+<aside class="callout callout-note"><p>Ceci est entièrement géré par les hooks git ci-dessus — vous ne modifiez jamais <code>__LABVERSION__</code> à la main.</p></aside>
 <p>Chaque script contient l'espace réservé :</p>
 <pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
 </code></pre>

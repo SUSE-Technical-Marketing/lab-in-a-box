@@ -362,10 +362,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 <li>用于下载软件包和镜像的互联网访问（或本地镜像源）</li>
 <li>将所选操作系统的 QCOW2 镜像放置在虚拟化主机的 <code>/var/lib/libvirt/images/sources/</code> 中</li>
 </ul>
-<blockquote>
-<p>[!IMPORTANT]
-自动化虚拟机需要专门的 <code>python3.11</code>——工具链明确固定使用该版本。大多数发行版会额外自带一个更旧的默认 <code>python3</code>；如果缺少 <code>python3.11</code>，安装脚本会拒绝继续执行。</p>
-</blockquote>
+<aside class="callout callout-important"><p>自动化虚拟机需要专门的 <code>python3.11</code>——工具链明确固定使用该版本。大多数发行版会额外自带一个更旧的默认 <code>python3</code>；如果缺少 <code>python3.11</code>，安装脚本会拒绝继续执行。</p></aside>
 <p>已测试过的镜像：
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> —— 推荐，配合 Ignition+Combustion 使用
 - openSUSE Leap Micro —— 受支持，配合 cloud-init 使用</p>
@@ -388,8 +385,7 @@ diff /tmp/part*
 </code></pre>
 
 
-> [!WARNING]
-> 下面的命令会**销毁目标设备上的所有数据**。执行前请务必将 `sdX` 与上面 `diff` 的输出仔细核对。
+<aside class="callout callout-warning"><p>下面的命令会<strong>销毁目标设备上的所有数据</strong>。执行前请务必将 <code>sdX</code> 与上面 <code>diff</code> 的输出仔细核对。</p></aside>
 
 
 <pre><code class="language-shell"># 写入 ISO（将 sdX 替换为你自己的设备）：
@@ -726,10 +722,7 @@ setup_lab.py --keep rancher-cluster.json
 <p><a id="step-by-step-walkthroughs"></a></p>
 <h2 id="分步教程">分步教程</h2>
 <p>上面的<a href="#examples">示例</a>是可直接复制粘贴的起点。下面三个教程会从头到尾完整走一遍真实场景——运行什么、每一步会发生什么，以及如何验证它确实生效了。下面出现的每个 JSON 字段和命令形式都与本项目自身的测试套件（<code>tests/run_tests.sh</code>）及源码保持一致。</p>
-<blockquote>
-<p>[!TIP]
-教程 2 和 3 都经过<strong>实机测试</strong>——是在真实的服务器/硬件上运行的，而不仅仅是孤立验证。</p>
-</blockquote>
+<aside class="callout callout-tip"><p>教程 2 和 3 都经过<strong>实机测试</strong>——是在真实的服务器/硬件上运行的，而不仅仅是孤立验证。</p></aside>
 <h3 id="教程-1--你的第一个集群rke2--rancher--longhorn">教程 1 —— 你的第一个集群：RKE2 + Rancher + Longhorn</h3>
 <p>目标：两台 SLE Micro 虚拟机、一个 RKE2 集群、用于管理的 Rancher、用于存储的 Longhorn——最终可以通过浏览器访问。</p>
 <ol>
@@ -1489,10 +1482,7 @@ install_longhorn --schema yaml      # ……或 YAML 格式
 - 在每次提交前运行完整的<a href="#testing">测试套件</a>
 - 管理按脚本的版本戳记（见下文）</p>
 <h3 id="版本管理的工作原理">版本管理的工作原理</h3>
-<blockquote>
-<p>[!NOTE]
-这完全由上述 git 钩子处理——你永远不需要手动编辑 <code>__LABVERSION__</code>。</p>
-</blockquote>
+<aside class="callout callout-note"><p>这完全由上述 git 钩子处理——你永远不需要手动编辑 <code>__LABVERSION__</code>。</p></aside>
 <p>每个脚本都包含如下占位符：</p>
 <pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
 </code></pre>

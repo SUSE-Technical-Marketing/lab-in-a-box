@@ -362,10 +362,7 @@ Ignition+Combustion（SLE Micro）、cloud-init（openSUSE/Ubuntu）、`virt-cus
 <li>パッケージとイメージのダウンロード用のインターネットアクセス（またはローカルミラー）</li>
 <li>選択した OS の QCOW2 イメージを、ハイパーバイザー上の <code>/var/lib/libvirt/images/sources/</code> に配置しておくこと</li>
 </ul>
-<blockquote>
-<p>[!IMPORTANT]
-自動化 VM には具体的に <code>python3.11</code> が必要 — ツールチェーンは明示的にこのバージョンに固定されている。ほとんどのディストリビューションはこれとは別に、より古いデフォルトの <code>python3</code> を同梱している。インストールスクリプトは <code>python3.11</code> が見つからない場合、処理を続行しない。</p>
-</blockquote>
+<aside class="callout callout-important"><p>自動化 VM には具体的に <code>python3.11</code> が必要 — ツールチェーンは明示的にこのバージョンに固定されている。ほとんどのディストリビューションはこれとは別に、より古いデフォルトの <code>python3</code> を同梱している。インストールスクリプトは <code>python3.11</code> が見つからない場合、処理を続行しない。</p></aside>
 <p>テスト済みイメージ：
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — 推奨。Ignition+Combustion で使用
 - openSUSE Leap Micro — サポート対象。cloud-init で使用</p>
@@ -388,8 +385,7 @@ diff /tmp/part*
 </code></pre>
 
 
-> [!WARNING]
-> 次のコマンドは対象デバイスの**すべてのデータを破壊する**。実行する前に、上記の `diff` の出力と `sdX` を必ず照合すること。
+<aside class="callout callout-warning"><p>次のコマンドは対象デバイスの<strong>すべてのデータを破壊する</strong>。実行する前に、上記の <code>diff</code> の出力と <code>sdX</code> を必ず照合すること。</p></aside>
 
 
 <pre><code class="language-shell"># ISO を書き込む（sdX を自分のデバイスに置き換える）：
@@ -726,10 +722,7 @@ setup_lab.py --keep rancher-cluster.json
 <p><a id="step-by-step-walkthroughs"></a></p>
 <h2 id="ステップバイステップウォークスルー">ステップバイステップ・ウォークスルー</h2>
 <p>上記の<a href="#examples">例</a>はコピー＆ペースト用の出発点である。以下の3つは、実際のシナリオを最初から最後まで完全にたどるもの — 何を実行し、各ステップで何が起こり、実際に動作したことをどう確認するか。以下の JSON フィールドとコマンドの形式はすべて、このプロジェクト自身のテストスイート（<code>tests/run_tests.sh</code>）およびソースコードと一致している。</p>
-<blockquote>
-<p>[!TIP]
-ウォークスルー2と3は<strong>実機テスト済み</strong>である — 単独で検証されただけでなく、実際のサーバー/ハードウェアに対して実行されている。</p>
-</blockquote>
+<aside class="callout callout-tip"><p>ウォークスルー2と3は<strong>実機テスト済み</strong>である — 単独で検証されただけでなく、実際のサーバー/ハードウェアに対して実行されている。</p></aside>
 <h3 id="ウォークスルー1--最初のクラスターrke2--rancher--longhorn">ウォークスルー1 — 最初のクラスター：RKE2 + Rancher + Longhorn</h3>
 <p>目標：2台の SLE Micro VM、RKE2 クラスター、管理用の Rancher、ストレージ用の Longhorn — 最終的にブラウザから到達可能になる。</p>
 <ol>
@@ -1489,10 +1482,7 @@ install_longhorn --schema yaml      # ...または YAML
 - コミットのたびに完全な<a href="#testing">テストスイート</a>を実行する
 - スクリプトごとのバージョンスタンプを管理する（下記参照）</p>
 <h3 id="バージョニングの仕組み">バージョニングの仕組み</h3>
-<blockquote>
-<p>[!NOTE]
-これは上記の Git フックによって完全に処理される — <code>__LABVERSION__</code> を手動で編集することは決してない。</p>
-</blockquote>
+<aside class="callout callout-note"><p>これは上記の Git フックによって完全に処理される — <code>__LABVERSION__</code> を手動で編集することは決してない。</p></aside>
 <p>各スクリプトには次のプレースホルダーが含まれる：</p>
 <pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
 </code></pre>
