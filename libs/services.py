@@ -50,16 +50,9 @@ from lab_creation import log, warn, die, ssh_run
 
 NAMED_ZONE_DIR = Path("/var/lib/named")
 
-# Serializes every DNS zone-file mutation below (add_to_dns/del_from_dns/
-# add_service_dns/add_dns_to_named_rr) — added 2026-09-21 for setup_lab.py's
-# parallel VM-creation mode. _dns_add_line/_dns_remove_line/_dns_append_line
-# do a plain read-whole-file -> mutate -> write-whole-file, non-atomically;
-# two nodes' DNS registrations racing on the SAME zone file (every node in a
-# domain shares one .lan/.db file) can genuinely lose an entry — a classic
-# lost-update race, not a hypothetical one. A single process-wide lock is
-# enough (this class only ever runs inside one process — the automation
-# node's own setup_lab.py — never multiple processes contending for the
-# same zone file at once).
+# Serializes every DNS zone-file mutation (add_to_dns, del_from_dns, add_service_dns and add_dns_to_named_rr). The helpers read the
+# whole zone file, change it and write it back, so two nodes writing the same zone file would lose an entry. One process-wide lock
+# is enough, because this class runs in a single process.
 _dns_lock = threading.Lock()
 
 
@@ -160,27 +153,13 @@ class DNSService(AuxService):
 
     def _dns_remove_ptr_for_octet(self, zone_file, last_octet):
         """
-        Removes any EXISTING PTR line for `last_octet` regardless of which
-        hostname it currently points to.
+        Remove any existing PTR line for `last_octet`, whichever hostname it points to.
 
-        Real bug found live 2026-09-23 (solar-system-lab.json): add_to_dns's
-        own _dns_add_line() only dedups an EXACT line match, so reusing an IP
-        a previous (destroyed, but incompletely cleaned-up) VM once held left
-        its OLD PTR record sitting right alongside the new one — two PTR
-        records for the same IP, BIND happily serves both, and the new VM's
-        own reverse-DNS lookup of its own IP can come back with the WRONG
-        (older) hostname. Confirmed live: this is exactly why
-        venus.mydemo.lab (reusing an IP a since-destroyed "node1a" VM once
-        used) picked up "node1a.mydemo.lab" as its own transient hostname on
-        boot instead of its real one — compounded by a separate, also-real
-        virt-customize bug (see prepare_virt_customize's own note) that left
-        venus with no STATIC hostname set at all, so systemd fell back to
-        deriving one from reverse DNS.
+        _dns_add_line() skips only an exact duplicate. An IP that still has a PTR record for an older hostname would then carry two PTR
+        records. BIND serves both, and the node's own reverse lookup can return the older name.
 
-        Matches on the octet as the line's own first whitespace-delimited
-        token (not a substring search) — same node1-vs-node10 precision
-        _dns_add_line's own docstring already documents, so removing PTR
-        '14' never accidentally removes PTR '142' too.
+        The octet is matched as the first whitespace-delimited token of the line, not as a substring. Removing PTR '14' therefore does
+        not also remove '142'.
         """
         zone_file = Path(zone_file)
         if not zone_file.exists():
@@ -202,11 +181,9 @@ class DNSService(AuxService):
 
     def _hosts_file(self):
         """
-        lab_creation.cfg's LAB_HOSTS_FILE (e.g. /etc/hosts), or None. When set,
-        every VM registered in DNS also gets a line there — for automation
-        nodes that don't run BIND themselves (e.g. a rodeo-cli host), so they
-        can still reach each VM by name, including a cloud VM whose IP is only
-        known once it exists. Added 2026-09-30.
+        Return lab_creation.cfg's LAB_HOSTS_FILE (for example /etc/hosts), or None. When it is set, every VM registered in DNS also gets
+        a line in that file. This serves automation nodes that do not run BIND, so they can reach each VM by name. That includes a cloud
+        VM, whose IP is known only after it exists.
         """
         try:
             import primary
@@ -248,10 +225,7 @@ class DNSService(AuxService):
                 self._remote_dns_add(server, rev_file, ptr_record)
                 self._remote(server, "systemctl restart named", check=False)
 
-            # Drop any stale PTR record for this IP FIRST — see
-            # _dns_remove_ptr_for_octet's own docstring for the real
-            # incident (a reused IP's old hostname winning a client's own
-            # reverse-DNS lookup) this prevents. One canonical PTR per IP.
+            # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
             self._dns_remove_ptr_for_octet(rev_file, last_octet)
             self._dns_add_line(lan_file, a_record)
             self._dns_add_line(rev_file, ptr_record)
@@ -443,19 +417,9 @@ def _dnsmasq_conf(cfg, tftp_root, nodes=None):
         "tftp-root=/tftpboot",
     ]
 
-    # dhcp-boot vs pxe-service: confirmed live 2026-08-30 (--log-dhcp showed
-    # dnsmasq correctly recognizing a real client's vendor class —
-    # "PXEClient:Arch:00007:UNDI:003001" — yet never logging a single
-    # reply) that plain dhcp-boot's next-server/filename fields are simply
-    # never sent in a PROXY DHCP reply: that information only ever goes out
-    # through the PXE-specific vendor-encapsulated options a pxe-service
-    # directive generates (over the separate PXE protocol on UDP/4011).
-    # dnsmasq accepted the dhcp-boot-only config with no error at all — a
-    # silent no-op, not a startup failure like the earlier dhcp-range bug —
-    # which is what made this one much harder to spot. dhcp-boot works fine
-    # in "full"/"off" mode (dnsmasq is generating the whole DHCP reply
-    # itself there, next-server/filename included), so only "proxy" needs
-    # the pxe-service form.
+    # In proxy mode the boot server and file name are sent only through the PXE options that a pxe-service directive generates.
+    # A plain dhcp-boot entry is accepted silently and never sent in a proxy reply. Outside proxy mode dhcp-boot works, because
+    # dnsmasq generates the whole reply there, so only proxy mode needs the pxe-service form.
     use_pxe_service = (mode == "proxy")
 
     if pxe_mode == "pxelinux":
@@ -467,16 +431,9 @@ def _dnsmasq_conf(cfg, tftp_root, nodes=None):
         else:
             lines.append("dhcp-boot={}".format(boot_filename))
     elif pxe_mode == "ipxe-uefi":
-        # Stage 1: any client that is NOT already iPXE (the VM's own UEFI
-        # firmware, on its very first PXE request) gets iPXE's UEFI binary
-        # over TFTP. Stage 2: a client tagged "ipxe" (iPXE itself, now
-        # running, re-requesting DHCP) gets THIS node's own boot-script URL
-        # over HTTP instead — the per-MAC dhcp-host/set: tag is what lets
-        # different nodes chainload different scripts (e.g. Harvester's
-        # create vs. join configs) from the one DHCP server. x86-64_EFI is
-        # the correct pxe-service CSA name for the UEFI-only scope this
-        # mode targets (arch 7 in the PXE spec, confirmed against the real
-        # client's own reported ARCH option — see module docstring).
+        # Stage 1: a client that is not iPXE yet gets the iPXE UEFI binary over TFTP. Stage 2: a client tagged ipxe gets this node's
+        # boot-script URL over HTTP. The per-MAC dhcp-host and set: tag lets different nodes load different scripts from one DHCP
+        # server. x86-64_EFI is the pxe-service name for the UEFI-only scope this mode targets.
         lines.append("dhcp-userclass=set:ipxe,iPXE")
         if use_pxe_service:
             lines.append('pxe-service=tag:!ipxe,x86-64_EFI,"PXE chainload to iPXE",ipxe.efi')
@@ -505,21 +462,11 @@ def _dnsmasq_conf(cfg, tftp_root, nodes=None):
         lease = cfg.get("pxe_dhcp_lease") or "12h"
         lines.append("dhcp-range={},{},{}".format(start, end, lease))
     elif mode == "proxy":
-        # PXE proxyDHCP: dnsmasq answers only the PXE-specific options
-        # (next-server/boot filename); an external DHCP server still hands
-        # out the actual lease/IP. This is what makes DHCP genuinely
-        # optional without breaking PXE — the default mode.
+        # Proxy DHCP: dnsmasq answers only the PXE options, next-server and the boot file name. An external DHCP server still hands
+        # out the lease. This keeps DHCP optional, and it is the default mode.
         #
-        # dnsmasq's proxy dhcp-range wants a NETWORK ADDRESS on the target
-        # subnet (e.g. "192.168.88.0"), not an interface name — confirmed
-        # live 2026-08-30 (the first time this ever ran against a real
-        # dnsmasq, a pre-existing bug from before this project's own
-        # PXEService was ever live-tested): passing pxe_bridge here
-        # ("br0,proxy") makes dnsmasq refuse to start at all
-        # ("bad dhcp-range at line N"), silently taking the whole PXE
-        # service down (systemd's Restart=always retries then gives up —
-        # "start request repeated too quickly" — with nothing surfaced to
-        # whatever caller expected PXE to be up).
+        # The proxy dhcp-range takes a network address on the target subnet, for example 192.168.88.0, not an interface name. An
+        # interface name makes dnsmasq refuse to start, and systemd then gives up restarting the service.
         subnet = cfg.get("pxe_dhcp_proxy_subnet")
         if not subnet:
             die("pxe_dhcp_mode is 'proxy' but pxe_dhcp_proxy_subnet is not set — dnsmasq's proxy "
@@ -539,19 +486,13 @@ def _dnsmasq_conf(cfg, tftp_root, nodes=None):
 
 def _pxe_quadlet_unit(tftp_root, config_path):
     """
-    Podman-systemd Quadlet unit content for the PXE container — the modern
-    way to run "a small container as a system service" on SUSE systems
-    (systemd auto-generates lab-pxe.service from this file on daemon-reload).
-    --network host is required (not a design choice to reconsider casually):
-    DHCP/PXE broadcast traffic needs L2 visibility on the lab's bridge, which
-    a container's default isolated network namespace does not have.
+    Return the podman-systemd Quadlet unit for the PXE container. systemd generates lab-pxe.service from this file on daemon-reload.
 
-    NET_ADMIN/NET_RAW are required too: confirmed live 2026-08-30 (the
-    first time this container ever actually tried to serve DHCP for real)
-    that dnsmasq refuses to start at all without them ("process is missing
-    required capability NET_ADMIN") — podman's default capability set
-    doesn't include what a real DHCP/TFTP server needs to bind privileged
-    ports and send raw-socket DHCP replies, even under --network=host.
+    --network host is required. DHCP and PXE broadcasts need layer 2 access to the lab's bridge, which a container's own network
+    namespace does not have.
+
+    NET_ADMIN and NET_RAW are required as well. dnsmasq does not start without them, because it needs to bind privileged ports and send
+    raw-socket DHCP replies.
     """
     return (
         "[Container]\n"
@@ -683,18 +624,9 @@ class PXEService(AuxService):
         (pxelinux_dir / mac_filename).write_text(entry)
 
     def enable(self):
-        # Quadlet units are systemd-generated, not real unit files on disk —
-        # `systemctl enable` rejects them ("transient or generated";
-        # confirmed live 2026-08-29 against an identical Quadlet unit for
-        # the MCP endpoint). daemon-reload alone makes systemd process the
-        # .container's own [Install] section (what makes it start on boot);
-        # only `start`/`restart` is needed/valid here, not `enable --now`.
-        # `restart`, not `start`: a rebuilt image (e.g. this method called
-        # again after an image update) leaves an already-running unit
-        # untouched by `start` — a no-op against a running unit — so the new
-        # image would silently never take effect. Confirmed live
-        # (2026-08-29) against the identical MCP-endpoint bug: a `start`
-        # left a stale container running for 10+ minutes after a rebuild.
+        # A Quadlet unit is generated by systemd, so systemctl enable rejects it. daemon-reload processes its [Install] section,
+        # and start or restart is enough. Restart is used, because start leaves a running unit alone, and a rebuilt image would
+        # never take effect.
         subprocess.run(["systemctl", "daemon-reload"], check=False)
         result = subprocess.run(["systemctl", "restart", _PXE_UNIT_NAME])
         if result.returncode != 0:
@@ -736,14 +668,8 @@ class PortForwardService(AuxService):
         # args) needs it too, since this service's actual state lives on the
         # hypervisor, not the automation VM these calls run from.
         self._remote_host = None
-        # _remote_host alone can't tell is_active() whether configure() has
-        # even run yet: a local hypervisor (no REMOTE_HOST configured) is a
-        # perfectly normal POST-configure state that also leaves
-        # _remote_host at None — found in code review 2026-09-05, not
-        # currently reachable (nothing calls is_active() before configure()
-        # today), but a real ordering landmine for a future caller: without
-        # this flag, is_active() would silently check the wrong (local)
-        # host and could misreport an unconfigured service as active.
+        # _remote_host is None for a local hypervisor, both before and after configure(), so it cannot tell is_active() whether
+        # configure() has run. A flag records that it has, so is_active() does not check the wrong host for an unconfigured service.
         self._configured = False
 
     def install(self):
