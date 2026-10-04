@@ -3,294 +3,107 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Uyuni is an open-source systems management solution (upstream of SUSE Multi-Linux Manager).
-# This script installs it on a dedicated host VM using mgradm (container-based install).
-# The target VM must run openSUSE Leap 15.6 / SLE Micro with podman available.
+# Uyuni is the open-source systems management server that SUSE Multi-Linux Manager is built on. This script installs it on a
+# dedicated host VM with mgradm, as a podman container deployment. The target VM must run openSUSE Leap 15.6 or SLE Micro with
+# podman available.
 #
-# JSON section: "uyuni" — configurable keys:
-#   uyuni_admin         : [OPTIONAL] admin username (default: admin)
-#   uyuni_password      : [OPTIONAL] admin password (default: Uyuni12345)
-#   uyuni_email         : [OPTIONAL] admin email (default: admin@lab.local)
-#   uyuni_org           : [OPTIONAL] default organisation name (default: lab)
-#   uyuni_ssl_password  : [OPTIONAL] SSL certificate password (default: same as uyuni_password)
-#   uyuni_channels      : [OPTIONAL] space-separated list of channels to sync after install
-#   uyuni_extra_dsk     : [OPTIONAL] extra disk to mount for storage (e.g. /dev/vdb,/srv/mirror)
+# JSON section: "uyuni"
+#   uyuni_admin         : admin username (default admin)
+#   uyuni_password      : admin password (default Uyuni12345)
+#   uyuni_email         : admin e-mail (default admin@lab.local)
+#   uyuni_org           : default organization (default lab)
+#   uyuni_ssl_password  : SSL certificate password (default: uyuni_password)
+#   uyuni_channels      : space-separated channels to sync after install
+#   uyuni_extra_dsk     : extra disk to mount for storage, e.g. /dev/vdb,/srv/mirror
 #
-# OPTIONAL – activation key (created after install, once the server is up;
-# skipped entirely if uyuni_activation_key is unset). Command syntax verified
-# against uyuni-project.org live docs (2026-08-27); NOT live-tested against a
-# real server — see libs/spacecmd_common.py.
-#   uyuni_activation_key       : Activation key name                (default: unset — skipped)
-#   uyuni_activation_key_desc  : Description                        (default: same as key name)
-#   uyuni_activation_key_base_channel : Base channel label — required if uyuni_activation_key is set
-#   uyuni_activation_key_child_channels : Space-separated child channel labels to add
-#   uyuni_activation_key_universal_default : "true" to mark this key as the org's universal
-#                             default                               (default: false)
-#   uyuni_activation_key_entitlements : Comma-separated entitlements, e.g.
-#                             "enterprise_entitled,virtualization_host"
-#   uyuni_activation_key_contact_method : Contact method to set on the key
-#   uyuni_activation_key_config_channels : Space-separated config channel labels to add
-#   uyuni_activation_key_enable_config_deployment : "true" to enable config-file deployment
-#                             on the key                            (default: false)
-#   uyuni_activation_key_groups : Space-separated system group names to add
-#   uyuni_activation_key_appstreams : Space-separated "module:stream" pairs to enable on the key
-#                             (e.g. "nodejs:20 postgresql:16"), via spacecmd's 'api' passthrough
-#                             calling activationkey.addAppStreams — applied on every run, not just
-#                             at key-creation time (idempotent: an already-enabled module is
-#                             detected from the server's own error and skipped, since there is no
-#                             list API for this — see libs/spacecmd_common.py)
-#   uyuni_activation_key_packages : Space-separated package names to add to the key (name-only, no
-#                             arch qualification — see libs/spacecmd_common.py), via spacecmd's
-#                             native activationkey_addpackages — applied on every run, not just at
-#                             key-creation time (idempotent: diffs against
-#                             activationkey_listpackages first and only adds what's missing)
-#   uyuni_sync_channels        : Space-separated software channel labels to ensure are synced
-#                             (each via 'mgr-sync add channel <label>' if not already present in
-#                             'spacecmd softwarechannel_list') before the activation key is created
-#                             — independent of, and safe to use alongside, uyuni_channels above
+# Activation key (created after install; skipped when uyuni_activation_key is unset)
+#   uyuni_activation_key                          : key name
+#   uyuni_activation_key_desc                     : description (default: the key name)
+#   uyuni_activation_key_base_channel             : base channel label, required when uyuni_activation_key is set
+#   uyuni_activation_key_child_channels           : space-separated child channel labels
+#   uyuni_activation_key_universal_default        : "true" marks the key as the organization's default (default false)
+#   uyuni_activation_key_entitlements             : comma-separated, e.g. "enterprise_entitled,virtualization_host"
+#   uyuni_activation_key_contact_method           : contact method
+#   uyuni_activation_key_config_channels          : space-separated config channel labels
+#   uyuni_activation_key_enable_config_deployment : "true" enables config-file deployment (default false)
+#   uyuni_activation_key_groups                   : space-separated system group names
+#   uyuni_activation_key_appstreams               : space-separated "module:stream" pairs, e.g. "nodejs:20 postgresql:16".
+#                                                   Applied on every run. An already-enabled module is detected and skipped.
+#   uyuni_activation_key_packages                 : space-separated package names, added on every run. Names only.
+#   uyuni_sync_channels                           : channels to ensure are synced (with mgr-sync add channel, when not already
+#                                                   present) before the key is created. Independent of uyuni_channels.
 #
-# OPTIONAL – config channels (created/updated before the activation key above, so
-# uyuni_activation_key_config_channels can reference them). List of objects:
-#   uyuni_config_channels     : [{
-#                                 "label": "...", "name": "...", "description": "...",
-#                                 "type": "normal" | "state"  (default: "normal"),
-#                                 "init_sls": "..."            (state channels only),
-#                                 "files": [{"path": "...", "content": "...",
-#                                            "owner": "root", "group": "root",
-#                                            "mode": "0644", "binary": false}, ...]
-#                               }, ...]
-#                             Idempotent per-channel and per-file (a file already matching its
-#                             content's sha256 is skipped) — see libs/spacecmd_common.py. Does NOT
-#                             associate the channel with any already-registered system directly
-#                             (that's client-side, out of scope here); use
-#                             uyuni_activation_key_config_channels for newly-registered clients.
+# Config channels (created before the activation key, so uyuni_activation_key_config_channels can refer to them)
+#   uyuni_config_channels : [{"label", "name", "description", "type": "normal" (default) | "state", "init_sls" (state channels only),
+#                           "files": [{"path", "content", "owner", "group", "mode", "binary"}]}]
+#                           Idempotent per channel and per file. The channel is not attached to a registered system here. Use
+#                           uyuni_activation_key_config_channels for newly registered clients.
 #
-# OPTIONAL – organizations (created after the above; each org gets its own admin session
-# for its own scoped provisioning). List of objects:
-#   uyuni_orgs                : [{
-#                                 "name": "...", "admin_user": "...", "admin_pass": "...",
-#                                 "admin_email": "...", "admin_first_name": "...",
-#                                 "admin_last_name": "...", "prefix": "...", "pam": false,
-#                                 "trust_with": ["other-org-name", ...],
-#                                 "share_channels": ["channel-label", ...],
-#                                 "share_channels_access": "protected" | "public" | "private",
-#                                 # plus this org's OWN uyuni_activation_key*/uyuni_config_channels
-#                                 # keys, same field names as above — reused as-is since once
-#                                 # this org's admin session is active, activation keys/config
-#                                 # channels are automatically scoped to it (hard-partitioned
-#                                 # per org server-side)
-#                                 "uyuni_activation_key": "...", "uyuni_config_channels": [...],
-#                                 "uyuni_access_groups": [...]   # see below — also reused per-org
-#                               }, ...]
-#                             admin_user/admin_pass/admin_email are required to create the org
-#                             (skipped — not idempotent-creatable — otherwise). trust_with names
-#                             other orgs to establish channel-sharing trust with — e.g. the value
-#                             of uyuni_org above, the default org this server bootstrapped with.
-#                             share_channels additionally marks channels THIS org owns as shared
-#                             (via the raw channel.access.setOrgSharing API — spacecmd has no
-#                             subcommand for it) so a trusted org's activation keys can reference
-#                             them. See libs/spacecmd_common.py for what's confirmed vs. inferred
-#                             here (trust's bidirectionality in particular).
+# Organizations (created after the above; each has its own admin session for scoped provisioning)
+#   uyuni_orgs : [{"name", "admin_user", "admin_pass", "admin_email", "admin_first_name", "admin_last_name", "prefix", "pam" (false),
+#               "trust_with": [...], "share_channels": [...], "share_channels_access": "protected" | "public" | "private",
+#               the organization's own uyuni_activation_key*, uyuni_config_channels and uyuni_access_groups, with the same field names}]
+#               admin_user, admin_pass and admin_email are required to create the organization. trust_with establishes channel-sharing
+#               trust. share_channels marks channels this organization owns as shared, so a trusted organization's activation keys can use them.
 #
-# OPTIONAL – user accounts. List of objects, usable at the top level (scoped to the default
-# org) or nested inside a uyuni_orgs entry (scoped to that org — same field name either way).
-# Runs automatically on every install (idempotent), BEFORE uyuni_access_groups below so its own
-# "users" list can reference an account defined here:
-#   uyuni_users                : [{
-#                                 "username": "...", "password": "...", "first_name": "...",
-#                                 "last_name": "...", "email": "...", "pam": false,
-#                                 "roles": ["channel_admin", ...]   # optional, see below
-#                               }, ...]
-#                             password/first_name/last_name/email are required to create the
-#                             account (skipped — not idempotent-creatable — otherwise, same
-#                             convention as an org's own admin_user/admin_pass/admin_email).
-#                             "roles" are applied on every run via spacecmd's native user_addrole
-#                             (idempotent — diffed against the user's current roles first), but
-#                             ONLY use it for one of the fixed labels from 'spacecmd
-#                             user_listavailableroles' (activation_key_admin, channel_admin,
-#                             config_admin, image_admin, org_admin, regular_user, satellite_admin,
-#                             system_group_admin) — those always exist. Do NOT put a custom access
-#                             group's own label here: uyuni_users runs BEFORE uyuni_access_groups
-#                             below (an access group's own "users" list needs the account to
-#                             already exist), so the custom role wouldn't exist yet and
-#                             user_addrole would fail. Attach a user to a custom group the other
-#                             way instead — list their username in that group's own "users" field
-#                             below, which runs in the correct order.
+# User accounts (top level, scoped to the default organization, or inside a uyuni_orgs entry)
+#   uyuni_users : [{"username", "password", "first_name", "last_name", "email", "pam" (false), "roles": [...]}]
+#               The first four are required for creation. "roles" are applied on every run with user_addrole, and only with the fixed
+#               labels: activation_key_admin, channel_admin, config_admin, image_admin, org_admin, regular_user, satellite_admin,
+#               system_group_admin. A custom access group label does not belong here. List the user in that group's "users" instead.
 #
-# OPTIONAL – RBAC / custom "User Access Groups" (API-only feature, Uyuni 2025.05+ / SMLM 5.1+).
-# List of objects, usable at the top level (scoped to the default org) or nested inside a
-# uyuni_orgs entry (scoped to that org — same field name either way):
-#   uyuni_access_groups       : [{
-#                                 "label": "...", "description": "...",
-#                                 "permissions_from": ["existing-role-label", ...],
-#                                 "permissions": [{"namespace": "...", "mode": "R" | "W"}, ...],
-#                                 "users": ["username", ...]
-#                               }, ...]
-#                             Each username must exist by the time this runs — defined above via
-#                             uyuni_users, or an org's own admin_user, or attaching the role fails
-#                             with a clear error. Every access_* operation goes through the raw
-#                             'api' passthrough (spacecmd has no native subcommand for this
-#                             namespace at all) — see libs/spacecmd_common.py.
+# RBAC: custom user access groups (API only)
+#   uyuni_access_groups : [{"label", "description", "permissions_from": [role labels], "permissions": [{"namespace", "mode": "R" | "W"}],
+#                        "users": [usernames]}]
+#               Each user must already exist, from uyuni_users or an organization's admin account.
 #
-# OPTIONAL – Ansible integration (API-only, orchestration only — does NOT push playbook/inventory
-# content; playbook/inventory files must already be on the control node's own filesystem — this
-# project's own install_ansible_control_node.py addon puts real example content there, or manage
-# it out-of-band e.g. via git). Entitlement enabling and path registration both run automatically
-# on every install (idempotent); playbook execution is a SEPARATE, explicit trigger — see
-# "--run-ansible-playbooks" below — since scheduling a run is not idempotent (each call creates a
-# brand-new run):
-#   uyuni_ansible_control_nodes : [{"system": "ansible-ctrl.mydemo.lab"}, ...]
-#                             Enables the real "Ansible Control Node" add-on entitlement on each
-#                             already-registered system (system.addEntitlements) and schedules a
-#                             highstate apply to install the ansible package — the same two steps
-#                             the real Web UI workflow documents (see libs/spacecmd_common.py's
-#                             ensure_ansible_control_node() for exactly what this does and does
-#                             not cover). A system must be registered (e.g. via client_registration)
-#                             BEFORE this can find it.
-#   uyuni_ansible_paths       : [{"system": "ansible-ctrl.mydemo.lab", "type": "playbook" | "inventory",
-#                                  "path": "/srv/ansible/playbooks"}, ...]
-#                             Names the control node either way: "system" (a hostname, resolved
-#                             automatically — the same mechanism uyuni_ansible_control_nodes
-#                             already uses) or "control_node_id" (the raw NUMERIC Uyuni system ID,
-#                             findable via 'spacecmd system_list' or the Web UI, if you already have
-#                             it). "path" is a DIRECTORY for type "playbook" (this project's own
-#                             install_ansible_control_node.py addon puts example playbooks under
-#                             /srv/ansible/playbooks by default), or the exact inventory FILE/script
-#                             path for type "inventory" (e.g. /srv/ansible/inventory/uyuni_dynamic_
-#                             inventory.py — that same addon's own default).
-#   uyuni_ansible_playbooks   : [{"control_node_id": 1000010001,
-#                                  "playbook_path": "/srv/ansible/playbooks/site.yml",
-#                                  "inventory_path": "/srv/ansible/inventory/hosts",
-#                                  "earliest": "2026-08-27T12:00:00",   # optional, default: now
-#                                  "action_chain_label": "...",         # optional
-#                                  "test_mode": false, "extra_vars": "...", "flush_cache": false
-#                                }, ...]
-#                             Run with:  install_uyuni.py <lab.json> --run-ansible-playbooks
-#                             (never runs automatically). See libs/spacecmd_common.py for the
-#                             dateTime-encoding and orchestration-only-model details.
+# Ansible integration (orchestration only; playbook and inventory files stay on the control node)
+#   uyuni_ansible_control_nodes : [{"system": "hostname"}]. Enables the "Ansible Control Node" entitlement and applies highstate to
+#                         install the ansible package. The system must be registered first.
+#   uyuni_ansible_paths         : [{"system" (hostname) or "control_node_id" (numeric), "type": "playbook" | "inventory", "path"}].
+#                         A playbook path is a directory. An inventory path is the inventory file or script.
+#   uyuni_ansible_playbooks     : [{"control_node_id", "playbook_path", "inventory_path", "earliest" (optional, default now),
+#                         "action_chain_label" (optional), "test_mode": false, "extra_vars": "...", "flush_cache": false}]
+#                         Run with install_uyuni.py <lab.json> --run-ansible-playbooks. It never runs automatically.
 #
-# OPTIONAL – Content Lifecycle Management (CLM). Project/source/filter/environment DEFINITION
-# runs automatically on every install (idempotent, in this order so activation keys etc. can
-# reference the environments); BUILD/PROMOTE are a SEPARATE, explicit trigger — see
-# "--run-clm-actions" below — since each call triggers real, non-idempotent background work:
-#   uyuni_content_projects    : [{
-#                                 "label": "...", "name": "...", "description": "...",
-#                                 "sources": ["software-channel-label", ...],
-#                                 "filters": [{"name": "...", "rule": "allow" | "deny",
-#                                              "entity_type": "package" | "erratum" | "module" | "ptf",
-#                                              "matcher": "...", "field": "...", "value": "..."}, ...],
-#                                 "environments": ["dev", "test", "prod"]
-#                                 # or [{"label": "...", "name": "...", "description": "..."}, ...]
-#                               }, ...]
-#                             "sources" only supports software-channel sources (the only Source
-#                             type that exists server-side). Filters have no lookup-by-name API —
-#                             idempotency is checked at the project level (does it already have a
-#                             filter by this name), and a freshly-created filter's id is parsed
-#                             heuristically from spacecmd's own printed output — see
-#                             libs/spacecmd_common.py for that caveat in detail.
-#   uyuni_content_lifecycle_actions : [
-#                                 {"project": "...", "action": "build", "message": "...",
-#                                  "wait": true, "wait_env": "dev", "wait_timeout": 1800},
-#                                 {"project": "...", "action": "promote", "from_env": "dev",
-#                                  "wait": true, "wait_env": "test"}
-#                               ]
-#                             "from_env" on a promote is the stage being promoted FROM, not the
-#                             destination — the server determines the successor itself (confirmed
-#                             from source; the admin-guide prose is ambiguous about this). "wait"
-#                             polls the named environment's status until built/failed. Run with:
-#                             install_uyuni.py <lab.json> --run-clm-actions (never automatic).
+# Content Lifecycle Management (CLM)
+#   Projects, sources, filters and environments are defined automatically and idempotently, before activation keys, so the keys
+#   can refer to environments. Builds and promotions run only with --run-clm-actions.
+#   uyuni_content_projects : [{"label", "name", "description", "sources": [software channel labels],
+#                        "filters": [{"name", "rule": "allow" | "deny", "entity_type": "package" | "erratum" | "module" | "ptf",
+#                        "matcher", "field", "value"}], "environments": ["dev", "test", "prod"] or [{"label", "name", "description"}]}]
+#                        Only software channels can be sources. Filters have no lookup by name, so the check is made at project level.
+#   uyuni_content_lifecycle_actions : [{"project", "action": "build", "message", "wait": true, "wait_env", "wait_timeout"},
+#                        {"project", "action": "promote", "from_env", "wait": true, "wait_env"}]
+#                        For promote, from_env is the stage being promoted from. The server picks the next stage. "wait" polls the
+#                        environment until it is built or failed. Run with install_uyuni.py <lab.json> --run-clm-actions.
 #
-# OPTIONAL – SCAP compliance auditing (legacy pre-staged-file model — spacecmd's native scap_*
-# commands only cover this always-available scheduleXccdfScan path, see libs/spacecmd_common.py).
-# Orchestration only: xccdf_path (and the OpenSCAP scanner + SCAP Security Guide content) must
-# already exist on the target system. Explicit trigger only — see "--run-scap-scans" below:
-#   uyuni_scap_scans          : [{"system": "web1.mydemo.lab",
-#                                  "xccdf_path": "/usr/share/openscap/scap-security-xccdf.xml",
-#                                  "profile": "Web-Default"}, ...]
-#                             Heuristically idempotent (skips a system already scanned against the
-#                             same xccdf_path — path only, not path+profile). Run with:
-#                             install_uyuni.py <lab.json> --run-scap-scans (never automatic).
+# SCAP compliance auditing
+#   uyuni_scap_scans    : [{"system", "xccdf_path", "profile"}]. The XCCDF path and the scanner must already exist on the target.
+#                         Idempotent by system and xccdf_path. Run with install_uyuni.py <lab.json> --run-scap-scans.
+#   uyuni_scap_policies : [{"policy_name", "scap_content_id" (a content id uploaded through the Web UI), "xccdf_profile_id"
+#                         (read it from the uploaded document), "description", "earliest" (ISO local date-time), "tailoring_file",
+#                         "tailoring_profile_id", "oval_files", "advanced_args", "fetch_remote_resources": false}]
+#                         Automatic and idempotent by name. It logs in as uyuni_admin through the Web UI route. That route is internal
+#                         and may change between releases. SCAP content and tailoring files are not uploaded by this script. Upload
+#                         them through the Web UI, then use their ids here.
 #
-# OPTIONAL – SCAP policy creation. Uyuni/SMLM 5.2's newer "centralized policies" system.scap.*
-# XML-RPC namespace is READ-ONLY (listPolicies/listScapContent/listTailoringFiles — no create*
-# method anywhere in it, re-verified 2026-09-30 against the full namespace listing), so this goes
-# through the Web UI's own internal REST route instead
-# (com.suse.manager.webui.controllers.ScapAuditController.java, ground-truthed directly against
-# the uyuni-project/uyuni source) — a private, internal API, not the documented/versioned public
-# XML-RPC one, could change across releases without a deprecation notice:
-#   uyuni_scap_policies       : [{"policy_name": "sles15-baseline",   # required
-#                                  "scap_content_id": 5,                # required — a real SCAP
-#                                                                  # content id already uploaded via
-#                                                                  # the Web UI (Audit > SCAP Content)
-#                                  "xccdf_profile_id":
-#                                    "xccdf_org.ssgproject.content_profile_standard",  # required —
-#                                                                  # not discoverable via any API;
-#                                                                  # read it out of the uploaded
-#                                                                  # XCCDF/DataStream document, or
-#                                                                  # the Web UI's own create-policy
-#                                                                  # form
-#                                  "description": "...",             # optional
-#                                  "earliest": "2026-10-01T00:00:00", # optional, ISO_LOCAL_DATE_TIME
-#                                  "tailoring_file": "...",           # optional
-#                                  "tailoring_profile_id": "...",     # optional
-#                                  "oval_files": "...",               # optional
-#                                  "advanced_args": "...",            # optional
-#                                  "fetch_remote_resources": true}, ...]  # optional, default false
-#                             Idempotent (skips a policy that already exists by name) and AUTOMATIC.
-#                             Authenticates as uyuni_admin/uyuni_password (the same account every
-#                             other ensure_* step already uses). SCAP CONTENT/TAILORING FILE upload
-#                             (the actual DataStream/XCCDF/tailoring XML files) is NOT automated —
-#                             those need to be staged onto the server's own container filesystem
-#                             first, and no kubectl-cp/mgrctl-cp equivalent exists yet in this
-#                             project to do that; upload them once, by hand, via the Web UI
-#                             (Audit > SCAP Content / Tailoring Files), then reference their real
-#                             id here.
+# CVE audit (read only, no JSON)
+#   install_uyuni.py <lab.json> --cve-audit CVE-YYYY-NNNNN         systems' patch status for the CVE
+#   install_uyuni.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN  the same for container and OS images
 #
-# OPTIONAL – CVE/OVAL audit (fully supported since SMLM 5.2 / stable in Uyuni). Pure read-only
-# query, no JSON config — run with:
-#   install_uyuni.py <lab.json> --cve-audit CVE-YYYY-NNNNN
-# prints every system's patch status for that CVE (AFFECTED_PATCH_INAPPLICABLE/
-# AFFECTED_PATCH_APPLICABLE/NOT_AFFECTED/PATCHED).
-#   install_uyuni.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN
-# same, for container/OS images instead of systems (audit.listImagesByPatchStatus — the ENTIRE
-# real 'audit' namespace is these two methods; ground-truthed 2026-09-18 directly against the
-# real API docs, confirming no separate "Beta" audit surface exists beyond this).
-#
-# OPTIONAL – dev/QA/prod environment topology. A THIN COMPOSITION layer over the primitives
-# above plus system groups/tags — Uyuni itself has no native "environment" or "release" object
-# tying these together (see libs/spacecmd_common.py). All idempotent and automatic EXCEPT
-# recurring_schedule (explicit trigger only — see "--run-recurring-schedules" below):
-#   uyuni_activation_keys     : [{...}, ...]   # same field names as uyuni_activation_key* above,
-#                             one dict per key — lets you define MULTIPLE named keys (e.g. one per
-#                             environment) without needing a separate org per key
-#   uyuni_system_groups       : [{"name": "...", "description": "...",
-#                                  "systems": ["existing-system-name", ...]}, ...]
-#   uyuni_custom_info_keys    : [{"name": "...", "description": "..."}, ...]
-#                             Org-level key definitions — required before uyuni_system_tags/
-#                             environments' custom_info_tags can set any value for that key.
-#   uyuni_system_tags         : [{"system": "...", "tags": {"key": "value", ...}}, ...]
-#                             Uyuni has no first-class "tag" object — this sets
-#                             system.custominfo key/value pairs, the closest real mechanism.
-#   uyuni_environments        : [{
-#                                 "label": "dev",
-#                                 "system_group": "dev-systems",     # name ref into system_groups
-#                                 "activation_key": "1-dev-key",     # name ref into activation_keys
-#                                 "custom_info_tags": {"tier": "dev"},
-#                                 "recurring_schedule": {
-#                                   "type": "highstate" | "custom",   # default: "highstate"
-#                                   "cron": "0 2 * * 2",
-#                                   "states": ["..."],                # required if type is "custom"
-#                                   "group_id": 123,                  # optional: skip name->id lookup
-#                                   "extra": {...}                    # merged into the API struct as-is
-#                                 }
-#                               }, ...]
-#                             system_group/activation_key are NAME REFERENCES only — define them via
-#                             the fields above, not inline here. recurring_schedule needs a NUMERIC
-#                             group id; by default it's resolved heuristically from the group's name
-#                             (see libs/spacecmd_common.py's group_id_for) — supply "group_id"
-#                             directly if that resolution fails. Run schedules with:
-#                             install_uyuni.py <lab.json> --run-recurring-schedules (never automatic
-#                             — recurring-action idempotency was never confirmed).
+# Environment topology (a composition of the primitives above; automatic except recurring_schedule)
+#   uyuni_activation_keys  : [{...}], one dict per key, with the same fields as uyuni_activation_key*. One organization can define
+#                            several named keys this way.
+#   uyuni_system_groups    : [{"name", "description", "systems": [...]}]
+#   uyuni_custom_info_keys : [{"name", "description"}]. Must be defined before uyuni_system_tags or an environment's custom_info_tags
+#                            can set a value for that key.
+#   uyuni_system_tags      : [{"system", "tags": {"key": "value"}}]. Uyuni has no tag object. These are custom-info values.
+#   uyuni_environments     : [{"label", "system_group" (name of a uyuni_system_groups entry), "activation_key" (name of a key),
+#                            "custom_info_tags": {...}, "recurring_schedule": {"type": "highstate" (default) | "custom", "cron",
+#                            "states" (for custom), "group_id" (skips the name lookup), "extra": {...}}}]
+#                            system_group and activation_key are references only. Run the schedules with
+#                            install_uyuni.py <lab.json> --run-recurring-schedules.
 #
 # The target node must have "uyuni" in its addons[] list in the JSON definition:
 #   "nodes": { "uyuni.lab": { "myip": "...", "addons": ["uyuni"] } }
@@ -300,14 +113,7 @@ __version__ = "ca2d2d5"
 PLUGIN = {
     "name": "uyuni",
     "targets": ["vm", "baremetal"],
-    # standalone-container, not kubernetes: confirmed live 2026-08-29 — this
-    # script's own install() runs `mgradm ... install podman` (see its
-    # docstring: "Installed on a dedicated host VM using mgradm
-    # (container-based install)"), a real podman container directly on the
-    # host, never touching kubectl/helm at all (requires_kubernetes below
-    # is already None, which this "kubernetes" layer value contradicted —
-    # a leftover DEFAULT_PLUGIN artifact from the mechanical sweep, never
-    # actually corrected for this addon specifically).
+    # This addon installs with mgradm and podman on the host, so its layer is standalone-container. It never uses kubectl or helm.
     "layers": ["standalone-container"],
     "requires_kubernetes": None,
     "aux_services": [],
@@ -328,11 +134,7 @@ import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
 from lab_creation import ssh_run, reboot_vm, check_ssh_conn, die  # noqa: E402
-# Moved to libs/mgradm_common.py 2026-09-12 — see that module's own docstring
-# for why (in short: `from install_uyuni import ...` breaks once this script
-# is deployed without its .py suffix, confirmed live). Aliased back to their
-# original leading-underscore names here so nothing else in this file, or in
-# tests/checks/18_live_bugfixes_test.py, needs to change.
+# The shared mgradm helpers are in libs/mgradm_common.py, and they are imported here under their original names.
 from mgradm_common import (  # noqa: E402
     run_install_with_pg_hba_guard as _run_install_with_pg_hba_guard,
     ensure_server_container_active as _ensure_server_container_active,
@@ -341,26 +143,11 @@ from mgradm_common import (  # noqa: E402
 
 def setup_uyuni(hostname, virt_srv, cfg):
     """
-    Install Uyuni on a host VM via mgradm. Mirrors setup_uyuni (bash) — with
-    one addition: bash's own version (libs/lab_creation.bash, pre-existing,
-    not a python-port regression) assumed mgradm/mgrctl were already
-    installable from whatever repos the target image ships with. Confirmed
-    live (2026-08-28, disposable VM on nuc6.mydemo.lab) that a stock
-    SL-Micro image does NOT have them — "No provider of 'mgradm' found" —
-    they ship from Uyuni's own community OBS repo, not any SCC
-    module/product. Fixed by adding that repo first, per
-    documentation.suse.com/multi-linux-manager's own Micro-variant
-    deployment guide (verified live 2026-08-28): `zypper ar` writes to
-    /etc/zypp (writable), but the key-trust import a `zypper ref` on a
-    brand-new repo triggers touches the RPM database under
-    /usr/lib/sysimage/rpm — read-only on SLE Micro outside a
-    transactional-update snapshot. Confirmed live that this makes `zypper
-    ref` itself report an internal "Failed to import public key" error yet
-    still exit 0, and the subsequent transactional-update install (which
-    imports the key for real, inside its own writable snapshot) succeeds
-    regardless — so ref's own exit code is checked, but its own stderr
-    warning about the failed key import is expected noise, not a real
-    failure signal.
+    Install Uyuni on a host VM with mgradm. This matches the bash setup_uyuni, with one addition.
+
+    mgradm and mgrctl are not in the default repositories of an SL Micro image, so Uyuni's community OBS repository is added first.
+    zypper ref can print a key-import error on the read-only RPM database and still exit 0. The exit code is the signal that counts.
+    The transactional-update install imports the key inside its own snapshot.
     """
     repo_url = ("https://download.opensuse.org/repositories/systemsmanagement:/Uyuni:/Stable/"
                 "images/repo/Uyuni-Server-POOL-$(arch)-Media1/")
@@ -392,18 +179,8 @@ def setup_uyuni(hostname, virt_srv, cfg):
     print("- Installing Uyuni server")
     admin = cfg.get("uyuni_admin") or "admin"
     password = cfg.get("uyuni_password") or "Uyuni12345"
-    # --admin-email doesn't exist on mgradm's actual CLI (confirmed live,
-    # 2026-08-28, via `mgradm install podman --help`: admin email is the
-    # top-level `--email` flag, not one of the "First User" admin-* flags —
-    # `mgradm install` rejected it outright with "unknown flag: --admin-email".
-    # bash's own version (libs/lab_creation.bash) has this identical bug,
-    # pre-existing, not a python-port regression.
-    # Every value shell-quoted — confirmed live 2026-09-13 (install_smlm.py,
-    # which mirrors this exact command shape): an unquoted multi-word
-    # --organization got split by the remote shell into two tokens, the
-    # second of which mgradm misinterpreted as its own optional FQDN
-    # positional argument. Same latent bug here — uyuni_org just never
-    # happened to contain a space in practice, so it was never hit live.
+    # The admin e-mail is set with the top-level --email flag, because mgradm has no --admin-email flag.
+    # Every value is shell-quoted, so a value with spaces stays one argument.
     install_cmd = (
         "mgradm install podman "
         "--admin-login {} "
@@ -473,12 +250,8 @@ def setup_uyuni(hostname, virt_srv, cfg):
             retries=3, retry_delay=15)
         rps("users", sc.ensure_users, hostname, exec_prefix, cfg, "uyuni")
         rps("access groups", sc.ensure_access_groups, hostname, exec_prefix, cfg, "uyuni")
-        # Each step below is independent of the ones before it — see
-        # spacecmd_common.run_provisioning_step()'s own docstring for the
-        # real incident (charon's Ansible control node registration racing
-        # ensure_orgs()) this wrapping fixes. ansible_control_node/
-        # ansible_paths get the most generous retry window — see
-        # install_smlm.py's identical comment for why.
+        # Each step runs through run_provisioning_step(), so a failure in one step does not skip the steps after it.
+        # The Ansible control node and its paths get the largest retry window, because they depend on a client that registers on its own.
         rps("ansible control node", sc.ensure_ansible_control_node, hostname, exec_prefix, cfg, "uyuni",
             retries=10, retry_delay=60)
         rps("ansible paths", sc.ensure_ansible_paths, hostname, exec_prefix, cfg, "uyuni",
@@ -527,26 +300,13 @@ def run_ansible_playbooks(hostname, cfg):
 
 def run_clm_actions(hostname, cfg):
     """
-    Runs every entry in uyuni_content_lifecycle_actions (see the JSON
-    section comment above) — NOT idempotent, NOT part of the automatic
-    setup_uyuni() flow (see libs/spacecmd_common.py for why).
+    Run every entry in uyuni_content_lifecycle_actions. The actions are not idempotent, and the automatic setup_uyuni() flow does
+    not run them.
 
-    Unlike a plain delegation to sc.run_content_lifecycle_actions, each
-    'wait' is wrapped with a stuck-build recovery (see
-    _wait_for_clm_with_restart_retry): confirmed live (2026-08-28, round 4
-    of the CLM stuck-build investigation — see MIGRATION_TODO.md, "the Web
-    UI 'Build' button theory, tested and disproven") that Uyuni's own
-    async CLM align worker can get itself permanently wedged after a
-    small, non-deterministic number of builds, independent of which API
-    triggers them — once wedged, EVERY subsequent CLM build/promote hangs
-    in "building" forever, and the ONLY confirmed mitigation is
-    restarting uyuni-server.service (clears the server's in-process async
-    message queue) followed by re-triggering the same action. This
-    recovery is deployment-specific (host-level systemctl, "uyuni"/mgrctl
-    only — no equivalent for "smlm"/kubectl pods), which is why it lives
-    here rather than in the shared spacecmd_common.py module. Best-effort,
-    not a guarantee — the underlying wedge is a genuine, unexplained
-    upstream bug this repo cannot fix, only work around.
+    Each wait is wrapped in a stuck-build recovery (see _wait_for_clm_with_restart_retry). Uyuni's asynchronous CLM align worker can
+    wedge after a few builds, and then every later build or promote stays in "building". The recovery restarts uyuni-server.service and
+    triggers the action again. It is specific to this deployment, which has host-level systemctl, so it lives here and not in
+    spacecmd_common.py. It is best effort: the wedge is an upstream issue that this script works around.
     """
     actions = cfg.get("uyuni_content_lifecycle_actions") or []
     if not actions:
