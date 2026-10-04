@@ -1,0 +1,63 @@
+name: Build & Deploy Static WebUI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'scripts/install_*.py'
+      - 'webui/htdocs/**'
+      - '.github/workflows/webui-schema-generate.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Extract addon schemas
+        run: |
+          cd "${{ github.workspace }}"
+          python3.11 scripts/extract-webui-schemas.py 2>/dev/null > webui/htdocs/schema.json
+          echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas"
+
+      - name: Build static WebUI
+        run: |
+          cd "${{ github.workspace }}"
+          python3.11 scripts/build-static-webui.py
+          ls -lh webui/htdocs/index-static.html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./webui/htdocs
+          keep_files: true
+          cname: false
+
+      - name: Commit generated files if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet webui/htdocs/schema.json webui/htdocs/index-static.html; then
+            echo "✓ No changes to commit"
+          else
+            git add webui/htdocs/schema.json webui/htdocs/index-static.html
+            git commit -m "chore: regenerate static webui" --no-verify || true
+            git push || true
+          fi
