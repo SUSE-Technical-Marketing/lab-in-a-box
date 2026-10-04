@@ -448,57 +448,10 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 
   </script>
   <script>
-// Embedded schemas for static generation
+// Load embedded schemas before app.js runs
 window.EMBEDDED_SCHEMAS = JSON.parse(document.getElementById('embedded-schemas').textContent);
-
-// Override apiGet for schema/components to use embedded data
-const originalApiGet = window.apiGet || (async (action) => {});
-window.apiGet = async function(action, params = {}) {
-  if (action === 'components') {
-    return {
-      components: window.EMBEDDED_SCHEMAS.addons.map(name => {
-        const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
-        const fields = schema.fields || [];
-        const countFields = (arr) => (Array.isArray(arr)
-          ? arr.reduce((n, f) => n + (f && typeof f === 'object' && f.name && f.type ? 1 : countFields(f.fields || [])), 0)
-          : 0);
-        return {
-          name,
-          title: schema.title || name,
-          description: schema.description || '',
-          field_count: countFields(fields),
-          layers: (schema.capabilities && schema.capabilities.layers) || []
-        };
-      }),
-      count: window.EMBEDDED_SCHEMAS.addons.length,
-      scripts_dir: 'embedded'
-    };
-  }
-  if (action === 'schema') {
-    const comp = params.name;
-    if (!comp || !window.EMBEDDED_SCHEMAS.schemas[comp]) {
-      throw new Error(`Schema not found for ${comp}`);
-    }
-    return window.EMBEDDED_SCHEMAS.schemas[comp];
-  }
-  // For all other actions: static mode doesn't support them
-  // Return safe defaults or throw with a clear message
-  if (action === 'base') {
-    return JSON.parse(document.getElementById('embedded-base-schema').textContent);
-  }
-  if (action === 'status') {
-    return { available: false };
-  }
-  if (action === 'validate') {
-    return { valid: true, errors: [] };
-  }
-  if (action === 'save') {
-    throw new Error('Save requires a backend. Use Download instead to save lab.json locally.');
-  }
-  // Unknown action
-  throw new Error(`Unsupported in static mode: ${action}`);
-}
-};
+window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-schema').textContent);
+  </script>
 
 "use strict";
 /*
@@ -1677,6 +1630,51 @@ document.addEventListener("themechange", () => {
   if (tab && tab.classList.contains("active")) tab.click();
 });
 
+
+// Override apiGet for static mode (after app.js loaded its definition)
+const _originalApiGet = window.apiGet;
+window.apiGet = async function(action, params = {}) {
+  if (action === 'components') {
+    return {
+      components: window.EMBEDDED_SCHEMAS.addons.map(name => {
+        const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
+        const fields = schema.fields || [];
+        const countFields = (arr) => (Array.isArray(arr)
+          ? arr.reduce((n, f) => n + (f && typeof f === 'object' && f.name && f.type ? 1 : countFields(f.fields || [])), 0)
+          : 0);
+        return {
+          name,
+          title: schema.title || name,
+          description: schema.description || '',
+          field_count: countFields(fields),
+          layers: (schema.capabilities && schema.capabilities.layers) || []
+        };
+      }),
+      count: window.EMBEDDED_SCHEMAS.addons.length,
+      scripts_dir: 'embedded'
+    };
+  }
+  if (action === 'schema') {
+    const comp = params.name;
+    if (!comp || !window.EMBEDDED_SCHEMAS.schemas[comp]) {
+      throw new Error(`Schema not found for ${comp}`);
+    }
+    return window.EMBEDDED_SCHEMAS.schemas[comp];
+  }
+  if (action === 'base') {
+    return window.EMBEDDED_BASE_SCHEMA;
+  }
+  if (action === 'status') {
+    return { available: false };
+  }
+  if (action === 'validate') {
+    return { valid: true, errors: [] };
+  }
+  if (action === 'save') {
+    throw new Error('Save requires a backend. Use Download instead to save lab.json locally.');
+  }
+  throw new Error(`Unsupported in static mode: ${action}`);
+};
   </script>
 </body>
 </html>

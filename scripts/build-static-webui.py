@@ -99,11 +99,15 @@ def build_static_html(schemas, base_schema, files):
 {theme_content}
   </script>
   <script>
-// Embedded schemas for static generation
+// Load embedded schemas before app.js runs
 window.EMBEDDED_SCHEMAS = JSON.parse(document.getElementById('embedded-schemas').textContent);
+window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-schema').textContent);
+  </script>
 
-// Override apiGet for schema/components to use embedded data
-const originalApiGet = window.apiGet || (async (action) => {{}});
+{js_content}
+
+// Override apiGet for static mode (after app.js loaded its definition)
+const _originalApiGet = window.apiGet;
 window.apiGet = async function(action, params = {{}}) {{
   if (action === 'components') {{
     return {{
@@ -132,10 +136,8 @@ window.apiGet = async function(action, params = {{}}) {{
     }}
     return window.EMBEDDED_SCHEMAS.schemas[comp];
   }}
-  // For all other actions: static mode doesn't support them
-  // Return safe defaults or throw with a clear message
   if (action === 'base') {{
-    return JSON.parse(document.getElementById('embedded-base-schema').textContent);
+    return window.EMBEDDED_BASE_SCHEMA;
   }}
   if (action === 'status') {{
     return {{ available: false }};
@@ -146,12 +148,8 @@ window.apiGet = async function(action, params = {{}}) {{
   if (action === 'save') {{
     throw new Error('Save requires a backend. Use Download instead to save lab.json locally.');
   }}
-  // Unknown action
   throw new Error(`Unsupported in static mode: ${{action}}`);
-}}
 }};
-
-{js_content}
   </script>
 </body>
 </html>"""
