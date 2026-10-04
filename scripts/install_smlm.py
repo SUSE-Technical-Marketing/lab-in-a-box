@@ -692,7 +692,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
                 shlex.quote(admin), shlex.quote(password), shlex.quote(email),
                 shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
         # Confidential Computing attestation container — see this JSON section's
-        # own smlm_coco_replicas doc comment above for the real, ground-truthed
+        # own smlm_coco_replicas doc comment above for the
         # `mgradm install podman --help` flags this maps to.
         for field in ("country", "state", "city", "org", "ou", "email"):
             if cfg.get("smlm_ssl_" + field):

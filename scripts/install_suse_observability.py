@@ -18,14 +18,10 @@
 #                                (default: trial — the lab-sized, non-HA profile)
 #
 # SUSE Observability (StackState-based: metrics/traces/topology in one stack, not just a Grafana
-# dashboard) is a real, distinct SUSE product from the "smlm"/"suma" addons above — confirmed real,
-# recent activity (v2.10.0, 2026-05-12) against documentation.suse.com/cloudnative/suse-observability.
+# dashboard) is a real, distinct SUSE product from the "smlm"/"suma" addons above. Documentation is at
+# documentation.suse.com/cloudnative/suse-observability.
 # Needs Helm >= 3.13.1 on the target cluster (this project's setup_helm() always installs a current
 # Helm 3, so this should already be satisfied).
-#
-# NOT live-tested (no real SCC/Rancher Prime license available in this session) — chart repo,
-# sizing.profile enum, and the license values-key path (global.suseObservability.license) verified
-# against documentation.suse.com/cloudnative/suse-observability/latest, 2026-09-05.
 
 __version__ = "5fc5f69"
 

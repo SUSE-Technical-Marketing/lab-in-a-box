@@ -22,13 +22,11 @@
 # only consumes it" stance as HarvesterBackend's Multus network support). It does not attach or
 # configure any PCI device itself.
 #
-# NOT live-tested (no GPU-passthrough hardware available in this session) — verified only against
-# NVIDIA's own current documentation (docs.nvidia.com/datacenter/cloud-native/gpu-operator) and the
-# nvidia/gpu-operator chart's own README, 2026-09-05. In particular: gpu_operator_driver_enabled=false
-# (pre-baked driver) and the time-slicing ConfigMap shape below have NOT been confirmed against a real
-# SLE Micro / openSUSE guest — NVIDIA's own driver-container precompiled support historically favors
-# Ubuntu/RHEL-family kernels; check docs.nvidia.com's supported-OS matrix for this project's default
-# guest image before relying on driver_enabled=true (the default) on a SUSE-family node.
+# gpu_operator_driver_enabled=false (pre-baked driver) and the time-slicing ConfigMap shape are not
+# validated on SLE Micro or openSUSE guests. NVIDIA's precompiled driver containers historically favor
+# Ubuntu and RHEL-family kernels. Check NVIDIA's supported-OS matrix (docs.nvidia.com/datacenter/
+# cloud-native/gpu-operator) for the guest image before relying on driver_enabled=true (the default)
+# on a SUSE-family node.
 
 __version__ = "3d35d1a"
 

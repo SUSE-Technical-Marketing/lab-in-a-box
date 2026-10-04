@@ -21,11 +21,8 @@
 # (ETH Zurich, EPFL, and the Swiss National Supercomputing Centre), released 2025-09-02 under Apache
 # 2.0. Unlike deepseek/llama/qwen/mistral, it is NOT in Ollama's own officially-curated library — the
 # GGUF build pulled here is a COMMUNITY package (MichelRosselli/apertus on ollama.com), maintained by a
-# third party, not the Apertus team or Ollama itself. Confirmed live on ollama.com, 2026-09-05: the
-# Ollama client itself needs to be reasonably current (0.12.6+) for Apertus' architecture to load
-# correctly — if the pull fails with an unrecognized-architecture error, update Ollama first.
-#
-# NOT live-tested (no matching hardware available in this session).
+# third party, not the Apertus team or Ollama itself. The Ollama client must be 0.12.6 or newer for Apertus'
+# architecture to load. If the pull fails with an unrecognized-architecture error, update Ollama first.
 
 __version__ = "3d35d1a"
 

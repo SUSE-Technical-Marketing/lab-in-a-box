@@ -1,21 +1,18 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install a standalone Grafana server as a
-# podman container directly on the target host (no Kubernetes involved) —
-# built 2026-09-16 alongside install_prometheus.py, to give the "prometheus"
-# addon's own metrics somewhere to actually be graphed/dashboarded.
+# Part of lab-in-a-box. Installs a standalone Grafana server as a podman container
+# directly on the target host (no Kubernetes involved), to graph the metrics of the
+# "prometheus" addon.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
 # Reference: https://grafana.com/docs/grafana/latest/administration/provisioning/
 #            https://grafana.com/grafana/dashboards/10277-uyuni-suse-manager-server/
-#            (real community dashboard for exactly the exporter set install_prometheus.py's
-#            own _smlm_scrape_job() targets — confirmed live 2026-09-16: id 10277, uid
-#            "2p2qPSUik", revision 2 at time of writing, 21 panels. Its raw JSON (as downloaded
-#            from grafana.com's own API, NOT the Web UI "import" flow) carries two unfilled
-#            template placeholders — ${DS_PROMETHEUS} for the datasource name and ${VAR_JOB} for
-#            the Prometheus job label — normally prompted for interactively on import; this addon
-#            substitutes them for unattended provisioning instead, matching the datasource name it
-#            itself provisions and the job name install_prometheus.py's own scrape config uses.)
+#            (community dashboard for the exporters that install_prometheus.py's
+#            _smlm_scrape_job() targets, uid 2p2qPSUik). Its raw JSON carries two unfilled
+#            placeholders: ${DS_PROMETHEUS} (the datasource name) and ${VAR_JOB} (the Prometheus
+#            job label). Grafana normally prompts for them on import. This addon substitutes them,
+#            using the datasource name it provisions and the job name from install_prometheus.py's
+#            scrape config.)
 #
 # ─── JSON section: "grafana" ─────────────────────────────────────────────────
 #
@@ -58,7 +55,7 @@
 # install_prometheus.py. Reachable remotely on grafana_port — the NODE ITSELF needs that port
 # open (this addon does not manage firewalls/security groups; see the node's own aws_open_ports).
 
-__version__ = "__LABVERSION__"
+__version__ = "94a91ec"
 
 PLUGIN = {
     "name": "grafana",

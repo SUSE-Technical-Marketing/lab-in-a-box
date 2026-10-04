@@ -87,10 +87,8 @@ def setup_suse_ai_registry(hostname, registry, user, password, ns):
     if login.returncode != 0:
         print("ERROR: helm registry login to '{}' failed (see helm's own error above) — "
               "suse_ai_registry_user/suse_ai_registry_password must be a real SUSE Application "
-              "Collection entitlement, NOT your SCC registration code/email (confirmed live "
-              "2026-09-05: those two credential families are separate — the SCC login this "
-              "project's SUSE_email/SUSE_regcode lab_creation.cfg keys use for product "
-              "registration does not also authenticate to dp.apps.rancher.io). Get Application "
+              "Collection entitlement, not your SCC registration code or email. The SCC login in "
+              "SUSE_email/SUSE_regcode does not authenticate to dp.apps.rancher.io. Get Application "
               "Collection access at https://apps.rancher.io.".format(registry), file=sys.stderr)
         sys.exit(1)
 

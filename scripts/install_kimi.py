@@ -28,10 +28,9 @@
 # offering built on it serves >US$20M/year in revenue to third parties — irrelevant for a lab/demo
 # deployment, but worth knowing before basing a real product on it.
 #
-# NOT live-tested — model names, API base, and the moonshot/ LiteLLM provider prefix (needing
-# MOONSHOT_API_KEY when read from env, though this addon passes the key directly in litellm_params
-# instead, same as every other proxy addon here) verified against docs.litellm.ai/docs/providers/moonshot
-# and ollama.com's own kimi-k3 listing, 2026-09-05.
+# The moonshot/ LiteLLM provider prefix is used. The key is passed directly in litellm_params, as with
+# every other proxy addon here, so MOONSHOT_API_KEY is not read from the environment.
+# Provider docs: docs.litellm.ai/docs/providers/moonshot
 
 __version__ = "3d35d1a"
 

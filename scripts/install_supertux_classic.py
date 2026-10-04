@@ -11,22 +11,13 @@
 #   supertux_classic_shorthn : [OPTIONAL] hostname prefix for ingress (default: supertux-classic)
 #   supertux_classic_version : [OPTIONAL] release tag to fetch (default: v0.4.2)
 #
-# LICENSE: GPL-3.0 (confirmed live via GitHub's own license API, 2026-09-06) — its own itch.io page
-# explicitly says "you can do whatever you like with the game's source files, whether that's
-# redistributing the game" — self-hosting the real, playable game (not a link to itch.io) is
-# genuinely permitted, unlike the other itch.io games considered alongside this one (see this
-# session's TODO for which ones were skipped and why).
+# LICENSE: GPL-3.0. The game's itch.io page states that the game and its source files may be
+# redistributed, so self-hosting the game is permitted.
 #
 # This deploys the REAL, pre-built HTML5 export the project itself publishes as a GitHub Release
 # asset (SuperTuxClassic-<version>-HTML.zip) — a Kubernetes initContainer downloads and unzips it
 # into a shared volume, an ordinary nginx container serves it. No Godot build toolchain needed;
 # this is the developer's own already-exported web build, not something built from source here.
-#
-# LIVE-TESTED 2026-09-06 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab: full
-# success end-to-end — the initContainer downloaded and unzipped the real release asset cleanly
-# (index.html WAS at the zip's top level, confirmed live — the defensive one-level flatten in the
-# fetch script never had to trigger), the pod reached Running in under 30s, and the real Traefik
-# ingress served a genuine HTTP 200 with <title>SuperTux Classic</title>.
 
 __version__ = "87e323b"
 

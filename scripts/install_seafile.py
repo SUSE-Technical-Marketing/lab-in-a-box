@@ -9,31 +9,18 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# References (ground-truthed 2026-09-27 against https://manual.seafile.com/latest/,
-# not guessed):
-#   https://manual.seafile.com/latest/setup/setup_ce_by_docker/ — the real Community
-#     Edition docker-compose deployment guide
-#   https://manual.seafile.com/13.0/repo/docker/ce/seafile-server.yml — the actual
-#     compose file; confirmed real image references (fetched verbatim):
-#       db service:      image: ${SEAFILE_DB_IMAGE:-mariadb:10.11}
-#       redis service:   image: ${SEAFILE_REDIS_IMAGE:-redis}
-#       seafile service: image: ${SEAFILE_IMAGE:-seafileltd/seafile-mc:13.0-latest}
-#     — confirming Seafile CE requires MySQL/MariaDB specifically (no PostgreSQL
-#     support, unlike Nextcloud) and that its own official compose file's default
-#     "80:80" port mapping is commented out in favor of a separate Caddy/nginx
-#     frontend for TLS — this addon skips that TLS frontend for the same reason
-#     install_nextcloud.py does (*.mydemo.lab domains are never publicly
-#     resolvable, so Let's Encrypt's HTTP01 challenge would just hang), and
-#     publishes the port directly instead.
-#   https://manual.seafile.com/latest/setup/helm_chart_single_node/ — the real
-#     official Helm chart: repo https://haiwen.github.io/seafile-helm-chart/repo,
-#     chart "seafile/ce" (Community) or "seafile/pro" (Professional)
-#   https://manual.seafile.com/latest/develop/server/ — confirms the three
-#     databases a Seafile server owns: ccnet_db, seafile_db, seahub_db — created
-#     and migrated by the seafile-mc image ITSELF on first boot using root DB
-#     credentials, not pre-created by this addon (unlike install_nextcloud.py's
-#     own mariadb_db/mariadb_user, which ARE pre-created — Seafile's image wants
-#     root access instead and manages its own schema/user)
+# References:
+#   https://manual.seafile.com/latest/setup/setup_ce_by_docker/ (Community Edition Docker deployment)
+#   https://manual.seafile.com/13.0/repo/docker/ce/seafile-server.yml (compose file: the image references
+#     for the db, redis and seafile services)
+#   https://manual.seafile.com/latest/setup/helm_chart_single_node/ (Helm chart at
+#     https://haiwen.github.io/seafile-helm-chart/repo, charts seafile/ce and seafile/pro)
+#   https://manual.seafile.com/latest/develop/server/ (the databases ccnet_db, seafile_db and seahub_db)
+#
+# Seafile CE requires MariaDB or MySQL, not PostgreSQL. The seafile-mc image creates and migrates its
+# three databases on first boot, using root database credentials. This addon therefore does not
+# pre-create them, unlike install_nextcloud.py. The port is published directly, with no TLS frontend,
+# because the lab domains are not publicly resolvable and cannot get Let's Encrypt certificates.
 #
 # Real env vars confirmed from the docs above: SEAFILE_SERVER_HOSTNAME,
 # INIT_SEAFILE_ADMIN_EMAIL, INIT_SEAFILE_ADMIN_PASSWORD,
@@ -130,15 +117,8 @@
 #                             passed through --set the same as every other value, since this
 #                             project's other Helm-chart addons don't manage separate Secret
 #                             objects either)
-#
-# NOT live-tested — no real host with the resource budget for a companion MariaDB + Redis +
-# Seafile running simultaneously, on top of everything else already deployed this session, was
-# available. Every image name/env var/chart reference above is ground-truthed against the real
-# manual.seafile.com docs referenced at the top of this file (including one raw compose file
-# fetch), not guessed, but the full feature surface has only been exercised via the mocked test
-# suite.
 
-__version__ = "__LABVERSION__"
+__version__ = "96819c8"
 
 PLUGIN = {
     "name": "seafile",

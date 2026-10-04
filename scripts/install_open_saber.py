@@ -11,20 +11,13 @@
 #   open_saber_shorthn : [OPTIONAL] hostname prefix for ingress (default: open-saber)
 #   open_saber_version : [OPTIONAL] release tag to fetch (default: v0.5.0)
 #
-# LICENSE: MIT (confirmed live via GitHub's own license API, 2026-09-06) — self-hosting the real,
-# playable game is genuinely permitted.
+# LICENSE: MIT. Self-hosting the game is permitted.
 #
 # This deploys the project's own real WebXR/web export, published as a GitHub Release asset
 # (OpenSaber<version>.WebXR.zip.zip — note the double ".zip" in the real filename itself, not a
 # typo here) — a Kubernetes initContainer downloads it and unzips it (handling the outer/inner zip
 # nesting defensively) into a shared volume; an ordinary nginx container serves it. No Godot build
 # toolchain needed; this is the developer's own already-exported web build.
-#
-# LIVE-TESTED 2026-09-06 on a disposable single-node RKE2 cluster on nuc6.mydemo.lab: full
-# success end-to-end — the double-zip handling in the fetch script worked correctly against the
-# real release asset (index.html ended up at the top level after both extraction stages, confirmed
-# by inspecting the pod's own filesystem), the pod reached Running in under 30s, and the real
-# Traefik ingress served a genuine HTTP 200 with <title>Open Saber</title>.
 
 __version__ = "87e323b"
 

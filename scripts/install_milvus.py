@@ -17,9 +17,8 @@
 # used by the "suse_ai" addon is a SEPARATE chart (oci://dp.apps.rancher.io/charts/milvus); don't run
 # both against the same cluster/namespace.
 #
-# NOT live-tested — chart repo URL and standalone-mode --set flags verified against
-# zilliztech/milvus-helm's own README/values.yaml, 2026-09-05 (the older milvus-io.github.io/milvus-helm
-# repo is archived — confirmed not to use it).
+# Chart and standalone-mode --set flags follow zilliztech/milvus-helm's README and values.yaml.
+# The milvus-io.github.io/milvus-helm repo is archived and is not used.
 
 __version__ = "3d35d1a"
 
