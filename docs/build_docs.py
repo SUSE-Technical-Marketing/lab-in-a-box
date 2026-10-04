@@ -78,6 +78,7 @@ a:hover { text-decoration-thickness: 2px; }
 }
 .lockup { display: block; height: 40px; width: auto; }
 .lockup--dark { display: none; }
+.opening-text h1 .lockup { display: inline-block; height: 3rem; vertical-align: middle; }
 html[data-theme="dark"] .lockup--light { display: none; }
 html[data-theme="dark"] .lockup--dark { display: block; }
 @media (prefers-color-scheme: dark) {
@@ -231,6 +232,17 @@ def nav_html(current_out):
     return "<nav aria-label=\"Documentation\">{}</nav>".format("".join(links))
 
 
+def heading(title):
+    """Page heading: the lockup logo in place of the 'lab-in-a-box' brand text, followed by any suffix."""
+    brand = "lab-in-a-box"
+    suffix = title[len(brand):] if title.startswith(brand) else ""
+    logo = (
+        '<img class="lockup lockup--light" src="../media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box">'
+        '<img class="lockup lockup--dark" src="../media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true">'
+    )
+    return logo + html.escape(suffix)
+
+
 def page(title, lead, body, current_out, mermaid):
     return "\n".join([
         "<!doctype html>",
@@ -266,7 +278,7 @@ def page(title, lead, body, current_out, mermaid):
             '<img src="../media/brand/logo-3d-4f.svg" alt="lab-in-a-box logo"></div>'
         ),
         '<div class="opening-text">',
-        f"<h1>{title}</h1>",
+        f"<h1>{heading(title)}</h1>",
         f'<p class="lead">{lead}</p>',
         '<p class="hint">Drag the cube to rotate it.</p>',
         "</div>",
