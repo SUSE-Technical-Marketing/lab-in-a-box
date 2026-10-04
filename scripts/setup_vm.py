@@ -131,13 +131,9 @@ def provision_vm(definition, config, defaults, vm_name):
 
     backend.push_provisioning_files(vm_name, config_method=config_method, vm_img_loc=vm_img_loc)
 
-    # DNS registration moved to AFTER create_vm(), 2026-09-09 (found live-testing AWSBackend — see
-    # TODO): a cloud backend's real IP is only known once the provider assigns it, not from the
-    # lab JSON's own (for a cloud node, deliberately empty — see README) `myip` field the way
-    # libvirt/Harvester's is. create_vm()'s return value (see VMBackend.create_vm()'s own
-    # docstring) reports that real IP for cloud backends; libvirt/Harvester return None and env's
-    # already-known static myip is used unchanged, exactly as before this change.
-    # open_ports (any backend) + the older AWS-only aws_open_ports, merged.
+    # DNS registration happens after create_vm(). A cloud backend's IP is known only after the provider assigns it, so create_vm()'s
+    # return value is used for it. libvirt and Harvester return None, and the static myip from the lab JSON is used.
+    # open_ports from any backend, and the older aws_open_ports, are merged.
     open_ports = []
     for entry in list(env.get("open_ports") or []) + list(env.get("aws_open_ports") or []):
         if str(entry) not in open_ports:
@@ -159,24 +155,14 @@ def provision_vm(definition, config, defaults, vm_name):
         vcluster=env.get("vcluster", ""),
         mymac=mymac,
         vm_machine=env.get("VM_MACHINE", ""),
-        # cloud_instance_type: an explicit per-node/common lab-JSON override for a cloud
-        # backend's instance type/server type/plan/flavor — added 2026-09-10 per explicit user
-        # request that no provider's sizing catalog be a hardcoded ceiling. Ignored by
-        # libvirt/Harvester (absorbed by their own **kwargs, same as every other cloud-only
-        # kwarg here). See README's Compute backends table.
+        # cloud_instance_type: an explicit per-node or common lab-JSON override of a cloud backend's instance type, server type, plan or
+        # flavor. The built-in sizing tables are not used when it is set. Other backends ignore it. See the Compute backends table.
         cloud_instance_type=env.get("cloud_instance_type", ""),
-        # aws_open_ports: an explicit per-node/common lab-JSON list of extra ports
-        # (e.g. ["443", "4505", "4506"], or "69/udp" for non-tcp) AWSBackend.create_vm()
-        # opens on the security group, in addition to always opening SSH from this
-        # automation node's own IP — added 2026-09-13, see AWSBackend._ensure_
-        # security_group_access()'s own docstring for the real bug this fixes.
-        # Ignored by every other backend (absorbed by their own **kwargs). The generic
-        # open_ports field (any cloud backend, see open_vm_ports() below) is merged in.
+        # aws_open_ports: an extra list of ports, for example ["443", "4505", "4506"] or "69/udp". AWSBackend opens them on the security
+        # group, as well as SSH from this automation node's IP. Other backends ignore it. The generic open_ports field is merged in.
         open_ports=open_ports,
-        # aws_nested_virtualization: opt-in, "true"/unset (default "" = off, unchanged existing
-        # behavior) — added 2026-09-30, see AWSBackend's own docstring for the full "why" (running
-        # this project's real kickstart/Harvester-ISO pipeline on a cloud-provisioned EC2
-        # "hypervisor" node). Ignored by every other backend (absorbed by their own **kwargs).
+        # aws_nested_virtualization: opt-in. "true" enables nested KVM on an EC2 node. The default, off, leaves existing labs unchanged.
+        # Other backends ignore it. See AWSBackend's docstring.
         nested_virtualization=env.get("aws_nested_virtualization") or "",
     )
     if created_ip:
@@ -219,16 +205,9 @@ def provision_vm(definition, config, defaults, vm_name):
     backend.reboot_vm(vm_name)
     check_ssh_conn(vm_name)
 
-    # Cross-cloud WireGuard overlay (see libs/overlay.py) — opt-in via
-    # common.overlay/OVERLAY_ENABLED. SITE-TO-SITE, not per-node: only each
-    # site's automation VM (the home site's own "mysource" host, or a
-    # small dedicated gateway VM for a non-hub cloud account) ever joins
-    # the overlay itself — this node just gets a persistent local route to
-    # every OTHER known site's real subnet, via its own site's gateway.
-    # Corrected 2026-09-18 (see overlay.py's own module docstring for the
-    # full story): a first version made every node its own WireGuard peer
-    # and used an arbitrary lab node (not an automation VM) as hub — both
-    # were real mistakes caught live-testing, not a design choice.
+    # Cross-cloud WireGuard overlay (see libs/overlay.py), enabled with common.overlay or OVERLAY_ENABLED. It is site-to-site, not
+    # per-node. Only each site's automation VM, or a small gateway VM for a non-hub cloud account, joins the overlay. A node gets a
+    # persistent local route to every other site's subnet, through its own site's gateway.
     overlay_enabled = str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() in (
         "1", "true", "yes")
     if overlay_enabled:
