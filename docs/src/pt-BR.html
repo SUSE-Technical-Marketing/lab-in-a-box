@@ -757,126 +757,376 @@ install_longhorn --schema yaml      # ...ou YAML
 <details open>
 <summary><strong>Plataforma Kubernetes &amp; GitOps</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`rancher`](https://www.rancher.com/) | Plataforma de gestão de Kubernetes SUSE Rancher Prime |
-| [`longhorn`](https://longhorn.io/) | Armazenamento em bloco distribuído SUSE Longhorn |
-| [`harbor`](https://goharbor.io/) | Registro de containers |
-| [`argocd`](https://argo-cd.readthedocs.io/) | Controlador GitOps Argo CD |
-| [`kubewarden`](https://www.kubewarden.io/) | Motor de políticas do Kubernetes |
-| [`istio`](https://istio.io/) | Service mesh |
-| [`linkerd`](https://linkerd.io/) | Service mesh |
-| [`traefik`](https://traefik.io/) | Controlador de ingress |
-| [`nginx`](https://nginx.org/) | Controlador de ingress / proxy reverso |
-| [`coredns`](https://coredns.io/) | DNS do cluster |
-| [`kucero`](https://github.com/SUSE/kucero) | Rotação de certificados do cluster Kubernetes |
-| [`fluid`](https://fluid-cloudnative.github.io/) | Orquestração/cache de dados para cargas de trabalho cloud-native |
-| [`suse_observability`](https://www.suse.com/products/suse-observability/) | SUSE Observability (métricas/traces/topologia baseadas em StackState) |
-| [`agones`](https://agones.dev/) | Hospedagem/escalonamento de servidores de jogo dedicados (agones.dev) |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
+<td>Plataforma de gestão de Kubernetes SUSE Rancher Prime</td>
+</tr>
+<tr>
+<td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
+<td>Armazenamento em bloco distribuído SUSE Longhorn</td>
+</tr>
+<tr>
+<td><a href="https://goharbor.io/"><code>harbor</code></a></td>
+<td>Registro de containers</td>
+</tr>
+<tr>
+<td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
+<td>Controlador GitOps Argo CD</td>
+</tr>
+<tr>
+<td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
+<td>Motor de políticas do Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://istio.io/"><code>istio</code></a></td>
+<td>Service mesh</td>
+</tr>
+<tr>
+<td><a href="https://linkerd.io/"><code>linkerd</code></a></td>
+<td>Service mesh</td>
+</tr>
+<tr>
+<td><a href="https://traefik.io/"><code>traefik</code></a></td>
+<td>Controlador de ingress</td>
+</tr>
+<tr>
+<td><a href="https://nginx.org/"><code>nginx</code></a></td>
+<td>Controlador de ingress / proxy reverso</td>
+</tr>
+<tr>
+<td><a href="https://coredns.io/"><code>coredns</code></a></td>
+<td>DNS do cluster</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
+<td>Rotação de certificados do cluster Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
+<td>Orquestração/cache de dados para cargas de trabalho cloud-native</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/suse-observability/"><code>suse_observability</code></a></td>
+<td>SUSE Observability (métricas/traces/topologia baseadas em StackState)</td>
+</tr>
+<tr>
+<td><a href="https://agones.dev/"><code>agones</code></a></td>
+<td>Hospedagem/escalonamento de servidores de jogo dedicados (agones.dev)</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-security"></a></p>
 <details open>
 <summary><strong>Segurança &amp; conformidade</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`neuvector`](https://open-docs.neuvector.com/) | Plataforma de segurança de containers SUSE NeuVector |
-| [`nv_testing`](https://open-docs.neuvector.com/testing/testing) | Cargas de trabalho de teste de segurança do NeuVector (pods nginx/node/redis) |
-| [`nv-demo-helm`](https://open-docs.neuvector.com/) | Demonstrações do NeuVector baseadas em Helm |
-| [`complianceascode`](https://complianceascode.github.io/) | Operador OpenSCAP/ComplianceAsCode |
-| [`keycloak`](https://www.keycloak.org/) | Gestão de identidade e acesso |
-| [`kagent`](https://kagent.dev/) | Assistente de segurança de IA agêntica para Kubernetes |
-| `insecure_app` | Aplicação web intencionalmente vulnerável (demo/treinamento) |
-| [`struts_demo`](https://struts.apache.org/) | Aplicação de demonstração vulnerável Apache Struts2 (CVE-2017-5638) |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>neuvector</code></a></td>
+<td>Plataforma de segurança de containers SUSE NeuVector</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/testing/testing"><code>nv_testing</code></a></td>
+<td>Cargas de trabalho de teste de segurança do NeuVector (pods nginx/node/redis)</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>nv-demo-helm</code></a></td>
+<td>Demonstrações do NeuVector baseadas em Helm</td>
+</tr>
+<tr>
+<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
+<td>Operador OpenSCAP/ComplianceAsCode</td>
+</tr>
+<tr>
+<td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
+<td>Gestão de identidade e acesso</td>
+</tr>
+<tr>
+<td><a href="https://kagent.dev/"><code>kagent</code></a></td>
+<td>Assistente de segurança de IA agêntica para Kubernetes</td>
+</tr>
+<tr>
+<td><code>insecure_app</code></td>
+<td>Aplicação web intencionalmente vulnerável (demo/treinamento)</td>
+</tr>
+<tr>
+<td><a href="https://struts.apache.org/"><code>struts_demo</code></a></td>
+<td>Aplicação de demonstração vulnerável Apache Struts2 (CVE-2017-5638)</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-suma"></a></p>
 <details open>
 <summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`uyuni`](https://www.uyuni-project.org/) | Servidor Uyuni (upstream): chaves de ativação, organizações, RBAC, Content Lifecycle Management, integração com Ansible, auditoria SCAP/CVE, topologia de ambientes dev/QA/prod — veja `install_uyuni --schema` para a lista completa de campos |
-| [`smlm`](https://www.suse.com/products/multi-linux-manager/) | Servidor SUSE Multi-Linux Manager — o mesmo conjunto de recursos que `uyuni`, implantado via Kubernetes/Helm |
-| [`smlm_proxy`](https://www.suse.com/products/multi-linux-manager/) | Proxy do SMLM |
-| `client_registration` | Registra qualquer VM como cliente Salt de um servidor `uyuni`/`smlm` existente (bootstrap por chave de ativação + aceitação da chave salt) |
-| [`suma`](https://www.suse.com/products/multi-linux-manager/) | SUSE Multi-Linux Manager (SUMA), instalado diretamente no sistema operacional via `mgradm` — não em Kubernetes |
-| [`ansible_control_node`](https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html) | Provisiona um nó de controle Ansible real: instala o `ansible-core`, envia playbooks de exemplo + um script de inventário dinâmico que consulta a própria lista de sistemas do `uyuni`/`smlm`, configura acesso SSH ao restante do laboratório. Combina com o próprio campo `*_ansible_control_nodes` do `uyuni`/`smlm`, que habilita a entitlement "Ansible Control Node" no lado do servidor |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.uyuni-project.org/"><code>uyuni</code></a></td>
+<td>Servidor Uyuni (upstream): chaves de ativação, organizações, RBAC, Content Lifecycle Management, integração com Ansible, auditoria SCAP/CVE, topologia de ambientes dev/QA/prod — veja <code>install_uyuni --schema</code> para a lista completa de campos</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
+<td>Servidor SUSE Multi-Linux Manager — o mesmo conjunto de recursos que <code>uyuni</code>, implantado via Kubernetes/Helm</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
+<td>Proxy do SMLM</td>
+</tr>
+<tr>
+<td><code>client_registration</code></td>
+<td>Registra qualquer VM como cliente Salt de um servidor <code>uyuni</code>/<code>smlm</code> existente (bootstrap por chave de ativação + aceitação da chave salt)</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>suma</code></a></td>
+<td>SUSE Multi-Linux Manager (SUMA), instalado diretamente no sistema operacional via <code>mgradm</code> — não em Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
+<td>Provisiona um nó de controle Ansible real: instala o <code>ansible-core</code>, envia playbooks de exemplo + um script de inventário dinâmico que consulta a própria lista de sistemas do <code>uyuni</code>/<code>smlm</code>, configura acesso SSH ao restante do laboratório. Combina com o próprio campo <code>*_ansible_control_nodes</code> do <code>uyuni</code>/<code>smlm</code>, que habilita a entitlement "Ansible Control Node" no lado do servidor</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-storage"></a></p>
 <details open>
 <summary><strong>Armazenamento &amp; bancos de dados</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`mariadb`](https://mariadb.org/) | Banco de dados MariaDB — Kubernetes (manifesto sem Helm) ou instalado nativamente no SO; o caminho nativo do SO (`libs/db_common.py`) também é reutilizado diretamente por outros add-ons (`nextcloud`, `seafile`) que precisam de um banco de dados complementar no mesmo host |
-| [`postgresql`](https://www.postgresql.org/) | Banco de dados PostgreSQL — Kubernetes (Helm) ou instalado nativamente no SO; o caminho nativo do SO (`libs/db_common.py`) também é reutilizado diretamente por outros add-ons (ex.: `nextcloud`) que precisam de um banco de dados complementar no mesmo host |
-| [`openldap`](https://www.openldap.org/) | Serviço de diretório OpenLDAP |
-| [`ds389`](https://www.port389.org/) | 389 Directory Server (LDAP) |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://mariadb.org/"><code>mariadb</code></a></td>
+<td>Banco de dados MariaDB — Kubernetes (manifesto sem Helm) ou instalado nativamente no SO; o caminho nativo do SO (<code>libs/db_common.py</code>) também é reutilizado diretamente por outros add-ons (<code>nextcloud</code>, <code>seafile</code>) que precisam de um banco de dados complementar no mesmo host</td>
+</tr>
+<tr>
+<td><a href="https://www.postgresql.org/"><code>postgresql</code></a></td>
+<td>Banco de dados PostgreSQL — Kubernetes (Helm) ou instalado nativamente no SO; o caminho nativo do SO (<code>libs/db_common.py</code>) também é reutilizado diretamente por outros add-ons (ex.: <code>nextcloud</code>) que precisam de um banco de dados complementar no mesmo host</td>
+</tr>
+<tr>
+<td><a href="https://www.openldap.org/"><code>openldap</code></a></td>
+<td>Serviço de diretório OpenLDAP</td>
+</tr>
+<tr>
+<td><a href="https://www.port389.org/"><code>ds389</code></a></td>
+<td>389 Directory Server (LDAP)</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-collaboration"></a></p>
 <details open>
 <summary><strong>Colaboração &amp; compartilhamento de arquivos</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`nextcloud`](https://nextcloud.com/) | Nextcloud — containers podman independentes (sem Kubernetes, o único modo que suporta instalações de apps em modo air-gapped) por padrão, ou o chart Helm oficial da comunidade em um cluster Kubernetes; apps opcionais de Talk/Groupware/Flow/Assistant e integração de edição de documentos ONLYOFFICE/Euro-Office/Collabora |
-| [`seafile`](https://www.seafile.com/) | Seafile — containers podman independentes (sem Kubernetes) por padrão, ou o chart Helm oficial real em um cluster Kubernetes |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://nextcloud.com/"><code>nextcloud</code></a></td>
+<td>Nextcloud — containers podman independentes (sem Kubernetes, o único modo que suporta instalações de apps em modo air-gapped) por padrão, ou o chart Helm oficial da comunidade em um cluster Kubernetes; apps opcionais de Talk/Groupware/Flow/Assistant e integração de edição de documentos ONLYOFFICE/Euro-Office/Collabora</td>
+</tr>
+<tr>
+<td><a href="https://www.seafile.com/"><code>seafile</code></a></td>
+<td>Seafile — containers podman independentes (sem Kubernetes) por padrão, ou o chart Helm oficial real em um cluster Kubernetes</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-cicd"></a></p>
 <details open>
 <summary><strong>CI/CD &amp; ferramentas de desenvolvimento</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`jenkins`](https://www.jenkins.io/) | Jenkins CI |
-| [`gitlab`](https://about.gitlab.com/) | GitLab — container podman Omnibus independente (sem Kubernetes) por padrão, ou o chart Helm oficial real em um cluster Kubernetes |
-| [`appcollection`](https://apps.rancher.io/) | SUSE Application Collection |
-| [`stackpack`](https://www.stackstate.com/) | Integração de monitoramento StackState |
-| [`trento`](https://www.trento-project.io/) | Monitoramento de infraestrutura SAP |
-| [`prometheus`](https://prometheus.io/) | Servidor Prometheus independente (container podman, sem Kubernetes) — coleta os próprios exporters embutidos de um servidor `smlm`/`uyuni` (`smlm_monitoring_enabled`) ou qualquer alvo personalizado de `prometheus_scrape_configs` |
-| [`grafana`](https://grafana.com/) | Servidor Grafana independente (container podman, sem Kubernetes) — provisiona automaticamente uma fonte de dados Prometheus e, opcionalmente, o dashboard real da comunidade do Grafana Labs para os próprios exporters de um servidor `smlm`/`uyuni` |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.jenkins.io/"><code>jenkins</code></a></td>
+<td>Jenkins CI</td>
+</tr>
+<tr>
+<td><a href="https://about.gitlab.com/"><code>gitlab</code></a></td>
+<td>GitLab — container podman Omnibus independente (sem Kubernetes) por padrão, ou o chart Helm oficial real em um cluster Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
+<td>SUSE Application Collection</td>
+</tr>
+<tr>
+<td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
+<td>Integração de monitoramento StackState</td>
+</tr>
+<tr>
+<td><a href="https://www.trento-project.io/"><code>trento</code></a></td>
+<td>Monitoramento de infraestrutura SAP</td>
+</tr>
+<tr>
+<td><a href="https://prometheus.io/"><code>prometheus</code></a></td>
+<td>Servidor Prometheus independente (container podman, sem Kubernetes) — coleta os próprios exporters embutidos de um servidor <code>smlm</code>/<code>uyuni</code> (<code>smlm_monitoring_enabled</code>) ou qualquer alvo personalizado de <code>prometheus_scrape_configs</code></td>
+</tr>
+<tr>
+<td><a href="https://grafana.com/"><code>grafana</code></a></td>
+<td>Servidor Grafana independente (container podman, sem Kubernetes) — provisiona automaticamente uma fonte de dados Prometheus e, opcionalmente, o dashboard real da comunidade do Grafana Labs para os próprios exporters de um servidor <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-ai"></a></p>
 <details open>
 <summary><strong>IA / ML</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`ollama`](https://ollama.com/) | Runtime local de LLM |
-| [`deepseek`](https://www.deepseek.com/) | Modelo DeepSeek, servido via Ollama |
-| [`apertus`](https://www.swiss-ai.org/apertus) | Modelo Apertus (Swiss AI Initiative), servido via Ollama |
-| [`gemini`](https://ai.google.dev/gemini-api) | Proxy da API do Google Gemini (LiteLLM) |
-| [`anthropic`](https://www.anthropic.com/) | Proxy da API do Anthropic Claude (LiteLLM) |
-| [`openai`](https://openai.com/) | Proxy da API da OpenAI (LiteLLM) |
-| [`kimi`](https://www.moonshot.ai/) | Proxy da API do Moonshot AI Kimi (LiteLLM) |
-| [`open_webui`](https://openwebui.com/) | Frontend de chat para Ollama / endpoints compatíveis com OpenAI |
-| [`hermes`](https://github.com/NousResearch/hermes-agent) | Hermes Agent — o agente de IA pessoal autoaprimorável da Nous Research (bot de Telegram/Discord/Slack + dashboard web) |
-| [`suse_ai`](https://www.suse.com/solutions/artificial-intelligence/) | Stack de IA próprio da SUSE: Ollama + Open WebUI + Milvus |
-| [`milvus`](https://milvus.io/) | Banco de dados vetorial Milvus (busca RAG/embeddings) |
-| [`qdrant`](https://qdrant.tech/) | Banco de dados vetorial Qdrant (busca RAG/embeddings) |
-| [`weaviate`](https://weaviate.io/) | Banco de dados vetorial Weaviate (busca RAG/embeddings) |
-| [`gpu_operator`](https://github.com/NVIDIA/gpu-operator) | NVIDIA GPU Operator (agendamento de GPU para cargas de trabalho de IA) |
-| [`qwen`](https://qwenlm.github.io/) | Modelo Qwen2.5, servido via Ollama |
-| [`mistral`](https://mistral.ai/) | Modelo Mistral, servido via Ollama |
-| [`codellama`](https://github.com/meta-llama/codellama) | Modelo Code Llama, servido via Ollama |
-| [`starcoder2`](https://github.com/bigcode-project/starcoder2) | Modelo StarCoder2, servido via Ollama |
-| [`phoebe`](https://github.com/SUSE/phoebe) | (veja `install_phoebe --schema`) |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://ollama.com/"><code>ollama</code></a></td>
+<td>Runtime local de LLM</td>
+</tr>
+<tr>
+<td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
+<td>Modelo DeepSeek, servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://www.swiss-ai.org/apertus"><code>apertus</code></a></td>
+<td>Modelo Apertus (Swiss AI Initiative), servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemini-api"><code>gemini</code></a></td>
+<td>Proxy da API do Google Gemini (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.anthropic.com/"><code>anthropic</code></a></td>
+<td>Proxy da API do Anthropic Claude (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openai.com/"><code>openai</code></a></td>
+<td>Proxy da API da OpenAI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.moonshot.ai/"><code>kimi</code></a></td>
+<td>Proxy da API do Moonshot AI Kimi (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openwebui.com/"><code>open_webui</code></a></td>
+<td>Frontend de chat para Ollama / endpoints compatíveis com OpenAI</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
+<td>Hermes Agent — o agente de IA pessoal autoaprimorável da Nous Research (bot de Telegram/Discord/Slack + dashboard web)</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
+<td>Stack de IA próprio da SUSE: Ollama + Open WebUI + Milvus</td>
+</tr>
+<tr>
+<td><a href="https://milvus.io/"><code>milvus</code></a></td>
+<td>Banco de dados vetorial Milvus (busca RAG/embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://qdrant.tech/"><code>qdrant</code></a></td>
+<td>Banco de dados vetorial Qdrant (busca RAG/embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://weaviate.io/"><code>weaviate</code></a></td>
+<td>Banco de dados vetorial Weaviate (busca RAG/embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/gpu-operator"><code>gpu_operator</code></a></td>
+<td>NVIDIA GPU Operator (agendamento de GPU para cargas de trabalho de IA)</td>
+</tr>
+<tr>
+<td><a href="https://qwenlm.github.io/"><code>qwen</code></a></td>
+<td>Modelo Qwen2.5, servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://mistral.ai/"><code>mistral</code></a></td>
+<td>Modelo Mistral, servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/meta-llama/codellama"><code>codellama</code></a></td>
+<td>Modelo Code Llama, servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
+<td>Modelo StarCoder2, servido via Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
+<td>(veja <code>install_phoebe --schema</code>)</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-virt"></a></p>
 <details open>
 <summary><strong>Virtualização</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`harvester`](https://harvesterhci.io/) | Provisionamento de nós SUSE Virtualization (Harvester/KubeVirt) |
-| [`kiwi`](https://osinside.github.io/kiwi/) | Construtor de appliances KIWI |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
+<td>Provisionamento de nós SUSE Virtualization (Harvester/KubeVirt)</td>
+</tr>
+<tr>
+<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
+<td>Construtor de appliances KIWI</td>
+</tr>
+</tbody>
+</table>
 
 </details>
 
@@ -884,15 +1134,44 @@ install_longhorn --schema yaml      # ...ou YAML
 <details open>
 <summary><strong>Aplicações de demonstração</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`wordpress`](https://wordpress.org/) | Aplicação de demonstração WordPress + MySQL |
-| [`fluentd`](https://www.fluentd.org/) | Agregação de logs |
-| [`mailman`](https://www.list.org/) | Gestão de listas de e-mail GNU Mailman 3 + interface web |
-| [`mediagoblin`](https://www.mediagoblin.org/) | Plataforma federada de publicação de mídia GNU MediaGoblin |
-| [`colt`](https://gitlab.com/NalaGinrut/colt) | Colt, um motor de blog baseado em git sobre GNU Artanis |
-| [`wikimusic`](https://codeberg.org/jjba23/wikimusic) | WikiMusic, um CMS de conhecimento musical sobre GNU Artanis |
-| [`home_assistant`](https://www.home-assistant.io/) | Plataforma de automação residencial Home Assistant |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://wordpress.org/"><code>wordpress</code></a></td>
+<td>Aplicação de demonstração WordPress + MySQL</td>
+</tr>
+<tr>
+<td><a href="https://www.fluentd.org/"><code>fluentd</code></a></td>
+<td>Agregação de logs</td>
+</tr>
+<tr>
+<td><a href="https://www.list.org/"><code>mailman</code></a></td>
+<td>Gestão de listas de e-mail GNU Mailman 3 + interface web</td>
+</tr>
+<tr>
+<td><a href="https://www.mediagoblin.org/"><code>mediagoblin</code></a></td>
+<td>Plataforma federada de publicação de mídia GNU MediaGoblin</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.com/NalaGinrut/colt"><code>colt</code></a></td>
+<td>Colt, um motor de blog baseado em git sobre GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://codeberg.org/jjba23/wikimusic"><code>wikimusic</code></a></td>
+<td>WikiMusic, um CMS de conhecimento musical sobre GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
+<td>Plataforma de automação residencial Home Assistant</td>
+</tr>
+</tbody>
+</table>
 
 </details>
 
@@ -900,11 +1179,28 @@ install_longhorn --schema yaml      # ...ou YAML
 <details open>
 <summary><strong>Jogos</strong></summary>
 
-| Nome do add-on | Descrição |
-|---|---|
-| [`supertux_classic`](https://github.com/Alzter/SuperTux-Classic) | SuperTux Classic, um jogo de plataforma Godot open source auto-hospedado |
-| [`skynet_simulator`](https://github.com/edisgreat/skynet-simulator) | Skynet Simulator, um jogo de quebra-cabeça/idle open source auto-hospedado para navegador |
-| [`open_saber`](https://github.com/leandrodreamer/BeepSaber) | Open Saber, um jogo de ritmo/corte de blocos open source auto-hospedado |
+<table>
+<thead>
+<tr>
+<th>Nome do add-on</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/Alzter/SuperTux-Classic"><code>supertux_classic</code></a></td>
+<td>SuperTux Classic, um jogo de plataforma Godot open source auto-hospedado</td>
+</tr>
+<tr>
+<td><a href="https://github.com/edisgreat/skynet-simulator"><code>skynet_simulator</code></a></td>
+<td>Skynet Simulator, um jogo de quebra-cabeça/idle open source auto-hospedado para navegador</td>
+</tr>
+<tr>
+<td><a href="https://github.com/leandrodreamer/BeepSaber"><code>open_saber</code></a></td>
+<td>Open Saber, um jogo de ritmo/corte de blocos open source auto-hospedado</td>
+</tr>
+</tbody>
+</table>
 
 </details>
 

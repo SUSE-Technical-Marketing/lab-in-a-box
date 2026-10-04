@@ -11,13 +11,13 @@
 
 lab-in-a-box builds complete labs from a single JSON or YAML file: the VMs, DNS, Kubernetes clusters and add-ons you describe. The VMs can run on your own KVM hosts, on Harvester, or on any of eight public clouds, and the same file works across them.
 
-**Documentation:** https://suse-technical-marketing.github.io/lab-in-a-box/
+**Documentation:** https://rmahique.github.io/lab-in-a-box/
 
 ## Index
 
-- [English documentation](https://suse-technical-marketing.github.io/lab-in-a-box/) — architecture, quick start, lab format, add-ons, configuration, testing
-- [Web UI (lab-builder)](https://suse-technical-marketing.github.io/lab-in-a-box/webui.html)
-- Translations: [Español](https://suse-technical-marketing.github.io/lab-in-a-box/es.html) · [Deutsch](https://suse-technical-marketing.github.io/lab-in-a-box/de.html) · [Français](https://suse-technical-marketing.github.io/lab-in-a-box/fr.html) · [Português (Brasil)](https://suse-technical-marketing.github.io/lab-in-a-box/pt-BR.html) · [日本語](https://suse-technical-marketing.github.io/lab-in-a-box/ja.html) · [简体中文](https://suse-technical-marketing.github.io/lab-in-a-box/zh-CN.html)
+- [English documentation](https://rmahique.github.io/lab-in-a-box/) — architecture, quick start, lab format, add-ons, configuration, testing
+- [Web UI (lab-builder)](https://rmahique.github.io/lab-in-a-box/webui.html)
+- Translations: [Español](https://rmahique.github.io/lab-in-a-box/es.html) · [Deutsch](https://rmahique.github.io/lab-in-a-box/de.html) · [Français](https://rmahique.github.io/lab-in-a-box/fr.html) · [Português (Brasil)](https://rmahique.github.io/lab-in-a-box/pt-BR.html) · [日本語](https://rmahique.github.io/lab-in-a-box/ja.html) · [简体中文](https://rmahique.github.io/lab-in-a-box/zh-CN.html)
 
 ## Repository layout
 
