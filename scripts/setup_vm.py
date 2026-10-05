@@ -95,7 +95,7 @@ def provision_vm(definition, config, defaults, vm_name):
 
     config_method = env.get("config_method", "") or ""
 
-    backend.copy_vm_image(env.get("ISO_IMAGE", ""), vm_name,
+    backend.copy_vm_image(env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), vm_name,
                            env.get("VM_DSK", ""), config_method=config_method)
 
     if config_method == "":
@@ -122,7 +122,7 @@ def provision_vm(definition, config, defaults, vm_name):
         )
     elif config_method == "install_iso":
         prepare_install_iso(
-            vm_name, lab_setup_path, env.get("install_type", ""), env.get("ISO_IMAGE", ""),
+            vm_name, lab_setup_path, env.get("install_type", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""),
             mymac, env.get("myip", ""), env.get("mymask", ""), env.get("mygw", ""),
             env.get("mydns", ""), env.get("mydomain", ""),
             env.get("ROOT_PWD_HASH", ""), root_ssh_key=env.get("ROOT_SSH_KEY"),
@@ -150,7 +150,7 @@ def provision_vm(definition, config, defaults, vm_name):
         vm_dsk_bus=env.get("VM_DSK_BUS", "virtio"),
         ign_file=ign_file, com_file=com_file,
         salt_states=env.get("salt_states", ""),
-        install_type=env.get("install_type", ""), iso_image=env.get("ISO_IMAGE", ""),
+        install_type=env.get("install_type", ""), iso_image=env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""),
         iso_loc=iso_loc, mydns=env.get("mydns", ""),
         vcluster=env.get("vcluster", ""),
         mymac=mymac,
@@ -184,7 +184,7 @@ def provision_vm(definition, config, defaults, vm_name):
         # resolution at it — a known, separately tracked follow-up, not silently glossed over).
         dns_vm_ip = backends.ensure_cloud_dns_vm(
             backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
-            env.get("mydomain", ""), env.get("ISO_IMAGE", ""), lab_setup_path,
+            env.get("mydomain", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path,
         )
         remote_dns_servers.append(dns_vm_ip)
 
@@ -221,7 +221,7 @@ def provision_vm(definition, config, defaults, vm_name):
             hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
         root_ssh_key = Path("/root/.ssh/id_rsa.pub").read_text().strip()
         hub_host, _hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub(
-            hub_backend, hub_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key,
+            hub_backend, hub_backend_name, env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key,
             wg_port=wg_port, overlay_cidr=overlay_cidr)
 
         this_backend_name = backends.effective_backend_name(definition, config, vm_name)
@@ -265,7 +265,7 @@ def provision_vm(definition, config, defaults, vm_name):
             if site_cidr:
                 gw_vm_name = overlay.hub_vm_name(this_backend_name, getattr(backend, "account", ""))
                 gw_public_ip = overlay.ensure_site_gateway_vm(
-                    backend, this_backend_name, env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key)
+                    backend, this_backend_name, env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key)
                 overlay.ensure_overlay_site_gateway(this_site, gw_public_ip, hub_host, hub_pubkey,
                                                      wg_port, site_cidr, overlay_cidr=overlay_cidr)
                 backend.disable_source_dest_check(gw_vm_name)

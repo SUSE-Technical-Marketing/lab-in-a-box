@@ -31,7 +31,7 @@
 #   ds389_ldap_nodeport   : NodePort for plaintext LDAP (default 30389, the upstream example value)
 #   ds389_ldaps_nodeport  : NodePort for LDAPS (default 30636, the upstream example value)
 
-__version__ = "__LABVERSION__"
+__version__ = "fbc6e36"
 
 PLUGIN = {
     "name": "ds389",

@@ -44,6 +44,14 @@ import services  # noqa: E402
 import backends  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
+from source_utils import get_source_type, is_url  # noqa: E402
+
+# Helper to get SOURCE_* with ISO_* fallback for backward compatibility
+def get_source_value(config, field_name):
+    """Get SOURCE_* field with ISO_* fallback (for backward compatibility)."""
+    source_field = f"SOURCE_{field_name}"
+    iso_field = f"ISO_{field_name}"
+    return config.get(source_field) or config.get(iso_field)
 
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>

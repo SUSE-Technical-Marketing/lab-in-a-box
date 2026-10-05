@@ -55,7 +55,7 @@
 # install_prometheus.py. Reachable remotely on grafana_port — the NODE ITSELF needs that port
 # open (this addon does not manage firewalls/security groups; see the node's own aws_open_ports).
 
-__version__ = "__LABVERSION__"
+__version__ = "fbc6e36"
 
 PLUGIN = {
     "name": "grafana",
