@@ -8,22 +8,33 @@ from pathlib import Path
 
 
 def load_schemas():
-    """Load addon schemas."""
+    """Load addon schemas, with fallback to filesystem if schema.json is invalid."""
     schema_file = Path(__file__).parent.parent / "webui" / "htdocs" / "schema.json"
-    if not schema_file.exists():
-        print(f"Error: {schema_file} not found", file=sys.stderr)
-        sys.exit(1)
-    try:
-        with open(schema_file) as f:
-            content = f.read().strip()
-            if not content:
-                print(f"Error: {schema_file} is empty (extract-webui-schemas.py produced no output)", file=sys.stderr)
-                sys.exit(1)
-            return json.loads(content)
-    except json.JSONDecodeError as e:
-        print(f"Error: {schema_file} contains invalid JSON: {e}", file=sys.stderr)
-        print(f"File size: {schema_file.stat().st_size} bytes", file=sys.stderr)
-        sys.exit(1)
+
+    # Try to load existing schema.json
+    if schema_file.exists():
+        try:
+            with open(schema_file) as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+                    if data.get("addons"):  # Valid and has addons
+                        return data
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: generate from install_*.py files
+    print(f"Fallback: Generating addon list from install_*.py scripts", file=sys.stderr)
+    scripts_dir = Path(__file__).parent
+    addon_list = sorted([s.stem.replace("install_", "") for s in scripts_dir.glob("install_*.py")])
+
+    return {
+        "version": "1.0",
+        "generated": True,
+        "addons": addon_list,
+        "infrastructure_addons": [],
+        "schemas": {}
+    }
 
 
 def load_base_schema():
