@@ -41,9 +41,21 @@ jobs:
       - name: Extract addon schemas
         run: |
           cd "${{ github.workspace }}"
+          echo "Running extract-webui-schemas.py..."
           python3.11 scripts/extract-webui-schemas.py > webui/htdocs/schema.json 2>&1
-          echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas"
-          echo "Schema file size: $(wc -c < webui/htdocs/schema.json) bytes"
+          echo "Extract completed. Schema.json details:"
+          ls -lh webui/htdocs/schema.json
+          wc -c < webui/htdocs/schema.json
+          echo "First 200 chars of schema.json:"
+          head -c 200 webui/htdocs/schema.json
+          echo ""
+          if [ -s webui/htdocs/schema.json ]; then
+            echo "✓ Schema file is not empty"
+            echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas" || echo "✗ Invalid JSON in schema.json"
+          else
+            echo "✗ ERROR: schema.json is empty!"
+            exit 1
+          fi
 
       - name: Build static WebUI
         run: |

@@ -63,12 +63,24 @@ def extract_addon_schemas():
 
 def main():
     """Main entry point."""
-    schemas = extract_addon_schemas()
+    try:
+        schemas = extract_addon_schemas()
 
-    # Output to stdout
-    print(json.dumps(schemas, indent=2))
+        # Output to stdout (always output valid JSON, even if empty)
+        output = json.dumps(schemas, indent=2)
+        print(output)
 
-    print(f"\nExtracted {len(schemas['addons'])} addon schemas", file=sys.stderr)
+        if not output:
+            print("ERROR: JSON output is empty!", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"\nExtracted {len(schemas['addons'])} addon schemas", file=sys.stderr)
+    except Exception as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        # Output empty but valid JSON as fallback
+        fallback = {"version": "1.0", "generated": False, "addons": [], "infrastructure_addons": [], "schemas": {}, "error": str(e)}
+        print(json.dumps(fallback, indent=2))
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

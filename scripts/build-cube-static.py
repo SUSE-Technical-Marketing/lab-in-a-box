@@ -13,8 +13,17 @@ def load_schemas():
     if not schema_file.exists():
         print(f"Error: {schema_file} not found", file=sys.stderr)
         sys.exit(1)
-    with open(schema_file) as f:
-        return json.load(f)
+    try:
+        with open(schema_file) as f:
+            content = f.read().strip()
+            if not content:
+                print(f"Error: {schema_file} is empty (extract-webui-schemas.py produced no output)", file=sys.stderr)
+                sys.exit(1)
+            return json.loads(content)
+    except json.JSONDecodeError as e:
+        print(f"Error: {schema_file} contains invalid JSON: {e}", file=sys.stderr)
+        print(f"File size: {schema_file.stat().st_size} bytes", file=sys.stderr)
+        sys.exit(1)
 
 
 def load_base_schema():
