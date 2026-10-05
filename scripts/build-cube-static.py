@@ -24,16 +24,28 @@ def load_schemas():
             pass
 
     # Fallback: generate from install_*.py files
-    print(f"Fallback: Generating addon list from install_*.py scripts", file=sys.stderr)
+    print(f"Fallback: Generating addon list and minimal schemas from install_*.py scripts", file=sys.stderr)
     scripts_dir = Path(__file__).parent
     addon_list = sorted([s.stem.replace("install_", "") for s in scripts_dir.glob("install_*.py")])
+
+    # Generate minimal schemas for each addon so they can be added even without config options
+    schemas = {}
+    for addon_name in addon_list:
+        schemas[addon_name] = {
+            "schema_version": "1.0",
+            "addon": addon_name,
+            "section": addon_name,
+            "description": f"{addon_name} addon",
+            "fields": [],
+            "capabilities": {"targets": ["container"], "layers": ["kubernetes"]}
+        }
 
     return {
         "version": "1.0",
         "generated": True,
         "addons": addon_list,
         "infrastructure_addons": [],
-        "schemas": {}
+        "schemas": schemas
     }
 
 
