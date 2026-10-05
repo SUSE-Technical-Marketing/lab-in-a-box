@@ -96,11 +96,19 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 // Static mode CSS: hide server-dependent buttons
 const style = document.createElement('style');
 style.textContent = `
-  button[onclick*="validate"], button[onclick*="save"] { display: none !important; }
+  button[onclick*="validate"], button[onclick*="save"], button[onclick*="refresh"], button:has-text("Refresh Images") { display: none !important; }
+  button:contains("Refresh Images") { display: none !important; }
   .actions { opacity: 1; }
   .actions .btn.disabled { opacity: 0.5; cursor: not-allowed; }
 `;
 document.head.appendChild(style);
+
+// Also hide by text content for Refresh Images button
+setTimeout(() => {
+  Array.from(document.querySelectorAll('button')).forEach(btn => {
+    if (btn.textContent.includes('Refresh Images')) btn.style.display = 'none';
+  });
+}, 100);
 
 // Override API functions for static mode
 const originalApiGet = window.apiGet;
