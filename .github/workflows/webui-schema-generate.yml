@@ -41,19 +41,31 @@ jobs:
       - name: Extract addon schemas
         run: |
           cd "${{ github.workspace }}"
-          echo "Running extract-webui-schemas.py..."
-          python3.11 scripts/extract-webui-schemas.py > webui/htdocs/schema.json 2>&1
-          echo "Extract completed. Schema.json details:"
+          echo "=== Extracting addon schemas ==="
+          python3.11 scripts/extract-webui-schemas.py > webui/htdocs/schema.json 2>extract-stderr.log
+
+          echo "Schema file details:"
           ls -lh webui/htdocs/schema.json
-          wc -c < webui/htdocs/schema.json
-          echo "First 200 chars of schema.json:"
-          head -c 200 webui/htdocs/schema.json
-          echo ""
-          if [ -s webui/htdocs/schema.json ]; then
-            echo "✓ Schema file is not empty"
-            echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas" || echo "✗ Invalid JSON in schema.json"
+
+          # Validate JSON
+          if jq empty webui/htdocs/schema.json 2>/dev/null; then
+            addon_count=$(jq '.addons | length' webui/htdocs/schema.json)
+            echo "✓ Valid JSON with $addon_count addons"
+            if [ "$addon_count" -gt 0 ]; then
+              echo "✓ SUCCESS: Schema extraction produced $addon_count addons"
+            else
+              echo "⚠ WARNING: Schema extracted but no addons found (empty lists)"
+              echo "Extract stderr:"
+              cat extract-stderr.log | head -50
+            fi
           else
-            echo "✗ ERROR: schema.json is empty!"
+            echo "✗ ERROR: Invalid JSON in schema.json"
+            echo "File size: $(wc -c < webui/htdocs/schema.json) bytes"
+            echo "First 500 chars:"
+            head -c 500 webui/htdocs/schema.json
+            echo ""
+            echo "Extract stderr:"
+            cat extract-stderr.log
             exit 1
           fi
 
