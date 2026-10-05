@@ -609,19 +609,35 @@ class LibvirtBackend(VMBackend):
             log("- install_iso: skipping base image copy (disk created by virt-install)")
             return
 
-        from source_utils import is_url
+        from source_utils import is_url, get_source_type, download_and_validate_source
 
         ext = "raw" if disk_format == "raw" else "qcow2"
         dest = "{}/{}.{}".format(self.vm_img_loc, vm_name, ext)
 
         # Handle SOURCE_IMAGE: can be URL, local filename in ISO_LOC, or local file path
         if is_url(iso_image):
-            # TODO: Download from URL and validate with source_sha256
-            # This is complex and will be implemented in a separate phase
-            die(f"URL-based SOURCE_IMAGE not yet implemented: {iso_image}")
-
-        # Local file handling (backward compatible)
-        src_q = shlex.quote("{}/{}".format(self.iso_loc, iso_image))
+            # Download from URL
+            log("- Downloading SOURCE_IMAGE from URL: {}".format(iso_image))
+            local_img = "{}/{}".format(self.iso_loc, iso_image.split('/')[-1])  # Use filename from URL
+            try:
+                download_and_validate_source(
+                    iso_image,
+                    local_img,
+                    checksum_value=source_sha256 if get_source_type(source_sha256) == "checksum" else None,
+                    checksum_url=source_sha256 if get_source_type(source_sha256) == "url" else None
+                )
+            except Exception as e:
+                die(f"Failed to download SOURCE_IMAGE: {e}")
+            src_q = shlex.quote(local_img)
+        else:
+            # Local file handling (backward compatible)
+            # Check if it's a local file path or just a filename
+            if "/" in iso_image or "\\" in iso_image:
+                # It's a file path
+                src_q = shlex.quote(iso_image)
+            else:
+                # It's a filename in ISO_LOC
+                src_q = shlex.quote("{}/{}".format(self.iso_loc, iso_image))
         dest_q = shlex.quote(dest)
 
         log("- Copy the image for the new VM \"{}{}{}\"".format(_RED, vm_name, _RESET))
