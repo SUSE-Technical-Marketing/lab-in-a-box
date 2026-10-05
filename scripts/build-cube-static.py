@@ -18,17 +18,34 @@ def load_schemas():
                 content = f.read().strip()
                 if content:
                     data = json.loads(content)
-                    if data.get("addons"):  # Valid and has addons
+                    if data.get("schemas") and len(data.get("schemas", {})) > 0:  # Valid with detailed schemas
                         return data
         except json.JSONDecodeError:
             pass
 
-    # Fallback: generate from install_*.py files
-    print(f"Fallback: Generating addon list and minimal schemas from install_*.py scripts", file=sys.stderr)
+    # Try to run extract script to get full schemas
+    print(f"Attempting to extract addon schemas via extract-webui-schemas.py", file=sys.stderr)
     scripts_dir = Path(__file__).parent
+    try:
+        result = subprocess.run(
+            ["python3.11", str(scripts_dir / "extract-webui-schemas.py")],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if data.get("schemas"):
+                print(f"✓ Successfully extracted {len(data['schemas'])} addon schemas", file=sys.stderr)
+                return data
+    except Exception as e:
+        print(f"⚠ Extraction failed ({type(e).__name__}), using fallback", file=sys.stderr)
+
+    # Final fallback: generate minimal schemas from install_*.py files
+    print(f"Fallback: Generating minimal addon schemas from install_*.py scripts", file=sys.stderr)
     addon_list = sorted([s.stem.replace("install_", "") for s in scripts_dir.glob("install_*.py")])
 
-    # Generate minimal schemas for each addon so they can be added even without config options
+    # Generate minimal schemas for each addon
     schemas = {}
     for addon_name in addon_list:
         schemas[addon_name] = {
