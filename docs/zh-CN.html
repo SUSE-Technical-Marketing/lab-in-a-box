@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>一个文件，一个命令。</strong>以声明式方式描述虚拟机、Kubernetes集群（RKE2或K3s）和附加组件。<code>setup_lab.py</code>按依赖关系顺序创建它们，无需手动运行<code>virt-install</code>或Ansible。</li>
 <li><strong>家庭或云中的实验室，相同的定义。</strong>实验室虚拟机在您拥有的KVM主机、Harvester HCI或AWS、Google Cloud、阿里巴巴云、Hetzner、Scaleway、UpCloud、OVHcloud或Exoscale上运行。实验室可以跨多个KVM主机扩展，单个实验室可以通过<a href="#cross-cloud-wireguard-overlay">云间WireGuard叠加网络</a>组合云和位置。</li>
-<li><strong>72个预集成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud等，以及有意脆弱的演示应用用于安全培训。</li>
+<li><strong>71个预集成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud等，以及有意脆弱的演示应用用于安全培训。</li>
 <li><strong>跟随代码的网络界面。</strong><a href="#web-ui-lab-builder">lab-builder</a>直接从附加组件的架构呈现每个表单。向脚本添加新字段时，无需更改前端即可在UI中显示。</li>
 <li><strong>可交换的配置。</strong>SLE Micro使用Ignition和Combustion，openSUSE和Ubuntu使用cloud-init，旧镜像使用<code>virt-customize</code>，或使用真实安装ISO进行脚本驱动的安装（AutoYaST、Kickstart、Preseed或AutoInstall）。</li>
 <li><strong>实验室文件外的凭据。</strong>云和服务凭据可以存在于按帐户加密的文件中（Argon2id密钥派生后接AES-256-GCM和ChaCha20-Poly1305级联）。</li>

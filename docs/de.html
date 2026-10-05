@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>Eine Datei, ein Befehl.</strong> Beschreiben Sie VMs, Kubernetes-Cluster (RKE2 oder K3s) und Add-ons deklarativ. <code>setup_lab.py</code> baut sie in Abhängigkeitsreihenfolge auf, ohne dass Sie <code>virt-install</code> oder Ansible von Hand ausführen müssen.</li>
 <li><strong>Home-Lab oder Cloud, dieselbe Definition.</strong> Lab-VMs laufen auf KVM-Hosts, die Ihnen gehören, auf Harvester HCI oder auf AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud oder Exoscale. Labs können sich über mehrere KVM-Hosts erstrecken, und ein einzelnes Lab kann über ein <a href="#cross-cloud-wireguard-overlay">Cross-Cloud-WireGuard-Overlay</a> Clouds und Standorte kombinieren.</li>
-<li><strong>72 vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
+<li><strong>71 vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
 <li><strong>Eine Web-UI, die dem Code folgt.</strong> <a href="#web-ui-lab-builder">lab-builder</a> rendert jedes Formular aus dem eigenen Schema des Add-ons. Ein neues Feld in einem Skript erscheint deshalb in der UI, ohne dass am Frontend etwas geändert werden muss.</li>
 <li><strong>Austauschbare Bereitstellung.</strong> Ignition und Combustion für SLE Micro, cloud-init für openSUSE und Ubuntu, <code>virt-customize</code> für ältere Images oder eine skriptgesteuerte Installation von einem Installations-ISO (AutoYaST, Kickstart, Preseed oder AutoInstall).</li>
 <li><strong>Zugangsdaten außerhalb der Lab-Datei.</strong> Cloud- und Service-Zugangsdaten können in verschlüsselten Dateien pro Konto liegen (Schlüsselableitung mit Argon2id, danach AES-256-GCM und ChaCha20-Poly1305 hintereinandergeschaltet).</li>
@@ -994,7 +994,7 @@ install_longhorn --schema yaml      # ...or YAML
 <hr />
 <h2 id="available-addons">Verfügbare Add-ons</h2>
 <p>Add-ons werden über ihren Namen im Array <code>addons</code> eines kclusters oder Knotens referenziert. Das passende Skript <code>install_&lt;name&gt;</code> muss im <code>PATH</code> liegen.</p>
-<p><sub>Direkt zu: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sicherheit &amp; Compliance</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Speicher &amp; Datenbanken</a> · <a href="#addons-collaboration">Zusammenarbeit &amp; Dateifreigabe</a> · <a href="#addons-cicd">CI/CD &amp; Entwicklerwerkzeuge</a> · <a href="#addons-ai">KI / ML</a> · <a href="#addons-virt">Virtualisierung</a> · <a href="#addons-demos">Demo-Anwendungen</a> · <a href="#addons-games">Spiele</a></sub></p>
+<p><sub>Direkt zu: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sicherheit &amp; Compliance</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Speicher &amp; Datenbanken</a> · <a href="#addons-collaboration">Zusammenarbeit &amp; Dateifreigabe</a> · <a href="#addons-cicd">CI/CD &amp; Entwicklerwerkzeuge</a> · <a href="#addons-ai">KI / ML</a> · <a href="#addons-virt">Virtualisierung</a> · <a href="#addons-demos">Demo-Anwendungen</a> · <a href="#addons-games">Spiele</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes-Plattform &amp; GitOps</strong></summary>
@@ -1115,7 +1115,7 @@ install_longhorn --schema yaml      # ...or YAML
 </table>
 </details>
 
-<p><a id="addons-suma"></a></p>
+<p><a id="addons-smlm"></a></p>
 <details open>
 <summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
 
@@ -1133,7 +1133,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE-Multi-Linux-Manager-Server, derselbe Funktionsumfang wie <code>uyuni</code>, per Kubernetes/Helm bereitgestellt</td>
+<td>SUSE-Multi-Linux-Manager-Server, derselbe Funktionsumfang wie <code>uyuni</code>, per Helm auf Kubernetes bereitgestellt oder mit <code>smlm_deployment: "podman"</code> per <code>mgradm</code> direkt auf einem Host oder einer VM</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1142,10 +1142,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><code>client_registration</code></td>
 <td>Registriert eine beliebige VM als Salt-Client eines bestehenden Servers <code>uyuni</code>/<code>smlm</code> (Bootstrap mit Aktivierungsschlüssel und Akzeptieren des Salt-Schlüssels)</td>
-</tr>
-<tr>
-<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>suma</code></a></td>
-<td>SUSE Multi-Linux Manager (SUMA), direkt auf dem Betriebssystem über <code>mgradm</code> installiert, nicht per Kubernetes</td>
 </tr>
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>

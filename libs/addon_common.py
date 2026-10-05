@@ -234,7 +234,7 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
     validate_fn : callable(Validator) used for --validate; if None, --validate
                   always exits 0 (mirrors a script whose block is just
                   `exit ${_ve}` with no checks — several addons have exactly
-                  this, e.g. install_uyuni, install_suma, install_wordpress).
+                  this, e.g. install_uyuni, install_wordpress).
     plugin      : this script's PLUGIN dict (see apps.py), printed as JSON by
                   --capabilities. Pass explicitly rather than having this
                   module go looking for it on the caller's module — every

@@ -49,9 +49,9 @@ check("schema('install_mariadb') keeps its own schema fields (section) too",
       sc.get("section") == "mariadb")
 
 # ── schema(): capabilities for a standalone-container addon ──────────────────
-# install_suma installs with mgradm and podman on the host, so it is a container addon, not an OS-native package.
-sc = discovery.schema("install_suma")
-check("schema('install_suma') has a capabilities.layers of ['standalone-container']",
+# install_grafana runs Grafana as a podman container on the host, so it is a container addon, not an OS-native package.
+sc = discovery.schema("install_grafana")
+check("schema('install_grafana') has a capabilities.layers of ['standalone-container']",
       sc.get("capabilities", {}).get("layers") == ["standalone-container"])
 
 # ── discover(): every listed item carries a layers list ──────────────────────
@@ -68,9 +68,9 @@ missing = [it["name"] for it in items if not it.get("targets")]
 check("every discover() item has a non-empty 'targets' list: {}".format(missing), missing == [])
 check("discover()'s install_mariadb entry targets container, vm and baremetal",
       mariadb_item is not None and mariadb_item["targets"] == ["container", "vm", "baremetal"])
-suma_item = next((it for it in items if it["name"] == "install_suma"), None)
-check("discover()'s install_suma entry targets vm and baremetal only",
-      suma_item is not None and suma_item["targets"] == ["vm", "baremetal"])
+grafana_item = next((it for it in items if it["name"] == "install_grafana"), None)
+check("discover()'s install_grafana entry targets vm and baremetal only",
+      grafana_item is not None and grafana_item["targets"] == ["vm", "baremetal"])
 
 
 if failures:

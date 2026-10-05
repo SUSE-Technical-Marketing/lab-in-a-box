@@ -3,7 +3,7 @@
 <ul>
 <li><strong>One file, one command.</strong> Describe VMs, Kubernetes clusters (RKE2 or K3s) and add-ons declaratively. <code>setup_lab.py</code> builds them in dependency order, without you running <code>virt-install</code> or Ansible by hand.</li>
 <li><strong>Home lab or cloud, same definition.</strong> Lab VMs run on KVM hosts you own, on Harvester HCI, or on AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud or Exoscale. Labs can span several KVM hosts, and a single lab can mix clouds and sites through a <a href="#cross-cloud-wireguard-overlay">cross-cloud WireGuard overlay</a>.</li>
-<li><strong>72 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
+<li><strong>71 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
 <li><strong>A web UI that follows the code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renders each form from the add-on's own schema, so a new field in a script shows up in the UI with no front-end change.</li>
 <li><strong>Pluggable provisioning.</strong> Ignition and Combustion for SLE Micro, cloud-init for openSUSE and Ubuntu, <code>virt-customize</code> for legacy images, or a scripted install from an installer ISO (AutoYaST, Kickstart, Preseed or AutoInstall).</li>
 <li><strong>Credentials kept out of the lab file.</strong> Cloud and service credentials can live in per-account encrypted files (Argon2id key derivation, then AES-256-GCM and ChaCha20-Poly1305 in cascade).</li>
@@ -839,7 +839,7 @@ install_longhorn --schema yaml      # ...or YAML
 <hr />
 <h2 id="available-addons">Available addons</h2>
 <p>Addons are referenced by name in the <code>addons</code> array of a kcluster or node. The corresponding <code>install_&lt;name&gt;</code> script must be on <code>PATH</code>.</p>
-<p><sub>Jump to: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Security &amp; compliance</a> · <a href="#addons-suma">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Storage &amp; databases</a> · <a href="#addons-collaboration">Collaboration &amp; file sharing</a> · <a href="#addons-cicd">CI/CD &amp; tooling</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">Virtualization</a> · <a href="#addons-demos">Demo applications</a> · <a href="#addons-games">Games</a></sub></p>
+<p><sub>Jump to: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Security &amp; compliance</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Storage &amp; databases</a> · <a href="#addons-collaboration">Collaboration &amp; file sharing</a> · <a href="#addons-cicd">CI/CD &amp; tooling</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">Virtualization</a> · <a href="#addons-demos">Demo applications</a> · <a href="#addons-games">Games</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes platform &amp; GitOps</strong></summary>
@@ -960,7 +960,7 @@ install_longhorn --schema yaml      # ...or YAML
 </table>
 </details>
 
-<p><a id="addons-suma"></a></p>
+<p><a id="addons-smlm"></a></p>
 <details open>
 <summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
 
@@ -978,7 +978,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager server — the same feature set as <code>uyuni</code>, Kubernetes/Helm-deployed</td>
+<td>SUSE Multi-Linux Manager server — the same feature set as <code>uyuni</code>, deployed with Helm on Kubernetes or, with <code>smlm_deployment: "podman"</code>, by <code>mgradm</code> directly on a host or VM</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -987,10 +987,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><code>client_registration</code></td>
 <td>Register any VM as a Salt client of an existing <code>uyuni</code>/<code>smlm</code> server (activation key bootstrap + salt-key acceptance)</td>
-</tr>
-<tr>
-<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>suma</code></a></td>
-<td>SUSE Multi-Linux Manager (SUMA), installed directly on the OS via <code>mgradm</code> — not Kubernetes</td>
 </tr>
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
