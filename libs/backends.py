@@ -387,6 +387,18 @@ class LibvirtBackend(VMBackend):
         """Same fallback as _virsh(), for virt-install."""
         return run_libvirt_tool("virt-install", self.remote_host, self.virt_srv, args, **kwargs)
 
+    def _graphics(self):
+        """virt-install --graphics value: spice, or vnc when the hypervisor's
+        domcapabilities list graphics types without spice (SLES 16's QEMU).
+        Queried once per backend; spice when the query fails."""
+        if getattr(self, "_graphics_value", None) is None:
+            r = self._virsh("domcapabilities", capture_output=True, text=True, check=False)
+            out = str(getattr(r, "stdout", "") or "")
+            no_spice = r.returncode == 0 and "<graphics supported='yes'>" in out \
+                and "<value>spice</value>" not in out
+            self._graphics_value = "{},listen=0.0.0.0".format("vnc" if no_spice else "spice")
+        return self._graphics_value
+
     def _virt_xml(self, *args, **kwargs):
         """Same fallback as _virsh(), for virt-xml (edits an already-defined domain's
         XML in place, as used by create_vm()'s autoinstall branch)."""
@@ -686,6 +698,8 @@ class LibvirtBackend(VMBackend):
                            # reason as cloud_instance_type above — this is the only backend
                            # without a trailing **kwargs, so it needs every cloud-only kwarg
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
+        nested_virtualization="",  # unused here — an AWS-only override, accepted and ignored
+                                   # like cloud_instance_type above.
     ):
         """
         Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
@@ -751,7 +765,7 @@ class LibvirtBackend(VMBackend):
             "--os-variant", os_variant, "--import",
             "--disk", "size={},path={}/{}.{},sparse=no,bus={},boot.order=1{}".format(
                 vm_dsk_gb, vm_img_loc, vm_name, disk_ext, vm_dsk_bus or "virtio", disk_type_arg),
-            "--graphics", "spice,listen=0.0.0.0",
+            "--graphics", self._graphics(),
             "--network", network, "--noautoconsole",
         ]
         if vm_machine:
@@ -834,7 +848,7 @@ class LibvirtBackend(VMBackend):
                         vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                     "--disk", "path={},device=cdrom,readonly=on".format(seed_remote),
                     *(extra_disk_args + [
-                        "--graphics", "spice,listen=0.0.0.0",
+                        "--graphics", self._graphics(),
                         "--network", network, "--noautoconsole", "--wait", "-1",
                     ]))
                 ssh_run(remote_host, "rm -f '{}' '{}' '{}'".format(
@@ -895,7 +909,7 @@ class LibvirtBackend(VMBackend):
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                 *(extra_disk_args + [
-                    "--graphics", "spice,listen=0.0.0.0",
+                    "--graphics", self._graphics(),
                     "--network", network, "--noautoconsole", "--wait", "-1",
                 ]))
             if r.returncode != 0:
