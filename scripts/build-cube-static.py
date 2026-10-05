@@ -85,8 +85,8 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 
     html = html[:head_end] + schema_inject + html[head_end:]
 
-    # Replace __LABVERSION__ with actual version
-    html = html.replace("__LABVERSION__", version)
+    # Replace c594a71 with actual version
+    html = html.replace("c594a71", version)
 
     # Find where to inject API overrides (after app.js loads, before closing </body>)
     body_end = html.rfind("</body>")
@@ -109,23 +109,37 @@ const hideButtonsByText = () => {
         btn.textContent.includes('Validate') ||
         btn.textContent.includes('Save')) {
       btn.style.display = 'none';
+      btn.disabled = true;
     }
   });
 };
-// Run after page loads and whenever palette changes
+// Run after page loads
 document.addEventListener('DOMContentLoaded', hideButtonsByText);
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', hideButtonsByText);
 } else {
   hideButtonsByText();
 }
+// Also watch for dynamically added buttons
+const observer = new MutationObserver(() => hideButtonsByText());
+observer.observe(document.body, { childList: true, subtree: true });
 
 // Override API functions for static mode
 const originalApiGet = window.apiGet;
 window.apiGet = async function(action, params = {}) {
   if (action === 'components') {
-    if (!window.EMBEDDED_SCHEMAS || !window.EMBEDDED_SCHEMAS.schemas) {
-      console.error('EMBEDDED_SCHEMAS not loaded');
+    if (!window.EMBEDDED_SCHEMAS) {
+      const msg = 'EMBEDDED_SCHEMAS not loaded - check if schemas script is before this one';
+      console.error(msg);
+      alert(msg);
+      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
+    }
+    if (!window.EMBEDDED_SCHEMAS.schemas) {
+      console.error('EMBEDDED_SCHEMAS.schemas is missing');
+      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
+    }
+    if (!window.EMBEDDED_SCHEMAS.addons) {
+      console.error('EMBEDDED_SCHEMAS.addons array missing');
       return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
     }
 
@@ -154,7 +168,7 @@ window.apiGet = async function(action, params = {}) {
     const regular = addons.map(buildComponent);
     const infrastructure = infraAddons.map(buildComponent);
 
-    console.log(`Loaded ${regular.length} regular addons, ${infrastructure.length} infrastructure addons`);
+    console.log(`✓ API: Loaded ${regular.length} regular addons, ${infrastructure.length} infrastructure addons`);
 
     return {
       components: regular,
