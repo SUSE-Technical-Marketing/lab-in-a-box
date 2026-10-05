@@ -85,8 +85,8 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 
     html = html[:head_end] + schema_inject + html[head_end:]
 
-    # Replace c594a71 with actual version
-    html = html.replace("c594a71", version)
+    # Replace __LABVERSION__ with actual git commit hash
+    html = html.replace("__LABVERSION__", version)
 
     # Find where to inject API overrides (after app.js loads, before closing </body>)
     body_end = html.rfind("</body>")
