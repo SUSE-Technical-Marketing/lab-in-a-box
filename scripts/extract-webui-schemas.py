@@ -26,7 +26,7 @@ def extract_addon_schemas():
                 ["python3.11", str(script_path), "--schema"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=10
             )
 
             if result.returncode == 0 and result.stdout.strip():
@@ -44,7 +44,12 @@ def extract_addon_schemas():
                     addon_list.append(addon)
                     print(f"  ✓ {addon}", file=sys.stderr)
             else:
-                print(f"  ✗ {addon_name}: no schema", file=sys.stderr)
+                if result.returncode != 0:
+                    print(f"  ✗ {addon_name}: exit code {result.returncode}", file=sys.stderr)
+                    if result.stderr:
+                        print(f"      stderr: {result.stderr[:200]}", file=sys.stderr)
+                else:
+                    print(f"  ✗ {addon_name}: no output", file=sys.stderr)
         except Exception as e:
             print(f"  ✗ {addon_name}: {e}", file=sys.stderr)
 
