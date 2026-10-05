@@ -93,10 +93,11 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 
     api_override = """
   <script>
-// Static mode CSS: hide server-dependent buttons
+// Static mode CSS: hide server-dependent elements
 const style = document.createElement('style');
 style.textContent = `
   button[onclick*="validate"], button[onclick*="save"], button[onclick*="refresh"] { display: none !important; }
+  #statusPanel { display: none !important; }
   .actions { opacity: 1; }
   .actions .btn.disabled { opacity: 0.5; cursor: not-allowed; }
 `;
