@@ -225,8 +225,8 @@ out3 = rec3.joined()
 check("run_install_with_pg_hba_guard also applies the health-kill-policy fix "
       "as soon as the systemd drop-in directory exists, not just after install finishes",
       "custom.conf" in out3 and "daemon-reload" in out3)
-check("restarts the service once so the freshly-patched PODMAN_EXTRA_ARGS actually take effect",
-      "systemctl restart uyuni-server.service" in out3)
+check("does not restart uyuni-server while mgradm install waits on its first start",
+      "systemctl restart uyuni-server.service" not in out3)
 check("the health-kill patch happens before mgradm install is confirmed finished",
       out3.index("daemon-reload") < out3.rindex("test -f"))
 check("run_install_with_pg_hba_guard ALSO relaxes uyuni-db's own health-kill policy, "

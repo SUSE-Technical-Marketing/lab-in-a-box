@@ -30,8 +30,8 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
     network.
 
     The same timing applies to --health-on-failure=stop. The health-kill policy is relaxed as soon as the systemd drop-in
-    directory appears, while mgradm still waits for the container. Restarting the container is safe at that point, because the
-    bootstrap has not started.
+    directory appears, while mgradm still waits for the container. The container is not restarted then: mgradm aborts the install
+    if its first start fails. The relaxed policy applies at the unit's next start.
 
     timeout is 1800 seconds. The install continues after the core bootstrap with optional services, such as attestation and tftpd,
     and that can take longer than 900 seconds.
@@ -78,8 +78,10 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
         if not health_patched:
             r = ssh_run(hostname, "test -d /etc/systemd/system/uyuni-server.service.d", check=False)
             if r.returncode == 0:
+                # No restart: mgradm is waiting on this container's first start, and a
+                # restart there aborts the install. The relaxed policy applies at the
+                # unit's next start (Restart=on-success brings it back after a health-kill).
                 _relax_health_kill_policy(hostname)
-                ssh_run(hostname, "systemctl restart uyuni-server.service", check=False)
                 health_patched = True
                 print("  Pre-empted the health-kill crash-loop as soon as the unit existed")
         r = ssh_run(hostname, "test -f {}".format(rc_path), check=False)
