@@ -370,6 +370,7 @@ async function handleDrop(targetId) {
   if (item.type !== "cluster") placeItem(item, targetId);
   state.sel = item.id;
   renderCanvas();
+  if (window.CubeFX) CubeFX.land(item);
   refreshLab();
 }
 
