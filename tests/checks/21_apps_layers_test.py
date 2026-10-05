@@ -84,7 +84,7 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
 # This catches a plugin that falls back to DEFAULT_PLUGIN by accident. Each install script must declare its own layers.
 scripts_dir = _REPO / "scripts"
 addon_files = sorted(glob.glob(str(scripts_dir / "install_*.py")))
-check("found the expected 72 python addon scripts to check", len(addon_files) == 72)
+check("found the expected 71 python addon scripts to check", len(addon_files) == 71)
 missing_layers = []
 for path in addon_files:
     plugin = apps.load_plugin_from_path(path)

@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Un archivo, un comando.</strong> Describa VMs, clústeres de Kubernetes (RKE2 o K3s) y complementos de forma declarativa. <code>setup_lab.py</code> los crea en orden de dependencias, sin necesidad de ejecutar <code>virt-install</code> o Ansible manualmente.</li>
 <li><strong>Lab en casa o en la nube, la misma definición.</strong> Las VMs del laboratorio se ejecutan en hosts KVM de su propiedad, en Harvester HCI o en AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud o Exoscale. Los laboratorios pueden extenderse por múltiples hosts KVM, y un solo laboratorio puede combinar nubes y ubicaciones mediante una <a href="#cross-cloud-wireguard-overlay">superposición de WireGuard entre nubes</a>.</li>
-<li><strong>72 complementos preintegrados.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionalmente vulnerables para entrenamiento en seguridad.</li>
+<li><strong>71 complementos preintegrados.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionalmente vulnerables para entrenamiento en seguridad.</li>
 <li><strong>Una interfaz web que sigue al código.</strong> <a href="#web-ui-lab-builder">lab-builder</a> representa cada formulario a partir del esquema propio del complemento. Un nuevo campo en un script aparece en la interfaz de usuario sin cambios en el frontend.</li>
 <li><strong>Provisión intercambiable.</strong> Ignition y Combustion para SLE Micro, cloud-init para openSUSE y Ubuntu, <code>virt-customize</code> para imágenes antiguas, o instalación guionizada desde ISO de instalación (AutoYaST, Kickstart, Preseed o AutoInstall).</li>
 <li><strong>Credenciales fuera del archivo de laboratorio.</strong> Las credenciales de nubes y servicios pueden residir en archivos cifrados por cuenta (derivación de claves con Argon2id, seguida de AES-256-GCM y ChaCha20-Poly1305 en cascada).</li>
@@ -422,7 +422,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   }
 }
 </code></pre>
-<p>Muchas más secciones (tutorial step-by-step, comandos disponibles, 72 complementos disponibles, referencia de configuración detallada, testing, contributing) se encuentran en la documentación completa en <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
+<p>Muchas más secciones (tutorial step-by-step, comandos disponibles, 71 complementos disponibles, referencia de configuración detallada, testing, contributing) se encuentran en la documentación completa en <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
 <p align="right"><a href="#top">↑ arriba</a></p>
 
 <hr />
