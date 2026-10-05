@@ -119,6 +119,30 @@ function paletteRow(spec, title, desc, meta, layers) {
   return li;
 }
 
+// Add-on palette sections, by where an add-on can be dropped (its PLUGIN
+// targets: "container" = inside a Kubernetes cluster, "vm"/"baremetal" = on a host).
+const ADDON_SECTIONS = [
+  { key: "cluster", title: "Cluster add-ons", hint: "Drop on a Kubernetes cluster" },
+  { key: "host", title: "VM add-ons", hint: "Drop on a VM" },
+  { key: "both", title: "Cluster or VM add-ons", hint: "Drop on a Kubernetes cluster or a VM" },
+];
+
+function addonSection(targets) {
+  const onCluster = targets.includes("container");
+  const onHost = targets.some((t) => t !== "container");
+  return onCluster && onHost ? "both" : onHost ? "host" : "cluster";
+}
+
+function paletteSection(title, hint, rows) {
+  const g = el("div", "pal-group");
+  g.appendChild(el("h3", "pal-title", title));
+  g.appendChild(el("p", "pal-hint", hint));
+  const ul = el("ul", "component-list");
+  rows.forEach((r) => ul.appendChild(r));
+  g.appendChild(ul);
+  return g;
+}
+
 function renderPalette(filter) {
   const root = $("#palette");
   root.innerHTML = "";
@@ -132,18 +156,21 @@ function renderPalette(filter) {
     g.appendChild(grid);
     root.appendChild(g);
   }
-  const g = el("div", "pal-group");
-  g.appendChild(el("h3", "pal-title", "Add-ons"));
-  const ul = el("ul", "component-list");
-  if (!f || "pxe tftp dhcp boot service".includes(f)) {
-    ul.appendChild(paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", []));
+  const matches = state.components
+    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f));
+  ADDON_SECTIONS.forEach((s) => {
+    const rows = matches
+      .filter((c) => addonSection(c.targets || []) === s.key)
+      .map((c) => paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
+        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers));
+    if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
+  });
+  const pxe = !f || "pxe tftp dhcp boot service".includes(f);
+  if (pxe) {
+    root.appendChild(paletteSection("Lab services", "Runs on the automation VM",
+      [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", [])]));
   }
-  state.components
-    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f))
-    .forEach((c) => ul.appendChild(paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
-      c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers)));
-  g.appendChild(ul);
-  root.appendChild(g);
+  if (f && !matches.length && !pxe) root.appendChild(el("p", "pal-hint", `No add-on matches “${filter}”.`));
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
@@ -370,6 +397,7 @@ async function handleDrop(targetId) {
   if (item.type !== "cluster") placeItem(item, targetId);
   state.sel = item.id;
   renderCanvas();
+  if (window.CubeFX) CubeFX.land(item);
   refreshLab();
 }
 
@@ -609,7 +637,7 @@ function applyEditor() {
 function walk(node, parent, outPath) {
   if (Array.isArray(node)) { node.forEach((n) => walk(n, parent, outPath)); return; }
   if (!node || typeof node !== "object") return;
-  if (isField(node)) { parent.appendChild(fieldRow(node, outPath)); return; }
+  if (isField(node)) { if (!node.hidden) parent.appendChild(fieldRow(node, outPath)); return; }
 
   for (const [key, val] of Object.entries(node)) {
     if (!val || typeof val !== "object") continue;      // skip scalar meta
@@ -650,7 +678,77 @@ function fieldRow(field, outPath, repeatMode) {
                 : null;
 
   let input;
-  if (options) {
+  // Special hybrid control for SOURCE_IMAGE: dropdown of common images + custom URL input
+  if (field.name === "SOURCE_IMAGE") {
+    const container = el("div", "source-image-container");
+
+    // Select dropdown with common images
+    const select = el("select");
+    select.className = "source-image-select";
+
+    const commonImages = [
+      { label: "— Select or enter custom URL —", value: "" },
+      { label: "SL-Micro 6.1 (QCOW2)", value: "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2" },
+      { label: "SLES 15 SP6", value: "SLES-15-SP6-for-SAP-Applications.x86_64-cloud.qcow2" },
+      { label: "openSUSE Leap 15.6", value: "openSUSE-Leap-15.6.x86_64.qcow2" },
+      { label: "Ubuntu 24.04 LTS", value: "ubuntu-24.04-cloud-amd64.qcow2" },
+      { label: "— Enter custom URL —", value: "CUSTOM_URL" }
+    ];
+
+    commonImages.forEach((img) => {
+      const opt = el("option", null, img.label);
+      opt.value = img.value;
+      select.appendChild(opt);
+    });
+
+    // Text input for custom URL or local path
+    const textInput = el("input");
+    textInput.type = "text";
+    textInput.className = "source-image-custom";
+    textInput.placeholder = "URL (http://, https://, ftp://) or local file path";
+    textInput.style.display = "none";
+
+    select.addEventListener("change", () => {
+      if (select.value === "CUSTOM_URL") {
+        textInput.style.display = "block";
+        textInput.focus();
+      } else if (select.value === "") {
+        textInput.style.display = "none";
+        textInput.value = "";
+      } else {
+        textInput.style.display = "none";
+        textInput.value = select.value;
+      }
+    });
+
+    textInput.addEventListener("input", () => {
+      // Update hidden field value when user types in custom URL
+      select.value = "CUSTOM_URL";
+    });
+
+    container.appendChild(select);
+    container.appendChild(textInput);
+
+    // Create a hidden input field that tracks the actual value
+    input = el("input");
+    input.type = "hidden";
+    input.className = "source-image-value";
+
+    // Sync dropdown and text input to the hidden field
+    const syncValue = () => {
+      if (select.value === "CUSTOM_URL" || select.value === "") {
+        input.value = textInput.value;
+      } else {
+        input.value = select.value;
+      }
+    };
+
+    select.addEventListener("change", syncValue);
+    textInput.addEventListener("input", syncValue);
+
+    row.appendChild(container);
+    // Don't append input here; let the normal flow handle it after initialization
+  } else if (options) {
     const optValue = (o) => (o && typeof o === "object") ? o.value : o;
     const optLabel = (o) => (o && typeof o === "object") ? o.label : o;
     input = el("select");

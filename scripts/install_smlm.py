@@ -39,10 +39,14 @@
 #                            "Multi-Linux-Manager-Server-SLE/5.2/x86_64". Override it if a GA release renames it.
 #
 # Passwords and credentials (defaults)
-#   smlm_db_admin_user     : mlmadmin          smlm_db_admin_pass : mlmadmin123
-#   smlm_db_user           : mlmuser           smlm_db_pass       : mlmuser123
-#   smlm_reportdb_user     : reportuser        smlm_reportdb_pass : reportuser123
-#   smlm_admin_user        : admin             smlm_admin_pass    : admin123 for "kubernetes", Smlm12345 for "podman"
+#   smlm_db_admin_user     : mlmadmin
+#   smlm_db_admin_pass     : mlmadmin123
+#   smlm_db_user           : mlmuser
+#   smlm_db_pass           : mlmuser123
+#   smlm_reportdb_user     : reportuser
+#   smlm_reportdb_pass     : reportuser123
+#   smlm_admin_user        : admin
+#   smlm_admin_pass        : admin123 for "kubernetes", Smlm12345 for "podman"
 #                            (the mgradm product default, as in install_uyuni.py)
 #
 # "podman" install options
@@ -50,9 +54,12 @@
 #   smlm_org               : organization created at install                        (default lab)
 #   smlm_ssl_password      : password of the generated self-signed CA                (default smlm_admin_pass)
 #   smlm_ssl_country       : CA subject country code (2 letters)
-#   smlm_ssl_state, smlm_ssl_city, smlm_ssl_org, smlm_ssl_ou, smlm_ssl_email
-#                          : further CA subject fields. Passed as --ssl-<field> only when set, and only on a fresh
-#                            install. Ignored when the uyuni-server container already exists.
+#   smlm_ssl_state         : CA subject state/province
+#   smlm_ssl_city          : CA subject city
+#   smlm_ssl_org           : CA subject organization
+#   smlm_ssl_ou            : CA subject organizational unit
+#                            smlm_ssl_country/state/city/org/ou are passed as --ssl-<field> only when set, and only
+#                            on a fresh install. Ignored when the uyuni-server container already exists.
 #
 # SUSE's server image ("podman")
 #   smlm_byos              : "true" when the node boots SUSE's SMLM server BYOS image (qcow2 for KVM, or a cloud
@@ -694,7 +701,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # Confidential Computing attestation container — see this JSON section's
         # own smlm_coco_replicas doc comment above for the
         # `mgradm install podman --help` flags this maps to.
-        for field in ("country", "state", "city", "org", "ou", "email"):
+        for field in ("country", "state", "city", "org", "ou"):
             if cfg.get("smlm_ssl_" + field):
                 install_cmd += " --ssl-{} {}".format(field, shlex.quote(str(cfg["smlm_ssl_" + field])))
         if cfg.get("smlm_coco_replicas") is not None:

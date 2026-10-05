@@ -13,7 +13,7 @@ Prints one JSON object, {vm name: state}. A backend without power support
 reports "unsupported"; any other failure reports "error: <message>" and makes
 the exit code 1. Without vm names: every node of the lab.
 """
-__version__ = "__LABVERSION__"
+__version__ = "3b205dd"
 
 import json
 import sys

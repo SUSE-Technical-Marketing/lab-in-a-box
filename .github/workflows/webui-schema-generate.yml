@@ -1,4 +1,4 @@
-name: Build & Deploy Static WebUI
+name: Build & Deploy to GitHub Pages
 
 on:
   push:
@@ -7,7 +7,12 @@ on:
       - dev
     paths:
       - 'scripts/install_*.py'
+      - 'scripts/lab_schema'
+      - 'scripts/build-cube-static.py'
+      - 'libs/**'
       - 'webui/htdocs/**'
+      - 'webui/lib/**'
+      - 'docs/**'
       - '.github/workflows/webui-schema-generate.yml'
   workflow_dispatch:
 
@@ -29,35 +34,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Extract addon schemas
-        run: |
-          cd "${{ github.workspace }}"
-          python3.11 scripts/extract-webui-schemas.py 2>/dev/null > webui/htdocs/schema.json
-          echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas"
-
       - name: Build static WebUI
+        run: python3.11 scripts/build-cube-static.py
+
+      - name: Prepare GitHub Pages deployment
         run: |
-          cd "${{ github.workspace }}"
-          python3.11 scripts/build-static-webui.py
-          ls -lh webui/htdocs/index-static.html
+          mkdir -p /tmp/gh-pages/lab-builder
+          cp -r docs/* /tmp/gh-pages/
+          cp -r webui/htdocs/. /tmp/gh-pages/lab-builder/
+          mv /tmp/gh-pages/lab-builder/lab-builder-static.html /tmp/gh-pages/lab-builder/index.html
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./webui/htdocs
-          keep_files: true
+          publish_dir: /tmp/gh-pages
           cname: false
-
-      - name: Commit generated files if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git diff --quiet webui/htdocs/schema.json webui/htdocs/index-static.html; then
-            echo "✓ No changes to commit"
-          else
-            git add webui/htdocs/schema.json webui/htdocs/index-static.html
-            git commit -m "chore: regenerate static webui" --no-verify || true
-            git push || true
-          fi

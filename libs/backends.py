@@ -387,6 +387,18 @@ class LibvirtBackend(VMBackend):
         """Same fallback as _virsh(), for virt-install."""
         return run_libvirt_tool("virt-install", self.remote_host, self.virt_srv, args, **kwargs)
 
+    def _graphics(self):
+        """virt-install --graphics value: spice, or vnc when the hypervisor's
+        domcapabilities list graphics types without spice (SLES 16's QEMU).
+        Queried once per backend; spice when the query fails."""
+        if getattr(self, "_graphics_value", None) is None:
+            r = self._virsh("domcapabilities", capture_output=True, text=True, check=False)
+            out = str(getattr(r, "stdout", "") or "")
+            no_spice = r.returncode == 0 and "<graphics supported='yes'>" in out \
+                and "<value>spice</value>" not in out
+            self._graphics_value = "{},listen=0.0.0.0".format("vnc" if no_spice else "spice")
+        return self._graphics_value
+
     def _virt_xml(self, *args, **kwargs):
         """Same fallback as _virsh(), for virt-xml (edits an already-defined domain's
         XML in place, as used by create_vm()'s autoinstall branch)."""
@@ -576,12 +588,22 @@ class LibvirtBackend(VMBackend):
         self._virsh("undefine", vm_name, "--nvram", "--remove-all-storage",
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", disk_format="qcow2"):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", disk_format="qcow2", source_sha256=""):
         """
         Copy a QCOW2 source image and resize it on the hypervisor, landing
         it at the exact path create_vm()'s own disk_format expects
         (<vm_name>.qcow2, or <vm_name>.raw — see create_vm's docstring for
         why "raw" exists at all).
+
+        iso_image can be:
+        - A local filename (looked for in ISO_LOC)
+        - A URL (http://, https://, ftp://, nfs://) — downloaded first
+        - A local file path — copied directly
+
+        source_sha256 can be:
+        - A checksum value to validate the image
+        - A URL to fetch the checksum from
+        - A local file path to read the checksum from
 
         install_iso: the disk is created empty by virt-install, so there's
         nothing to copy or resize.
@@ -599,12 +621,35 @@ class LibvirtBackend(VMBackend):
             log("- install_iso: skipping base image copy (disk created by virt-install)")
             return
 
+        from source_utils import is_url, get_source_type, download_and_validate_source
+
         ext = "raw" if disk_format == "raw" else "qcow2"
         dest = "{}/{}.{}".format(self.vm_img_loc, vm_name, ext)
-        # iso_image is the lab JSON's ISO_IMAGE (free text); dest embeds vm_name
-        # (a node hostname); vm_dsk_gb comes from the JSON too — shell-quote all
-        # of them so none can inject into the remote command string.
-        src_q = shlex.quote("{}/{}".format(self.iso_loc, iso_image))
+
+        # Handle SOURCE_IMAGE: can be URL, local filename in ISO_LOC, or local file path
+        if is_url(iso_image):
+            # Download from URL
+            log("- Downloading SOURCE_IMAGE from URL: {}".format(iso_image))
+            local_img = "{}/{}".format(self.iso_loc, iso_image.split('/')[-1])  # Use filename from URL
+            try:
+                download_and_validate_source(
+                    iso_image,
+                    local_img,
+                    checksum_value=source_sha256 if get_source_type(source_sha256) == "checksum" else None,
+                    checksum_url=source_sha256 if get_source_type(source_sha256) == "url" else None
+                )
+            except Exception as e:
+                die(f"Failed to download SOURCE_IMAGE: {e}")
+            src_q = shlex.quote(local_img)
+        else:
+            # Local file handling (backward compatible)
+            # Check if it's a local file path or just a filename
+            if "/" in iso_image or "\\" in iso_image:
+                # It's a file path
+                src_q = shlex.quote(iso_image)
+            else:
+                # It's a filename in ISO_LOC
+                src_q = shlex.quote("{}/{}".format(self.iso_loc, iso_image))
         dest_q = shlex.quote(dest)
 
         log("- Copy the image for the new VM \"{}{}{}\"".format(_RED, vm_name, _RESET))
@@ -653,6 +698,8 @@ class LibvirtBackend(VMBackend):
                            # reason as cloud_instance_type above — this is the only backend
                            # without a trailing **kwargs, so it needs every cloud-only kwarg
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
+        nested_virtualization="",  # unused here — an AWS-only override, accepted and ignored
+                                   # like cloud_instance_type above.
     ):
         """
         Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
@@ -718,7 +765,7 @@ class LibvirtBackend(VMBackend):
             "--os-variant", os_variant, "--import",
             "--disk", "size={},path={}/{}.{},sparse=no,bus={},boot.order=1{}".format(
                 vm_dsk_gb, vm_img_loc, vm_name, disk_ext, vm_dsk_bus or "virtio", disk_type_arg),
-            "--graphics", "spice,listen=0.0.0.0",
+            "--graphics", self._graphics(),
             "--network", network, "--noautoconsole",
         ]
         if vm_machine:
@@ -801,7 +848,7 @@ class LibvirtBackend(VMBackend):
                         vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                     "--disk", "path={},device=cdrom,readonly=on".format(seed_remote),
                     *(extra_disk_args + [
-                        "--graphics", "spice,listen=0.0.0.0",
+                        "--graphics", self._graphics(),
                         "--network", network, "--noautoconsole", "--wait", "-1",
                     ]))
                 ssh_run(remote_host, "rm -f '{}' '{}' '{}'".format(
@@ -862,7 +909,7 @@ class LibvirtBackend(VMBackend):
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                 *(extra_disk_args + [
-                    "--graphics", "spice,listen=0.0.0.0",
+                    "--graphics", self._graphics(),
                     "--network", network, "--noautoconsole", "--wait", "-1",
                 ]))
             if r.returncode != 0:

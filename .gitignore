@@ -23,3 +23,8 @@ CHANGELOG
 /*.json.*
 /*.jsonb*
 /*.jsonbackup*
+
+# Generated webui files — built by scripts/build-*.py on every deployment
+webui/htdocs/schema.json
+webui/htdocs/lab-builder-static.html
+webui/htdocs/index-static.html
