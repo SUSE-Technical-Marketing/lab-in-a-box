@@ -80,11 +80,13 @@ def main():
 
     # NOTE: unlike most addons, bash's loop here has no break/exit after a
     # match — it runs setup_helm/setup_nv_repo/setup_nv on EVERY node whose
-    # INSTALL_RKE2_TYPE is "server" or unset, not just the first one found.
-    # That means multiple server nodes (HA control planes, or multiple
-    # clusters in the same lab) each get NeuVector installed independently.
+    # KUBERNETES_NODE_TYPE (or deprecated INSTALL_RKE2_TYPE) is "server" or unset,
+    # not just the first one found. That means multiple server nodes (HA control
+    # planes, or multiple clusters in the same lab) each get NeuVector installed independently.
     for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("INSTALL_RKE2_TYPE", "") not in ("server", ""):
+        # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
+        node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "")
+        if node_type not in ("server", ""):
             continue
         print("# Using node: {}".format(vm_name))
         clu_name = node_cfg.get("kcluster", "")

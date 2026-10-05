@@ -98,7 +98,9 @@ def main():
     clu_name = os.environ.get("clu_name", "")
     node_cfg = definition.get("nodes", {}).get(vm_name, {})
 
-    if node_cfg.get("INSTALL_RKE2_TYPE", "") in ("server", ""):
+    # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
+    node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "")
+    if node_type in ("server", ""):
         print("Using node: \"{}\"".format(vm_name))
         clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
         cfg = definition.get("harvester", {}) or {}

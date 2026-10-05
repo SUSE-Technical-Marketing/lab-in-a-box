@@ -47,7 +47,7 @@
 # ansible_control_nodes (see those install scripts' own schema docs) for the full,
 # real "Setup Ansible Control Node" workflow documentation.suse.com describes.
 
-__version__ = "__LABVERSION__"
+__version__ = "fbc6e36"
 
 PLUGIN = {
     "name": "ansible_control_node",

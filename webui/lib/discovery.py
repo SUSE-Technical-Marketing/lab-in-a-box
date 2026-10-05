@@ -255,6 +255,7 @@ def discover():
                 "description": sc.get("description", ""),
                 "field_count": len(sc.get("fields", [])),
                 "layers": plugin.get("layers") or [],
+                "targets": plugin.get("targets") or [],
             })
     return sorted(items, key=lambda it: it["name"])
 

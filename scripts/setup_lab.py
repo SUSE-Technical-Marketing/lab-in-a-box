@@ -44,6 +44,14 @@ import services  # noqa: E402
 import backends  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
+from source_utils import get_source_type, is_url  # noqa: E402
+
+# Helper to get SOURCE_* with ISO_* fallback for backward compatibility
+def get_source_value(config, field_name):
+    """Get SOURCE_* field with ISO_* fallback (for backward compatibility)."""
+    source_field = f"SOURCE_{field_name}"
+    iso_field = f"ISO_{field_name}"
+    return config.get(source_field) or config.get(iso_field)
 
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
@@ -508,7 +516,9 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if node_cfg.get("kcluster") != clu_name:
             continue
-        if node_cfg.get("INSTALL_RKE2_TYPE", "server") == "agent":
+        # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
+        node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
+        if node_type == "agent":
             token, rancher1_ip = distro.install_agent(vm_name, clu_name, clu_cfg, token, rancher1_ip)
         else:
             token, rancher1_ip = distro.install_server(vm_name, clu_name, clu_cfg, token=token, rancher1_ip=rancher1_ip)

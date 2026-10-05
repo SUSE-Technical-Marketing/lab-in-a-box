@@ -26,15 +26,29 @@ The only fixed convention is the schema vocabulary: a **field** is any object
 with `name` + `type`; `fields`/`sections` are structural; a section may carry
 `repeatable`. Everything else is discovered.
 
+The add-on palette is split by where each add-on can be dropped, read from the
+`targets` in its own `PLUGIN` dict: **Cluster add-ons** (`container` only — drop
+on a Kubernetes cluster), **VM add-ons** (`vm`/`baremetal` only), **Cluster or
+VM add-ons** (both), and **Lab services** (pxe, on the automation VM).
+
 ## Try it online (GitHub Pages)
 
-**[→ Open lab-builder in your browser](https://rmahique.github.io/lab-in-a-box/index-static.html)** — no backend required, fully static.
+**[→ Open lab-builder in your browser](https://rmahique.github.io/lab-in-a-box/lab-builder/)** — no backend required, fully static.
 
-This version regenerates automatically on every commit via GitHub Actions:
-- All 72 addon schemas embedded in a single HTML file
-- Offline-capable — works without internet after load
-- Drag VMs/clusters/add-ons in the cube canvas, edit configs, download lab.json
-- No server, no login, no state saved anywhere
+`scripts/build-cube-static.py` builds this page from `webui/htdocs/index.html`.
+It embeds what the live API (`webui/lib/api.py`) answers for the add-on list,
+every add-on's schema and the base schema, computed from the repo checkout, so
+the static page shows the same add-ons, options and palette sections as a live
+install. GitHub Actions rebuilds and redeploys it on every push to `main`/`dev`
+that touches the add-ons, the libraries or the webui; if any add-on's schema
+can't be read, the build fails and nothing is deployed.
+
+With no server behind it, the static page hides the hypervisor status panel,
+Refresh images, Validate and Save to server. Drag VMs, clusters and add-ons onto
+the canvas, edit their settings, and use Download to get the lab.json.
+
+Build it locally: `python3.11 scripts/build-cube-static.py [--output PATH]`
+(default output: `webui/htdocs/lab-builder-static.html`).
 
 ## Run locally (any machine with Python 3)
 
