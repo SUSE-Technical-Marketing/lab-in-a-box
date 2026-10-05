@@ -1,0 +1,245 @@
+<html lang="ja" charset="UTF-8"><p><strong>lab-in-a-box</strong>は、単一のJSONまたはYAMLファイルから完全なラボを作成します。説明するVMs、DNS、Kubernetesクラスター、およびアドオンから成ります。VMは独自のKVMホスト、Harvester、または8つのパブリッククラウドのいずれかで実行でき、同じファイルがすべてで機能します。</p>
+<h2 id="why-lab-in-a-box">lab-in-a-boxを選ぶ理由は？</h2>
+<ul>
+<li><strong>1つのファイル、1つのコマンド。</strong> VM、Kubernetesクラスター（RKE2またはK3s）、およびアドオンを宣言的に記述します。<code>setup_lab.py</code>は依存関係の順序で作成し、<code>virt-install</code>またはAnsibleを手動で実行する必要はありません。</li>
+<li><strong>自宅またはクラウド内のラボ、同じ定義。</strong> ラボのVMは所有するKVMホスト、Harvester HCI、またはAWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscaleで実行されます。ラボは複数のKVMホストに拡張でき、単一のラボは<a href="#cross-cloud-wireguard-overlay">クラウド間WireGuardオーバーレイ</a>を介してクラウドと場所を組み合わせることができます。</li>
+<li><strong>72個の事前統合されたアドオン。</strong> Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloudなど、セキュリティトレーニング用の意図的に脆弱なデモアプリケーション付き。</li>
+<li><strong>コードに従うウェブインターフェイス。</strong> <a href="#web-ui-lab-builder">lab-builder</a>は各フォームをアドオンのスキーマから直接レンダリングします。スクリプトに新しいフィールドが追加されると、フロントエンドを変更することなくUIに表示されます。</li>
+<li><strong>交換可能なプロビジョニング。</strong> SLE Micro用のIgnitionおよびCombustion、openSUSEおよびUbuntu用のcloud-init、古いイメージ用の<code>virt-customize</code>、または実際のインストールISOからのスクリプト実行インストール（AutoYaST、Kickstart、PreseedまたはAutoInstall）。</li>
+<li><strong>ラボファイルの外の認証情報。</strong> クラウドおよびサービスの認証情報は、アカウントごとに暗号化されたファイルに存在できます（Argon2idキー派生に続いてAES-256-GCMおよびChaCha20-Poly1305がカスケード）。</li>
+<li><strong>コンテナ化テスト。</strong> 各チェックは独立した使い捨て<code>podman</code>コンテナで実行され、プリコミットフックは関連するチェックを実行します。</li>
+</ul>
+<hr />
+<h2 id="table-of-contents">目次</h2>
+<ul>
+<li><a href="#architecture">アーキテクチャ</a></li>
+<li><a href="#how-it-works">動作方法</a></li>
+<li><a href="#quick-start">クイックスタート</a></li>
+<li><a href="#web-ui-lab-builder">ウェブインターフェイス（lab-builder）</a></li>
+<li><a href="#lab-definition-format">ラボ定義フォーマット</a></li>
+<li><a href="#examples">例</a></li>
+<li><a href="#step-by-step-walkthroughs">段階的なチュートリアル</a></li>
+<li><a href="#available-commands">利用可能なコマンド</a></li>
+<li><a href="#available-addons">利用可能なアドオン</a></li>
+<li><a href="#configuration-reference">設定リファレンス</a></li>
+<li><a href="#testing">テスト</a></li>
+<li><a href="#contributing--developer-setup">貢献/開発者セットアップ</a></li>
+</ul>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="architecture">アーキテクチャ</h2>
+<p align="center" float="left">
+</p>
+
+<p>システムは<strong>2層アーキテクチャ</strong>に基づいています：</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;オペレータのクライアント&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;ハイパーバイザーノード — KVM/QEMU&quot;]
+        AutoVM[&quot;オートメーションVM&lt;br/&gt;DNS · HTTP · スクリプト · ウェブUI&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;ラボVM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;ラボVM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;ラボVM&quot;]
+    end
+</pre>
+<h3 id="hypervisor-nodes">ハイパーバイザーノード</h3>
+<p>1つ以上の物理マシン（ベアメタル）にKVM/QEMU。各マシンはラボVMをホストし、ソースQCOW2イメージを<code>/var/lib/libvirt/images/sources/</code>に保持します。NUC、ワークステーション、またはKVMを実行できるx86_64マシンで十分です。1つのマシンが提供できるより多くの容量を必要とするラボは、<strong>複数のKVMホスト</strong>に拡張できます—下の<a href="#multi-host-labs">マルチホストラボ</a>を参照してください。</p>
+<h3 id="automation-vm">オートメーションVM</h3>
+<p>ラボ全体のコントロールプレーンとして機能するハイパーバイザー上の小さなVM。提供します：</p>
+<ul>
+<li><strong>DNS</strong> — BIND（<code>named</code>）はラボドメインを提供し、外部クエリをフォワードします。そのため、すべてのラボホスト名は、それを指すすべてのクライアントから解決されます</li>
+<li><strong>HTTP</strong> — <code>/srv/www/htdocs/lab_creation/</code>にプロビジョニングファイル（Ignition、Combustion、cloud-init）を提供します</li>
+<li><strong>スクリプト</strong> — <code>/usr/local/bin/</code>にインストールされたすべてのラボ管理コマンド</li>
+<li><strong>ウェブインターフェイス</strong>（オプション）— <a href="#web-ui-lab-builder">lab-builder</a>、lab.jsonファイル用のブラウザベースのデザイナー</li>
+</ul>
+<p>すべてのユーザーコマンドは<strong>オートメーションVM上で</strong>実行されます。ハイパーバイザーまたはハイパーバイザーと作成されたVMにSSH経由で接続します。初期設定後、ハイパーバイザーへの直接アクセスは必要ありません。</p>
+<h3 id="under-the-hood">エンジンを見る</h3>
+<p>コマンドラインツールと各アドオンはPython 3.11で、<code>libs/</code>と<code>scripts/</code>に常駐し、<code>/usr/local/lib/lab_creation/</code>にインストールされています。共有ライブラリモジュールの小さなセットの周りに組織されています（<code>lab_creation.py</code>、<code>backends.py</code>、<code>services.py</code>、<code>spacecmd_common.py</code>など）。これらは互いに依存していません。VM作成は、libvirt、Harvester、8つのパブリッククラウド（<a href="#compute-backends">コンピュートバックエンド</a>を参照）の10の実装を持つ交換可能な<code>VMBackend</code>インターフェースを介して実行されます。アドオンとオーケストレーションコードはそれらの間で変わりません。置き換えられたBash実装は<code>legacy_bash/</code>の下にアーカイブされています—元の<code>install_ds389</code>を含む。</p>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="how-it-works">動作方法</h2>
+<h3 id="deploy-pipeline">デプロイメントパイプライン</h3>
+<p><code>setup_lab.py</code>は固定されたフェーズシーケンスを実行します。<code>kclusters</code>セクションのないラボの場合、2つのKubernetesスペシフィックフェーズは完全にスキップされます：</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;has kclusters&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;no kclusters&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;has kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;no kclusters&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="vm-provisioning">仮想マシンのプロビジョニング</h3>
+<p>各VCは以下のように作成されます：
+1. それをホストするKVMホストを決定する（明示的な<code>kvm_host</code>フィールド、または空き容量による自動選択—<a href="#multi-host-labs">マルチホストラボ</a>を参照）
+2. ソースQCOW2イメージをそのホストにコピーして拡大する
+3. その<code>config_method</code>に従ってテンプレートからプロビジョニングファイルを生成する
+4. BINDにDNSエントリを登録する
+5. SSHを介してハイパーバイザーで<code>virt-install</code>を実行する
+6. SSHが利用可能になるまで待つ</p>
+<p>プロビジョニング方法はラボのJSON内の<code>config_method</code>で制御されます（ノード単位または<code>common</code>内）：</p>
+<table>
+<thead>
+<tr>
+<th>値</th>
+<th>方法</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(空、デフォルト)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>cloud-init ISO</td>
+<td>openSUSE Leap、Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>ハイパーバイザー上で直接QCOW2を変更（<code>virt-customize</code>）—ゲストにIgnition/cloud-initサポートは必要ありません</td>
+<td>CentOS 7、古いRHEL/Debian、またはIgnition/cloud-initのない任意のイメージ</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>実際のインストールISOからスクリプト実行インストール（AutoYaST、Kickstart、PreseedまたはAutoInstall、<code>install_type</code>経由で選択）</td>
+<td>他のプロビジョニングパスのない配布</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends">コンピュートバックエンド</h3>
+<p>交換可能な<code>VMBackend</code>インターフェースがノードのVMが作成される場所を決定します。ノードの<code>backend</code>フィールド（またはバックエンドを意味する<code>cloud_account</code>）から1回解決されます。デフォルトは<code>libvirt</code>です。各アドオンとオーケストレーションスクリプトは、それが何であれ、同じ方法で解決されたバックエンドと通信します：</p>
+<table>
+<thead>
+<tr>
+<th>バックエンド</th>
+<th>VMが実行される場所</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>libvirt</code></td>
+<td>オペレーティングするKVM/QEMUハイパーバイザー（デフォルト）</td>
+</tr>
+<tr>
+<td><code>harvester</code></td>
+<td>Harvester HCIクラスター、KubeVirt VirtualMachinesとして</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>Amazon EC2</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td>Google Compute Engine</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td>Alibaba Cloud ECS</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td>Hetzner Cloud</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td>Scaleway Instances</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td>UpCloud</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td>OVHcloud Public Cloud</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td>Exoscale</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kubernetes-setup">Kubernetes構成</h3>
+<p>VMが実行されるようになると、<code>setup_lab.py</code>はJSONの<code>kclusters</code>セクションに従って各ノードにKubernetesをインストールします。RKE2とK3sの両方がサポートされています。クラスターの準備ができたら、そのアドオンが順序立てて実行されます。VMレベルのアドオン（クラスターではなく個々のノードに割り当てられる）は、そのノードがプロビジョニングされた後で実行されます。</p>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="quick-start">クイックスタート</h2>
+<h3 id="requirements">要件</h3>
+<ul>
+<li>KVMを実行できるマシン（Intel VT-xまたはAMD-V有効）</li>
+<li>パッケージとイメージをダウンロードするためのインターネットアクセス（またはローカルミラー）</li>
+<li>ハイパーバイザー上の<code>/var/lib/libvirt/images/sources/</code>に選択したOSのQCOW2イメージ</li>
+</ul>
+<aside class="callout callout-important"><p>オートメーションVMは特に<code>python3.11</code>を必要とします—ツールチェーンはそれに明示的に固定されています。ほとんどのディストリビューションはそれ以外に古い標準<code>python3</code>を提供します。<code>python3.11</code>が不足している場合、インストールスクリプトは停止します。</p></aside>
+<p>テスト済みイメージ：
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>—推奨、Ignition+Combustion付きで使用
+- openSUSE Leap Micro—サポート、cloud-init付きで使用</p>
+<h3 id="step-1--prepare-the-hypervisor-os">ステップ1—ハイパーバイザーOSを準備する</h3>
+<p>SLESまたは別のKVM対応Linux配布をハードウェアにインストールします。インストール中に選択します：
+- <strong>ネットワーキング</strong>：ブリッジ（<code>br0</code>）を作成して、メインNICに接続して固定IPを取得
+- <strong>システムロール</strong>：KVM仮想化ホスト</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">ステップ2—セットアップスクリプトをブートストラップする</h3>
+<p>ハイパーバイザーへのSSHアクセスを持つLinuxマシンから：</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>これはセットアップスクリプトを<code>/var/tmp/setup_demo_server/</code>にダウンロードします。</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">ステップ3—KVMノード構成を構成して実行する</h3>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p>その後、構成を実行します（<code>&lt;IP&gt;</code>をハイパーバイザーのIPで置き換えるか、ローカルでは省略）：</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>これはオートメーションVMをプロビジョニングし、必要なすべてのサービスを開始します。</p>
+<h3 id="step-4--configure-the-automation-vm">ステップ4—オートメーションVMを構成する</h3>
+<p>オートメーションVMにSSH接続し、ラボスクリプトをインストールします：</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">ステップ5—クライアントDNスをオートメーションVMに指す</h3>
+<p>デスクトップからホスト名を解決するには：</p>
+<pre><code class="language-shell"># Linux（NetworkManager）：
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# または/etc/resolv.confに追加：
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="step-6--build-your-first-lab">ステップ6—最初のラボを構築する</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>以下の<a href="#examples">例</a>でより多くの開始点を見つけられます。または、JSONを手動で記述する代わりに<a href="#web-ui-lab-builder">ウェブインターフェイス</a>を開くことができます。</p>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="web-ui-lab-builder">ウェブインターフェイス（lab-builder）</h2>
+<p><code>lab.json</code>ファイルデザイナーはブラウザベースで、<strong>実行時にプロジェクト独自のPythonライブラリを評価します</strong>。任意のアドオンについての組み込みの知識はありません。コンポーネントを選択すると、フォームがそのスキーマから直接レンダリングされます。スクリプトにフィールドを追加すると、UIはフロントエンドを変更することなくそれを表示します。</p>
+<pre><code class="language-shell"># それを試す最速の方法—Python以外の依存なし：
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>本番環境（Apache、または自動署名証明書とHTTPS）については、<strong><a href="webui.html">README.webui.md</a></strong>を参照してください。3つの操作モード、HTTP API、トラブルシューティングについて説明しています。</p>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="lab-definition-format">ラボ定義形式</h2>
+<p>ラボはJSONまたはYAMLファイルとして定義されます（自動検出、下の注記を参照）。現在の形式はラボごとに複数のKubernetesクラスターをサポートします（<code>kclusters</code>）。単一クラスター（<code>cluster</code>）の形式は<code>examples/cluster.json.template</code>にあります。</p>
+<p>より詳細な手順、リファレンス、例は<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>の完全なドキュメントにあります。</p>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="testing">テスト</h2>
+<p>各チェックはその独立した使い捨て<code>podman</code>コンテナで実行されます：</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p align="right"><a href="#top">↑ トップへ</a></p>
+
+<hr />
+<h2 id="contributing--developer-setup">貢献/開発者セットアップ</h2>
+<p>完全なガイドについては<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>をGitHubで参照してください。</p>
+</html>

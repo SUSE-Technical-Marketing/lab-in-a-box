@@ -1,0 +1,254 @@
+<html lang="zh-CN" charset="UTF-8"><p><strong>lab-in-a-box</strong>从单个JSON或YAML文件创建完整的实验室：您描述的虚拟机、DNS、Kubernetes集群和附加组件。虚拟机可以在您自己的KVM主机、Harvester上运行，或在八个公有云中的任何一个上运行，同一文件适用于所有这些。</p>
+<h2 id="why-lab-in-a-box">为什么选择lab-in-a-box？</h2>
+<ul>
+<li><strong>一个文件，一个命令。</strong>以声明式方式描述虚拟机、Kubernetes集群（RKE2或K3s）和附加组件。<code>setup_lab.py</code>按依赖关系顺序创建它们，无需手动运行<code>virt-install</code>或Ansible。</li>
+<li><strong>家庭或云中的实验室，相同的定义。</strong>实验室虚拟机在您拥有的KVM主机、Harvester HCI或AWS、Google Cloud、阿里巴巴云、Hetzner、Scaleway、UpCloud、OVHcloud或Exoscale上运行。实验室可以跨多个KVM主机扩展，单个实验室可以通过<a href="#cross-cloud-wireguard-overlay">云间WireGuard叠加网络</a>组合云和位置。</li>
+<li><strong>72个预集成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud等，以及有意脆弱的演示应用用于安全培训。</li>
+<li><strong>跟随代码的网络界面。</strong><a href="#web-ui-lab-builder">lab-builder</a>直接从附加组件的架构呈现每个表单。向脚本添加新字段时，无需更改前端即可在UI中显示。</li>
+<li><strong>可交换的配置。</strong>SLE Micro使用Ignition和Combustion，openSUSE和Ubuntu使用cloud-init，旧镜像使用<code>virt-customize</code>，或使用真实安装ISO进行脚本驱动的安装（AutoYaST、Kickstart、Preseed或AutoInstall）。</li>
+<li><strong>实验室文件外的凭据。</strong>云和服务凭据可以存在于按帐户加密的文件中（Argon2id密钥派生后接AES-256-GCM和ChaCha20-Poly1305级联）。</li>
+<li><strong>容器化测试。</strong>每个检查在其自己的独立可用<code>podman</code>容器中运行，预提交钩子运行相关检查。</li>
+</ul>
+<hr />
+<h2 id="table-of-contents">目录</h2>
+<ul>
+<li><a href="#architecture">架构</a></li>
+<li><a href="#how-it-works">工作原理</a></li>
+<li><a href="#quick-start">快速开始</a></li>
+<li><a href="#web-ui-lab-builder">网络界面（lab-builder）</a></li>
+<li><a href="#lab-definition-format">实验室定义格式</a></li>
+<li><a href="#examples">示例</a></li>
+<li><a href="#step-by-step-walkthroughs">分步指南</a></li>
+<li><a href="#available-commands">可用命令</a></li>
+<li><a href="#available-addons">可用附加组件</a></li>
+<li><a href="#configuration-reference">配置参考</a></li>
+<li><a href="#testing">测试</a></li>
+<li><a href="#contributing--developer-setup">贡献/开发者设置</a></li>
+</ul>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="architecture">架构</h2>
+<p align="center" float="left">
+</p>
+
+<p>系统基于<strong>两层架构</strong>：</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;运营商客户端&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;虚拟管理程序节点 — KVM/QEMU&quot;]
+        AutoVM[&quot;自动化VM&lt;br/&gt;DNS · HTTP · 脚本 · 网络UI&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;实验室VM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;实验室VM&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;实验室VM&quot;]
+    end
+</pre>
+<h3 id="hypervisor-nodes">虚拟管理程序节点</h3>
+<p>一个或多个物理机（裸机）带有KVM/QEMU。每个主机实验室虚拟机并在<code>/var/lib/libvirt/images/sources/</code>中保持源QCOW2镜像。NUC、工作站或任何运行KVM的x86_64机器都足够。需要超过单台机器容量的实验室可以扩展到<strong>多个KVM主机</strong>—见下面的<a href="#multi-host-labs">多主机实验室</a>。</p>
+<h3 id="automation-vm">自动化VM</h3>
+<p>虚拟管理程序上作为整个实验室的控制平面的小型虚拟机。提供：</p>
+<ul>
+<li><strong>DNS</strong> — BIND（<code>named</code>）为实验室域提供服务并转发外部查询，以便所有实验室主机名从指向它的任何客户端解析</li>
+<li><strong>HTTP</strong> — 在<code>/srv/www/htdocs/lab_creation/</code>提供配置文件（Ignition、Combustion、cloud-init）</li>
+<li><strong>脚本</strong> — 安装在<code>/usr/local/bin/</code>的所有实验室管理命令</li>
+<li><strong>网络界面</strong>（可选）— <a href="#web-ui-lab-builder">lab-builder</a>，lab.json文件的基于浏览器的设计器</li>
+</ul>
+<p>所有用户命令都在<strong>自动化VM上</strong>运行。它通过SSH连接到虚拟管理程序或虚拟管理程序以及创建的虚拟机。初始设置后，不需要对虚拟管理程序的直接访问。</p>
+<h3 id="under-the-hood">引擎盖下</h3>
+<p>命令行工具和每个附加组件都在Python 3.11中，驻留在<code>libs/</code>和<code>scripts/</code>中，并安装在<code>/usr/local/lib/lab_creation/</code>中。它们围绕一小组共享库模块（<code>lab_creation.py</code>、<code>backends.py</code>、<code>services.py</code>、<code>spacecmd_common.py</code>等）进行组织。这些不相互依赖。虚拟机创建通过可交换的<code>VMBackend</code>接口执行，具有十个实现：libvirt、Harvester和八个公有云（见<a href="#compute-backends">计算后端</a>）。附加组件和编排代码在它们之间不会改变。被替换的Bash实现存档在<code>legacy_bash/</code>下—包括原始<code>install_ds389</code>。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="how-it-works">工作原理</h2>
+<h3 id="deploy-pipeline">部署管道</h3>
+<p><code>setup_lab.py</code>执行一个固定的阶段序列。对于没有<code>kclusters</code>部分的实验室，两个Kubernetes特定阶段被完全跳过：</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;has kclusters&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;no kclusters&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;has kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;no kclusters&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="vm-provisioning">虚拟机配置</h3>
+<p>每个虚拟机的创建方式如下：
+1. 确定它驻留的KVM主机（显式<code>kvm_host</code>字段或按可用容量自动选择—见<a href="#multi-host-labs">多主机实验室</a>）
+2. 在该主机上复制并扩展源QCOW2镜像
+3. 根据其<code>config_method</code>从模板生成配置文件
+4. 在BIND中注册DNS条目
+5. 通过SSH在虚拟管理程序上运行<code>virt-install</code>
+6. 等待SSH可用</p>
+<p>配置方法由实验室JSON中的<code>config_method</code>控制（每个节点或在<code>common</code>中）：</p>
+<table>
+<thead>
+<tr>
+<th>值</th>
+<th>方法</th>
+<th>用于</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(空，默认)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>cloud-init ISO</td>
+<td>openSUSE Leap、Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>直接在虚拟管理程序上修改QCOW2（<code>virt-customize</code>）—来宾不需要Ignition/cloud-init支持</td>
+<td>CentOS 7、旧的RHEL/Debian或任何没有Ignition/cloud-init的镜像</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>从真实安装ISO进行脚本驱动的安装（AutoYaST、Kickstart、Preseed或AutoInstall，通过<code>install_type</code>选择）</td>
+<td>没有其他配置路径的发行版</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends">计算后端</h3>
+<p>可交换的<code>VMBackend</code>接口确定节点的虚拟机创建位置。从其<code>backend</code>字段（或意味着后端的<code>cloud_account</code>）针对每个节点解析一次。默认值为<code>libvirt</code>。每个附加组件和编排脚本以相同的方式与解析的后端通信，不管它是什么：</p>
+<table>
+<thead>
+<tr>
+<th>后端</th>
+<th>虚拟机在何处运行</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>libvirt</code></td>
+<td>您操作的KVM/QEMU虚拟管理程序（默认）</td>
+</tr>
+<tr>
+<td><code>harvester</code></td>
+<td>Harvester HCI集群，作为KubeVirt VirtualMachines</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>Amazon EC2</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td>Google Compute Engine</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td>阿里巴巴云ECS</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td>Hetzner Cloud</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td>Scaleway Instances</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td>UpCloud</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td>OVHcloud Public Cloud</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td>Exoscale</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kubernetes-setup">Kubernetes设置</h3>
+<p>虚拟机运行后，<code>setup_lab.py</code>根据JSON的<code>kclusters</code>部分在每个节点上安装Kubernetes。支持RKE2和K3s。一旦集群准备好，其附加组件就会按顺序运行。虚拟机级别的附加组件（分配给单个节点而不是集群）在该节点配置后运行。</p>
+<h3 id="library-loading-order">库加载顺序</h3>
+<p>每个脚本按以下顺序读取配置：</p>
+<ol>
+<li><code>/etc/lab_creation.defaults</code> — 系统默认值、路径、包列表</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code> — 输入验证、配置加载</li>
+<li><code>/etc/lab_creation.cfg</code> — 节点特定设置（<code>REMOTE_HOST</code>、<code>ROOT_SSH_KEY</code>、<code>VIRT_SRV</code>、<code>KVM_HOSTS</code>等）</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code> — 虚拟机、DNS和编排函数</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code> — Kubernetes集群函数</li>
+</ol>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="quick-start">快速开始</h2>
+<h3 id="requirements">要求</h3>
+<ul>
+<li>能够运行KVM的机器（Intel VT-x或AMD-V启用）</li>
+<li>互联网访问（或本地镜像）以下载包和镜像</li>
+<li>所选操作系统的QCOW2镜像在虚拟管理程序上的<code>/var/lib/libvirt/images/sources/</code>中</li>
+</ul>
+<aside class="callout callout-important"><p>自动化VM特别需要<code>python3.11</code>—工具链显式固定在上面。大多数发行版提供一个较旧的标准<code>python3</code>。如果缺少<code>python3.11</code>，安装脚本将停止。</p></aside>
+<p>测试的镜像：
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>—推荐，与Ignition+Combustion一起使用
+- openSUSE Leap Micro—支持，与cloud-init一起使用</p>
+<h3 id="step-1--prepare-the-hypervisor-os">步骤1—准备虚拟管理程序操作系统</h3>
+<p>在硬件上安装SLES或其他支持KVM的Linux发行版。在安装期间，选择：
+- <strong>网络</strong>：创建一个桥接（<code>br0</code>）连接到您的主NIC，使用固定IP
+- <strong>系统角色</strong>：KVM虚拟化主机</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">步骤2—启动设置脚本</h3>
+<p>从具有虚拟管理程序SSH访问权的任何Linux机器：</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>这将设置脚本下载到<code>/var/tmp/setup_demo_server/</code>。</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">步骤3—配置并运行KVM节点设置</h3>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p>然后运行设置（用虚拟管理程序的IP替换<code>&lt;IP&gt;</code>，或本地时省略）：</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>这配置自动化VM并启动所有必需的服务。</p>
+<h3 id="step-4--configure-the-automation-vm">步骤4—配置自动化VM</h3>
+<p>SSH连接到自动化VM并安装实验室脚本：</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">步骤5—将客户端DNS指向自动化VM</h3>
+<p>从您的桌面解析主机名：</p>
+<pre><code class="language-shell"># Linux（NetworkManager）：
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# 或添加到/etc/resolv.conf：
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="step-6--build-your-first-lab">步骤6—构建您的第一个实验室</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>您可以在下面的<a href="#examples">示例</a>中找到更多起点。或者，您可以打开<a href="#web-ui-lab-builder">网络界面</a>，而不是手动编写JSON。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="web-ui-lab-builder">网络界面（lab-builder）</h2>
+<p><code>lab.json</code>文件设计器基于浏览器，<strong>在运行时评估项目自己的Python库</strong>。它对任何附加组件都没有内置知识。选择一个组件，表单将直接从其架构呈现。向脚本添加字段，UI将在不更改前端的情况下显示它。</p>
+<pre><code class="language-shell"># 尝试它的最快方式—除Python外零依赖：
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>对于生产（Apache或独立systemd/init服务，加上HTTPS over自签证书），请参阅<strong><a href="webui.html">README.webui.md</a></strong>。那里描述了三种操作模式、HTTP API和故障排除。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="lab-definition-format">实验室定义格式</h2>
+<p>实验室定义为JSON或YAML文件（自动检测，见下面的注记）。当前格式支持每个实验室的多个Kubernetes集群（<code>kclusters</code>）。单个集群（<code>cluster</code>）的格式在<code>examples/cluster.json.template</code>中。</p>
+<p>更详细的程序、参考和示例在<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>上的完整文档中。</p>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="testing">测试</h2>
+<p>每个检查在其自己的独立可用<code>podman</code>容器中运行：</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p align="right"><a href="#top">↑ 回到顶部</a></p>
+
+<hr />
+<h2 id="contributing--developer-setup">贡献/开发者设置</h2>
+<p>完整指南请参阅GitHub上的<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>。</p>
+</html>

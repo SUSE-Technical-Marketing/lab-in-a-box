@@ -1,0 +1,253 @@
+<p><strong>lab-in-a-box</strong> cria laboratórios completos a partir de um único arquivo JSON ou YAML: as máquinas virtuais, DNS, clusters Kubernetes e complementos que você descreve. As máquinas virtuais podem ser executadas em seus próprios hosts KVM, em Harvester ou em uma das oito nuvens públicas, e o mesmo arquivo funciona em todas elas.</p>
+<h2 id="why-lab-in-a-box">Por que lab-in-a-box?</h2>
+<ul>
+<li><strong>Um arquivo, um comando.</strong> Descreva máquinas virtuais, clusters Kubernetes (RKE2 ou K3s) e complementos de forma declarativa. <code>setup_lab.py</code> os cria em ordem de dependências, sem necessidade de executar <code>virt-install</code> ou Ansible manualmente.</li>
+<li><strong>Lab em casa ou na nuvem, mesma definição.</strong> As máquinas virtuais do laboratório são executadas em seus hosts KVM pessoais, no Harvester HCI ou em AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Os laboratórios podem se estender por múltiplos hosts KVM, e um único laboratório pode combinar nuvens e locais por meio de uma <a href="#cross-cloud-wireguard-overlay">sobreposição WireGuard entre nuvens</a>.</li>
+<li><strong>72 complementos pré-integrados.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud e muito mais, além de aplicações de demonstração intencionalmente vulneráveis para treinamento de segurança.</li>
+<li><strong>Uma interface web que segue o código.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renderiza cada formulário diretamente do esquema do complemento. Um novo campo em um script aparece na interface de usuário sem alterações no frontend.</li>
+<li><strong>Provisionamento intercambiável.</strong> Ignition e Combustion para SLE Micro, cloud-init para openSUSE e Ubuntu, <code>virt-customize</code> para imagens antigas, ou instalação orientada por script de um ISO de instalação real (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
+<li><strong>Credenciais fora do arquivo de laboratório.</strong> As credenciais de nuvem e serviço podem residir em arquivos criptografados por conta (derivação de chave com Argon2id seguida por AES-256-GCM e ChaCha20-Poly1305 em cascata).</li>
+<li><strong>Testes conteinerizados.</strong> Cada verificação é executada em seu próprio contêiner <code>podman</code> descartável independente, e um gancho de pré-commit executa as verificações relevantes.</li>
+</ul>
+<hr />
+<h2 id="table-of-contents">Índice</h2>
+<ul>
+<li><a href="#architecture">Arquitetura</a></li>
+<li><a href="#how-it-works">Como funciona</a></li>
+<li><a href="#quick-start">Início rápido</a></li>
+<li><a href="#web-ui-lab-builder">Interface web (lab-builder)</a></li>
+<li><a href="#lab-definition-format">Formato de definição do laboratório</a></li>
+<li><a href="#examples">Exemplos</a></li>
+<li><a href="#step-by-step-walkthroughs">Guias passo a passo</a></li>
+<li><a href="#available-commands">Comandos disponíveis</a></li>
+<li><a href="#available-addons">Complementos disponíveis</a></li>
+<li><a href="#configuration-reference">Referência de configuração</a></li>
+<li><a href="#testing">Testes</a></li>
+<li><a href="#contributing--developer-setup">Contribuindo / Configuração do desenvolvedor</a></li>
+</ul>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="architecture">Arquitetura</h2>
+<p align="center" float="left">
+</p>
+
+<p>O sistema é baseado em uma <strong>arquitetura de dois níveis</strong>:</p>
+<pre class="mermaid">graph TB
+    Operator[&quot;Cliente do operador&quot;] --&gt;|&quot;SSH / DNS / HTTP&quot;| AutoVM
+    subgraph HV[&quot;Nó hipervisor — KVM/QEMU&quot;]
+        AutoVM[&quot;VM de automação&lt;br/&gt;DNS · HTTP · Scripts · Interface web&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM1[&quot;VM de laboratório&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM2[&quot;VM de laboratório&quot;]
+        AutoVM --&gt;|&quot;virt-install / virsh&quot;| VM3[&quot;VM de laboratório&quot;]
+    end
+</pre>
+<h3 id="hypervisor-nodes">Nós hipervisor</h3>
+<p>Uma ou mais máquinas físicas (bare metal) com KVM/QEMU. Cada uma hospeda máquinas virtuais de laboratório e mantém imagens de origem QCOW2 em <code>/var/lib/libvirt/images/sources/</code>. Um NUC, estação de trabalho ou qualquer máquina x86_64 executando KVM é suficiente. Laboratórios que requerem mais capacidade do que uma única máquina pode oferecer podem se estender em <strong>múltiplos hosts KVM</strong> — veja <a href="#multi-host-labs">Laboratórios multi-host</a> abaixo.</p>
+<h3 id="automation-vm">VM de automação</h3>
+<p>Uma pequena máquina virtual no hipervisor atuando como plano de controle para todo o laboratório. Fornece:</p>
+<ul>
+<li><strong>DNS</strong> — BIND (<code>named</code>) atende o domínio do laboratório e encaminha consultas externas, de modo que todos os nomes de host do laboratório sejam resolvidos de qualquer cliente que o aponte</li>
+<li><strong>HTTP</strong> — fornece arquivos de provisionamento (Ignition, Combustion, cloud-init) em <code>/srv/www/htdocs/lab_creation/</code></li>
+<li><strong>Scripts</strong> — todos os comandos de gerenciamento de laboratório, instalados em <code>/usr/local/bin/</code></li>
+<li><strong>Interface web</strong> (opcional) — <a href="#web-ui-lab-builder">lab-builder</a>, um designer baseado em navegador para arquivos lab.json</li>
+</ul>
+<p>Todos os comandos do usuário são executados <strong>na VM de automação</strong>. Conecta via SSH com o hipervisor ou hipervisores, e com as máquinas virtuais criadas. Após a configuração inicial, nenhum acesso direto ao hipervisor é necessário.</p>
+<h3 id="under-the-hood">Sob o capô</h3>
+<p>As ferramentas de linha de comando e cada complemento estão em Python 3.11, residindo em <code>libs/</code> e <code>scripts/</code>, e instalados em <code>/usr/local/lib/lab_creation/</code>. Estão organizados em torno de um pequeno conjunto de módulos de biblioteca compartilhada (<code>lab_creation.py</code>, <code>backends.py</code>, <code>services.py</code>, <code>spacecmd_common.py</code>, …) que não dependem uns dos outros. A criação de máquinas virtuais é realizada através de uma interface <code>VMBackend</code> intercambiável com dez implementações: libvirt, Harvester e oito nuvens públicas (veja <a href="#compute-backends">Backends de computação</a>). Complementos e código de orquestração não mudam entre eles. As implementações em Bash que foram substituídas estão arquivadas em <code>legacy_bash/</code> — incluindo o <code>install_ds389</code> original.</p>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="how-it-works">Como funciona</h2>
+<h3 id="deploy-pipeline">Pipeline de implantação</h3>
+<p><code>setup_lab.py</code> executa uma sequência fixa de fases. As duas fases específicas de Kubernetes são completamente ignoradas para um laboratório sem a seção <code>kclusters</code>:</p>
+<pre class="mermaid">flowchart LR
+    A[&quot;phase_services&quot;] --&gt;|&quot;has kclusters&quot;| C[&quot;phase_dns&quot;]
+    A --&gt;|&quot;no kclusters&quot;| D[&quot;phase_create_vms&quot;]
+    C --&gt; D[&quot;phase_create_vms&quot;]
+    D --&gt;|&quot;has kclusters&quot;| F[&quot;phase_reboot_and_wait_kept_nodes&quot;]
+    D --&gt;|&quot;no kclusters&quot;| H[&quot;phase_vm_addons&quot;]
+    F --&gt; G[&quot;phase_install_k8s_and_addons&quot;]
+    G --&gt; H[&quot;phase_vm_addons&quot;]
+</pre>
+<h3 id="vm-provisioning">Provisionamento de máquinas virtuais</h3>
+<p>Cada máquina virtual é criada assim:
+1. Determinar qual host KVM a hospeda (o campo explícito <code>kvm_host</code> ou seleção automática por capacidade livre — veja <a href="#multi-host-labs">Laboratórios multi-host</a>)
+2. Copiar e expandir uma imagem de origem QCOW2 nesse host
+3. Gerar arquivos de provisionamento a partir de modelos de acordo com seu <code>config_method</code>
+4. Registrar uma entrada DNS em BIND
+5. Executar <code>virt-install</code> no hipervisor via SSH
+6. Aguardar SSH estar disponível</p>
+<p>O método de provisionamento é controlado por <code>config_method</code> no JSON do laboratório (por nó ou em <code>common</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Valor</th>
+<th>Método</th>
+<th>Usado para</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(vazio, padrão)</em></td>
+<td>Ignition + Combustion</td>
+<td>SLE Micro</td>
+</tr>
+<tr>
+<td><code>cloud-init</code></td>
+<td>ISO cloud-init</td>
+<td>openSUSE Leap, Ubuntu</td>
+</tr>
+<tr>
+<td><code>virt_customize</code></td>
+<td>Modifica QCOW2 diretamente no hipervisor (<code>virt-customize</code>) — nenhum suporte Ignition/cloud-init necessário no sistema convidado</td>
+<td>CentOS 7, RHEL/Debian antigos ou qualquer imagem sem Ignition/cloud-init</td>
+</tr>
+<tr>
+<td><code>install_iso</code></td>
+<td>Instalação orientada por script de um ISO de instalação real (AutoYaST, Kickstart, Preseed ou AutoInstall, selecionado via <code>install_type</code>)</td>
+<td>Distribuições sem outro caminho de provisionamento</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends">Backends de computação</h3>
+<p>Uma interface <code>VMBackend</code> intercambiável determina onde a máquina virtual de um nó é criada. Ela é resolvida uma vez por nó a partir de seu campo <code>backend</code> (ou de <code>cloud_account</code>, que implica o backend). O padrão é <code>libvirt</code>. Cada complemento e script de orquestração fala com o backend resolvido da mesma forma, não importa qual seja:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Onde a VM é executada</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>libvirt</code></td>
+<td>Um hipervisor KVM/QEMU que você opera (padrão)</td>
+</tr>
+<tr>
+<td><code>harvester</code></td>
+<td>Um cluster Harvester HCI, como KubeVirt VirtualMachines</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>Amazon EC2</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td>Google Compute Engine</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td>Alibaba Cloud ECS</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td>Hetzner Cloud</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td>Scaleway Instances</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td>UpCloud</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td>OVHcloud Public Cloud</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td>Exoscale</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kubernetes-setup">Configuração de Kubernetes</h3>
+<p>Uma vez que as máquinas virtuais estão em execução, <code>setup_lab.py</code> instala Kubernetes em cada nó de acordo com a seção <code>kclusters</code> do JSON. RKE2 e K3s são ambos suportados. Uma vez que um cluster esteja pronto, seus complementos são executados sequencialmente. Os complementos em nível de VM (designados a um nó individual em vez de um cluster) são executados posteriormente uma vez que esse nó está provisionado.</p>
+<h3 id="library-loading-order">Ordem de carregamento de bibliotecas</h3>
+<p>Cada script lê a configuração nesta ordem:</p>
+<ol>
+<li><code>/etc/lab_creation.defaults</code> — valores padrão do sistema, caminhos, listas de pacotes</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code> — validação de entrada, carregamento de configuração</li>
+<li><code>/etc/lab_creation.cfg</code> — configurações específicas do nó (<code>REMOTE_HOST</code>, <code>ROOT_SSH_KEY</code>, <code>VIRT_SRV</code>, <code>KVM_HOSTS</code>, etc.)</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code> — funções de VM, DNS e orquestração</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code> — funções de cluster Kubernetes</li>
+</ol>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="quick-start">Início rápido</h2>
+<h3 id="requirements">Requisitos</h3>
+<ul>
+<li>Uma máquina capaz de executar KVM (Intel VT-x ou AMD-V ativado)</li>
+<li>Acesso à Internet (ou espelho local) para baixar pacotes e imagens</li>
+<li>Uma imagem QCOW2 para o SO escolhido em <code>/var/lib/libvirt/images/sources/</code> no hipervisor</li>
+</ul>
+<aside class="callout callout-important"><p>A VM de automação especificamente requer <code>python3.11</code> — a cadeia de ferramentas é explicitamente fixada nela. A maioria das distribuições fornece um <code>python3</code> padrão mais antigo além disso. O script de instalação é interrompido se <code>python3.11</code> está faltando.</p></aside>
+<p>Imagens testadas:
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recomendada, usada com Ignition+Combustion
+- openSUSE Leap Micro — suportada, usada com cloud-init</p>
+<h3 id="step-1--prepare-the-hypervisor-os">Etapa 1 — Preparar o SO do hipervisor</h3>
+<p>Instale SLES (ou outra distribuição Linux capaz de KVM) no seu hardware. Durante a instalação, selecione:
+- <strong>Rede</strong>: criar uma ponte (<code>br0</code>) conectada à sua NIC principal, com um IP fixo
+- <strong>Papel do sistema</strong>: Host de virtualização KVM</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">Etapa 2 — Inicializar os scripts de configuração</h3>
+<p>De qualquer máquina Linux com acesso SSH ao hipervisor:</p>
+<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+</code></pre>
+<p>Isso baixa os scripts de configuração para <code>/var/tmp/setup_demo_server/</code>.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Etapa 3 — Configurar e executar a configuração do nó KVM</h3>
+<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
+vim lab.cfg
+</code></pre>
+<p>Então execute a configuração (substitua <code>&lt;IP&gt;</code> pelo IP do seu hipervisor, ou omita para local):</p>
+<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>Isso provisiona a VM de automação e inicia todos os serviços necessários.</p>
+<h3 id="step-4--configure-the-automation-vm">Etapa 4 — Configurar a VM de automação</h3>
+<p>Conecte via SSH à VM de automação e instale os scripts do laboratório:</p>
+<pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
+./install_automation_node_scripts.sh
+
+cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
+vim /etc/lab_creation.cfg
+</code></pre>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">Etapa 5 — Apontar o DNS do cliente para a VM de automação</h3>
+<p>Para que os nomes de host sejam resolvidos a partir de sua área de trabalho:</p>
+<pre><code class="language-shell"># Linux (NetworkManager):
+nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
+
+# Ou adicione a /etc/resolv.conf:
+nameserver &lt;AUTOMATION_IP&gt;
+</code></pre>
+<h3 id="step-6--build-your-first-lab">Etapa 6 — Construir seu primeiro laboratório</h3>
+<pre><code class="language-shell">setup_lab.py examples/cluster.json.template
+</code></pre>
+<p>Você encontrará mais pontos de partida abaixo em <a href="#examples">Exemplos</a>. Alternativamente, você pode abrir a <a href="#web-ui-lab-builder">interface web</a> em vez de escrever JSON manualmente.</p>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="web-ui-lab-builder">Interface web (lab-builder)</h2>
+<p>Um designer de arquivos <code>lab.json</code> baseado em navegador que <strong>avalia as próprias bibliotecas Python do projeto em tempo de execução</strong>. Não possui conhecimento integrado de nenhum complemento. Selecione um componente e um formulário será renderizado diretamente de seu esquema. Adicione um campo a um script e a interface de usuário o exibirá sem alterações no frontend.</p>
+<pre><code class="language-shell"># A maneira mais rápida de tentar — zero dependências além de Python:
+python3.11 webui/run-local.py            # → http://localhost:8677/
+</code></pre>
+<p>Para produção (Apache ou serviço systemd/init autônomo, mais HTTPS sobre certificado autoassinado criado de forma idempotente) veja <strong><a href="webui.html">README.webui.md</a></strong>. Lá estão descritos os três modos de operação, a API HTTP e solução de problemas.</p>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="lab-definition-format">Formato de definição do laboratório</h2>
+<p>Os laboratórios são definidos como arquivos JSON ou YAML (autodetecção, veja a nota abaixo). O formato atual suporta múltiplos clusters Kubernetes por laboratório (<code>kclusters</code>). O formato para um único cluster (<code>cluster</code>) é encontrado em <code>examples/cluster.json.template</code>.</p>
+<p>Muitas mais seções (procedimentos detalhados, referências e exemplos) estão na documentação completa no <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="testing">Testes</h2>
+<p>Cada verificação é executada em seu próprio contêiner <code>podman</code> descartável independente:</p>
+<pre><code class="language-shell">tests/run_tests.sh
+</code></pre>
+<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+
+<hr />
+<h2 id="contributing--developer-setup">Contribuindo / Configuração do desenvolvedor</h2>
+<p>Veja <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> no GitHub para o guia completo.</p>
