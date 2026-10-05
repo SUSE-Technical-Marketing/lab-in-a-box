@@ -61,8 +61,8 @@ def build():
     with open(index_path) as f:
         html = f.read()
 
-    # Find where to inject schemas (before </head>)
-    head_end = html.find("</head>")
+    # Find where to inject schemas (right after <head> tag, BEFORE any scripts load)
+    head_start = html.find("<head>") + len("<head>")
 
     # Create schema scripts
     schemas_json = json.dumps(schemas)
@@ -83,7 +83,7 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
   </script>
 """
 
-    html = html[:head_end] + schema_inject + html[head_end:]
+    html = html[:head_start] + schema_inject + html[head_start:]
 
     # Replace __LABVERSION__ with actual git commit hash
     html = html.replace("__LABVERSION__", version)
