@@ -32,6 +32,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Verify Python and test extraction
+        run: |
+          python3.11 --version
+          ls -1 scripts/install_*.py | wc -l
+          python3.11 scripts/install_agones.py --schema 2>&1 | head -5
+
       - name: Extract addon schemas
         run: |
           cd "${{ github.workspace }}"
@@ -73,10 +79,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet webui/htdocs/schema.json webui/htdocs/index-static.html; then
+          if git diff --quiet webui/htdocs/schema.json webui/htdocs/lab-builder-static.html; then
             echo "✓ No changes to commit"
           else
-            git add webui/htdocs/schema.json webui/htdocs/index-static.html
+            git add webui/htdocs/schema.json webui/htdocs/lab-builder-static.html
             git commit -m "chore: regenerate static webui" --no-verify || true
             git push || true
           fi
