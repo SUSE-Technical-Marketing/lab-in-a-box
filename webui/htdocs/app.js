@@ -609,7 +609,7 @@ function applyEditor() {
 function walk(node, parent, outPath) {
   if (Array.isArray(node)) { node.forEach((n) => walk(n, parent, outPath)); return; }
   if (!node || typeof node !== "object") return;
-  if (isField(node)) { parent.appendChild(fieldRow(node, outPath)); return; }
+  if (isField(node)) { if (!node.hidden) parent.appendChild(fieldRow(node, outPath)); return; }
 
   for (const [key, val] of Object.entries(node)) {
     if (!val || typeof val !== "object") continue;      // skip scalar meta
