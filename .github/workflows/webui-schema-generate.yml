@@ -7,6 +7,8 @@ on:
       - dev
     paths:
       - 'scripts/install_*.py'
+      - 'scripts/build-cube-static.py'
+      - 'scripts/extract-webui-schemas.py'
       - 'webui/htdocs/**'
       - 'docs/**'
       - '.github/workflows/webui-schema-generate.yml'
