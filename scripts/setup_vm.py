@@ -96,7 +96,8 @@ def provision_vm(definition, config, defaults, vm_name):
     config_method = env.get("config_method", "") or ""
 
     backend.copy_vm_image(env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), vm_name,
-                           env.get("VM_DSK", ""), config_method=config_method)
+                           env.get("VM_DSK", ""), config_method=config_method,
+                           source_sha256=env.get("SOURCE_SHA256") or env.get("ISO_SHA256", ""))
 
     if config_method == "":
         prepare_ignition_combustion(

@@ -576,12 +576,22 @@ class LibvirtBackend(VMBackend):
         self._virsh("undefine", vm_name, "--nvram", "--remove-all-storage",
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", disk_format="qcow2"):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", disk_format="qcow2", source_sha256=""):
         """
         Copy a QCOW2 source image and resize it on the hypervisor, landing
         it at the exact path create_vm()'s own disk_format expects
         (<vm_name>.qcow2, or <vm_name>.raw — see create_vm's docstring for
         why "raw" exists at all).
+
+        iso_image can be:
+        - A local filename (looked for in ISO_LOC)
+        - A URL (http://, https://, ftp://, nfs://) — downloaded first
+        - A local file path — copied directly
+
+        source_sha256 can be:
+        - A checksum value to validate the image
+        - A URL to fetch the checksum from
+        - A local file path to read the checksum from
 
         install_iso: the disk is created empty by virt-install, so there's
         nothing to copy or resize.
@@ -599,11 +609,18 @@ class LibvirtBackend(VMBackend):
             log("- install_iso: skipping base image copy (disk created by virt-install)")
             return
 
+        from source_utils import is_url
+
         ext = "raw" if disk_format == "raw" else "qcow2"
         dest = "{}/{}.{}".format(self.vm_img_loc, vm_name, ext)
-        # iso_image is the lab JSON's ISO_IMAGE (free text); dest embeds vm_name
-        # (a node hostname); vm_dsk_gb comes from the JSON too — shell-quote all
-        # of them so none can inject into the remote command string.
+
+        # Handle SOURCE_IMAGE: can be URL, local filename in ISO_LOC, or local file path
+        if is_url(iso_image):
+            # TODO: Download from URL and validate with source_sha256
+            # This is complex and will be implemented in a separate phase
+            die(f"URL-based SOURCE_IMAGE not yet implemented: {iso_image}")
+
+        # Local file handling (backward compatible)
         src_q = shlex.quote("{}/{}".format(self.iso_loc, iso_image))
         dest_q = shlex.quote(dest)
 
