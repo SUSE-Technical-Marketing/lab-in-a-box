@@ -96,24 +96,39 @@ window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-
 // Static mode CSS: hide server-dependent buttons
 const style = document.createElement('style');
 style.textContent = `
-  button[onclick*="validate"], button[onclick*="save"], button[onclick*="refresh"], button:has-text("Refresh Images") { display: none !important; }
-  button:contains("Refresh Images") { display: none !important; }
+  button[onclick*="validate"], button[onclick*="save"], button[onclick*="refresh"] { display: none !important; }
   .actions { opacity: 1; }
   .actions .btn.disabled { opacity: 0.5; cursor: not-allowed; }
 `;
 document.head.appendChild(style);
 
-// Also hide by text content for Refresh Images button
-setTimeout(() => {
+// Hide Refresh Images button by text content (can't use :has-text in CSS)
+const hideButtonsByText = () => {
   Array.from(document.querySelectorAll('button')).forEach(btn => {
-    if (btn.textContent.includes('Refresh Images')) btn.style.display = 'none';
+    if (btn.textContent.includes('Refresh Images') ||
+        btn.textContent.includes('Validate') ||
+        btn.textContent.includes('Save')) {
+      btn.style.display = 'none';
+    }
   });
-}, 100);
+};
+// Run after page loads and whenever palette changes
+document.addEventListener('DOMContentLoaded', hideButtonsByText);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', hideButtonsByText);
+} else {
+  hideButtonsByText();
+}
 
 // Override API functions for static mode
 const originalApiGet = window.apiGet;
 window.apiGet = async function(action, params = {}) {
   if (action === 'components') {
+    if (!window.EMBEDDED_SCHEMAS || !window.EMBEDDED_SCHEMAS.schemas) {
+      console.error('EMBEDDED_SCHEMAS not loaded');
+      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
+    }
+
     const buildComponent = (name) => {
       const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
       const fields = schema.fields || [];
@@ -134,8 +149,12 @@ window.apiGet = async function(action, params = {}) {
       };
     };
 
-    const regular = (window.EMBEDDED_SCHEMAS.addons || []).map(buildComponent);
-    const infrastructure = (window.EMBEDDED_SCHEMAS.infrastructure_addons || []).map(buildComponent);
+    const addons = window.EMBEDDED_SCHEMAS.addons || [];
+    const infraAddons = window.EMBEDDED_SCHEMAS.infrastructure_addons || [];
+    const regular = addons.map(buildComponent);
+    const infrastructure = infraAddons.map(buildComponent);
+
+    console.log(`Loaded ${regular.length} regular addons, ${infrastructure.length} infrastructure addons`);
 
     return {
       components: regular,

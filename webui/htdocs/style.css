@@ -150,6 +150,13 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .field input.invalid,.field select.invalid{border-color:var(--danger)}
 .field-error{color:var(--danger);font-size:.78rem;margin-top:.25rem}
 
+/* SOURCE_IMAGE hybrid dropdown + custom URL input */
+.source-image-container{display:flex;flex-direction:column;gap:.4rem}
+.source-image-select{width:100%;padding:.45rem .55rem;border:1px solid var(--line);border-radius:7px;background:var(--field-bg);color:var(--ink);font-size:.9rem;font-family:inherit}
+.source-image-select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+.source-image-custom{width:100%;padding:.45rem .55rem;border:1px solid var(--line);border-radius:7px;background:var(--field-bg);color:var(--ink);font-size:.9rem;font-family:inherit}
+.source-image-custom:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+
 /* repeatable groups (nodes / kclusters) */
 .component-list li.pinned{border:1px dashed var(--accent)}
 .component-list li.pinned .ci-title{color:var(--accent)}

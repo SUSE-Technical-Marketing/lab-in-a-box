@@ -650,7 +650,77 @@ function fieldRow(field, outPath, repeatMode) {
                 : null;
 
   let input;
-  if (options) {
+  // Special hybrid control for SOURCE_IMAGE: dropdown of common images + custom URL input
+  if (field.name === "SOURCE_IMAGE") {
+    const container = el("div", "source-image-container");
+
+    // Select dropdown with common images
+    const select = el("select");
+    select.className = "source-image-select";
+
+    const commonImages = [
+      { label: "— Select or enter custom URL —", value: "" },
+      { label: "SL-Micro 6.1 (QCOW2)", value: "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2" },
+      { label: "SLES 15 SP6", value: "SLES-15-SP6-for-SAP-Applications.x86_64-cloud.qcow2" },
+      { label: "openSUSE Leap 15.6", value: "openSUSE-Leap-15.6.x86_64.qcow2" },
+      { label: "Ubuntu 24.04 LTS", value: "ubuntu-24.04-cloud-amd64.qcow2" },
+      { label: "— Enter custom URL —", value: "CUSTOM_URL" }
+    ];
+
+    commonImages.forEach((img) => {
+      const opt = el("option", null, img.label);
+      opt.value = img.value;
+      select.appendChild(opt);
+    });
+
+    // Text input for custom URL or local path
+    const textInput = el("input");
+    textInput.type = "text";
+    textInput.className = "source-image-custom";
+    textInput.placeholder = "URL (http://, https://, ftp://) or local file path";
+    textInput.style.display = "none";
+
+    select.addEventListener("change", () => {
+      if (select.value === "CUSTOM_URL") {
+        textInput.style.display = "block";
+        textInput.focus();
+      } else if (select.value === "") {
+        textInput.style.display = "none";
+        textInput.value = "";
+      } else {
+        textInput.style.display = "none";
+        textInput.value = select.value;
+      }
+    });
+
+    textInput.addEventListener("input", () => {
+      // Update hidden field value when user types in custom URL
+      select.value = "CUSTOM_URL";
+    });
+
+    container.appendChild(select);
+    container.appendChild(textInput);
+
+    // Create a hidden input field that tracks the actual value
+    input = el("input");
+    input.type = "hidden";
+    input.className = "source-image-value";
+
+    // Sync dropdown and text input to the hidden field
+    const syncValue = () => {
+      if (select.value === "CUSTOM_URL" || select.value === "") {
+        input.value = textInput.value;
+      } else {
+        input.value = select.value;
+      }
+    };
+
+    select.addEventListener("change", syncValue);
+    textInput.addEventListener("input", syncValue);
+
+    row.appendChild(container);
+    // Don't append input here; let the normal flow handle it after initialization
+  } else if (options) {
     const optValue = (o) => (o && typeof o === "object") ? o.value : o;
     const optLabel = (o) => (o && typeof o === "object") ? o.label : o;
     input = el("select");
