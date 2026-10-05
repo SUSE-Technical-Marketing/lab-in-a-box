@@ -112,15 +112,14 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Hide Refresh Images button by text content and attributes (can't use :has-text in CSS)
+// Hide Refresh Images, Validate, Save buttons completely
 const hideButtonsByText = () => {
   Array.from(document.querySelectorAll('button')).forEach(btn => {
     const txt = btn.textContent.toLowerCase();
     const onclick = (btn.getAttribute('onclick') || '').toLowerCase();
     if (txt.includes('refresh') || txt.includes('validate') || txt.includes('save') ||
         onclick.includes('refresh') || onclick.includes('validate') || onclick.includes('save')) {
-      btn.style.display = 'none !important';
-      btn.disabled = true;
+      btn.parentNode.removeChild(btn);  // Remove button from DOM completely
     }
   });
 };

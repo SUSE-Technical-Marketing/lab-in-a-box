@@ -69,6 +69,13 @@ def extract_addon_schemas():
 
     print(f"Extraction complete: {len(addon_list)} regular + {len(infrastructure_addons)} infrastructure, {failed_count} failed", file=sys.stderr)
 
+    # FALLBACK: If extraction produced no results, generate addon names from filesystem
+    if not addon_list and not infrastructure_addons and failed_count > 0:
+        print(f"WARNING: All extraction attempts failed. Using filesystem fallback.", file=sys.stderr)
+        fallback_scripts = sorted(scripts_dir.glob("install_*.py"))
+        addon_list = [script.stem.replace("install_", "") for script in fallback_scripts]
+        print(f"FALLBACK: Generated {len(addon_list)} addon names from install_*.py scripts", file=sys.stderr)
+
     return {
         "version": "1.0",
         "generated": True,
