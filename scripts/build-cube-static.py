@@ -103,13 +103,14 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Hide Refresh Images button by text content (can't use :has-text in CSS)
+// Hide Refresh Images button by text content and attributes (can't use :has-text in CSS)
 const hideButtonsByText = () => {
   Array.from(document.querySelectorAll('button')).forEach(btn => {
-    if (btn.textContent.includes('Refresh Images') ||
-        btn.textContent.includes('Validate') ||
-        btn.textContent.includes('Save')) {
-      btn.style.display = 'none';
+    const txt = btn.textContent.toLowerCase();
+    const onclick = (btn.getAttribute('onclick') || '').toLowerCase();
+    if (txt.includes('refresh') || txt.includes('validate') || txt.includes('save') ||
+        onclick.includes('refresh') || onclick.includes('validate') || onclick.includes('save')) {
+      btn.style.display = 'none !important';
       btn.disabled = true;
     }
   });
