@@ -5,7 +5,7 @@
 # License: GPLv3
 #
 # References: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
-#            https://documentation.suse.com/suma/5.2/en/docs/administration/monitoring.html
+#            https://documentation.suse.com/multi-linux-manager/5.2/en/docs/administration/monitoring.html
 #
 # ─── JSON section: "prometheus" ─────────────────────────────────────────────
 #

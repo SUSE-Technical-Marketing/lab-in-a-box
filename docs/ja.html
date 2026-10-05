@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>1つのファイル、1つのコマンド。</strong> VM、Kubernetesクラスター（RKE2またはK3s）、およびアドオンを宣言的に記述します。<code>setup_lab.py</code>は依存関係の順序で作成し、<code>virt-install</code>またはAnsibleを手動で実行する必要はありません。</li>
 <li><strong>自宅またはクラウド内のラボ、同じ定義。</strong> ラボのVMは所有するKVMホスト、Harvester HCI、またはAWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscaleで実行されます。ラボは複数のKVMホストに拡張でき、単一のラボは<a href="#cross-cloud-wireguard-overlay">クラウド間WireGuardオーバーレイ</a>を介してクラウドと場所を組み合わせることができます。</li>
-<li><strong>72個の事前統合されたアドオン。</strong> Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloudなど、セキュリティトレーニング用の意図的に脆弱なデモアプリケーション付き。</li>
+<li><strong>71個の事前統合されたアドオン。</strong> Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloudなど、セキュリティトレーニング用の意図的に脆弱なデモアプリケーション付き。</li>
 <li><strong>コードに従うウェブインターフェイス。</strong> <a href="#web-ui-lab-builder">lab-builder</a>は各フォームをアドオンのスキーマから直接レンダリングします。スクリプトに新しいフィールドが追加されると、フロントエンドを変更することなくUIに表示されます。</li>
 <li><strong>交換可能なプロビジョニング。</strong> SLE Micro用のIgnitionおよびCombustion、openSUSEおよびUbuntu用のcloud-init、古いイメージ用の<code>virt-customize</code>、または実際のインストールISOからのスクリプト実行インストール（AutoYaST、Kickstart、PreseedまたはAutoInstall）。</li>
 <li><strong>ラボファイルの外の認証情報。</strong> クラウドおよびサービスの認証情報は、アカウントごとに暗号化されたファイルに存在できます（Argon2idキー派生に続いてAES-256-GCMおよびChaCha20-Poly1305がカスケード）。</li>
