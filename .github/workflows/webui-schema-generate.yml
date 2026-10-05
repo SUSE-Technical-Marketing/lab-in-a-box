@@ -35,8 +35,9 @@ jobs:
       - name: Extract addon schemas
         run: |
           cd "${{ github.workspace }}"
-          python3.11 scripts/extract-webui-schemas.py 2>/dev/null > webui/htdocs/schema.json
+          python3.11 scripts/extract-webui-schemas.py > webui/htdocs/schema.json 2>&1
           echo "✓ Extracted $(jq '.addons | length' webui/htdocs/schema.json) addon schemas"
+          echo "Schema file size: $(wc -c < webui/htdocs/schema.json) bytes"
 
       - name: Build static WebUI
         run: |
