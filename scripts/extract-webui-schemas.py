@@ -13,9 +13,6 @@ def extract_addon_schemas():
     addon_list = []
     infrastructure_addons = []
 
-    # Addons that are infrastructure/internal services, shown in separate section
-    infrastructure = {"coredns", "ds389", "mariadb", "postgresql", "harbor", "gitlab", "argocd", "smlm_proxy"}
-
     # Find all install_*.py scripts
     addon_scripts = sorted(scripts_dir.glob("install_*.py"))
 
@@ -37,7 +34,10 @@ def extract_addon_schemas():
                 addon = schema.get("addon", addon_name)
                 schemas[addon] = schema
 
-                if addon_name in infrastructure:
+                # Check if addon declares itself as infrastructure via metadata
+                is_infrastructure = schema.get("metadata", {}).get("infrastructure", False)
+
+                if is_infrastructure:
                     infrastructure_addons.append(addon)
                     print(f"  ✓ {addon} (infrastructure)", file=sys.stderr)
                 else:
