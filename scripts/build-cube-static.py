@@ -1,273 +1,109 @@
 #!/usr/bin/env python3.11
-"""Build static offline version of cube canvas webui with embedded schemas."""
+"""
+Build the static, backend-free lab-builder page (published on GitHub Pages).
 
+Takes webui/htdocs/index.html and embeds the answers the live lab-builder API
+(webui/lib/api.py) gives for "components", "base" and every add-on's "schema",
+computed from this repo checkout. An inline script replaces app.js's apiGet()
+with lookups over that data; CSS hides the controls that need the server
+(hypervisor status, image refresh, Validate, Save to server).
+
+Usage: build-cube-static.py [--output PATH]   (default: webui/htdocs/lab-builder-static.html)
+
+Exits non-zero when any API call fails or no add-on is found, so a page with
+missing add-on data is never written.
+"""
+import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parent.parent
+HTDOCS = REPO / "webui" / "htdocs"
 
-def load_schemas():
-    """Load addon schemas, with fallback to filesystem if schema.json is invalid."""
-    schema_file = Path(__file__).parent.parent / "webui" / "htdocs" / "schema.json"
+# The page reflects this checkout only: not copies installed under /usr/local on
+# the build machine, and none of its hypervisor/image data (os.devnull is never a
+# regular file, so discovery.status() reports "unavailable").
+os.environ["LABBUILDER_SCRIPTS_DIR"] = str(REPO / "scripts")
+os.environ["LABBUILDER_LIBS_DIR"] = str(REPO / "libs")
+os.environ["LABBUILDER_STATUS_FILE"] = os.devnull
+sys.path.insert(0, str(REPO / "webui" / "lib"))
+import api  # noqa: E402
 
-    # Try to load existing schema.json
-    if schema_file.exists():
-        try:
-            with open(schema_file) as f:
-                content = f.read().strip()
-                if content:
-                    data = json.loads(content)
-                    if data.get("schemas") and len(data.get("schemas", {})) > 0:  # Valid with detailed schemas
-                        return data
-        except json.JSONDecodeError:
-            pass
+HIDE_SERVER_CONTROLS = """
+  <style>
+    #statusPanel, #refreshImagesBtn, #editorImages, #validateBtn, #saveBtn { display: none !important; }
+  </style>
+"""
 
-    # Try to run extract script to get full schemas
-    print(f"Attempting to extract addon schemas via extract-webui-schemas.py", file=sys.stderr)
-    scripts_dir = Path(__file__).parent
-    try:
-        result = subprocess.run(
-            ["python3.11", str(scripts_dir / "extract-webui-schemas.py")],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
-            if data.get("schemas"):
-                print(f"✓ Successfully extracted {len(data['schemas'])} addon schemas", file=sys.stderr)
-                return data
-    except Exception as e:
-        print(f"⚠ Extraction failed ({type(e).__name__}), using fallback", file=sys.stderr)
-
-    # Final fallback: generate minimal schemas from install_*.py files
-    print(f"Fallback: Generating minimal addon schemas from install_*.py scripts", file=sys.stderr)
-    addon_list = sorted([s.stem.replace("install_", "") for s in scripts_dir.glob("install_*.py")])
-
-    # Generate minimal schemas for each addon
-    schemas = {}
-    for addon_name in addon_list:
-        schemas[addon_name] = {
-            "schema_version": "1.0",
-            "addon": addon_name,
-            "section": addon_name,
-            "description": f"{addon_name} addon",
-            "fields": [],
-            "capabilities": {"targets": ["container"], "layers": ["kubernetes"]}
-        }
-
-    return {
-        "version": "1.0",
-        "generated": True,
-        "addons": addon_list,
-        "infrastructure_addons": [],
-        "schemas": schemas
-    }
-
-
-def load_base_schema():
-    """Load base schema."""
-    try:
-        result = subprocess.run(
-            ["python3.11", str(Path(__file__).parent / "lab_schema"), "--base"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)
-    except Exception as e:
-        print(f"Warning: Could not load base schema: {e}", file=sys.stderr)
-    return {}
-
-
-def get_version():
-    """Get version from git or return a placeholder."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=Path(__file__).parent.parent,
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return "unknown"
-
-
-def build():
-    """Build static cube canvas webui."""
-    schemas = load_schemas()
-    base_schema = load_base_schema()
-    version = get_version()
-
-    # Read original index.html (the cube canvas)
-    index_path = Path(__file__).parent.parent / "webui" / "htdocs" / "index.html"
-    with open(index_path) as f:
-        html = f.read()
-
-    # Find where to inject schemas (right after <head> tag, BEFORE any scripts load)
-    head_start = html.find("<head>") + len("<head>")
-
-    # Create schema scripts
-    schemas_json = json.dumps(schemas)
-    base_json = json.dumps(base_schema)
-
-    schema_inject = f"""
-  <script id="embedded-schemas" type="application/json">
-{schemas_json}
-  </script>
-  <script id="embedded-base-schema" type="application/json">
-{base_json}
-  </script>
+STATIC_API = """
+  <script id="static-api-data" type="application/json">%s</script>
   <script>
-// Static mode overrides: intercept API calls to use embedded data
-window.STATIC_MODE = true;
-window.EMBEDDED_SCHEMAS = JSON.parse(document.getElementById('embedded-schemas').textContent);
-window.EMBEDDED_BASE_SCHEMA = JSON.parse(document.getElementById('embedded-base-schema').textContent);
+  (function () {
+    const data = JSON.parse(document.getElementById("static-api-data").textContent);
+    const copy = (v) => JSON.parse(JSON.stringify(v));
+    window.apiGet = async function (action, params = {}) {
+      if (action === "components") return copy(data.components);
+      if (action === "base") return copy(data.base);
+      if (action === "status") return { available: false, hosts: [], images: [], config: {} };
+      if (action === "schema") {
+        if (!Object.prototype.hasOwnProperty.call(data.schemas, params.name)) throw new Error("unknown add-on: " + params.name);
+        return copy(data.schemas[params.name]);
+      }
+      throw new Error(action + " needs the lab-builder server");
+    };
+  })();
   </script>
 """
 
-    html = html[:head_start] + schema_inject + html[head_start:]
 
-    # Replace __LABVERSION__ with actual git commit hash
-    html = html.replace("__LABVERSION__", version)
-
-    # Find where to inject API overrides (after app.js loads, before closing </body>)
-    body_end = html.rfind("</body>")
-
-    api_override = """
-  <script>
-// Static mode CSS: hide server-dependent elements
-const style = document.createElement('style');
-style.textContent = `
-  button[onclick*="validate"], button[onclick*="save"], button[onclick*="refresh"] { display: none !important; }
-  #statusPanel { display: none !important; }
-  .actions { opacity: 1; }
-  .actions .btn.disabled { opacity: 0.5; cursor: not-allowed; }
-`;
-document.head.appendChild(style);
-
-// Hide Refresh Images button by text content and attributes (can't use :has-text in CSS)
-const hideButtonsByText = () => {
-  Array.from(document.querySelectorAll('button')).forEach(btn => {
-    const txt = btn.textContent.toLowerCase();
-    const onclick = (btn.getAttribute('onclick') || '').toLowerCase();
-    if (txt.includes('refresh') || txt.includes('validate') || txt.includes('save') ||
-        onclick.includes('refresh') || onclick.includes('validate') || onclick.includes('save')) {
-      btn.style.display = 'none !important';
-      btn.disabled = true;
-    }
-  });
-};
-// Run after page loads
-document.addEventListener('DOMContentLoaded', hideButtonsByText);
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', hideButtonsByText);
-} else {
-  hideButtonsByText();
-}
-// Also watch for dynamically added buttons
-const observer = new MutationObserver(() => hideButtonsByText());
-observer.observe(document.body, { childList: true, subtree: true });
-
-// Override API functions for static mode
-const originalApiGet = window.apiGet;
-window.apiGet = async function(action, params = {}) {
-  if (action === 'components') {
-    if (!window.EMBEDDED_SCHEMAS) {
-      const msg = 'EMBEDDED_SCHEMAS not loaded - check if schemas script is before this one';
-      console.error(msg);
-      alert(msg);
-      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
-    }
-    if (!window.EMBEDDED_SCHEMAS.schemas) {
-      console.error('EMBEDDED_SCHEMAS.schemas is missing');
-      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
-    }
-    if (!window.EMBEDDED_SCHEMAS.addons) {
-      console.error('EMBEDDED_SCHEMAS.addons array missing');
-      return { components: [], infrastructure: [], count: 0, infrastructure_count: 0, scripts_dir: 'embedded' };
-    }
-
-    const buildComponent = (name) => {
-      const schema = window.EMBEDDED_SCHEMAS.schemas[name] || {};
-      const fields = schema.fields || [];
-      const countFields = (arr) => {
-        if (!Array.isArray(arr)) return 0;
-        return arr.reduce((n, f) => {
-          if (f && typeof f === 'object' && f.name && f.type) return n + 1;
-          if (f && f.fields) return n + countFields(f.fields);
-          return n;
-        }, 0);
-      };
-      return {
-        name,
-        title: schema.title || name,
-        description: schema.description || '',
-        field_count: countFields(fields),
-        layers: (schema.capabilities && schema.capabilities.layers) || []
-      };
-    };
-
-    const addons = window.EMBEDDED_SCHEMAS.addons || [];
-    const infraAddons = window.EMBEDDED_SCHEMAS.infrastructure_addons || [];
-    const regular = addons.map(buildComponent);
-    const infrastructure = infraAddons.map(buildComponent);
-
-    console.log(`✓ API: Loaded ${regular.length} regular addons, ${infrastructure.length} infrastructure addons`);
-
-    return {
-      components: regular,
-      infrastructure: infrastructure,
-      count: regular.length,
-      infrastructure_count: infrastructure.length,
-      scripts_dir: 'embedded'
-    };
-  }
-  if (action === 'schema') {
-    const comp = params.name;
-    if (!comp || !window.EMBEDDED_SCHEMAS.schemas[comp]) {
-      throw new Error(`Schema not found for ${comp}`);
-    }
-    return window.EMBEDDED_SCHEMAS.schemas[comp];
-  }
-  if (action === 'base') {
-    return window.EMBEDDED_BASE_SCHEMA;
-  }
-  if (action === 'status') {
-    return { available: false };
-  }
-  if (action === 'validate') {
-    return { valid: true, errors: [] };
-  }
-  if (action === 'save') {
-    throw new Error('In static mode, use Download to save lab.json');
-  }
-  throw new Error(`Unsupported in static mode: ${action}`);
-};
-  </script>
-"""
-
-    html = html[:body_end] + api_override + html[body_end:]
-
-    return html
+def git_version() -> str:
+    r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else "unknown"
 
 
-def main():
-    html = build()
+def api_get(action: str, **params: str) -> dict:
+    """One GET through the live API's dispatcher; exits on any non-200 answer."""
+    status, body = api.dispatch(action, "GET", {k: [v] for k, v in params.items()}, b"")
+    if status != 200:
+        sys.exit("build-cube-static: API {} {} failed: {}".format(action, params, body.get("error")))
+    return body
 
-    output_path = Path(__file__).parent.parent / "webui" / "htdocs" / "lab-builder-static.html"
-    with open(output_path, "w") as f:
-        f.write(html)
 
-    print(f"✓ Built {output_path} ({len(html)} bytes)", file=sys.stderr)
-    print(f"✓ Embedded {len(load_schemas()['addons'])} addon schemas", file=sys.stderr)
-    print(output_path)
+def collect(version: str) -> dict:
+    """Every GET answer the page needs, keyed the way the static apiGet() looks them up."""
+    components = api_get("components")
+    if not components["count"]:
+        sys.exit("build-cube-static: no add-ons found in {}".format(REPO / "scripts"))
+    components["scripts_dir"] = "lab-in-a-box " + version
+    components.pop("libs_dir", None)
+    schemas = {c["name"]: api_get("schema", name=c["name"]) for c in components["components"]}
+    return {"components": components, "base": api_get("base"), "schemas": schemas}
+
+
+def build(data: dict, version: str) -> str:
+    html = (HTDOCS / "index.html").read_text().replace("__LABVERSION__", version)
+    payload = json.dumps(data).replace("</", "<\\/")
+    head_end = html.index("</head>")
+    html = html[:head_end] + HIDE_SERVER_CONTROLS + html[head_end:]
+    body_end = html.rindex("</body>")
+    return html[:body_end] + STATIC_API % payload + html[body_end:]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    parser.add_argument("--output", type=Path, default=HTDOCS / "lab-builder-static.html",
+                        help="file to write (default: webui/htdocs/lab-builder-static.html)")
+    args = parser.parse_args()
+
+    version = git_version()
+    data = collect(version)
+    args.output.write_text(build(data, version))
+    fields = sum(c["field_count"] for c in data["components"]["components"])
+    print("built {}: {} add-ons, {} fields, version {}".format(
+        args.output, data["components"]["count"], fields, version), file=sys.stderr)
 
 
 if __name__ == "__main__":

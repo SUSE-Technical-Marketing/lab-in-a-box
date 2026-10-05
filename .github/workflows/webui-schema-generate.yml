@@ -7,9 +7,11 @@ on:
       - dev
     paths:
       - 'scripts/install_*.py'
+      - 'scripts/lab_schema'
       - 'scripts/build-cube-static.py'
-      - 'scripts/extract-webui-schemas.py'
+      - 'libs/**'
       - 'webui/htdocs/**'
+      - 'webui/lib/**'
       - 'docs/**'
       - '.github/workflows/webui-schema-generate.yml'
   workflow_dispatch:
@@ -32,64 +34,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Verify Python and test extraction
-        run: |
-          python3.11 --version
-          ls -1 scripts/install_*.py | wc -l
-          python3.11 scripts/install_agones.py --schema 2>&1 | head -5
-
-      - name: Extract addon schemas
-        run: |
-          cd "${{ github.workspace }}"
-          echo "=== Extracting addon schemas ==="
-          python3.11 scripts/extract-webui-schemas.py > webui/htdocs/schema.json 2>extract-stderr.log
-
-          echo "Schema file details:"
-          ls -lh webui/htdocs/schema.json
-
-          # Validate JSON
-          if jq empty webui/htdocs/schema.json 2>/dev/null; then
-            addon_count=$(jq '.addons | length' webui/htdocs/schema.json)
-            echo "✓ Valid JSON with $addon_count addons"
-            if [ "$addon_count" -gt 0 ]; then
-              echo "✓ SUCCESS: Schema extraction produced $addon_count addons"
-            else
-              echo "⚠ WARNING: Schema extracted but no addons found (empty lists)"
-              echo "Extract stderr:"
-              cat extract-stderr.log | head -50
-            fi
-          else
-            echo "✗ ERROR: Invalid JSON in schema.json"
-            echo "File size: $(wc -c < webui/htdocs/schema.json) bytes"
-            echo "First 500 chars:"
-            head -c 500 webui/htdocs/schema.json
-            echo ""
-            echo "Extract stderr:"
-            cat extract-stderr.log
-            exit 1
-          fi
-
       - name: Build static WebUI
-        run: |
-          cd "${{ github.workspace }}"
-          python3.11 scripts/build-cube-static.py
-          ls -lh webui/htdocs/lab-builder-static.html
+        run: python3.11 scripts/build-cube-static.py
 
       - name: Prepare GitHub Pages deployment
         run: |
           mkdir -p /tmp/gh-pages/lab-builder
-          # Copy documentation as root
           cp -r docs/* /tmp/gh-pages/
-          # Copy static webui to /lab-builder/ with all dependencies
-          cp webui/htdocs/lab-builder-static.html /tmp/gh-pages/lab-builder/index.html
-          cp webui/htdocs/schema.json /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/style.css /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/theme.js /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/app.js /tmp/gh-pages/lab-builder/
-          cp -r webui/htdocs/vendor /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/*.svg /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/*.png /tmp/gh-pages/lab-builder/
-          cp webui/htdocs/*.ico /tmp/gh-pages/lab-builder/
+          cp -r webui/htdocs/. /tmp/gh-pages/lab-builder/
+          mv /tmp/gh-pages/lab-builder/lab-builder-static.html /tmp/gh-pages/lab-builder/index.html
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
@@ -97,16 +50,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: /tmp/gh-pages
           cname: false
-
-      - name: Commit generated files if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git diff --quiet webui/htdocs/schema.json webui/htdocs/lab-builder-static.html; then
-            echo "✓ No changes to commit"
-          else
-            git add webui/htdocs/schema.json webui/htdocs/lab-builder-static.html
-            git commit -m "chore: regenerate static webui" --no-verify || true
-            git push || true
-          fi

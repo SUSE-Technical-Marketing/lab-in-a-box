@@ -215,6 +215,12 @@ check("empty model compiles to an empty lab", JSON.stringify(sandbox.compileLab(
   check("compileLab output feeds the diagram renderer unchanged", def.includes('subgraph n_clu_clu1["clu1 (rke2)"]'));
 }
 
+// -- addonSection: palette section from an add-on's PLUGIN targets ---------
+check("addonSection: container only -> cluster add-ons", sandbox.addonSection(["container"]) === "cluster");
+check("addonSection: vm/baremetal only -> VM add-ons", sandbox.addonSection(["vm", "baremetal"]) === "host");
+check("addonSection: container and vm -> cluster or VM add-ons",
+  sandbox.addonSection(["container", "vm", "baremetal"]) === "both");
+
 if (failures) {
   console.error(failures + " check(s) failed");
   process.exit(1);

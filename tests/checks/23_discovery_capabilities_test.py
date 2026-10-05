@@ -63,6 +63,15 @@ mariadb_item = next((it for it in items if it["name"] == "install_mariadb"), Non
 check("discover()'s install_mariadb entry has 'kubernetes' among its layers",
       mariadb_item is not None and "kubernetes" in mariadb_item["layers"])
 
+# ── discover(): every listed item carries its PLUGIN targets ─────────────────
+missing = [it["name"] for it in items if not it.get("targets")]
+check("every discover() item has a non-empty 'targets' list: {}".format(missing), missing == [])
+check("discover()'s install_mariadb entry targets container, vm and baremetal",
+      mariadb_item is not None and mariadb_item["targets"] == ["container", "vm", "baremetal"])
+suma_item = next((it for it in items if it["name"] == "install_suma"), None)
+check("discover()'s install_suma entry targets vm and baremetal only",
+      suma_item is not None and suma_item["targets"] == ["vm", "baremetal"])
+
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

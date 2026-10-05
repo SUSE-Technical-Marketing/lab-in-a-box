@@ -119,6 +119,30 @@ function paletteRow(spec, title, desc, meta, layers) {
   return li;
 }
 
+// Add-on palette sections, by where an add-on can be dropped (its PLUGIN
+// targets: "container" = inside a Kubernetes cluster, "vm"/"baremetal" = on a host).
+const ADDON_SECTIONS = [
+  { key: "cluster", title: "Cluster add-ons", hint: "Drop on a Kubernetes cluster" },
+  { key: "host", title: "VM add-ons", hint: "Drop on a VM" },
+  { key: "both", title: "Cluster or VM add-ons", hint: "Drop on a Kubernetes cluster or a VM" },
+];
+
+function addonSection(targets) {
+  const onCluster = targets.includes("container");
+  const onHost = targets.some((t) => t !== "container");
+  return onCluster && onHost ? "both" : onHost ? "host" : "cluster";
+}
+
+function paletteSection(title, hint, rows) {
+  const g = el("div", "pal-group");
+  g.appendChild(el("h3", "pal-title", title));
+  g.appendChild(el("p", "pal-hint", hint));
+  const ul = el("ul", "component-list");
+  rows.forEach((r) => ul.appendChild(r));
+  g.appendChild(ul);
+  return g;
+}
+
 function renderPalette(filter) {
   const root = $("#palette");
   root.innerHTML = "";
@@ -132,18 +156,21 @@ function renderPalette(filter) {
     g.appendChild(grid);
     root.appendChild(g);
   }
-  const g = el("div", "pal-group");
-  g.appendChild(el("h3", "pal-title", "Add-ons"));
-  const ul = el("ul", "component-list");
-  if (!f || "pxe tftp dhcp boot service".includes(f)) {
-    ul.appendChild(paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", []));
+  const matches = state.components
+    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f));
+  ADDON_SECTIONS.forEach((s) => {
+    const rows = matches
+      .filter((c) => addonSection(c.targets || []) === s.key)
+      .map((c) => paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
+        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers));
+    if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
+  });
+  const pxe = !f || "pxe tftp dhcp boot service".includes(f);
+  if (pxe) {
+    root.appendChild(paletteSection("Lab services", "Runs on the automation VM",
+      [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", [])]));
   }
-  state.components
-    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f))
-    .forEach((c) => ul.appendChild(paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
-      c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers)));
-  g.appendChild(ul);
-  root.appendChild(g);
+  if (f && !matches.length && !pxe) root.appendChild(el("p", "pal-hint", `No add-on matches “${filter}”.`));
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
