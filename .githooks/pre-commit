@@ -7,8 +7,8 @@ _changed=0
 
 while IFS= read -r _file; do
     [[ -f "${_repo_root}/${_file}" ]] || continue
-    if grep -q '_VERSION="[0-9a-f]\{7,\}"' "${_repo_root}/${_file}"; then
-        sed -i 's/_VERSION="[0-9a-f]\{7,\}"/_VERSION="__LABVERSION__"/' "${_repo_root}/${_file}"
+    if grep -q -E '(_VERSION="|__version__ = ")[0-9a-f]{7,}"' "${_repo_root}/${_file}"; then
+        sed -i -E 's/(_VERSION="|__version__ = ")[0-9a-f]{7,}"/\1__LABVERSION__"/' "${_repo_root}/${_file}"
         git add "${_repo_root}/${_file}"
         _changed=1
     fi
