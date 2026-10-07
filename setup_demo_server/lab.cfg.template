@@ -20,8 +20,8 @@ ROOT_SSH_PUB_KEY='REPLACE ME with: cat ~/.ssh/<your_key>.pub'
 ################################
 
 # Root password hash (used to set the root password inside the automation VM)
-# Generate with: openssl passwd -6 'yourpassword'
-ROOT_PWD_HASH='$6$AK9pZLzQ6G5zD5Vn$U7t.tGI9xDLqMez/kQLjziwVwxIYxpWbx./UYAVqZGvYclQHoiZ3ph1pFLvsNnz/p6H..51sLXS79Wn9IXc/r0'  ## --> hash for 1234
+# Generate with: openssl passwd -6 'yourpassword' (the template's value is the hash of 1234)
+ROOT_PWD_HASH='$6$AK9pZLzQ6G5zD5Vn$U7t.tGI9xDLqMez/kQLjziwVwxIYxpWbx./UYAVqZGvYclQHoiZ3ph1pFLvsNnz/p6H..51sLXS79Wn9IXc/r0'
 
 # Initial plaintext root password (used with chpasswd -c SHA512)
 root_pwd=1234
@@ -95,14 +95,9 @@ SUSE_url=""
 # MAC address for the automation VM (leave empty to auto-generate from _myip using QEMU OUI 52:54:00)
 _automation_mac=""
 
-# virt-install --graphics value for the automation VM. "spice" (default) needs
-# QEMU built with spice support, which isn't guaranteed on a minimal host install
-# (confirmed live 2026-08-30: fails outright with "spice graphics are not
-# supported with this QEMU" on an openSUSE Leap Minimal-VM Cloud host — its
-# libvirt-daemon-qemu only pulls spice in as a weak zypper Recommends). Set to
-# "none" on a host like that instead of installing the extra spice packages —
-# the automation VM is managed entirely over SSH/DNS/webui either way, spice is
-# only ever used for an operator to remote-viewer into its console if needed.
+# virt-install --graphics value for the automation VM. "spice" (default) falls back to
+# "vnc" automatically when the host's QEMU has no spice support (virsh domcapabilities);
+# "none" leaves it without a graphical console (it is managed over SSH/DNS/webui anyway).
 _automation_graphics="spice"
 
 # KVM hypervisor SSH connection for sshfs mount of source images

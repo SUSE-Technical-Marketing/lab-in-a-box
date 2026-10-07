@@ -27,132 +27,106 @@ def _profile_for(os_info):
         return khp.detect_profile()
 
 
-# ── (ID, major version) branch selection ──────────────────────────────────────
-p = _profile_for({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
-check("opensuse-leap 15.6 resolves to the Leap 15 profile", isinstance(p, khp.OpenSUSELeap15Profile))
-check("Leap 15 profile keeps the full package list (kubevirt-virtctl etc. included)",
-      "kubevirt-virtctl" in p.packages and not p.unmapped_packages)
-check("Leap 15 profile installs fuse3 (guestmount/guestunmount's own fusermount3 "
-      "dependency; it is missing on a Minimal-VM Cloud host, see the packages list's own comment)",
-      "fuse3" in p.packages)
-
-p = _profile_for({"ID": "opensuse-leap", "VERSION_ID": "16.0"})
-check("opensuse-leap 16.0 resolves to the Leap 16 profile", isinstance(p, khp.OpenSUSELeap16Profile))
-check("Leap 16 profile's package list is genuinely different from Leap 15's",
-      p.packages != khp.OpenSUSELeap15Profile.packages)
-check("Leap 16 profile moves the OBS-devel-origin packages to unmapped_packages, not packages",
-      "kubevirt-virtctl" not in p.packages and "kubevirt-virtctl" in p.unmapped_packages)
-
-p = _profile_for({"ID": "sles", "VERSION_ID": "15.6"})
-check("sles 15.6 resolves to the SLES 15 profile", isinstance(p, khp.SLES15Profile))
-p = _profile_for({"ID": "sles", "VERSION_ID": "16.0"})
-check("sles 16.0 resolves to the SLES 16 profile", isinstance(p, khp.SLES16Profile))
-check("SLES 16 profile also moves the unverified packages out",
-      "kubevirt-virtctl" not in p.packages and "kubevirt-virtctl" in p.unmapped_packages)
+# ── detect_profile(): one profile per (ID, major version) ────────────────────
+for os_info, cls in [
+        ({"ID": "opensuse-leap", "VERSION_ID": "15.6"}, khp.OpenSUSELeap15Profile),
+        ({"ID": "opensuse-leap", "VERSION_ID": "16.0"}, khp.OpenSUSELeap16Profile),
+        ({"ID": "sles", "VERSION_ID": "15.6"}, khp.SLES15Profile),
+        ({"ID": "sles", "VERSION_ID": "16.0"}, khp.SLES16Profile),
+        ({"ID": "debian", "VERSION_ID": "12"}, khp.Debian12Profile),
+        ({"ID": "debian", "VERSION_ID": "13"}, khp.Debian13Profile),
+        ({"ID": "ubuntu", "VERSION_ID": "22.04", "ID_LIKE": "debian"}, khp.Ubuntu2204Profile),
+        ({"ID": "ubuntu", "VERSION_ID": "24.04", "ID_LIKE": "debian"}, khp.Ubuntu2404Profile),
+        ({"ID": "rocky", "VERSION_ID": "9.8", "ID_LIKE": "rhel centos fedora"}, khp.EL9Profile),
+        ({"ID": "almalinux", "VERSION_ID": "10.2", "ID_LIKE": "rhel centos fedora"}, khp.EL10Profile),
+        ({"ID": "rhel", "VERSION_ID": "9.6", "ID_LIKE": "fedora"}, khp.EL9Profile),
+        ({"ID": "centos", "VERSION_ID": "10", "ID_LIKE": "rhel fedora"}, khp.EL10Profile),
+        ({"ID": "fedora", "VERSION_ID": "44"}, khp.FedoraProfile)]:
+    p = _profile_for(os_info)
+    check("{} {} resolves to {}".format(os_info["ID"], os_info["VERSION_ID"], cls.__name__),
+          type(p) is cls and p.verified)
 
 p = _profile_for({"ID": "opensuse-leap", "VERSION_ID": "17.1"})
-check("an unrecognised future Leap major version falls back to the newest known branch (16)",
-      isinstance(p, khp.OpenSUSELeap16Profile))
-
+check("an unknown Leap major version gets the newest Leap profile, marked unverified",
+      isinstance(p, khp.OpenSUSELeap16Profile) and not p.verified)
+p = _profile_for({"ID": "linuxmint", "VERSION_ID": "22", "ID_LIKE": "ubuntu debian"})
+check("an Ubuntu derivative gets the newest Ubuntu profile, marked unverified",
+      isinstance(p, khp.Ubuntu2404Profile) and not p.verified)
+p = _profile_for({"ID": "ol", "VERSION_ID": "9.4", "ID_LIKE": "fedora rhel"})
+check("an EL derivative gets the newest EL profile, marked unverified",
+      isinstance(p, khp.EL10Profile) and not p.verified)
 p = _profile_for({"ID": "", "ID_LIKE": "suse opensuse", "VERSION_ID": "15.6"})
-check("ID_LIKE=suse fallback (no exact ID match) resolves via the opensuse-leap family",
-      isinstance(p, khp.OpenSUSELeap15Profile))
+check("ID_LIKE=suse alone resolves to an openSUSE Leap profile", isinstance(p, khp._SuseZypperProfile))
+check("a genuinely unrecognised OS returns None", _profile_for({"ID": "unknownos", "VERSION_ID": "1"}) is None)
 
-p = _profile_for({"ID": "unknownos", "VERSION_ID": "1.0"})
-check("a genuinely unrecognised OS returns None", p is None)
+# ── package lists ─────────────────────────────────────────────────────────────
+for cls in (khp.OpenSUSELeap15Profile, khp.SLES16Profile, khp.Debian12Profile, khp.EL9Profile, khp.FedoraProfile):
+    check("{} requires fuse3 (guestmount needs fusermount3 to flush its writes)".format(cls.__name__),
+          "fuse3" in cls.packages)
+    check("{} keeps conveniences out of the required list".format(cls.__name__),
+          not set(cls.packages) & set(cls.extra_packages + cls.unmapped_packages))
+check("the EL list leaves curl out (curl-minimal conflicts with it)", "curl" not in khp.EL9Profile.packages)
+check("SLES 15 and Leap 15 share their package lists, as do SLES 16 and Leap 16",
+      khp.SLES15Profile.packages == khp.OpenSUSELeap15Profile.packages
+      and khp.SLES16Profile.packages == khp.OpenSUSELeap16Profile.packages
+      and khp.SLES16Profile.extra_packages == khp.OpenSUSELeap16Profile.extra_packages)
+check("Leap/SLES 15 pin kubectl as an extra; 16 has no kubectl package",
+      khp.OpenSUSELeap15Profile.kubectl_package in khp.OpenSUSELeap15Profile.extra_packages
+      and khp.OpenSUSELeap16Profile.kubectl_package == "")
+check("kubevirt-virtctl is an extra on Leap/SLES 16", "kubevirt-virtctl" in khp.SLES16Profile.extra_packages)
+check("Debian/Ubuntu require bridge-utils (ifupdown bridges need it)", "bridge-utils" in khp.Debian13Profile.packages)
 
-# ── Non-SUSE families unaffected by the version-branch change ─────────────────
-p = _profile_for({"ID": "ubuntu", "VERSION_ID": "24.04"})
-check("ubuntu still resolves to DebianProfile (no version-branch regression)",
-      isinstance(p, khp.DebianProfile))
-p = _profile_for({"ID": "rocky", "VERSION_ID": "9"})
-check("rocky still resolves to RHELProfile", isinstance(p, khp.RHELProfile))
+# ── install(): required packages in one transaction, extras best-effort ───────
+p = khp.Debian12Profile({"ID": "debian", "VERSION_ID": "12"})
 
 
-# ── configure_bridge(): nmcli vs. wicked live-service detection ───────────────
-def _run(rc_by_service, device_conn="", conn_ipv4=None):
-    """device_conn/conn_ipv4 simulate `nmcli device show <nic>` and
-    `nmcli con show <existing_conn>` for configure_bridge()'s
-    existing-connection-migration logic — empty/None means "no existing
-    connection found on this device", matching a fresh device with nothing
-    configured on it yet."""
-    conn_ipv4 = conn_ipv4 or {}
-
+def _apt(fail_pkgs):
     def fake_run(cmd, check=False, **kwargs):
-        if cmd[:2] == ["systemctl", "is-active"]:
-            svc = cmd[-1]
-            return subprocess.CompletedProcess(cmd, rc_by_service.get(svc, 1))
-        if cmd[:4] == ["nmcli", "-t", "-f", "GENERAL.CONNECTION"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="GENERAL.CONNECTION:{}".format(device_conn))
-        if cmd[:2] == ["nmcli", "-g"]:
-            field = cmd[2]
-            return subprocess.CompletedProcess(cmd, 0, stdout=conn_ipv4.get(field, ""))
-        return subprocess.CompletedProcess(cmd, 0, stdout="")
+        rc = 100 if any(pkg in cmd for pkg in fail_pkgs) else 0
+        if check and rc:
+            raise subprocess.CalledProcessError(rc, cmd)
+        return subprocess.CompletedProcess(cmd, rc)
     return fake_run
 
 
-# The test container runs Python 3.6, where unittest.mock's call.args and call.kwargs do not exist. The call_args_list entries are
-# therefore indexed as tuples: call[0] is the positional tuple and call[0][0] is the first positional argument.
-p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
-with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0})) as m:
-    p.configure_bridge("eth0", "br0")
-    calls = [c[0][0] for c in m.call_args_list]
-    check("configure_bridge picks nmcli when NetworkManager is active",
-          any(c[:2] == ["nmcli", "con"] for c in calls))
-    check("configure_bridge with no existing connection on the NIC never tries to deactivate one",
-          not any(c[:3] == ["nmcli", "con", "down"] for c in calls))
-
-# ── configure_bridge(): migrating an existing static-IP connection ─────────
-# The NIC's existing connection is migrated to the bridge. Otherwise the bridge gets no IP, and the slave connection never attaches.
-p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
-with mock.patch.object(subprocess, "run", side_effect=_run(
-        {"NetworkManager": 0}, device_conn="lab-static",
-        conn_ipv4={"ipv4.method": "manual", "ipv4.addresses": "192.168.88.150/24",
-                   "ipv4.gateway": "192.168.88.1", "ipv4.dns": "192.168.88.73"})) as m:
-    p.configure_bridge("eth0", "br0")
-    calls = [c[0][0] for c in m.call_args_list]
-    bridge_add = next(c for c in calls if c[:5] == ["nmcli", "con", "add", "type", "bridge"])
-    check("configure_bridge gives the new bridge the NIC's existing static IPv4 config",
-          "ipv4.method" in bridge_add and "manual" in bridge_add
-          and "192.168.88.150/24" in bridge_add and "192.168.88.1" in bridge_add)
-    check("configure_bridge deactivates the NIC's old connection so the slave connection can attach",
-          ["nmcli", "con", "down", "lab-static"] in calls)
-    down_idx = calls.index(["nmcli", "con", "down", "lab-static"])
-    slave_idx = next(i for i, c in enumerate(calls) if c[:4] == ["nmcli", "con", "add", "type"]
-                      and "bridge-slave" in c)
-    check("configure_bridge deactivates the old connection before adding the slave connection",
-          down_idx < slave_idx)
-
-# A device with no existing connection (nothing configured on it yet, or
-# nmcli couldn't determine one) must not try to migrate a nonexistent config
-# or deactivate anything by name.
-p = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
-with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 0}, device_conn="")) as m:
-    p.configure_bridge("eth0", "br0")
-    calls = [c[0][0] for c in m.call_args_list]
-    bridge_add = next(c for c in calls if c[:5] == ["nmcli", "con", "add", "type", "bridge"])
-    check("configure_bridge with no existing connection creates a plain (DHCP-default) bridge",
-          "ipv4.method" not in bridge_add)
-    check("configure_bridge with no existing connection never calls 'nmcli con down'",
-          not any(c[:3] == ["nmcli", "con", "down"] for c in calls))
-
-with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 1, "wickedd": 0})) as m, \
-     mock.patch.object(khp.Path, "write_text") as wt:
-    p.configure_bridge("eth0", "br0")
-    calls = [c[0][0] for c in m.call_args_list]
-    check("configure_bridge falls back to wicked when NetworkManager is inactive but wicked is live",
-          any(c[:2] == ["wicked", "ifreload"] for c in calls))
-    check("configure_bridge writes ifcfg files for both the bridge and the NIC under wicked",
-          wt.call_count == 2)
-
-with mock.patch.object(subprocess, "run", side_effect=_run({"NetworkManager": 1, "wickedd": 1})):
-    raised = False
+with mock.patch.object(subprocess, "run", side_effect=_apt(["mc"])) as m:
+    failed = p.install()
+calls = [c[0][0] for c in m.call_args_list]
+check("install() installs every required package in its first call",
+      all(pkg in calls[0] for pkg in p.packages))
+check("install() retries the extras one by one when the batch fails and reports only the failing one",
+      failed == ["mc"])
+raised = False
+with mock.patch.object(subprocess, "run", side_effect=_apt(["qemu-utils"])):
     try:
-        p.configure_bridge("eth0", "br0")
-    except NotImplementedError:
+        p.install()
+    except subprocess.CalledProcessError:
         raised = True
-    check("configure_bridge raises when neither NetworkManager nor wicked is live", raised)
+check("install() fails when a required package cannot be installed", raised)
+check("install() installs the upstream kubectl binary where the OS has no kubectl package",
+      ["sh", "-c", khp.kubectl_binary_script()] in calls)
+leap15 = khp.OpenSUSELeap15Profile({"ID": "opensuse-leap", "VERSION_ID": "15.6"})
+with mock.patch.object(subprocess, "run", side_effect=_apt([])) as m:
+    leap15.install()
+check("install() relies on the kubectl package where the OS has one",
+      not any(c[0][0][:2] == ["sh", "-c"] for c in m.call_args_list))
+script = khp.kubectl_binary_script()
+check("the upstream kubectl script pins KUBECTL_VERSION and verifies the published SHA-256",
+      "/release/v{}/bin/linux/".format(khp.KUBECTL_VERSION) in script and "sha256sum -c" in script
+      and khp.OpenSUSELeap15Profile.kubectl_package == "kubernetes{}-client".format(
+          ".".join(khp.KUBECTL_VERSION.split(".")[:2])))
 
+# ── register_repos(): EPEL + CRB on EL, nothing elsewhere ─────────────────────
+rocky = khp.EL9Profile({"ID": "rocky", "VERSION_ID": "9.8"})
+check("Rocky enables EPEL and CRB", ["dnf", "config-manager", "--set-enabled", "crb"] in rocky.repo_setup
+      and ["dnf", "install", "-y", "epel-release", "dnf-plugins-core"] in rocky.repo_setup)
+rhel = khp.EL10Profile({"ID": "rhel", "VERSION_ID": "10.0"})
+check("RHEL enables CodeReady Builder through subscription-manager and EPEL 10 from its URL",
+      rhel.repo_setup[0][:3] == ["subscription-manager", "repos", "--enable"]
+      and "codeready-builder-for-rhel-10-" in rhel.repo_setup[0][3]
+      and rhel.repo_setup[1][-1].endswith("epel-release-latest-10.noarch.rpm"))
+check("Fedora and Debian need no repository setup",
+      khp.FedoraProfile({"ID": "fedora"}).repo_setup == [] and p.repo_setup == [])
 
 # ── _SuseRegisteredProfile.register_repos(): the registration code is required ──
 # The base product is registered with the registration code before any module is added. Modules alone fail on an unregistered host.

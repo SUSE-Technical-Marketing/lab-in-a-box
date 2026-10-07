@@ -225,14 +225,13 @@
 <li>Internetzugang (oder ein lokaler Spiegel) für Paket- und Image-Downloads</li>
 <li>Ein QCOW2-Image für das gewählte Betriebssystem unter <code>/var/lib/libvirt/images/sources/</code> auf dem Hypervisor</li>
 </ul>
-<aside class="callout callout-important"><p>Die Automatisierungs-VM braucht konkret <code>python3.11</code> — der Toolchain ist explizit darauf festgelegt. Die meisten Distributionen liefern daneben ein älteres Standard-<code>python3</code> mit. Das Installationsskript bricht ab, wenn <code>python3.11</code> fehlt.</p></aside>
+<aside class="callout callout-important"><p>Auf dem Hypervisor muss vorher kein Python installiert sein: der Setup-Befehl installiert <code>python311</code> auf openSUSE Leap / SLES 15 und überall sonst das <code>python3</code> der Distribution (3.9 oder neuer).</p></aside>
 <p>Getestete Images:
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — empfohlen, mit Ignition+Combustion verwendet
 - openSUSE Leap Micro — unterstützt, mit cloud-init verwendet</p>
-<h3 id="step-1--prepare-the-hypervisor-os">Schritt 1 — Hypervisor-Betriebssystem vorbereiten</h3>
-<p>Installieren Sie SLES (oder eine andere KVM-fähige Linux-Distribution) auf Ihrer Hardware. Wählen Sie bei der Installation:
-- <strong>Netzwerk</strong>: eine Bridge (<code>br0</code>) anlegen, die mit Ihrer Haupt-NIC verbunden ist, mit einer festen IP
-- <strong>Systemrolle</strong>: KVM Virtualization Host</p>
+<h3 id="step-1--prepare-the-hypervisor-os">Schritt 1 — Das Hypervisor-Betriebssystem installieren</h3>
+<p>Installieren Sie eines dieser Systeme auf Ihrer Hardware: openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora. Eine Minimal- oder Server-Installation genügt; eine Bridge oder zusätzliche Pakete werden vorher nicht benötigt.</p>
+<p>Auf Hypervisoren der RHEL-Familie und Fedora wird der Host vollständig eingerichtet, die Automation-VM kann dort aber noch nicht gebaut werden: libguestfs kann auf diesen Systemen das btrfs-Dateisystem ihres openSUSE-Leap-Images nicht lesen. Erstellen Sie den Automation-Knoten vorerst auf einem Host einer anderen Distributionsfamilie.</p>
 <details>
 <summary>Bootfähigen USB-Stick unter Linux erstellen</summary>
 
@@ -258,50 +257,20 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 
 </details>
 
-<h3 id="step-2--bootstrap-the-setup-scripts">Schritt 2 — Setup-Skripte bootstrappen</h3>
-<p>Von jeder Linux-Maschine mit SSH-Zugang zum Hypervisor aus:</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-2--bootstrap-the-setup-scripts">Schritt 2 — Den Setup-Befehl ausführen</h3>
+<p>Auf dem Hypervisor, als root:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>Dies lädt die Setup-Skripte nach <code>/var/tmp/setup_demo_server/</code>.</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">Schritt 3 — KVM-Knoten-Setup konfigurieren und ausführen</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>Der Befehl installiert git und Python, lädt lab-in-a-box nach <code>/var/tmp/setup_demo_server/</code> und fragt die Lab-Einstellungen ab, jeweils mit den Werten dieses Hosts als Vorgabe: Bridge- oder NAT-Netzwerk, DNS-Domain des Labs, IP-Adresse und root-Passwort der Automation-VM (unter SLES zusätzlich der Registrierungscode). Danach installiert er die Hypervisor-Pakete, macht die NIC mit der Default-Route zum Port der Bridge <code>br0</code>, wobei der Host seine Adresse behält (antwortet das Gateway nicht mehr, wird die vorherige Netzwerkkonfiguration automatisch wiederhergestellt), und erstellt die Automation-VM.</p>
+<p>Jede Antwort lässt sich auch als Option angeben, für unbeaufsichtigte Läufe (z. B. aus cloud-init):</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<p>Wichtige Einstellungen in <code>lab.cfg</code>:</p>
-<table>
-<thead>
-<tr>
-<th>Einstellung</th>
-<th>Beschreibung</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>ROOT_PWD_HASH</code></td>
-<td>Gehashtes Root-Passwort — erzeugen mit <code>mkpasswd --method=SHA-512 --stdin</code></td>
-</tr>
-<tr>
-<td><code>ROOT_SSH_PUB_KEY</code></td>
-<td>Ihr öffentlicher SSH-Schlüssel für passwortlosen Zugriff</td>
-</tr>
-<tr>
-<td><code>AUTOMATION_HOSTNAME</code></td>
-<td>Hostname der Automatisierungs-VM (z. B. <code>automation.mydemo.lab</code>)</td>
-</tr>
-<tr>
-<td><code>_QCOW_IMAGE</code></td>
-<td>Dateiname des QCOW2-Quellimages</td>
-</tr>
-<tr>
-<td>Netzwerkeinstellungen</td>
-<td>IP, Gateway, Maske, DNS für das Lab-Netz</td>
-</tr>
-</tbody>
-</table>
-<p>Starten Sie dann das Setup (ersetzen Sie <code>&lt;IP&gt;</code> durch die IP Ihres Hypervisors, oder lassen Sie es für lokal weg):</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Schritt 3 — Setup erneut ausführen oder ändern</h3>
+<p>Ein erneuter Lauf verwendet die vorhandene <code>setup_demo_server/lab.cfg</code>; <code>--reconfigure</code> fragt alles neu ab. Um <code>lab.cfg</code> vor jeder Änderung selbst zu bearbeiten, laden Sie nur den Code:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p>Dies stellt die Automatisierungs-VM bereit und startet alle erforderlichen Dienste.</p>
+<p><code>setup_kvm_node.py &lt;IP&gt;</code> richtet einen anderen Rechner per SSH ein; <code>setup_kvm_node.py --help</code> zeigt alle Optionen.</p>
 <h3 id="step-4--configure-the-automation-vm">Schritt 4 — Automatisierungs-VM konfigurieren</h3>
 <p>Verbinden Sie sich per SSH mit der Automatisierungs-VM und installieren Sie die Lab-Skripte:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;

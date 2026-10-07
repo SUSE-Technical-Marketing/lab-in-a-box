@@ -226,7 +226,7 @@ const DIAGRAMS = {
   // ---------------------------------------------------------------- quickstart
   quickstart: (T, k) => {
     const W = 1000, H = 230;
-    const steps = ['Prepare the hypervisor OS', 'Bootstrap the setup scripts', 'Configure and run the KVM node setup', 'Configure the automation VM', 'Point client DNS at the automation VM', 'Build your first lab'];
+    const steps = ['Install the hypervisor OS', 'Run the setup command', 'Re-run or change the setup', 'Configure the automation VM', 'Point client DNS at the automation VM', 'Build your first lab'];
     const tiles = ['teal', 'navy', 'coral', 'sand', 'teal', 'navy'];
     let b = k.text(20, 34, 'Quick start', 'm');
     const w = 148, gap = 14, y = 56, h = 140;

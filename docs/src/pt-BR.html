@@ -183,27 +183,27 @@
 <li>Acesso à Internet (ou espelho local) para baixar pacotes e imagens</li>
 <li>Uma imagem QCOW2 para o SO escolhido em <code>/var/lib/libvirt/images/sources/</code> no hipervisor</li>
 </ul>
-<aside class="callout callout-important"><p>A VM de automação especificamente requer <code>python3.11</code> — a cadeia de ferramentas é explicitamente fixada nela. A maioria das distribuições fornece um <code>python3</code> padrão mais antigo além disso. O script de instalação é interrompido se <code>python3.11</code> está faltando.</p></aside>
+<aside class="callout callout-important"><p>O hipervisor não precisa de Python instalado antes: o comando de instalação instala <code>python311</code> no openSUSE Leap / SLES 15 e o <code>python3</code> da própria distribuição (3.9 ou mais recente) nas demais.</p></aside>
 <p>Imagens testadas:
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recomendada, usada com Ignition+Combustion
 - openSUSE Leap Micro — suportada, usada com cloud-init</p>
-<h3 id="step-1--prepare-the-hypervisor-os">Etapa 1 — Preparar o SO do hipervisor</h3>
-<p>Instale SLES (ou outra distribuição Linux capaz de KVM) no seu hardware. Durante a instalação, selecione:
-- <strong>Rede</strong>: criar uma ponte (<code>br0</code>) conectada à sua NIC principal, com um IP fixo
-- <strong>Papel do sistema</strong>: Host de virtualização KVM</p>
-<h3 id="step-2--bootstrap-the-setup-scripts">Etapa 2 — Inicializar os scripts de configuração</h3>
-<p>De qualquer máquina Linux com acesso SSH ao hipervisor:</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-1--prepare-the-hypervisor-os">Etapa 1 — Instalar o SO do hipervisor</h3>
+<p>Instale um destes sistemas no seu hardware: openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora. Uma instalação mínima ou de servidor basta; não é preciso criar uma bridge nem instalar pacotes antes.</p>
+<p>Em hipervisores da família RHEL e Fedora a configuração do host é concluída, mas a VM de automação ainda não pode ser criada neles: o libguestfs desses sistemas não consegue ler o sistema de arquivos btrfs da imagem openSUSE Leap. Por enquanto, crie o nó de automação em um host de outra família.</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">Etapa 2 — Executar o comando de instalação</h3>
+<p>No hipervisor, como root:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>Isso baixa os scripts de configuração para <code>/var/tmp/setup_demo_server/</code>.</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">Etapa 3 — Configurar e executar a configuração do nó KVM</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>Ele instala git e Python, baixa o lab-in-a-box em <code>/var/tmp/setup_demo_server/</code> e pergunta as configurações do laboratório, com os valores deste host como padrão: rede em bridge ou NAT, domínio DNS do laboratório, endereço IP e senha de root da VM de automação (e o código de registro no SLES). Depois instala os pacotes do hipervisor, transforma a NIC da rota padrão em porta da bridge <code>br0</code> mantendo o endereço do host (se o gateway parar de responder, a configuração de rede anterior é restaurada automaticamente) e cria a VM de automação.</p>
+<p>Cada resposta também pode ser passada como opção, para execuções sem supervisão (por exemplo via cloud-init):</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<p>Então execute a configuração (substitua <code>&lt;IP&gt;</code> pelo IP do seu hipervisor, ou omita para local):</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Etapa 3 — Executar de novo ou alterar a configuração</h3>
+<p>Uma nova execução usa o <code>setup_demo_server/lab.cfg</code> existente; <code>--reconfigure</code> pergunta tudo de novo. Para editar o <code>lab.cfg</code> antes de qualquer mudança, baixe apenas o código:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p>Isso provisiona a VM de automação e inicia todos os serviços necessários.</p>
+<p><code>setup_kvm_node.py &lt;IP&gt;</code> configura outra máquina via SSH; <code>setup_kvm_node.py --help</code> mostra todas as opções.</p>
 <h3 id="step-4--configure-the-automation-vm">Etapa 4 — Configurar a VM de automação</h3>
 <p>Conecte via SSH à VM de automação e instale os scripts do laboratório:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;

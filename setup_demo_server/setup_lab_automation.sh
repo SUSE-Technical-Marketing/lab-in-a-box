@@ -44,6 +44,8 @@ function detect_bridge() {
 # hardcoded per OS.
 function configure_bridge() {
     [[ -z "${_bridge_nic}" ]] && return
+    # setup_kvm_node.py creates the bridge (libs/host_network.py) before running this script.
+    [[ -d "/sys/class/net/${_bridge_name}/bridge" ]] && return
     _msg="Configure network bridge ${_bridge_name} (${_bridge_nic})" show_nicer_messages
     if systemctl is-active --quiet NetworkManager; then
         nmcli con add type bridge con-name "${_bridge_name}" ifname "${_bridge_name}"
@@ -150,8 +152,13 @@ EOF
 
 function install_packages() {
     _msg="Install required packages" show_nicer_messages
+    # python311: install_automation_node_scripts.sh needs python3.11. kubernetes1.35-client: same kubectl
+    # as the hypervisors (libs/kvm_host_profiles.py's KUBECTL_VERSION). Nothing that pulls in a kernel:
+    # installing one here rebuilds the initrd inside the chroot, and the VM then cannot find its root disk.
     chroot /mnt/ zypper install -y vim-small git rsync apache2 bind-utils bind docker podman \
-        libvirt-client jq NetworkManager virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd
+        libvirt-client jq NetworkManager virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd \
+        python311 kubernetes1.35-client \
+        || { echo -e "\033[1;31mERROR\033[0m: package installation in the automation VM image failed" >&2; exit 1; }
     _msg="Enable/Disable services" show_nicer_messages
     chroot /mnt/ bash -c "
         systemctl disable firewalld.service wicked.service
@@ -188,7 +195,8 @@ function install_lab_scripts() {
     # (templates/addons/*, scripts/install_*, ...), so it must run with that directory as cwd.
     # Otherwise every relative copy fails with "cannot stat", which is non-fatal and silently skips
     # the addon templates and scripts.
-    chroot /mnt/ bash -c "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh"
+    chroot /mnt/ bash -c "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh" \
+        || { echo -e "\033[1;31mERROR\033[0m: install_automation_node_scripts.sh failed in the automation VM image" >&2; exit 1; }
 }
 
 function configure_helm() {
@@ -329,6 +337,14 @@ EOF
 function _lab_host_is_leap16() {
     . /etc/os-release 2>/dev/null
     [[ "${ID}" == "opensuse-leap" && "${VERSION_ID}" == 16* ]]
+}
+
+# The automation VM image is edited offline with libguestfs, which on the RHEL family and Fedora
+# cannot read the btrfs root filesystem of the openSUSE Leap image, so neither guestmount nor
+# guestfish can prepare it there.
+function _host_can_prepare_image() {
+    . /etc/os-release 2>/dev/null
+    [[ " ${ID} ${ID_LIKE} " != *" rhel "* && " ${ID} ${ID_LIKE} " != *" fedora "* ]]
 }
 
 # Does the whole configure_image()+configure_os()+install_packages()+
@@ -573,11 +589,13 @@ HELMSCRIPT
 function finish_automation_vm_setup_over_ssh() {
     _msg="Install required packages (post-boot, Leap 16 exception)" show_nicer_messages
     ssh -o StrictHostKeyChecking=accept-new "root@${_myip}" \
-        "zypper --gpg-auto-import-keys install -y vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd"
+        "zypper --gpg-auto-import-keys install -y vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd python311 kubernetes1.35-client" \
+        || { echo -e "\033[1;31mERROR\033[0m: package installation on the automation VM failed" >&2; exit 1; }
     ssh "root@${_myip}" "systemctl enable --now named apache2"
 
     _msg="Run install_automation_node_scripts.sh (post-boot, Leap 16 exception)" show_nicer_messages
-    ssh "root@${_myip}" "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh"
+    ssh "root@${_myip}" "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh" \
+        || { echo -e "\033[1;31mERROR\033[0m: install_automation_node_scripts.sh failed on the automation VM" >&2; exit 1; }
 }
 
 function unmount_image() {
@@ -597,7 +615,10 @@ function unmount_image() {
         lsof +D /mnt 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill -9
         sleep 1
     fi
-    guestunmount /mnt
+    if ! guestunmount /mnt; then
+        echo -e "\033[1;31mERROR\033[0m: guestunmount /mnt failed, so the changes to the automation VM image were not written; stopping before creating the VM" >&2
+        exit 1
+    fi
     trap - EXIT
     # guestunmount returning success only means the FUSE mountpoint is gone. libguestfs's internal
     # helper VM, which backs read/write access to the qcow2, can still hold its lock on the file for a
@@ -628,13 +649,17 @@ function vm_network_arg() {
 
 function create_vm() {
     _msg="Create virtual machine" show_nicer_messages
-    # lab.cfg's _automation_graphics — default stays "spice" (unchanged behavior),
-    # Spice graphics are a config knob, not hardcoded. Spice depends on QEMU having been
-    # built with spice support, which isn't guaranteed on a minimal host install
-    # On an openSUSE Leap Minimal-VM host, the QEMU build may lack spice support, and virt-install then
-    # fails with "spice graphics are not supported with this QEMU". libvirt-daemon-qemu's spice UI packages
-    # are only a weak zypper Recommends there. Set _automation_graphics=none in lab.cfg on such a host
-    # instead of installing the extra spice packages.
+    # lab.cfg's _automation_graphics (default spice). When it is spice and this host's QEMU lists
+    # graphics types without spice (EL 10, SLES 16, some minimal openSUSE installs), vnc is used
+    # instead, the same check libs/backends.py's LibvirtBackend._graphics() makes for lab VMs.
+    local _graphics="${_automation_graphics:-spice}"
+    if [[ "${_graphics}" == spice ]]; then
+        local _caps
+        _caps=$(virsh --connect "${_qemu_addr}" domcapabilities 2>/dev/null)
+        if [[ "${_caps}" == *"<graphics supported='yes'>"* && "${_caps}" != *"<value>spice</value>"* ]]; then
+            _graphics=vnc
+        fi
+    fi
     virt-install --connect ${_qemu_addr} \
         --name "${AUTOMATION_HOSTNAME}" \
         --autostart \
@@ -643,7 +668,7 @@ function create_vm() {
         --osinfo="${_vm_osinfo}" \
         --import \
         --disk "size=${_disk_size:-40},path=/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2,sparse=no,boot.order=1" \
-        --graphics="${_automation_graphics:-spice}" \
+        --graphics="${_graphics}" \
         --network "$(vm_network_arg)" \
         --noautoconsole
 }
@@ -697,6 +722,11 @@ function configure_host_dns() {
 
 
 # --- Main ---
+
+if ! _host_can_prepare_image; then
+    echo -e "\033[1;31mERROR\033[0m: the automation VM cannot be built on ${PRETTY_NAME:-this host}: libguestfs on the RHEL family and Fedora cannot read the btrfs filesystem of the openSUSE Leap automation image. The host itself is set up; create the automation node on another host for now." >&2
+    exit 1
+fi
 
 _msg="Delete VM \"${AUTOMATION_HOSTNAME}\" if it exists" show_nicer_messages
 if virsh desc "${AUTOMATION_HOSTNAME}" &>/dev/null; then

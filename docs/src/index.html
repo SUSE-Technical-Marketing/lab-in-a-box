@@ -213,8 +213,8 @@
 <hr />
 <h2 id="quick-start">Quick Start</h2>
 <pre class="mermaid">flowchart TD
-    S1[&quot;1. Prepare the hypervisor OS&quot;] --&gt; S2[&quot;2. Bootstrap the setup scripts&quot;]
-    S2 --&gt; S3[&quot;3. Configure and run the KVM node setup&quot;]
+    S1[&quot;1. Install the hypervisor OS&quot;] --&gt; S2[&quot;2. Run the setup command&quot;]
+    S2 --&gt; S3[&quot;3. Re-run or change the setup&quot;]
     S3 --&gt; S4[&quot;4. Configure the automation VM&quot;]
     S4 --&gt; S5[&quot;5. Point your client DNS at the automation VM&quot;]
     S5 --&gt; S6[&quot;6. Build your first lab&quot;]
@@ -225,14 +225,36 @@
 <li>Internet access (or a local mirror) for package and image downloads</li>
 <li>A QCOW2 image for your chosen OS placed at <code>/var/lib/libvirt/images/sources/</code> on the hypervisor</li>
 </ul>
-<aside class="callout callout-important"><p>The automation VM needs <code>python3.11</code> specifically — the toolchain pins to it explicitly. Most distros ship an older default <code>python3</code> alongside it; the install script refuses to proceed if <code>python3.11</code> is missing.</p></aside>
+<aside class="callout callout-important"><p>The hypervisor needs no Python installed beforehand: the setup command installs <code>python311</code> on openSUSE Leap / SLES 15 and the distribution's own <code>python3</code> (3.9 or newer) everywhere else.</p></aside>
 <p>Tested images:
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recommended, used with Ignition+Combustion
 - openSUSE Leap Micro — supported, used with cloud-init</p>
-<h3 id="step-1--prepare-the-hypervisor-os">Step 1 — Prepare the hypervisor OS</h3>
-<p>Install SLES (or another KVM-capable Linux) on your hardware. During install, choose:
-- <strong>Network</strong>: create a bridge interface (<code>br0</code>) linked to your main NIC with a static IP
-- <strong>System role</strong>: KVM Virtualization Host</p>
+<h3 id="step-1--prepare-the-hypervisor-os">Step 1 — Install the hypervisor OS</h3>
+<p>Install one of these on your hardware; a minimal or server installation is enough, and no bridge or extra package is needed beforehand:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Versions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>openSUSE Leap, SLES</td>
+<td>15 (SP6+), 16</td>
+</tr>
+<tr>
+<td>Debian, Ubuntu</td>
+<td>Debian 12, 13; Ubuntu 22.04, 24.04</td>
+</tr>
+<tr>
+<td>RHEL, Rocky Linux, AlmaLinux, CentOS Stream, Fedora</td>
+<td>9, 10; current Fedora</td>
+</tr>
+</tbody>
+</table>
+<p>Other versions of these families get the newest matching package list with a warning that it was not verified for them. SLES needs a registration code (asked for during setup) unless the host is already registered.</p>
+<p>On RHEL-family and Fedora hypervisors the host setup completes, but the automation VM cannot be built there yet: libguestfs on those systems cannot read the btrfs filesystem of its openSUSE Leap image. Create the automation node on a host of another family for now.</p>
 <details>
 <summary>Writing a bootable USB from Linux</summary>
 
@@ -258,14 +280,33 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 
 </details>
 
-<h3 id="step-2--bootstrap-the-setup-scripts">Step 2 — Bootstrap the setup scripts</h3>
-<p>From any Linux machine with SSH access to the hypervisor:</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-2--bootstrap-the-setup-scripts">Step 2 — Run the setup command</h3>
+<p>On the hypervisor, as root:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>This downloads the setup scripts to <code>/var/tmp/setup_demo_server/</code>.</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">Step 3 — Configure and run the KVM node setup</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>It installs git and Python, fetches lab-in-a-box into <code>/var/tmp/setup_demo_server/</code> and runs <code>setup_demo_server/setup_kvm_node.py</code>, which asks for the lab settings, each with this host's own values as the default:</p>
+<ul>
+<li><strong>Lab network</strong>: <code>bridge</code> puts the lab VMs on the host's LAN; <code>nat</code> uses a private libvirt network instead (for a laptop or single-NIC host)</li>
+<li><strong>Lab DNS domain</strong> (default <code>mydemo.lab</code>), the <strong>automation VM's IP address</strong> (a free address on the lab network is suggested) and its <strong>root password</strong></li>
+<li>On SLES, the <strong>registration code</strong></li>
+</ul>
+<p>The network, gateway, DNS server, timezone and SSH key (<code>~/.ssh/id_ed25519.pub</code>, created if missing) are taken from the host. The answers are written to <code>setup_demo_server/lab.cfg</code>; after a summary and a confirmation, the setup:</p>
+<ol>
+<li>installs the hypervisor packages for the detected distribution (EPEL and CRB are enabled on RHEL-family hosts);</li>
+<li>in bridge mode, turns the NIC carrying the default route into a port of <code>br0</code>, keeping the host's address. NetworkManager, netplan, wicked, systemd-networkd and ifupdown are supported. A timer restores the previous network configuration unless the gateway still answers through the bridge, so a failed change cannot leave the host unreachable;</li>
+<li>configures libvirt and creates the automation VM.</li>
+</ol>
+<p>Every answer can also be given as an option, so the same command runs unattended, for example from cloud-init:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+</code></pre>
+<p>Without <code>--root-password</code> (or <code>LAB_ROOT_PASSWORD</code>), a non-interactive run generates a password and prints it at the end. Run <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> for every option.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Step 3 — Re-running or changing the setup</h3>
+<p>Running the command again uses the existing <code>lab.cfg</code> as is; options that map to its settings (for example <code>--network-mode nat</code>) update them first, and <code>--reconfigure</code> asks for everything again. To review or edit <code>lab.cfg</code> before anything is changed, fetch the code only:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
+</code></pre>
+<p>To set up another machine from this one, pass its address; the code is copied there over SSH and the same options apply:</p>
+<pre><code class="language-shell">python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py &lt;IP&gt;
 </code></pre>
 <p>Key settings in <code>lab.cfg</code>:</p>
 <table>
@@ -277,12 +318,16 @@ vim lab.cfg
 </thead>
 <tbody>
 <tr>
-<td><code>ROOT_PWD_HASH</code></td>
-<td>Hashed root password — generate with <code>mkpasswd --method=SHA-512 --stdin</code></td>
+<td><code>_network_mode</code>, <code>_bridge_name</code>, <code>_bridge_nic</code></td>
+<td>Bridge or NAT networking; the bridge the lab VMs attach to and the NIC that becomes its port</td>
 </tr>
 <tr>
-<td><code>ROOT_SSH_PUB_KEY</code></td>
-<td>Your SSH public key for passwordless access</td>
+<td><code>_mynet</code>, <code>_mygw</code>, <code>_mydns</code>, <code>_myip</code></td>
+<td>Lab network, gateway, upstream DNS and the automation VM's address</td>
+</tr>
+<tr>
+<td><code>ROOT_PWD_HASH</code>, <code>ROOT_SSH_PUB_KEY</code></td>
+<td>Automation VM root password hash and the SSH key allowed to log in</td>
 </tr>
 <tr>
 <td><code>AUTOMATION_HOSTNAME</code></td>
@@ -292,16 +337,8 @@ vim lab.cfg
 <td><code>_QCOW_IMAGE</code></td>
 <td>Filename of the source QCOW2 image</td>
 </tr>
-<tr>
-<td>Network settings</td>
-<td>IP, gateway, mask, DNS for the lab network</td>
-</tr>
 </tbody>
 </table>
-<p>Then run the setup (replace <code>&lt;IP&gt;</code> with your hypervisor IP, or omit for local):</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
-</code></pre>
-<p>This provisions the automation VM and starts all required services.</p>
 <h3 id="step-4--configure-the-automation-vm">Step 4 — Configure the automation VM</h3>
 <p>SSH into the automation VM and install the lab scripts:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;

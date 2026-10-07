@@ -174,27 +174,27 @@
 <li>パッケージとイメージをダウンロードするためのインターネットアクセス（またはローカルミラー）</li>
 <li>ハイパーバイザー上の<code>/var/lib/libvirt/images/sources/</code>に選択したOSのQCOW2イメージ</li>
 </ul>
-<aside class="callout callout-important"><p>オートメーションVMは特に<code>python3.11</code>を必要とします—ツールチェーンはそれに明示的に固定されています。ほとんどのディストリビューションはそれ以外に古い標準<code>python3</code>を提供します。<code>python3.11</code>が不足している場合、インストールスクリプトは停止します。</p></aside>
+<aside class="callout callout-important"><p>ハイパーバイザーに事前に Python をインストールしておく必要はありません。セットアップコマンドが openSUSE Leap / SLES 15 では <code>python311</code> を、それ以外ではディストリビューションの <code>python3</code> (3.9 以降) をインストールします。</p></aside>
 <p>テスト済みイメージ：
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>—推奨、Ignition+Combustion付きで使用
 - openSUSE Leap Micro—サポート、cloud-init付きで使用</p>
-<h3 id="step-1--prepare-the-hypervisor-os">ステップ1—ハイパーバイザーOSを準備する</h3>
-<p>SLESまたは別のKVM対応Linux配布をハードウェアにインストールします。インストール中に選択します：
-- <strong>ネットワーキング</strong>：ブリッジ（<code>br0</code>）を作成して、メインNICに接続して固定IPを取得
-- <strong>システムロール</strong>：KVM仮想化ホスト</p>
-<h3 id="step-2--bootstrap-the-setup-scripts">ステップ2—セットアップスクリプトをブートストラップする</h3>
-<p>ハイパーバイザーへのSSHアクセスを持つLinuxマシンから：</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-1--prepare-the-hypervisor-os">ステップ 1 — ハイパーバイザー OS をインストールする</h3>
+<p>次のいずれかをハードウェアにインストールします: openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora。最小構成またはサーバー構成で十分で、事前のブリッジ作成や追加パッケージは不要です。</p>
+<p>RHEL 系および Fedora のハイパーバイザーではホストのセットアップは完了しますが、自動化 VM はまだ作成できません。これらのシステムの libguestfs は、その openSUSE Leap イメージの btrfs ファイルシステムを読めないためです。当面は別の系統のホストで自動化ノードを作成してください。</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">ステップ 2 — セットアップコマンドを実行する</h3>
+<p>ハイパーバイザー上で、root として:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>これはセットアップスクリプトを<code>/var/tmp/setup_demo_server/</code>にダウンロードします。</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">ステップ3—KVMノード構成を構成して実行する</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>git と Python をインストールし、lab-in-a-box を <code>/var/tmp/setup_demo_server/</code> に取得してから、このホストの値を既定値としてラボの設定を尋ねます: ブリッジまたは NAT ネットワーク、ラボの DNS ドメイン、自動化 VM の IP アドレスと root パスワード (SLES では登録コードも)。続いてハイパーバイザーのパッケージをインストールし、デフォルトルートの NIC をホストのアドレスを保ったままブリッジ <code>br0</code> のポートにし (ゲートウェイが応答しなくなった場合は以前のネットワーク設定が自動的に復元されます)、自動化 VM を作成します。</p>
+<p>すべての回答はオプションとしても指定でき、無人実行 (cloud-init など) に使えます:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<p>その後、構成を実行します（<code>&lt;IP&gt;</code>をハイパーバイザーのIPで置き換えるか、ローカルでは省略）：</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">ステップ 3 — セットアップの再実行と変更</h3>
+<p>再実行すると既存の <code>setup_demo_server/lab.cfg</code> を使用します。<code>--reconfigure</code> を付けるとすべて尋ね直します。変更の前に <code>lab.cfg</code> を編集したい場合は、コードの取得だけを行います:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p>これはオートメーションVMをプロビジョニングし、必要なすべてのサービスを開始します。</p>
+<p><code>setup_kvm_node.py &lt;IP&gt;</code> は別のマシンを SSH 経由でセットアップします。全オプションは <code>setup_kvm_node.py --help</code> で確認できます。</p>
 <h3 id="step-4--configure-the-automation-vm">ステップ4—オートメーションVMを構成する</h3>
 <p>オートメーションVMにSSH接続し、ラボスクリプトをインストールします：</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;

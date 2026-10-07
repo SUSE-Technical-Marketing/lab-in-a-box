@@ -183,27 +183,27 @@
 <li>互联网访问（或本地镜像）以下载包和镜像</li>
 <li>所选操作系统的QCOW2镜像在虚拟管理程序上的<code>/var/lib/libvirt/images/sources/</code>中</li>
 </ul>
-<aside class="callout callout-important"><p>自动化VM特别需要<code>python3.11</code>—工具链显式固定在上面。大多数发行版提供一个较旧的标准<code>python3</code>。如果缺少<code>python3.11</code>，安装脚本将停止。</p></aside>
+<aside class="callout callout-important"><p>虚拟化主机无需预先安装 Python：安装命令会在 openSUSE Leap / SLES 15 上安装 <code>python311</code>，在其他发行版上安装其自带的 <code>python3</code>（3.9 或更高版本）。</p></aside>
 <p>测试的镜像：
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>—推荐，与Ignition+Combustion一起使用
 - openSUSE Leap Micro—支持，与cloud-init一起使用</p>
-<h3 id="step-1--prepare-the-hypervisor-os">步骤1—准备虚拟管理程序操作系统</h3>
-<p>在硬件上安装SLES或其他支持KVM的Linux发行版。在安装期间，选择：
-- <strong>网络</strong>：创建一个桥接（<code>br0</code>）连接到您的主NIC，使用固定IP
-- <strong>系统角色</strong>：KVM虚拟化主机</p>
-<h3 id="step-2--bootstrap-the-setup-scripts">步骤2—启动设置脚本</h3>
-<p>从具有虚拟管理程序SSH访问权的任何Linux机器：</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-1--prepare-the-hypervisor-os">步骤 1 — 安装虚拟化主机操作系统</h3>
+<p>在硬件上安装以下系统之一：openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora。最小安装或服务器安装即可，无需事先创建网桥或安装额外的软件包。</p>
+<p>在 RHEL 系列和 Fedora 虚拟化主机上，主机设置可以完成，但目前还无法在其上构建自动化虚拟机：这些系统上的 libguestfs 无法读取其 openSUSE Leap 镜像的 btrfs 文件系统。目前请在其他系列的主机上创建自动化节点。</p>
+<h3 id="step-2--bootstrap-the-setup-scripts">步骤 2 — 运行安装命令</h3>
+<p>在虚拟化主机上，以 root 身份：</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>这将设置脚本下载到<code>/var/tmp/setup_demo_server/</code>。</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">步骤3—配置并运行KVM节点设置</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>该命令会安装 git 和 Python，将 lab-in-a-box 获取到 <code>/var/tmp/setup_demo_server/</code>，并以本主机的值作为默认值询问实验室设置：网桥或 NAT 网络、实验室 DNS 域、自动化虚拟机的 IP 地址和 root 密码（SLES 上还有注册码）。随后它会安装虚拟化主机软件包，将承载默认路由的网卡变为网桥 <code>br0</code> 的端口并保留主机地址（如果网关不再响应，会自动恢复之前的网络配置），并创建自动化虚拟机。</p>
+<p>每个回答也都可以作为选项提供，用于无人值守运行（例如通过 cloud-init）：</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<p>然后运行设置（用虚拟管理程序的IP替换<code>&lt;IP&gt;</code>，或本地时省略）：</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">步骤 3 — 重新运行或更改设置</h3>
+<p>再次运行时会使用已有的 <code>setup_demo_server/lab.cfg</code>；<code>--reconfigure</code> 会重新询问所有设置。如需在任何更改之前编辑 <code>lab.cfg</code>，只获取代码即可：</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p>这配置自动化VM并启动所有必需的服务。</p>
+<p><code>setup_kvm_node.py &lt;IP&gt;</code> 通过 SSH 设置另一台机器；<code>setup_kvm_node.py --help</code> 列出所有选项。</p>
 <h3 id="step-4--configure-the-automation-vm">步骤4—配置自动化VM</h3>
 <p>SSH连接到自动化VM并安装实验室脚本：</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
