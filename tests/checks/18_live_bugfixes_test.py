@@ -1010,6 +1010,16 @@ check("DNSService.add_to_dns under real concurrent threads: no duplicate/corrupt
       len(lan_lines) == N_WORKERS)
 
 
+# ── every backend's copy_vm_image takes source_sha256 ──────────────────────
+# setup_vm.py passes source_sha256 to whichever backend the node uses; a backend without the parameter crashed a cloud
+# deploy with a TypeError before creating the VM.
+import inspect  # noqa: E402
+
+_backends = [c for c in vars(backends).values()
+             if inspect.isclass(c) and issubclass(c, backends.VMBackend)]
+check("copy_vm_image: every backend accepts source_sha256 ({} backends)".format(len(_backends)),
+      len(_backends) > 1 and all("source_sha256" in inspect.signature(c.copy_vm_image).parameters for c in _backends))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
