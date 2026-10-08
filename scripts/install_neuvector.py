@@ -10,7 +10,7 @@
 #   nv_repo_url  : [OPTIONAL] Helm repo URL                            (default: https://neuvector.github.io/neuvector-helm)
 #   nv_version   : [OPTIONAL] Helm chart version                        (empty = latest)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "neuvector",
@@ -18,6 +18,16 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
+    # Version matrix (libs/versions.py): core chart versions; 2.11 is NeuVector 5.6, 2.10 is 5.5, 2.9 is 5.4
+    # (appVersion in https://neuvector.github.io/neuvector-helm/index.yaml). Kubernetes range of 5.6:
+    # https://open-docs.neuvector.com/basics/requirements
+    "versions": {
+        "nv_version": [
+            {"version": "2.11", "kubernetes": {"rke2": {"min": "1.19", "max": "1.36"}, "k3s": {"min": "1.19", "max": "1.36"}}},
+            {"version": "2.10"},
+            {"version": "2.9"},
+        ],
+    },
 }
 
 import sys

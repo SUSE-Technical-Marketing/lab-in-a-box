@@ -452,6 +452,78 @@ const LOCAL_BACKENDS = new Set(["", "libvirt", "harvester"]);
 // What is wrong with the lab in `model`: { errors, warnings }, each a list of
 // sentences. Errors block Download, Save and Create; warnings do not. Checks
 // that need a schema (state.base, state.schemaCache) are skipped until it is loaded.
+// ---- add-on version matrix (same rules as libs/versions.py) -----------------
+function normalizeVersion(value) {
+  const v = String(value == null ? "" : value).trim().replace(/^--version[=\s]+/, "");
+  return /^[vV]\d/.test(v) ? v.slice(1) : v;
+}
+function versionNumbers(v) {
+  const m = normalizeVersion(v).match(/^\d+(\.\d+)*/);
+  return m ? m[0].split(".").map(Number) : [];
+}
+function compareVersions(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] || 0) - (b[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+function versionMatches(declared, value) {
+  const d = normalizeVersion(declared), v = normalizeVersion(value);
+  return !!d && (v === d || v.startsWith(d + "."));
+}
+// The declared versions of `field` in version matrix `versions`, newest first.
+function versionSuggestions(versions, field) {
+  return ((versions || {})[field] || []).map((e) => e.version).filter(Boolean).map(String);
+}
+// Why add-on config `cfg` falls outside version matrix `versions`, as sentences (see libs/versions.py issues()).
+function versionIssues(versions, cfg, cluType, cluRel, osVariants) {
+  const out = [];
+  const kube = /^v?\d+\.\d+/.test(String(cluRel || "").trim()) ? versionNumbers(cluRel).slice(0, 2) : [];
+  Object.keys(versions || {}).sort().forEach((field) => {
+    const value = (cfg || {})[field];
+    if (value === undefined || value === null || value === "") return;
+    const entry = (versions[field] || []).find((e) => versionMatches(String(e.version || ""), String(value)));
+    if (!entry) {
+      out.push(`${field} '${value}' is not in the version matrix (${versionSuggestions(versions, field).join(", ") || "none declared"})`);
+      return;
+    }
+    const supported = entry.kubernetes;
+    if (supported && cluType) {
+      if (!(cluType in supported)) {
+        out.push(`${field} ${entry.version} is not declared for clu_type '${cluType}' (declared: ${Object.keys(supported).sort().join(", ")})`);
+      } else if (kube.length) {
+        const rng = supported[cluType] || {};
+        const low = versionNumbers(rng.min || "").slice(0, 2), high = versionNumbers(rng.max || "").slice(0, 2);
+        if ((low.length && compareVersions(kube, low) < 0) || (high.length && compareVersions(kube, high) > 0)) {
+          out.push(`${field} ${entry.version} supports Kubernetes ${rng.min || "any"}–${rng.max || "any"} on ${cluType}, the kcluster's clu_rel is '${cluRel}'`);
+        }
+      }
+    }
+    if (entry.os && entry.os.length) {
+      [...new Set(osVariants || [])].sort().forEach((v) => {
+        if (!entry.os.includes(v)) out.push(`${field} ${entry.version} is not declared for VM_OSVARIANT '${v}' (declared: ${entry.os.join(", ")})`);
+      });
+    }
+  });
+  return out;
+}
+
+// Gives each version field of add-on schema `sc` on `form` a list of the versions its matrix declares.
+function attachVersionSuggestions(form, sc) {
+  const versions = (sc.capabilities && sc.capabilities.versions) || {};
+  form.querySelectorAll("input[data-outpath]").forEach((input) => {
+    const name = input._field && input._field.name;
+    const list = versionSuggestions(versions, name);
+    if (!list.length) return;
+    const dl = el("datalist");
+    dl.id = "versions-" + name;
+    list.forEach((v) => { const o = el("option"); o.value = v; dl.appendChild(o); });
+    form.appendChild(dl);
+    input.setAttribute("list", dl.id);
+  });
+}
+
 function lintLab(model) {
   const errors = [], warnings = [];
   const items = model.items;
@@ -514,6 +586,19 @@ function lintLab(model) {
     }
   });
   unknown.forEach((n) => errors.push("Add-on " + n + " is not installed on this lab-builder."));
+
+  addons.forEach((a) => {
+    const sc = a.comp && state.schemaCache[a.comp];
+    const versions = sc && sc.capabilities && sc.capabilities.versions;
+    if (!versions || !Object.keys(versions).length) return;
+    const t = a.parent && byId[a.parent];
+    const osOf = (n) => n.cfg.VM_OSVARIANT || model.common.VM_OSVARIANT || "";
+    const where = t ? " on " + (t.type === "node" ? "VM " : "Kubernetes cluster ") + t.name : "";
+    const hosts = !t ? [] : t.type === "node" ? [t] : nodes.filter((n) => n.parent === t.id);
+    const cluster = t && t.type === "cluster" ? t.cfg : {};
+    versionIssues(versions, model.addonCfg[label(a)] || {}, cluster.clu_type || "", cluster.clu_rel || "",
+      hosts.map(osOf).filter(Boolean)).forEach((w) => warnings.push("Add-on " + label(a) + where + ": " + w + "."));
+  });
 
   const sections = new Set(addons.map(label));
   sections.forEach((sec) => {
@@ -816,6 +901,7 @@ async function openEditor(id) {
       kind = "Add-on"; title = item.section; desc = sc.description || "";
       layers = (sc.capabilities && sc.capabilities.layers) || [];
       walk(sc, form, []);
+      attachVersionSuggestions(form, sc);
       const frag = m.addonCfg[item.section] || {};
       form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
     }

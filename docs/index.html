@@ -1544,13 +1544,29 @@ install_longhorn --schema yaml      # ...or YAML
 
 <p>To add a new addon: create an executable <code>scripts/install_&lt;name&gt;</code> in any language, with or without a file extension (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, a compiled binary), add templates under <code>templates/addons/&lt;name&gt;/</code> if needed, and reference <code>"&lt;name&gt;"</code> in the <code>addons</code> array of your JSON. <code>install_automation_node_scripts.sh</code> deploys it as <code>/usr/local/bin/install_&lt;name&gt;</code>, and <code>setup_lab.py</code> and the web UI use it only through its command-line contract:</p>
 <ul>
-<li><code>install_&lt;name&gt; --schema json</code> prints its schema as JSON, including a <code>capabilities</code> object (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>); <code>--schema yaml</code> prints the same as YAML</li>
+<li><code>install_&lt;name&gt; --schema json</code> prints its schema as JSON, including a <code>capabilities</code> object (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>, <code>versions</code>); <code>--schema yaml</code> prints the same as YAML</li>
 <li><code>install_&lt;name&gt; --capabilities</code> prints the same capabilities as JSON</li>
-<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> exits non-zero, printing <code>[ERROR]</code> lines, when its configuration is invalid</li>
+<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> exits non-zero, printing <code>[ERROR]</code> lines, when its configuration is invalid; <code>[WARNING]</code> lines (version matrix) do not change the exit code</li>
 <li><code>install_&lt;name&gt; --version</code> and <code>--help</code></li>
 <li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> installs it on the VM named in <code>$_vm_name</code> (and the cluster in <code>$clu_name</code> for a cluster add-on)</li>
 </ul>
 <p>A Python add-on gets all of these from <code>addon_common.handle_common_args()</code> and a module-level <code>PLUGIN</code> dict; follow the pattern of an existing one (load the relevant JSON section via <code>load_definition()</code>, do the work over SSH).</p>
+<h3 id="add-on-version-matrix">Add-on version matrix</h3>
+<p>An add-on can declare the versions it can install, as <code>versions</code> in its capabilities (in a Python add-on, a <code>"versions"</code> key in <code>PLUGIN</code>). It is optional, and so is every part of an entry except <code>version</code>; what is not declared is not checked. The key is a version field of the add-on's JSON section; its entries go newest first:</p>
+<pre><code class="language-python">"versions": {
+    "rancher_version": [
+        {"version": "2.13",
+         "kubernetes": {"rke2": {"min": "1.32", "max": "1.34"}, "k3s": {"min": "1.32", "max": "1.34"}},
+         "os": ["sle15sp7"]},
+    ],
+}
+</code></pre>
+<ul>
+<li><code>version</code>: an exact version or a prefix; <code>2.13</code> matches 2.13 and 2.13.x. A leading <code>v</code> or <code>--version </code> is ignored on both sides.</li>
+<li><code>kubernetes</code> (optional): the kcluster types the version supports, each with an optional inclusive Kubernetes range (<code>min</code>, <code>max</code>, as major.minor). The range is checked only when the kcluster's <code>clu_rel</code> is a version (e.g. <code>v1.33.4+rke2r1</code>), not a channel such as <code>stable</code>.</li>
+<li><code>os</code> (optional): the <code>VM_OSVARIANT</code> values of the nodes the add-on runs on (the node's own, else the common one; unset values are not checked).</li>
+</ul>
+<p>A lab outside the matrix still deploys: <code>setup_lab.py</code>'s preflight and the web UI's lab checks show a warning, and <code>--validate</code> prints a <code>[WARNING]</code> line. An empty version field means the latest version and is not checked. In the web UI, a version field with a matrix suggests the declared versions and still accepts any value. Add-ons with a matrix today: <code>rancher</code> (<code>rancher_version</code>, <code>cert_manager_ver</code>), <code>longhorn</code> (<code>lh_version</code>) and <code>neuvector</code> (<code>nv_version</code>).</p>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
 <hr />

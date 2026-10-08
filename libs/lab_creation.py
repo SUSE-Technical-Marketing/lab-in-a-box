@@ -224,6 +224,24 @@ def _supported_config_methods(iso_image):
     return None
 
 
+def _addon_version_issues(definition, addon_entry, node_names, clu_type="", clu_rel=""):
+    """
+    Version-matrix warnings (libs/versions.py) for one addons[] entry: its config (the shared section with the entry's
+    own overrides), installed on the kcluster `clu_type`/`clu_rel` ("" for a VM add-on) and running on `node_names`.
+    """
+    import versions
+    from apps import addon_entry_name, addon_entry_overrides, load_plugin
+    addon = addon_entry_name(addon_entry)
+    matrix = load_plugin(addon).get("versions") or {}
+    if not matrix:
+        return []
+    cfg = dict(definition.get(addon) or {}, **addon_entry_overrides(addon_entry))
+    common_os = (definition.get("common") or {}).get("VM_OSVARIANT") or ""
+    os_variants = [((definition.get("nodes") or {}).get(n) or {}).get("VM_OSVARIANT") or common_os for n in node_names]
+    return versions.issues(matrix, cfg, clu_type=clu_type or "", clu_rel=clu_rel or "",
+                           os_variants=[v for v in os_variants if v])
+
+
 def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_node=None,
                             vm_img_loc=None, issues_out=None):
     """
@@ -515,6 +533,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype)
             if issue:
                 err("kclusters.{}: addon '{}' {}".format(clu, addon, issue))
+            members = [n for n, c in nodes.items() if (c or {}).get("kcluster") == clu]
+            for w in _addon_version_issues(definition, addon_entry, members, ctype, crel):
+                warn("kclusters.{}: addon '{}' {}".format(clu, addon, w))
 
     # Harvester clusters: AWS nodes from an AMI, with nested virtualization; see libs/harvester.py.
     import harvester
@@ -536,6 +557,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             issue = requirement_issue(load_plugin(addon), node_kind(definition, node))
             if issue:
                 err("nodes.{}: addon '{}' {}".format(node, addon, issue))
+            for w in _addon_version_issues(definition, addon_entry, [node]):
+                warn("nodes.{}: addon '{}' {}".format(node, addon, w))
 
     # ── 5. Per-addon field validation — delegate to each install script ───────
     # Each install_* script supports --validate <json> and exits non-zero
@@ -561,8 +584,10 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         result = subprocess.run([exe, "--validate", str(definition.source_path)], capture_output=True, text=True)
         if result.returncode != 0:
             combined = (result.stdout or "") + (result.stderr or "")
+            # [WARNING] lines are version-matrix warnings, reported by section 4 with their placement.
             for line in combined.splitlines():
-                err("addon '{}': {}".format(addon, re.sub(r"^\[ERROR\]\s*", "", line)))
+                if not line.startswith("[WARNING]"):
+                    err("addon '{}': {}".format(addon, re.sub(r"^\[ERROR\]\s*", "", line)))
 
     # ── 5b. Base image downloads (ISO_URL) ────────────────────────────────────
     if _jq_or(common.get("ISO_URL")):

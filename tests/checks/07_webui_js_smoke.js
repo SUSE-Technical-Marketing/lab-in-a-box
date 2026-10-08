@@ -365,6 +365,42 @@ check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM 
   Object.assign(sandbox, { document: savedDoc, window: savedWin, loadLab: savedLoad, toast: savedToast });
 }
 
+// -- version matrix (mirrors 77_version_matrix_test.py) ----------------
+{
+  const M = { x_version: [
+    { version: "2.13", kubernetes: { rke2: { min: "1.32", max: "1.34" }, k3s: { min: "1.32" } }, os: ["sle15sp7", "sles16.0"] },
+    { version: "2.12" },
+  ] };
+  const vi = (...a) => sandbox.versionIssues(M, ...a);
+  check("versions: suggestions newest first", JSON.stringify(sandbox.versionSuggestions(M, "x_version")) === '["2.13","2.12"]');
+  check("versions: --version and v ignored", sandbox.versionMatches("v1.20", "--version v1.20.2"));
+  check("versions: prefix does not match a longer minor", !sandbox.versionMatches("2.1", "2.13.0"));
+  check("versions: empty value not checked", vi({ x_version: "" }).length === 0);
+  check("versions: unknown version warned", vi({ x_version: "2.11.0" }).length === 1);
+  check("versions: in range is clean", vi({ x_version: "2.13.1" }, "rke2", "v1.33.2+rke2r1", ["sle15sp7"]).length === 0);
+  check("versions: above max warned", vi({ x_version: "2.13.1" }, "rke2", "v1.35.0+rke2r1").length === 1);
+  check("versions: below min warned", vi({ x_version: "2.13.1" }, "rke2", "v1.31.0+rke2r1").length === 1);
+  check("versions: open max not checked", vi({ x_version: "2.13" }, "k3s", "v1.40.0+k3s1").length === 0);
+  check("versions: channel not range-checked", vi({ x_version: "2.13" }, "rke2", "stable").length === 0);
+  check("versions: undeclared clu_type warned", vi({ x_version: "2.13" }, "harvester", "stable").length === 1);
+  check("versions: undeclared OS warned once", vi({ x_version: "2.13" }, "", "", ["slem5.5", "sle15sp7", "slem5.5"]).length === 1);
+  check("versions: same sentence as the Python side",
+    vi({ x_version: "2.13.1" }, "rke2", "v1.35.0+rke2r1")[0] === "x_version 2.13 supports Kubernetes 1.32–1.34 on rke2, the kcluster's clu_rel is 'v1.35.0+rke2r1'");
+
+  // lintLab warns for an add-on on a Kubernetes cluster outside the matrix.
+  const saved = { cache: st.schemaCache, base: st.base };
+  st.schemaCache = { install_x: { fields: [], capabilities: { layers: ["kubernetes"], versions: M } } };
+  st.base = null;
+  const model = { common: {}, addonCfg: { x: { x_version: "2.13" } }, extra: {}, seq: 3, items: [
+    { id: "c1", type: "cluster", name: "k1", parent: null, cfg: { clu_type: "rke2", clu_rel: "v1.36.0+rke2r1" } },
+    { id: "n2", type: "node", name: "vm1", parent: "c1", cfg: {} },
+    { id: "a3", type: "addon", comp: "install_x", section: "x", parent: "c1" },
+  ] };
+  const w = sandbox.lintLab(model).warnings;
+  check("versions: lintLab warns with the placement", w.some((t) => t.startsWith("Add-on x on Kubernetes cluster k1: x_version 2.13 supports")));
+  st.schemaCache = saved.cache; st.base = saved.base;
+}
+
 if (failures) {
   console.error(failures + " check(s) failed");
   process.exit(1);
