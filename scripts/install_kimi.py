@@ -32,7 +32,7 @@
 # every other proxy addon here, so MOONSHOT_API_KEY is not read from the environment.
 # Provider docs: docs.litellm.ai/docs/providers/moonshot
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "kimi",

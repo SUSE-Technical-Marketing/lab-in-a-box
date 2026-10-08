@@ -6,7 +6,7 @@ on:
       - main
       - dev
     paths:
-      - 'scripts/install_*.py'
+      - 'scripts/install_*'
       - 'scripts/lab_schema'
       - 'scripts/build-cube-static.py'
       - 'libs/**'

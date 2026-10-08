@@ -5,4 +5,4 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
 
-python3 tests/checks/20_setup_kvm_node_test.py
+python3.11 tests/checks/20_setup_kvm_node_test.py

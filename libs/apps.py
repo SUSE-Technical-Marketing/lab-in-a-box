@@ -3,9 +3,20 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 """
-libs/apps.py: the plugin registry for install_<addon> scripts.
+libs/apps.py: the plugin registry for install_<addon> executables.
 
-Each scripts/install_<addon>.py declares a module-level PLUGIN dict:
+An add-on is any executable named install_<addon>, with or without a file extension (install_<addon>.py,
+install_<addon>.sh, a compiled binary, ...), written in any language. Its contract:
+
+    install_<addon> --schema json      prints its schema as JSON, with a "capabilities" object:
+                                       {"targets": [...], "layers": [...], "requires_kubernetes": [...] or null,
+                                        "aux_services": [...]}
+    install_<addon> --capabilities     prints the same capabilities as JSON
+    install_<addon> --validate <json>  exits non-zero, printing [ERROR] lines, when its config in the lab is invalid
+    install_<addon> --version | --help
+    install_<addon> <lab.json>         installs it; the target VM is in $_vm_name, the cluster in $clu_name
+
+Python add-ons get all of this from libs/addon_common.handle_common_args() and a module-level PLUGIN dict:
 
     PLUGIN = {
         "name": "mariadb",
@@ -15,16 +26,18 @@ Each scripts/install_<addon>.py declares a module-level PLUGIN dict:
         "aux_services": [],                     # names from the services registry
     }
 
-load_plugin() imports the addon script as a module, without running its main(), and returns the dict. A script without a PLUGIN
-dict, or one that fails to import, falls back to a conservative default. That default still validates the addon as it did before
-the registry existed.
+describe() runs `--schema json` and caches the output per file signature; load_plugin() returns the capabilities from it.
+An add-on whose output is missing or invalid falls back to a conservative default, which still validates it as before the
+registry existed.
 """
 
-import importlib.util
+import hashlib
+import json
 import os
-from importlib.machinery import SourceFileLoader
 import shutil
-import sys
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Iterable, List, Optional
 
 from lab_creation import die
 
@@ -39,34 +52,126 @@ DEFAULT_PLUGIN = {
 _cache = {}
 
 
-def load_plugin_from_path(path, name=None):
-    """
-    Return the PLUGIN dict for the addon script at `path`, an explicit filesystem path. load_plugin() uses a PATH lookup instead, and
-    every CLI call site uses that. In a development checkout the scripts are not on PATH, so webui/lib/discovery.py calls this function.
+_DESCRIBE_TIMEOUT = 120
+_LIBS = os.path.dirname(os.path.abspath(__file__))
 
-    Returns a copy of DEFAULT_PLUGIN, with "name" filled in, when the file does not exist, has no PLUGIN dict, or raises on import. This
-    is the same fallback as load_plugin().
+
+def addon_name(filename: str) -> str:
+    """Return the add-on executable's name without its file extension: install_x.py -> install_x."""
+    return os.path.basename(filename).split(".", 1)[0]
+
+
+def addon_files(directory: str) -> Dict[str, str]:
+    """
+    Return {install_<addon>: path} for every add-on executable in directory. When install_<addon> exists both with and
+    without an extension, the last one in sorted order wins, the same file install_automation_node_scripts.sh deploys.
+    """
+    found = {}
+    if not os.path.isdir(directory):
+        return found
+    for fname in sorted(os.listdir(directory)):
+        path = os.path.join(directory, fname)
+        if fname.startswith("install_") and os.path.isfile(path):
+            found[addon_name(fname)] = path
+    return found
+
+
+def _cache_file() -> str:
+    """Return the describe() cache path: $LAB_ADDON_CACHE, else lab_creation/addons.json in the user's cache directory."""
+    return os.environ.get("LAB_ADDON_CACHE") or os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "lab_creation", "addons.json")
+
+
+def _signature(path: str) -> List[int]:
+    """Return what invalidates a cached describe() result: the add-on file, and the lab_schema and libs it may use."""
+    sig = []
+    for p in (path, os.path.join(os.path.dirname(path), "lab_schema"),
+              os.path.join(_LIBS, "addon_common.py"), os.path.join(_LIBS, "apps.py")):
+        try:
+            st = os.stat(p)
+            sig += [st.st_mtime_ns, st.st_size]
+        except OSError:
+            sig += [0, 0]
+    return sig
+
+
+def _load_cache() -> dict:
+    try:
+        with open(_cache_file()) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_cache(data: dict) -> None:
+    path = _cache_file()
+    tmp = "{}.{}".format(path, os.getpid())
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _run_schema(path: str) -> dict:
+    """Return the add-on's `--schema json` output, or {} when it is not executable, fails or prints no JSON object."""
+    if not os.access(path, os.X_OK):
+        return {}
+    try:
+        r = subprocess.run([path, "--schema", "json"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=_DESCRIBE_TIMEOUT)
+        out = json.loads(r.stdout) if r.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def describe_many(paths: Iterable[str]) -> Dict[str, dict]:
+    """Return {path: describe(path)}, running the uncached add-ons in parallel."""
+    paths = [os.path.realpath(p) for p in paths]
+    cache = _load_cache()
+    result, todo = {}, []
+    for p in paths:
+        key = hashlib.sha256(p.encode()).hexdigest()
+        entry = cache.get(key)
+        if entry and entry.get("sig") == _signature(p):
+            result[p] = entry["out"]
+        else:
+            todo.append((p, key))
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(len(todo), os.cpu_count() or 4)) as pool:
+            outs = list(pool.map(lambda item: _run_schema(item[0]), todo))
+        for (p, key), out in zip(todo, outs):
+            result[p] = out
+            if out:
+                cache[key] = {"sig": _signature(p), "out": out}
+        _save_cache(cache)
+    return result
+
+
+def describe(path: str) -> dict:
+    """Return the add-on executable's `--schema json` output (cached), or {} when it provides none."""
+    real = os.path.realpath(path)
+    return describe_many([real])[real]
+
+
+def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> dict:
+    """
+    Return the capabilities of the add-on executable at `path`, an explicit filesystem path, from its `--schema json`
+    output. load_plugin() uses a PATH lookup instead, and every CLI call site uses that. In a development checkout the
+    scripts are not on PATH, so webui/lib/discovery.py calls this function.
+
+    Returns a copy of DEFAULT_PLUGIN, with "name" filled in, when the file does not exist or prints no capabilities.
     """
     plugin = dict(DEFAULT_PLUGIN, name=name)
     if not path or not os.path.isfile(str(path)):
         return plugin
-    try:
-        # A deployed script has no .py suffix (install_automation_node_scripts.sh
-        # copies it to /usr/local/bin/install_<addon>), so
-        # spec_from_file_location can't infer a loader from the extension —
-        # an explicit SourceFileLoader is required, extension or not.
-        mod_name = "install_{}_plugin".format(name or os.path.basename(str(path)))
-        loader = SourceFileLoader(mod_name, str(path))
-        spec = importlib.util.spec_from_loader(mod_name, loader)
-        mod = importlib.util.module_from_spec(spec)
-        loader.exec_module(mod)
-        found = getattr(mod, "PLUGIN", None)
-        if found:
-            plugin = found
-    except Exception:
-        # An import failure, such as a missing dependency, a syntax error or a script that is not valid Python, falls back to the
-        # default. One broken script then does not stop validation, orchestration or discovery.
-        pass
+    caps = describe(str(path)).get("capabilities")
+    if isinstance(caps, dict) and caps:
+        plugin.update(caps)
     return plugin
 
 

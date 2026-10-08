@@ -21,7 +21,7 @@
 # Uses emptyDir (not a PersistentVolumeClaim) for /srv, which is ephemeral and suited to a quick demo.
 # The same tradeoff applies as in install_mailman.py, and RKE2 clusters have no default StorageClass.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "mediagoblin",

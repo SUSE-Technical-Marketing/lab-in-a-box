@@ -9,6 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import admin  # noqa: E402
 import discovery  # noqa: E402
 
 
@@ -18,15 +19,30 @@ def _one(v, default=""):
     return v if v is not None else default
 
 
-def dispatch(action, method, params, body):
+def dispatch(action, method, params, body, user=None, https=False):
     """
     action  : str            e.g. "components", "schema", "validate", "save"
     method  : "GET"|"POST"
     params  : dict[str, list] parsed query string
     body    : bytes          request body (POST)
+    user    : str|None       the logged-in user (login endpoint only)
+    https   : bool           the request came over HTTPS
     returns : (http_status:int, obj:dict|list)
+
+    The actions in admin.ACTIONS need both a user and HTTPS.
     """
     try:
+        if action in admin.ACTIONS:
+            if not https:
+                return 403, {"error": "You must connect via HTTPS to use this UI"}
+            if not user:
+                return 401, {"error": "log in to use %s" % action}
+            data = json.loads(body.decode("utf-8") or "{}") if body else {}
+            return 200, admin.dispatch(action, method, params, data)
+
+        if action == "auth" and method == "GET":
+            return 200, {"login_configured": admin.login_configured(), "user": user or ""}
+
         if action == "components" and method == "GET":
             comps = discovery.discover()
             return 200, {
@@ -49,9 +65,6 @@ def dispatch(action, method, params, body):
             data = json.loads(body.decode("utf-8") or "{}") if body else {}
             if action == "validate":
                 return 200, discovery.validate_lab(data.get("config", {}))
-            if action == "save":
-                path = discovery.save_lab(data.get("filename", "lab"), data.get("config", {}))
-                return 200, {"saved": os.path.basename(path), "path": path}
 
         return 400, {"error": "unknown action %r (%s)" % (action, method)}
 

@@ -2,13 +2,16 @@
 lab-builder — runtime introspection of lab-in-a-box, driven by the project's
 own Python libraries (no subprocess fan-out to shell scripts).
 
-It imports, in-process:
-  * scripts/lab_schema  -> parse_script()      (schema of each addon definition)
+Add-ons are executables named install_<addon> in any language, with or
+without a file extension; each one describes itself through its own
+`--schema json` output (libs/apps.describe(), cached). In-process it imports:
+  * scripts/lab_schema  -> base_lab_schema()   (schema of common/nodes/kclusters)
   * libs/primary        -> validate_definition (structural lab validation)
+  * libs/apps           -> describe()/addon_files() (add-on discovery)
 
 It holds NO knowledge of any specific addon or field: components and their
-fields are discovered at run time from the definitions themselves, so adding a
-new install_* definition (or a field to one) appears automatically.
+fields are discovered at run time from the add-ons themselves, so adding a
+new install_* executable (or a field to one) appears automatically.
 
 Configuration (all optional, env-overridable):
   LABBUILDER_SCRIPTS_DIR   dir holding install_* definitions + lab_schema
@@ -158,21 +161,17 @@ def _apps_lib():
 
 def _def_path(name):
     """
-    Resolve `name` to its real file path. Tries both `name` and `name.py` —
-    in a repo checkout, ported addons keep their .py suffix
-    (install_<name>.py) since that's how they're tracked in git; production
-    (install_automation_node_scripts.sh) strips it on deploy. discover()
-    already normalizes the other direction (strips .py from the name it
-    reports), so this is what makes schema()/discover() agree on the same
-    addon regardless of which form is on disk.
+    Resolve add-on `name` (install_<addon>) to its executable's path, with or
+    without a file extension: a repo checkout keeps install_<addon>.py,
+    production (install_automation_node_scripts.sh) strips the extension on
+    deploy.
     """
     if not SCRIPT_RE.match(name or ""):
         raise ValueError("invalid component name: %r" % name)
     for d in addon_dirs():
-        for candidate in (name, name + ".py"):
-            p = os.path.join(d, candidate)
-            if os.path.isfile(p):
-                return p
+        path = _apps_lib().addon_files(d).get(name)
+        if path:
+            return path
     raise FileNotFoundError(name)
 
 
@@ -205,12 +204,12 @@ def _inject_dynamic_enums(node, images):
 
 
 def schema(name):
-    """Schema of a single addon definition, via the lab_schema library."""
-    path = _def_path(name)
-    sc = _schema_lib().parse_script(path)
+    """Schema of a single add-on, from its own `--schema json` output."""
+    sc = json.loads(json.dumps(_apps_lib().describe(_def_path(name))))
+    if not sc:
+        raise FileNotFoundError(name)
+    sc.setdefault("capabilities", _apps_lib().attach_capabilities({}, _apps_lib().DEFAULT_PLUGIN)["capabilities"])
     _inject_dynamic_enums(sc, status().get("images", []))
-    plugin = _apps_lib().load_plugin_from_path(path, name=name)
-    _apps_lib().attach_capabilities(sc, plugin)
     return sc
 
 
@@ -222,41 +221,28 @@ def base_schema():
 
 
 def discover():
-    """Every install_* definition that yields a non-empty schema section."""
-    parse = _schema_lib().parse_script
-    items = []
-    seen = set()
+    """Every install_* add-on whose `--schema json` output has a section or fields."""
+    apps = _apps_lib()
+    found = {}
     for d in addon_dirs():
-        if not os.path.isdir(d):
+        for name, path in apps.addon_files(d).items():
+            found.setdefault(name, path)
+    described = apps.describe_many(found.values())
+    items = []
+    for name, path in found.items():
+        sc = described.get(os.path.realpath(path)) or {}
+        if not sc.get("section") and not sc.get("fields"):
             continue
-        for fname in sorted(os.listdir(d)):
-            # In a repo checkout, scripts/install_<x>.py
-            # carries a .py suffix that production's deployed (suffix-
-            # stripped) /usr/local/bin/install_<x> never has — normalize so
-            # dev-mode discovery names match what setup_lab.py dispatches to.
-            name = fname[:-3] if fname.endswith(".py") else fname
-            if not SCRIPT_RE.match(name) or name in seen:
-                continue
-            p = os.path.join(d, fname)
-            if not os.path.isfile(p):
-                continue
-            try:
-                sc = parse(p)
-            except Exception:
-                continue
-            if not sc.get("section") and not sc.get("fields"):
-                continue
-            seen.add(name)
-            plugin = _apps_lib().load_plugin_from_path(p, name=name)
-            items.append({
-                "name": name,
-                "kind": "addon",
-                "title": sc.get("section") or name,
-                "description": sc.get("description", ""),
-                "field_count": len(sc.get("fields", [])),
-                "layers": plugin.get("layers") or [],
-                "targets": plugin.get("targets") or [],
-            })
+        caps = sc.get("capabilities") or {}
+        items.append({
+            "name": name,
+            "kind": "addon",
+            "title": sc.get("section") or name,
+            "description": sc.get("description", ""),
+            "field_count": len(sc.get("fields", [])),
+            "layers": caps.get("layers") or [],
+            "targets": caps.get("targets") or [],
+        })
     return sorted(items, key=lambda it: it["name"])
 
 

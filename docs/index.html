@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
-<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported. Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned.</p>
+<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
 <p>A lab isn't limited to one hypervisor. Set <code>KVM_HOSTS</code> (space-separated) in <code>/etc/lab_creation.cfg</code> on the automation VM to make more than one hypervisor available:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -412,14 +412,36 @@ footer.site {
 <li>Internet access (or a local mirror) for package and image downloads</li>
 <li>A QCOW2 image for your chosen OS placed at <code>/var/lib/libvirt/images/sources/</code> on the hypervisor</li>
 </ul>
-<aside class="callout callout-important"><p>The automation VM needs <code>python3.11</code> specifically — the toolchain pins to it explicitly. Most distros ship an older default <code>python3</code> alongside it; the install script refuses to proceed if <code>python3.11</code> is missing.</p></aside>
+<aside class="callout callout-important"><p>The hypervisor needs no Python installed beforehand: the setup command installs <code>python311</code> on openSUSE Leap / SLES 15 and the distribution's own <code>python3</code> (3.9 or newer) everywhere else.</p></aside>
 <p>Tested images:
 - <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recommended, used with Ignition+Combustion
 - openSUSE Leap Micro — supported, used with cloud-init</p>
-<h3 id="step-1--prepare-the-hypervisor-os">Step 1 — Prepare the hypervisor OS</h3>
-<p>Install SLES (or another KVM-capable Linux) on your hardware. During install, choose:
-- <strong>Network</strong>: create a bridge interface (<code>br0</code>) linked to your main NIC with a static IP
-- <strong>System role</strong>: KVM Virtualization Host</p>
+<h3 id="step-1--prepare-the-hypervisor-os">Step 1 — Install the hypervisor OS</h3>
+<p>Install one of these on your hardware; a minimal or server installation is enough, and no bridge or extra package is needed beforehand:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Versions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>openSUSE Leap, SLES</td>
+<td>15 (SP6+), 16</td>
+</tr>
+<tr>
+<td>Debian, Ubuntu</td>
+<td>Debian 12, 13; Ubuntu 22.04, 24.04</td>
+</tr>
+<tr>
+<td>RHEL, Rocky Linux, AlmaLinux, CentOS Stream, Fedora</td>
+<td>9, 10; current Fedora</td>
+</tr>
+</tbody>
+</table>
+<p>Other versions of these families get the newest matching package list with a warning that it was not verified for them. SLES needs a registration code (asked for during setup) unless the host is already registered.</p>
+<p>On RHEL-family and Fedora hypervisors the host setup completes, but the automation VM cannot be built there yet: libguestfs on those systems cannot read the btrfs filesystem of its openSUSE Leap image. Create the automation node on a host of another family for now.</p>
 <details>
 <summary>Writing a bootable USB from Linux</summary>
 
@@ -445,14 +467,33 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 
 </details>
 
-<h3 id="step-2--bootstrap-the-setup-scripts">Step 2 — Bootstrap the setup scripts</h3>
-<p>From any Linux machine with SSH access to the hypervisor:</p>
-<pre><code class="language-shell">curl https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -
+<h3 id="step-2--bootstrap-the-setup-scripts">Step 2 — Run the setup command</h3>
+<p>On the hypervisor, as root:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>This downloads the setup scripts to <code>/var/tmp/setup_demo_server/</code>.</p>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">Step 3 — Configure and run the KVM node setup</h3>
-<pre><code class="language-shell">cd /var/tmp/setup_demo_server/setup_demo_server/
-vim lab.cfg
+<p>It installs git and Python, fetches lab-in-a-box into <code>/var/tmp/setup_demo_server/</code> and runs <code>setup_demo_server/setup_kvm_node.py</code>. It takes the lab settings from its options and this host's own values; with <code>--interactive</code> it asks for each one instead, with those values as defaults:</p>
+<ul>
+<li><strong>Lab network</strong>: <code>bridge</code> puts the lab VMs on the host's LAN; <code>nat</code> uses a private libvirt network instead (for a laptop or single-NIC host)</li>
+<li><strong>Lab DNS domain</strong> (default <code>mydemo.lab</code>), the <strong>automation VM's IP address</strong> (a free address on the lab network is suggested) and its <strong>root password</strong></li>
+<li>On SLES, the <strong>registration code</strong></li>
+</ul>
+<p>The network, gateway, DNS server, timezone and SSH key (<code>~/.ssh/id_ed25519.pub</code>, created if missing) are taken from the host. The answers are written to <code>setup_demo_server/lab.cfg</code>; after a summary (and, with <code>--interactive</code>, a confirmation), the setup:</p>
+<ol>
+<li>installs the hypervisor packages for the detected distribution (EPEL and CRB are enabled on RHEL-family hosts);</li>
+<li>in bridge mode, turns the NIC carrying the default route into a port of <code>br0</code>, keeping the host's address. NetworkManager, netplan, wicked, systemd-networkd and ifupdown are supported. A timer restores the previous network configuration unless the gateway still answers through the bridge, so a failed change cannot leave the host unreachable;</li>
+<li>configures libvirt and creates the automation VM.</li>
+</ol>
+<p>Every setting can be given as an option, for example in an unattended run from cloud-init:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
+  | sudo bash -s -- --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+</code></pre>
+<p>Without <code>--root-password</code> (or <code>LAB_ROOT_PASSWORD</code>), a password is generated and printed at the end, unless <code>--interactive</code> asks for one. Run <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> for every option.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Step 3 — Re-running or changing the setup</h3>
+<p>Running the command again uses the existing <code>lab.cfg</code> as is; options that map to its settings (for example <code>--network-mode nat</code>) update them first, and <code>--reconfigure</code> asks for everything again. To review or edit <code>lab.cfg</code> before anything is changed, fetch the code only:</p>
+<pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
+</code></pre>
+<p>To set up another machine from this one, pass its address; the code is copied there over SSH and the same options apply:</p>
+<pre><code class="language-shell">python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py &lt;IP&gt;
 </code></pre>
 <p>Key settings in <code>lab.cfg</code>:</p>
 <table>
@@ -464,12 +505,16 @@ vim lab.cfg
 </thead>
 <tbody>
 <tr>
-<td><code>ROOT_PWD_HASH</code></td>
-<td>Hashed root password — generate with <code>mkpasswd --method=SHA-512 --stdin</code></td>
+<td><code>_network_mode</code>, <code>_bridge_name</code>, <code>_bridge_nic</code></td>
+<td>Bridge or NAT networking; the bridge the lab VMs attach to and the NIC that becomes its port</td>
 </tr>
 <tr>
-<td><code>ROOT_SSH_PUB_KEY</code></td>
-<td>Your SSH public key for passwordless access</td>
+<td><code>_mynet</code>, <code>_mygw</code>, <code>_mydns</code>, <code>_myip</code></td>
+<td>Lab network, gateway, upstream DNS and the automation VM's address</td>
+</tr>
+<tr>
+<td><code>ROOT_PWD_HASH</code>, <code>ROOT_SSH_PUB_KEY</code></td>
+<td>Automation VM root password hash and the SSH key allowed to log in</td>
 </tr>
 <tr>
 <td><code>AUTOMATION_HOSTNAME</code></td>
@@ -479,16 +524,8 @@ vim lab.cfg
 <td><code>_QCOW_IMAGE</code></td>
 <td>Filename of the source QCOW2 image</td>
 </tr>
-<tr>
-<td>Network settings</td>
-<td>IP, gateway, mask, DNS for the lab network</td>
-</tr>
 </tbody>
 </table>
-<p>Then run the setup (replace <code>&lt;IP&gt;</code> with your hypervisor IP, or omit for local):</p>
-<pre><code class="language-shell">./setup_kvm_node.py &lt;IP&gt;
-</code></pre>
-<p>This provisions the automation VM and starts all required services.</p>
 <h3 id="step-4--configure-the-automation-vm">Step 4 — Configure the automation VM</h3>
 <p>SSH into the automation VM and install the lab scripts:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
@@ -528,6 +565,7 @@ vim /etc/lab_creation.cfg
 </tr>
 </tbody>
 </table>
+<p><strong>HTTP and HTTPS.</strong> The automation VM serves its files on port 80 (HTTP) and port 443 (HTTPS, self-signed certificate in <code>/etc/lab_creation/tls/</code>). Installers (AutoYaST, kickstart, preseed) and Helm fetch them over HTTPS and accept the self-signed certificate. Set <code>PROVISIONING_TLS_VERIFY=1</code> to verify it instead, or <code>PROVISIONING_BASE_URL</code> (e.g. <code>http://192.168.88.250</code>) to use another address or go back to HTTP. Harvester's iPXE netboot always uses HTTP: iPXE cannot accept a self-signed certificate.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Step 5 — Point your client DNS at the automation VM</h3>
 <p>For hostnames to resolve from your desktop:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -584,7 +622,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -630,7 +668,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -786,6 +824,44 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</h3>
+<p>A <code>kclusters</code> entry with <code>clu_type: "harvester"</code> builds a Harvester cluster from EC2 instances.
+Each node boots a Harvester AMI that you supply (SUSE publishes none; <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a>
+builds one from the Harvester ISO) and installs itself at first boot from the Harvester configuration lab-in-a-box passes as its
+user-data. The first node of the cluster in the file creates the cluster; the others join it through the cluster VIP.</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>Nodes</strong> must use the <code>aws</code> backend, <code>aws_nested_virtualization: "true"</code> with a supported
+  <code>cloud_instance_type</code> (M7i/M8i/C7i/R7i/I7i families; see <a href="#compute-backends_1">Compute backends</a>), and the
+  Harvester AMI ID as <code>SOURCE_IMAGE</code>. 250 GiB is the AMI's minimum disk.</li>
+<li><strong>Cluster fields</strong>: <code>harvester_token</code> (required, shared by every node); <code>harvester_vip</code>
+  (default: a free address of <code>AWS_SUBNET_ID</code>, registered as a secondary private IP on the create node);
+  <code>harvester_mtu</code> (default 1500, the same on every node); <code>harvester_replica_count</code> (set 1 below 3 nodes);
+  <code>harvester_device</code> (default <code>/dev/nvme0n1p6</code>, the community AMI's layout); <code>harvester_ntp_servers</code>
+  (default the AWS time service, 169.254.169.123); <code>harvester_config</code> (merged last into every node's Harvester
+  configuration); <code>harvester_settings</code> (Harvester Settings applied once the cluster is up). Per node:
+  <code>harvester_role</code> (default, management, worker, witness).</li>
+<li><strong>Access</strong>: the nodes accept the automation node's SSH key for the <code>rancher</code> user (Harvester blocks
+  root SSH), and the lab's <code>ROOT_PWD_HASH</code> as the password. The security group gets 80, 443, 6443 and 9345 and all
+  traffic between its own instances. When the cluster is up, <code>setup_lab.py</code> prints the UI address
+  (<code>https://&lt;create node&gt;/</code>) and keeps the kubeconfig in <code>/etc/lab_creation/harvester-&lt;cluster&gt;.kubeconfig</code>.</li>
+<li><strong>Limits</strong>: the VIP stays on the create node (AWS does not move a secondary IP, so it does not fail over); EC2
+  drops frames from foreign MAC addresses, so Harvester VMs cannot use bridged VLAN networks; add-ons are not installed on a
+  Harvester cluster yet; each node costs roughly what its instance type costs per hour plus 250 GiB of EBS.</li>
+</ul>
 <h3 id="deploying-a-legacy-image-centos-7">Deploying a legacy image (CentOS 7)</h3>
 <p>CentOS 7 (and other pre-built <code>.qcow2</code> images that old) has neither Ignition/Combustion nor
 cloud-init built in, so <code>config_method</code> must be <code>virt_customize</code> (see
@@ -1466,7 +1542,15 @@ install_longhorn --schema yaml      # ...or YAML
 
 </details>
 
-<p>To add a new addon: create <code>scripts/install_&lt;name&gt;.py</code> following the pattern of an existing one (source <code>addon_common</code>, load the relevant JSON section via <code>load_definition()</code>, do the work over SSH), add templates under <code>templates/addons/&lt;name&gt;/</code> if needed, and reference <code>"&lt;name&gt;"</code> in the <code>addons</code> array of your JSON — <code>install_automation_node_scripts.sh</code>'s deploy loop and the web UI both discover it automatically.</p>
+<p>To add a new addon: create an executable <code>scripts/install_&lt;name&gt;</code> in any language, with or without a file extension (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, a compiled binary), add templates under <code>templates/addons/&lt;name&gt;/</code> if needed, and reference <code>"&lt;name&gt;"</code> in the <code>addons</code> array of your JSON. <code>install_automation_node_scripts.sh</code> deploys it as <code>/usr/local/bin/install_&lt;name&gt;</code>, and <code>setup_lab.py</code> and the web UI use it only through its command-line contract:</p>
+<ul>
+<li><code>install_&lt;name&gt; --schema json</code> prints its schema as JSON, including a <code>capabilities</code> object (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>); <code>--schema yaml</code> prints the same as YAML</li>
+<li><code>install_&lt;name&gt; --capabilities</code> prints the same capabilities as JSON</li>
+<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> exits non-zero, printing <code>[ERROR]</code> lines, when its configuration is invalid</li>
+<li><code>install_&lt;name&gt; --version</code> and <code>--help</code></li>
+<li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> installs it on the VM named in <code>$_vm_name</code> (and the cluster in <code>$clu_name</code> for a cluster add-on)</li>
+</ul>
+<p>A Python add-on gets all of these from <code>addon_common.handle_common_args()</code> and a module-level <code>PLUGIN</code> dict; follow the pattern of an existing one (load the relevant JSON section via <code>load_definition()</code>, do the work over SSH).</p>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
 <hr />
@@ -1511,6 +1595,14 @@ install_longhorn --schema yaml      # ...or YAML
 <td><code>delay_min</code></td>
 <td>Minutes to wait between provisioning stages (increase on slow hardware)</td>
 </tr>
+<tr>
+<td><code>PROVISIONING_BASE_URL</code></td>
+<td><em>(optional)</em> replaces <code>https://&lt;automation VM&gt;</code> in the URLs installers and Helm fetch files from, e.g. <code>http://192.168.88.250</code></td>
+</tr>
+<tr>
+<td><code>PROVISIONING_TLS_VERIFY</code></td>
+<td><code>0</code> (default) accepts the automation VM's self-signed certificate; <code>1</code> verifies it</td>
+</tr>
 </tbody>
 </table>
 <h3 id="compute-backends_1">Compute backends</h3>
@@ -1535,7 +1627,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>One credential file per kind is reusable across every addon that needs that kind (e.g. a single <code>scc</code> file covers any addon's own SCC credentials), regardless of each addon's own JSON-field prefix — see <code>libs/addon_common.py</code>'s <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> and <code>libs/primary.py</code>'s <code>*_service_credential*</code> functions for the underlying mechanism.</p>
 <p><strong>Cloud backends (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) and <code>myip</code>:</strong> leave a cloud-backend node's <code>myip</code> empty in the lab JSON — the real IP is only known once the provider assigns it at create time, not something you can decide in advance the way a static libvirt/Harvester IP works. <code>setup_vm.py</code> picks up the real IP from <code>create_vm()</code>'s own return value and registers it in DNS <em>after</em> the node actually exists, not before (a real bug found live-testing AWSBackend, 2026-09-06 — see TODO). <code>mymac</code> is similarly meaningless for a cloud backend — leave it unset; it's ignored rather than generated/conflict-checked.</p>
-<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. <strong>Known gaps:</strong> (1) a freshly created cloud node does not yet automatically point its own resolution at this DNS VM, so a second cloud node in the same lab can't yet resolve a first one by hostname without further wiring; (2) querying this DNS VM's own zone via its AWS Elastic/Public IP from an external client (including automation.mydemo.lab itself) currently returns a bogus root-zone NXDOMAIN instead of the real answer — querying via the VM's private IP or loopback works; the public-IP path is not yet root-caused. See <code>libs/backends.py</code>'s <code>ensure_cloud_dns_vm()</code> docstring and TODO.</p>
+<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. <strong>Known gaps:</strong> (1) a freshly created cloud node does not yet automatically point its own resolution at this DNS VM, so a second cloud node in the same lab can't yet resolve a first one by hostname without further wiring; (2) nodes query this DNS VM through its private IP; DNS queries to its public IP from outside the cloud can be intercepted by networks on the path, since some ISPs and routers answer all DNS traffic themselves. See the <code>ensure_cloud_dns_vm()</code> docstring in <code>libs/backends.py</code>.</p>
 <p><strong>Cloud instance sizing:</strong> every cloud backend maps <code>VM_CPU</code>/<code>VM_MEM</code> to the provider's own smallest sufficient instance type/server type/plan/flavor from a small built-in table (each one's own "Notes" column below says which) — that table was never meant to be a ceiling. Two ways to override it, in order of precedence:
 1. <strong><code>cloud_instance_type</code></strong> (common or per-node, per-node wins) — an exact instance type/server type/plan/flavor name, used verbatim instead of auto-picking one at all. Works the same way on every cloud backend, including OVHcloud (skips its own live flavor-list API call) and GCP (skips building a custom <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> type — give it a real predefined type like <code>n2-standard-4</code> instead).
 2. <strong>A <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> config key</strong> (see each provider's own row below) — a full replacement of the built-in table itself, so <code>VM_CPU</code>/<code>VM_MEM</code> auto-picking keeps working but against your own list. Format: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, e.g. <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. This replaces the table entirely, not merges with it — repeat any built-in entries you still want. GCP and OVHcloud have no such key: GCP builds a real custom machine type directly from <code>VM_CPU</code>/<code>VM_MEM</code> (no catalog to override), and OVHcloud already queries its own real flavor list live at create time (see its own row).</p>

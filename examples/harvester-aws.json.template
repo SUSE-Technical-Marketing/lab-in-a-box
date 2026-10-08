@@ -1,0 +1,34 @@
+{
+  "common": {
+    "backend": "aws",
+    "config_method": "cloud-init",
+    "cloud_account": "aws-main",
+    "SOURCE_IMAGE": "ami-0123456789abcdef0",
+    "cloud_instance_type": "m8i.4xlarge",
+    "aws_nested_virtualization": "true",
+    "VM_MEM": 65536,
+    "VM_CPU": 16,
+    "VM_DSK": 250
+  },
+  "nodes": {
+    "harv1.mydemo.lab": {
+      "kcluster": "harv"
+    },
+    "harv2.mydemo.lab": {
+      "kcluster": "harv"
+    },
+    "harv3.mydemo.lab": {
+      "kcluster": "harv"
+    }
+  },
+  "kclusters": {
+    "harv": {
+      "clu_type": "harvester",
+      "clu_rel": "v1.9.0",
+      "mydomain": "mydemo.lab",
+      "harvester_token": "change-me",
+      "harvester_mtu": 1500,
+      "harvester_replica_count": 3
+    }
+  }
+}

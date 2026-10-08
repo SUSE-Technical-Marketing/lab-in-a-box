@@ -32,6 +32,8 @@ import threading
 import time
 from pathlib import Path
 
+import provisioning
+
 
 # ── Output helpers ────────────────────────────────────────────────────────────
 
@@ -273,14 +275,18 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # common.ISO_IMAGE is only required when some node doesn't supply its own
     # override (nodes.<name>.ISO_IMAGE) — a lab where every node pins its own
     # image is valid and never needs a common default at all.
-    iso = _jq_or(common.get("ISO_IMAGE"))
+    # SOURCE_IMAGE, or its older name ISO_IMAGE.
+    def _image(cfg):
+        return _jq_or(cfg.get("SOURCE_IMAGE")) if not _empty(_jq_or(cfg.get("SOURCE_IMAGE"))) else _jq_or(cfg.get("ISO_IMAGE"))
+
+    iso = _image(common)
     if _empty(iso):
         nodes_missing_iso = [
             n for n, cfg in (definition.get("nodes") or {}).items()
-            if _empty(_jq_or((cfg or {}).get("ISO_IMAGE")))
+            if _empty(_image(cfg or {}))
         ]
         if nodes_missing_iso:
-            err("common.ISO_IMAGE is required (or set ISO_IMAGE per-node) — missing for: {}".format(
+            err("common.SOURCE_IMAGE is required (or set SOURCE_IMAGE per-node) — missing for: {}".format(
                 ", ".join(sorted(nodes_missing_iso))))
 
     for req in ("VM_MEM", "VM_DSK", "VM_CPU"):
@@ -413,7 +419,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 "\"\" (Ignition+Combustion), cloud-init, virt_customize, install_iso".format(
                     node, eff_config_method))
 
-        node_iso = _jq_or(node_cfg.get("ISO_IMAGE"))
+        node_iso = _image(node_cfg)
         eff_iso = node_iso if not _empty(node_iso) else iso
 
         # An ISO_IMAGE that ends in .iso is an installer medium, not a bootable disk. Every config_method except install_iso copies
@@ -492,7 +498,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         cdomain = _jq_or(clu_cfg.get("mydomain"))
 
         if _empty(ctype):
-            err("kclusters.{}: 'clu_type' is required (rke2 or k3s)".format(clu))
+            err("kclusters.{}: 'clu_type' is required (rke2, k3s or harvester)".format(clu))
         if _empty(crel):
             err("kclusters.{}: 'clu_rel' is required (e.g. stable)".format(clu))
         if _empty(cdomain):
@@ -509,6 +515,12 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype)
             if issue:
                 err("kclusters.{}: addon '{}' {}".format(clu, addon, issue))
+
+    # Harvester clusters: AWS nodes from an AMI, with nested virtualization; see libs/harvester.py.
+    import harvester
+    from backends import effective_backend_name
+    for problem in harvester.problems(definition, lambda vm: effective_backend_name(definition, config, vm)):
+        err(problem)
 
     # Per-VM addon scripts must also be present
     for node in nodes_to_check:
@@ -560,7 +572,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     for node in nodes_to_check:
         node_cfg = nodes.get(node) or {}
         if _jq_or(node_cfg.get("ISO_URL")):
-            node_img = _jq_or(node_cfg.get("ISO_IMAGE")) or iso
+            node_img = _image(node_cfg) or iso
             for issue in image_source_issues("nodes.{}".format(node), node_img, _jq_or(node_cfg.get("ISO_URL")),
                                              _jq_or(node_cfg.get("ISO_SHA256")),
                                              _jq_or(node_cfg.get("ISO_SHA256_URL"))):
@@ -635,7 +647,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 check_image_on_hv(iso, "common.ISO_IMAGE", host)
         for node in libvirt_nodes_to_check:
             node_host, _ = resolved_host_for(node)
-            node_iso = _jq_or((nodes.get(node) or {}).get("ISO_IMAGE"))
+            node_iso = _image(nodes.get(node) or {})
             if not _empty(node_iso):
                 check_image_on_hv(node_iso, "nodes.{}.ISO_IMAGE".format(node), node_host)
 
@@ -649,7 +661,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # lab file is untouched) and record a warning so the summary shows it.
     def check_min_disk_for_node(node):
         node_cfg = nodes.get(node) or {}
-        img = _jq_or(node_cfg.get("ISO_IMAGE")) or iso
+        img = _image(node_cfg) or iso
         host, _ = resolved_host_for(node)
         if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
             return
@@ -690,6 +702,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     needs_install_iso = False
     for node_cfg in nodes.values():
         cm = _jq_or((node_cfg or {}).get("config_method"))
+        if _empty(cm):
+            cm = _jq_or(common.get("config_method"))
         if cm == "cloud-init":
             needs_cloud_init = True
         elif cm == "install_iso":
@@ -1937,7 +1951,7 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
     if nt == "wicked":
         # Find DHCP ifcfg files in Python (avoids shell quoting issues with regex)
         # and remove them one by one with a simple rm command per file
-        dhcp_pat = re.compile(r"BOOTPROTO\s*=\s*\S*(dhcp|auto)", re.IGNORECASE)
+        dhcp_pat = re.compile(r"BOOTPROTO\\s*=\\s*\\S*(dhcp|auto)", re.IGNORECASE)
         for _f in vls("/etc/sysconfig/network"):
             if not _f.startswith("ifcfg-") or _f == "ifcfg-lo":
                 continue
@@ -2041,8 +2055,8 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
            r""" && printf 'PermitRootLogin yes\nPasswordAuthentication yes\n'"""
            r""" > /etc/ssh/sshd_config.d/99-lab.conf"""
            r""" ; sed -i -E"""
-           r""" -e 's/^#?\s*PermitRootLogin\s+.*/PermitRootLogin yes/'"""
-           r""" -e 's/^#?\s*PasswordAuthentication\s+.*/PasswordAuthentication yes/'"""
+           r""" -e 's/^#?\\s*PermitRootLogin\\s+.*/PermitRootLogin yes/'"""
+           r""" -e 's/^#?\\s*PasswordAuthentication\\s+.*/PasswordAuthentication yes/'"""
            r""" /etc/ssh/sshd_config 2>/dev/null; true"""]
     if nt != "cloud-init":
         # For non-cloud-init systems: disable cloud-init entirely so it doesn't interfere.
@@ -2189,14 +2203,20 @@ def setup_helm(hostname, clu_name, online=False, automation_host="automation"):
     Install Helm on a remote Kubernetes node, as the bash setup_helm does.
 
     online=True downloads directly from GitHub. online=False downloads from the automation VM. The default is False, which matches
-    the bash behaviour when the `online` field is absent.
+    the bash behaviour when the `online` field is absent. The automation VM URL and certificate check follow lab_creation.cfg's
+    PROVISIONING_BASE_URL and PROVISIONING_TLS_VERIFY (see libs/provisioning.py).
     """
     log("Setting up Helm on cluster '{}'".format(clu_name))
     if online:
         ssh_run(hostname,
                 "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
     else:
-        ssh_run(hostname, "curl http://{}/helm/install_helm.sh | bash -".format(automation_host))
+        from primary import load_config
+        config = load_config()
+        base = provisioning.base_url(automation_host, config.get("PROVISIONING_BASE_URL", ""))
+        tls = provisioning.curl_tls_option(base, provisioning.tls_verify(config.get("PROVISIONING_TLS_VERIFY", "")))
+        fetch = " ".join(filter(None, ["curl", tls, "{}/helm/install_helm.sh".format(shlex.quote(base))]))
+        ssh_run(hostname, "{} | LAB_PROVISIONING_URL={} LAB_CURL_TLS={} bash -".format(fetch, shlex.quote(base), tls))
 
 
 def helm_repo_add(hostname, repo_name, repo_url):

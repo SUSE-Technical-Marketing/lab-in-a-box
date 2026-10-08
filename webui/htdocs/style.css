@@ -172,8 +172,13 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .badge{background:var(--code);color:var(--muted);border-radius:6px;padding:.15rem .5rem;font-size:.74rem;font-weight:600}
 .lab-preview{
   margin:0;padding:1rem;overflow:auto;flex:1;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  background:var(--field-bg);white-space:pre;min-height:200px;
+  background:var(--field-bg);color:var(--ink);white-space:pre;min-height:200px;border:0;resize:none;width:100%;box-sizing:border-box;
 }
+.lab-preview:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.lab-issues{margin:.6rem 1rem 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.3rem;max-height:30vh;overflow-y:auto}
+.issue{padding:.4rem .6rem;border-radius:7px;font-size:.8rem;line-height:1.4}
+.issue.err{background:color-mix(in srgb,var(--danger) 15%,transparent);color:var(--danger)}
+.issue.warn{background:color-mix(in srgb,var(--gold) 20%,transparent);color:var(--ink)}
 .view-tabs{display:flex;gap:.2rem;background:var(--code);border-radius:7px;padding:.15rem}
 .view-tab{
   border:0;background:transparent;color:var(--muted);font-size:.76rem;font-weight:600;
@@ -278,6 +283,8 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .mini-addons{display:flex;flex-wrap:wrap;justify-content:center;gap:.3rem;margin-top:.1rem}
 .block-mini{min-width:0;padding:0 .3rem .25rem;border-radius:9px;box-shadow:0 0 0 1px var(--line);background:var(--bg)}
 .block-mini .block-name{font-size:.66rem}
+.common-area{display:flex;flex-direction:column;gap:.6rem}
+.common-addons{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:0 .4rem}
 .loose{display:flex;flex-direction:column;gap:.6rem}
 .loose-row{display:flex;flex-wrap:wrap;gap:.7rem;align-items:flex-start}
 
@@ -297,3 +304,34 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .btn.danger:hover:not(:disabled){border-color:var(--danger);color:var(--danger)}
 .editor .instance{border:0;border-top:0;padding:0;background:transparent}
 .editor .rm-inst{display:none}
+
+/* server dialogs: saved labs, credentials, Create lab */
+.small-dialog{width:min(480px,94vw)}
+.dialog-body{overflow-y:auto;flex:1;padding:0 1.2rem 1rem;display:flex;flex-direction:column;gap:.8rem}
+.dialog-msg{margin:0 1.2rem 1rem}
+.saved-list{list-style:none;margin:0;padding:0 1.2rem 1rem;display:flex;flex-direction:column;gap:.4rem;overflow-y:auto}
+.saved-row{display:flex;align-items:center;gap:.8rem}
+.saved-name{font-weight:640;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.muted{color:var(--muted);font-size:.8rem}
+.table-wrap{overflow-x:auto}
+.cred-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.cred-table th{text-align:left;color:var(--muted);font-weight:600;padding:.3rem .4rem;border-bottom:1px solid var(--line)}
+.cred-table td{padding:.4rem;border-bottom:1px solid var(--line);vertical-align:middle}
+.cred-name{font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.cred-actions{display:flex;gap:.3rem;justify-content:flex-end}
+.cred-add{display:flex;flex-direction:column;gap:.6rem;border-top:1px solid var(--line);padding-top:.8rem}
+.cred-add h4{margin:0;font-size:.9rem}
+.cred-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.5rem .8rem}
+.cred-grid .field{display:flex;flex-direction:column;gap:.2rem;margin:0}
+.cred-grid input,.cred-grid select{width:100%;box-sizing:border-box;padding:.4rem .55rem;border:1px solid var(--line);border-radius:7px;background:var(--field-bg);color:var(--ink);font:inherit;font-size:.85rem}
+.cred-add .btn.primary{align-self:flex-start}
+.create-summary{margin:0;padding:.7rem .8rem;background:var(--code);border-radius:8px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+.job-state{margin:0;font-weight:640}
+.job-state.done{color:var(--ok)}
+.job-state.failed{color:var(--danger)}
+.job-log{margin:0;padding:.7rem .8rem;background:var(--field-bg);border:1px solid var(--line);border-radius:8px;
+  font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:50vh;overflow:auto;min-height:8rem}
+.cred-grid .f-name{font-weight:600;font-size:.82rem}
+.top-actions .btn{padding:.38rem .8rem}
+.dialog-body[hidden],.dialog-msg[hidden],#credPassBox[hidden]{display:none}
+.dialog-body .form-desc{padding:0;margin:0}

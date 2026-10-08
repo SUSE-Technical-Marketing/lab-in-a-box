@@ -6,7 +6,8 @@ Takes webui/htdocs/index.html and embeds the answers the live lab-builder API
 (webui/lib/api.py) gives for "components", "base" and every add-on's "schema",
 computed from this repo checkout. An inline script replaces app.js's apiGet()
 with lookups over that data; CSS hides the controls that need the server
-(hypervisor status, image refresh, Validate, Save to server).
+(hypervisor status, image refresh, Validate, Save to server, Saved labs,
+Create lab); the Credentials button is greyed out.
 
 Usage: build-cube-static.py [--output PATH]   (default: webui/htdocs/lab-builder-static.html)
 
@@ -34,7 +35,7 @@ import api  # noqa: E402
 
 HIDE_SERVER_CONTROLS = """
   <style>
-    #statusPanel, #refreshImagesBtn, #editorImages, #validateBtn, #saveBtn { display: none !important; }
+    #statusPanel, #refreshImagesBtn, #editorImages, #validateBtn, #saveBtn, #savedBtn, #createBtn { display: none !important; }
   </style>
 """
 
@@ -44,6 +45,7 @@ STATIC_API = """
   (function () {
     const data = JSON.parse(document.getElementById("static-api-data").textContent);
     const copy = (v) => JSON.parse(JSON.stringify(v));
+    window.LAB_STATIC = true;
     window.apiGet = async function (action, params = {}) {
       if (action === "components") return copy(data.components);
       if (action === "base") return copy(data.base);

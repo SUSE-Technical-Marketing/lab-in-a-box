@@ -19,7 +19,7 @@
 # PHP/MySQL logging feature (update.php/log.sql) — deliberately NOT wired up here (no PHP/DB
 # runtime in this addon's nginx-only pod); the game itself works fully without it.
 
-__version__ = "87e323b"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "skynet_simulator",

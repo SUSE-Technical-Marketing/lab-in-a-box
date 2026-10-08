@@ -21,7 +21,7 @@
 # Ingress. See artanis_common.py's own module docstring for why colt_image is mandatory rather
 # than defaulting to a published image.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "colt",

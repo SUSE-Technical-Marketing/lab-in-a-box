@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of lab-in-a-box, prepares the demo server scripts
+# Part of lab-in-a-box: one-command setup of a KVM hypervisor and its automation VM.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -8,86 +8,82 @@
 # This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
+#
+# Usage (as root):
+#   curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | bash -s -- [options]
+#
+# Installs git and Python 3 (python311 on openSUSE Leap / SLES 15, the distribution's python3
+# elsewhere), fetches lab-in-a-box into /var/tmp/setup_demo_server and runs
+# setup_demo_server/setup_kvm_node.py with every other option (see its --help). Nothing is asked
+# unless --interactive is given; its prompts are then read from the terminal.
+#
+# Options handled here:
+#   --source DIR    use the lab-in-a-box checkout in DIR instead of cloning
+#   --fetch-only    only fetch the code; edit setup_demo_server/lab.cfg and run setup_kvm_node.py yourself
+# Environment: LAB_REPO_URL, LAB_REPO_BRANCH (default: the SUSE-Technical-Marketing repo, main).
 
+set -euo pipefail
 
+_red='\033[1;31m'; _reset='\033[0m'
+die() { echo -e "${_red}ERROR${_reset}: $*" >&2; exit 1; }
 
+_repo_url=${LAB_REPO_URL:-https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git}
+_branch=${LAB_REPO_BRANCH:-main}
+_dest=/var/tmp/setup_demo_server
+_source=""
+_fetch_only=0
+_args=()
+while (( $# )); do
+    case $1 in
+        --source) _source=${2:?--source needs a directory}; shift 2 ;;
+        --source=*) _source=${1#*=}; shift ;;
+        --fetch-only) _fetch_only=1; shift ;;
+        *) _args+=("$1"); shift ;;
+    esac
+done
 
+[[ $EUID -eq 0 ]] || die "run this as root (e.g. curl ... | sudo bash -s -- [options])"
+[[ -f /etc/os-release ]] || die "/etc/os-release not found: cannot tell which distribution this is"
+. /etc/os-release
+_major=${VERSION_ID%%.*}
 
-# check which OS are we in
-[[ -f /etc/os-release ]] && source /etc/os-release && _os="${ID}"
+case " ${ID} ${ID_LIKE:-} " in
+    *" opensuse-leap "*|*" sles "*|*" suse "*)
+        _py=python3; _pkgs=(git-core python3)
+        [[ $_major == 15 ]] && { _py=python3.11; _pkgs=(git-core python311); }
+        _install() { zypper --non-interactive install -y "$@"; } ;;
+    *" debian "*|*" ubuntu "*)
+        _py=python3; _pkgs=(git python3)
+        _install() { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
+    *" rhel "*|*" fedora "*|*" centos "*)
+        _py=python3; _pkgs=(git-core python3)
+        _install() { dnf install -y "$@"; } ;;
+    *) die "unsupported distribution: ${PRETTY_NAME:-$ID}" ;;
+esac
 
-# Fail if not os detected
-if [[ "$_os" == "" ]]
-then
-   echo -e '\033[1;31mERROR\033[0m: OS type not detected'
-   exit 1
-elif [[ "$_os" == "opensuse-leap" ]]
-then
-  echo '- Installing in openSUSE Leap'
-  _pkg_mgr="zypper "
-elif [[ "$_os" == "sles" ]]
-then
-  echo '- Installing in SLES'
-  _pkg_mgr="zypper "
+echo "- ${PRETTY_NAME:-$ID}: installing ${_pkgs[*]}"
+_install "${_pkgs[@]}" || die "could not install ${_pkgs[*]}"
+"$_py" -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "$_py is older than 3.9"
+
+if [[ -n $_source ]]; then
+    _repo=$_source
+elif [[ -d $_dest/.git ]]; then
+    git -C "$_dest" pull --ff-only || die "could not update $_dest"
+    _repo=$_dest
 else
-  echo -e "\033[1;31mERROR\033[0m: Unsupported OS '${_os}'. This script supports opensuse-leap and sles."
-  exit 1
+    git clone --branch "$_branch" "$_repo_url" "$_dest" || die "could not clone $_repo_url"
+    _repo=$_dest
+fi
+_setup="$_repo/setup_demo_server/setup_kvm_node.py"
+[[ -f $_setup ]] || die "$_setup not found"
+
+if (( _fetch_only )); then
+    echo "Fetched into $_repo. Next: edit $_repo/setup_demo_server/lab.cfg (or let the setup write it) and run:"
+    echo "  $_py $_setup"
+    exit 0
 fi
 
-if ! type "git" &>/dev/null
-then
-  $_pkg_mgr install -y git || { echo -e '\033[1;31mERROR\033[0m: GIT command is not pressent and we couldn'\''t install it, please install it before proceed' ; exit 1 ; }
+if [[ -r /dev/tty ]] && { : </dev/tty; } 2>/dev/null; then
+    exec "$_py" "$_setup" "${_args[@]}" </dev/tty
 fi
-
-# setup_kvm_node.py is pinned to python3.11 explicitly, same as the rest of
-# this project's Python code — refuse to point the user at a script that
-# can't run rather than failing later, less clearly.
-if ! command -v python3.11 &>/dev/null
-then
-  echo -e '\033[1;31mERROR\033[0m: python3.11 is required (this project'\''s Python code is pinned to it) but was not found on PATH.'
-  exit 1
-fi
-
-if [[ -d /var/tmp/setup_demo_server/.git ]]; then
-    git -C /var/tmp/setup_demo_server pull --ff-only
-else
-    git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server
-fi
-
-if cd /var/tmp/setup_demo_server/setup_demo_server/
-then
-	chmod 0755 setup_kvm_node.py setup_lab_automation.sh
-
-	if [[ ! -f lab.cfg ]]; then
-	    [[ -f lab.cfg.template ]] || { echo -e '\033[1;31mERROR\033[0m: lab.cfg.template missing'; exit 1; }
-	    cp lab.cfg.template lab.cfg
-	fi
-	echo -e '
-\033[0;32;42m####################################################################\033[0m
-
-\033[1;31mPlease edit the lab configuration file\033[0m:
-
-\033[1;32mcd /var/tmp/setup_demo_server/setup_demo_server/ ; vi lab.cfg\033[0m
-
-in this folder according to your settings.
-
-Afterwards please run setup_kvm_node.py to configure your LAB KVM server:
-
-\033[1;32m./setup_kvm_node.py <node_ip>\033[0m
-
-\033[1;30m- node_ip\033[0m: is the IP of the server you want to use for your lab
-
-
-You can also setup your current machine as the lab server by running the same command without any parameter:
-
-\033[1;32m./setup_kvm_node.py \033[0m
-
-
-\033[0;32;42m####################################################################\033[0m
-'
-else
-	echo -e '\033[1;31mERROR\033[0m: Cloning the repository failed, this is the command used: \"\033[1;32mgit clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /var/tmp/setup_demo_server/\033[0m\"'
-	exit 1
-fi
-
-
+exec "$_py" "$_setup" "${_args[@]}"

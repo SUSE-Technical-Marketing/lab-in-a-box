@@ -20,7 +20,7 @@
 # Chart and standalone-mode --set flags follow zilliztech/milvus-helm's README and values.yaml.
 # The milvus-io.github.io/milvus-helm repo is archived and is not used.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "milvus",

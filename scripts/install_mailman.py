@@ -22,7 +22,7 @@
 # All data uses emptyDir volumes, so it is ephemeral and suited to a demonstration. For durable data, use PersistentVolumeClaims and a
 # StorageClass, which a bare RKE2 cluster does not have by default.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "mailman",

@@ -21,7 +21,7 @@
 # Known requirements: the ingress needs configuration.forceInit=true and a templateConfig with an http block that lists trusted proxies.
 # Otherwise every request through the ingress returns 400 Bad Request. forceInit is also needed on a re-run against an existing PVC.
 
-__version__ = "87e323b"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "home_assistant",
