@@ -26,7 +26,7 @@ _SSHFS_OPTS="_netdev,reconnect,identityfile=/root/.ssh/id_rsa,allow_other,defaul
 # same kubectl as the hypervisors (libs/kvm_host_profiles.py's KUBECTL_VERSION). Nothing that pulls in a kernel:
 # installing one in the chroot rebuilds the initrd there, and the VM then cannot find its root disk.
 _VM_PACKAGES="vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh ipcalc
-fuse3 sshfs netcat-openbsd python311 kubernetes1.35-client openssl"
+fuse3 sshfs netcat-openbsd python311 python311-cryptography kubernetes1.35-client openssl sudo"
 
 # Writes NODE_DIR/settings (mode 0600) under ROOT from the current values of NODE_SETTINGS.
 function write_node_settings() {

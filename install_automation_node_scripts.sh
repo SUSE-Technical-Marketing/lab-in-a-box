@@ -134,13 +134,22 @@ do
     chmod 0755 "/usr/local/bin/${i}"
 done
 
+# The lab-builder's root-side tools: lab-builder-helper (run by the web UI
+# through sudo, see the webui section below) and lab-builder-passwd (logins).
+cp scripts/lab_builder_helper.py /usr/local/sbin/lab-builder-helper
+sed -i "s/__LABVERSION__/$(lab_version scripts/lab_builder_helper.py)/" /usr/local/sbin/lab-builder-helper
+cp scripts/lab-builder-passwd /usr/local/sbin/lab-builder-passwd
+chown root:root /usr/local/sbin/lab-builder-helper /usr/local/sbin/lab-builder-passwd
+chmod 0755 /usr/local/sbin/lab-builder-helper /usr/local/sbin/lab-builder-passwd
+
 # Point the installed scripts at _python_bin when it isn't the default.
 if [[ "${_python_bin}" != "python3.11" ]]
 then
     for i in /usr/local/bin/install_* /usr/local/bin/setup_lab.py /usr/local/bin/setup_vm.py \
              /usr/local/bin/destroy_vm.py /usr/local/bin/destroy_lab.py /usr/local/bin/lab_schema \
              /usr/local/bin/refresh_hypervisor_status.py /usr/local/bin/setup_harvester_cluster.py \
-             /usr/local/bin/build_lab_usb.py /usr/local/bin/setup_credentials.py /usr/local/bin/vm_power.py
+             /usr/local/bin/build_lab_usb.py /usr/local/bin/setup_credentials.py /usr/local/bin/vm_power.py \
+             /usr/local/sbin/lab-builder-helper
     do
         [[ -f "${i}" ]] && grep -Iq . "${i}" && sed -i "1s|^#!/usr/bin/env python3.11\$|#!/usr/bin/env ${_python_bin}|" "${i}"
     done
@@ -287,6 +296,27 @@ then
         sed -i "s/__LABVERSION__/${_lb_ver}/g" "${_f}"
     done
 
+    # Logins for the server actions (Save to server, saved labs, credentials,
+    # Create lab): /etc/lab-builder/htpasswd, managed with lab-builder-passwd.
+    # It starts empty, so those actions stay locked until a user is added.
+    # The web server's group reads it (Apache Basic auth and the CGI).
+    _lb_web_user=""
+    for _u in wwwrun apache www-data
+    do
+        id "${_u}" &>/dev/null && { _lb_web_user="${_u}"; break; }
+    done
+    _lb_web_group=root
+    if [[ "${_webui_mode:-apache}" != "service" && -n "${_lb_web_user}" ]]
+    then
+        # The group Apache runs as (SLES: www in uid.conf), else the user's own group.
+        _lb_web_group=$(awk '$1 == "Group" {print $2; exit}' /etc/apache2/uid.conf /etc/httpd/conf/httpd.conf 2>/dev/null)
+        [[ -n "${_lb_web_group}" ]] || _lb_web_group=$(id -gn "${_lb_web_user}")
+    fi
+    install -d -m 0750 -o root -g "${_lb_web_group}" /etc/lab-builder
+    [[ -f /etc/lab-builder/htpasswd ]] || install -m 0640 -o root -g "${_lb_web_group}" /dev/null /etc/lab-builder/htpasswd
+    chgrp "${_lb_web_group}" /etc/lab-builder/htpasswd
+    install -d -m 0700 -o root -g root /var/lib/lab-builder /var/lib/lab-builder/jobs
+
     if [[ "${_webui_mode:-apache}" == "service" ]]
     then
         _lb_port="${_webui_port:-8677}"
@@ -305,6 +335,7 @@ _lb_port="${_lb_port}"
 _lb_scheme="${_lb_scheme}"
 export LABBUILDER_TLS_CERT="${_lb_tls_cert}"
 export LABBUILDER_TLS_KEY="${_lb_tls_key}"
+export LABBUILDER_OUTPUT_DIR="\${_lb_root}/labs"
 _lb_pidfile=/run/lab-builder.pid
 _lb_logfile=/var/log/lab-builder.log
 
@@ -365,6 +396,7 @@ After=network.target
 Type=simple
 Environment=LABBUILDER_TLS_CERT=${_lb_tls_cert}
 Environment=LABBUILDER_TLS_KEY=${_lb_tls_key}
+Environment=LABBUILDER_OUTPUT_DIR=${_lb_root}/labs
 ExecStart=/usr/bin/env python3 ${_lb_root}/run-local.py ${_lb_port}
 Restart=always
 RestartSec=2
@@ -391,12 +423,28 @@ UNITEOF
         # Apache (wwwrun) must be able to write generated labs
         chown -R wwwrun "${_lb_root}/labs" 2>/dev/null || true
 
+        # The CGI runs lab-builder-helper as root through sudo, and nothing else.
+        if [[ -n "${_lb_web_user}" ]] && command -v visudo &>/dev/null
+        then
+            printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/lab-builder-helper\n' "${_lb_web_user}" > /etc/sudoers.d/lab-builder.new
+            chmod 0440 /etc/sudoers.d/lab-builder.new
+            if visudo -cf /etc/sudoers.d/lab-builder.new &>/dev/null
+            then
+                mv -f /etc/sudoers.d/lab-builder.new /etc/sudoers.d/lab-builder
+            else
+                rm -f /etc/sudoers.d/lab-builder.new
+                echo "WARNING: sudoers rule for lab-builder-helper rejected by visudo; credentials and Create lab will not work" >&2
+            fi
+        else
+            echo "WARNING: no web server user or no sudo; the lab-builder's credentials and Create lab will not work" >&2
+        fi
+
         if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
         then
             cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
             # enable the modules this needs if they aren't already: cgid
             # always, rewrite for the HTTPS redirect unless _webui_tls=0.
-            _needed_modules="cgid"
+            _needed_modules="cgid auth_basic authn_file authz_user"
             if [[ -n "${_lb_tls_cert}" ]]
             then
                 cp webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
@@ -418,6 +466,7 @@ UNITEOF
             # drain).
             systemctl restart apache2 2>/dev/null || true
             echo "lab-builder web UI installed -> ${_lb_scheme}://<automation-vm>/lab-builder/"
+            echo "  add a login for its server actions with: lab-builder-passwd <user>"
             [[ -n "${_lb_tls_cert}" ]] && echo "  (also reachable, and redirected to, from http://<automation-vm>/lab-builder/ — self-signed cert, browsers will warn once)"
         elif [[ -d /etc/httpd/conf.d ]]            # RHEL family
         then

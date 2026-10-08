@@ -215,11 +215,107 @@ check("empty model compiles to an empty lab", JSON.stringify(sandbox.compileLab(
   check("compileLab output feeds the diagram renderer unchanged", def.includes('subgraph n_clu_clu1["clu1 (rke2)"]'));
 }
 
-// -- addonSection: palette section from an add-on's PLUGIN targets ---------
-check("addonSection: container only -> cluster add-ons", sandbox.addonSection(["container"]) === "cluster");
-check("addonSection: vm/baremetal only -> VM add-ons", sandbox.addonSection(["vm", "baremetal"]) === "host");
-check("addonSection: container and vm -> cluster or VM add-ons",
-  sandbox.addonSection(["container", "vm", "baremetal"]) === "both");
+// -- addonSection / shownLayers: palette section from an add-on's layers ----
+check("addonSection: kubernetes only -> Kubernetes cluster add-ons", sandbox.addonSection(["kubernetes"]) === "cluster");
+check("addonSection: os-native / standalone-container -> VM add-ons",
+  sandbox.addonSection(["os-native"]) === "host" && sandbox.addonSection(["standalone-container"]) === "host");
+check("addonSection: kubernetes and a VM layer -> either",
+  sandbox.addonSection(["kubernetes", "standalone-container"]) === "both");
+check("shownLayers: the kubernetes badge is not repeated under Kubernetes cluster add-ons",
+  JSON.stringify(sandbox.shownLayers(["kubernetes"], "cluster")) === "[]");
+check("shownLayers: VM add-ons keep their layer badge",
+  JSON.stringify(sandbox.shownLayers(["os-native"], "host")) === '["os-native"]');
+check("shownLayers: add-ons for either keep every badge",
+  JSON.stringify(sandbox.shownLayers(["kubernetes", "standalone-container"], "both")) === '["kubernetes","standalone-container"]');
+
+// -- placement rules, lint, load ---------------------------------------------
+const st = vm.runInContext("state", sandbox);
+st.components = [
+  { name: "rancher", title: "rancher", layers: ["kubernetes"] },
+  { name: "grafana", title: "grafana", layers: ["standalone-container"] },
+  { name: "mariadb", title: "mariadb", layers: ["kubernetes", "os-native"] },
+];
+st.base = {
+  sections: {
+    common: { fields: [{ name: "SOURCE_IMAGE", required: true }, { name: "VM_MEM", required: true }, { name: "VM_BOOT", required: false, default: "uefi" }] },
+    nodes: { fields: [{ name: "myip", required: true }] },
+    kclusters: { fields: [{ name: "clu_type", required: true }, { name: "clu_rel", required: true }, { name: "mydomain", required: true }] },
+  },
+};
+st.schemaCache = { rancher: { fields: [{ name: "rancher_password", required: true }] } };
+st.model = {
+  common: {}, addonCfg: {}, extra: {}, seq: 9,
+  items: [
+    { id: "c1", type: "cluster", name: "k1", cfg: { clu_type: "rke2", clu_rel: "stable", mydomain: "lab" }, parent: null },
+    { id: "n1", type: "node", name: "vm1", cfg: { myip: "10.0.0.1" }, parent: "c1" },
+    { id: "n2", type: "node", name: "vm2", cfg: { myip: "10.0.0.2" }, parent: null },
+  ],
+};
+const drop = (item, target) => JSON.parse(JSON.stringify(sandbox.dropParent(item, target)));
+check("placement: a Kubernetes add-on goes on a Kubernetes cluster", drop({ type: "addon", comp: "rancher" }, "c1").parent === "c1");
+check("placement: a Kubernetes add-on dropped on a cluster's VM goes to that cluster", drop({ type: "addon", comp: "rancher" }, "n1").parent === "c1");
+check("placement: a Kubernetes add-on cannot go on a standalone VM", !!drop({ type: "addon", comp: "rancher" }, "n2").error);
+check("placement: a VM add-on cannot go on a Kubernetes cluster", !!drop({ type: "addon", comp: "grafana" }, "c1").error);
+check("placement: a VM add-on goes on a VM", drop({ type: "addon", comp: "grafana" }, "n1").parent === "n1");
+check("placement: an add-on for either goes on both",
+  drop({ type: "addon", comp: "mariadb" }, "c1").parent === "c1" && drop({ type: "addon", comp: "mariadb" }, "n2").parent === "n2");
+check("placement: pxe never goes on a VM or a Kubernetes cluster",
+  !!drop({ type: "addon", comp: "__pxe" }, "n1").error && !!drop({ type: "addon", comp: "__pxe" }, "c1").error);
+check("placement: any add-on can go on Common settings",
+  drop({ type: "addon", comp: "rancher" }, "common").parent === null && drop({ type: "addon", comp: "__pxe" }, null).parent === null);
+
+let lint = JSON.parse(JSON.stringify(sandbox.lintLab(st.model)));
+check("lint: required common settings unset while VMs have no own value are errors",
+  lint.errors.some((e) => e.includes("SOURCE_IMAGE")) && lint.errors.some((e) => e.includes("VM_MEM")));
+check("lint: a common setting with a default is not required", !lint.errors.some((e) => e.includes("VM_BOOT")));
+st.model.common = { ISO_IMAGE: "x.qcow2" };
+st.model.items.forEach((i) => { if (i.type === "node") i.cfg.VM_MEM = 2048; });
+lint = JSON.parse(JSON.stringify(sandbox.lintLab(st.model)));
+check("lint: VMs' own values and the ISO_IMAGE alias satisfy the common settings", lint.errors.length === 0);
+st.model.items.push({ id: "c2", type: "cluster", name: "empty", cfg: { clu_type: "k3s", clu_rel: "stable", mydomain: "lab" }, parent: null });
+st.model.items.push({ id: "a1", type: "addon", comp: "grafana", section: "grafana", parent: "c1" });
+st.model.items.push({ id: "a2", type: "addon", comp: "rancher", section: "rancher", parent: null });
+st.model.items[2].cfg.myip = "10.0.0.1";
+lint = JSON.parse(JSON.stringify(sandbox.lintLab(st.model)));
+check("lint: a Kubernetes cluster with no VM is an error", lint.errors.some((e) => e.includes("Kubernetes cluster empty has no VM")));
+check("lint: an add-on where its layers do not allow it is an error", lint.errors.some((e) => e.startsWith("grafana cannot be attached")));
+check("lint: two VMs with one IP is an error", lint.errors.some((e) => e.includes("same myip 10.0.0.1")));
+check("lint: an add-on's required field is an error", lint.errors.some((e) => e.includes("rancher: rancher_password")));
+check("lint: add-on settings nothing lists are a warning", lint.warnings.some((w) => w.includes("Add-on rancher has settings")));
+
+const labIn = {
+  common: { SOURCE_IMAGE: "x.qcow2", VM_MEM: 2048 },
+  nodes: {
+    "vm1": { myip: "10.0.0.1", kcluster: "k1", addons: ["grafana"] },
+    "vm2": { myip: "10.0.0.2", kcluster: "gone", addons: [{ mariadb: { db_name: "x" } }] },
+  },
+  kclusters: { k1: { clu_type: "rke2", clu_rel: "stable", mydomain: "lab", addons: ["rancher"] } },
+  rancher: { rancher_password: "p" },
+  mariadb: {},
+  pxe: { pxe_dhcp_mode: "off" },
+  cluster: { clu_name: "old" },
+};
+const m2 = sandbox.decompileLab(JSON.parse(JSON.stringify(labIn)));
+check("load: VMs join the Kubernetes cluster their kcluster names",
+  m2.items.find((i) => i.name === "vm1").parent === m2.items.find((i) => i.name === "k1").id);
+check("load: an unknown kcluster is kept on the VM", m2.items.find((i) => i.name === "vm2").cfg.kcluster === "gone");
+check("load: pxe goes under Common settings", m2.items.some((i) => i.comp === "__pxe" && i.parent === null));
+const labOut = JSON.parse(JSON.stringify(sandbox.compileLab(m2)));
+check("load: compileLab gives the loaded lab back", JSON.stringify(labOut.nodes) === JSON.stringify(labIn.nodes)
+  && JSON.stringify(labOut.kclusters) === JSON.stringify(labIn.kclusters) && labOut.rancher.rancher_password === "p"
+  && JSON.stringify(labOut.pxe) === JSON.stringify(labIn.pxe));
+check("load: keys the canvas does not model are kept", labOut.cluster.clu_name === "old");
+
+vm.runInContext(fs.readFileSync("webui/htdocs/vendor/js-yaml.min.js", "utf8"), sandbox);
+sandbox.window.jsyaml = sandbox.jsyaml;
+check("parseLab: JSON", sandbox.parseLab('{"common": {"VM_MEM": 1}}').common.VM_MEM === 1);
+check("parseLab: YAML", sandbox.parseLab("common:\n  VM_MEM: 1\nnodes: {}\n").common.VM_MEM === 1);
+let threw = false;
+try { sandbox.parseLab("[1, 2]"); } catch (e) { threw = true; }
+check("parseLab: a list is not a lab definition", threw);
+threw = "";
+try { sandbox.parseLab("{ broken"); } catch (e) { threw = e.name; }
+check("parseLab: broken JSON reports the JSON error, not a YAML one", threw === "SyntaxError");
 
 if (failures) {
   console.error(failures + " check(s) failed");

@@ -30,10 +30,19 @@ The only fixed convention is the schema vocabulary: a **field** is any object
 with `name` + `type`; `fields`/`sections` are structural; a section may carry
 `repeatable`. Everything else is discovered.
 
-The add-on palette is split by where each add-on can be dropped, read from the
-`targets` in the `capabilities` of its `--schema json` output: **Cluster add-ons** (`container` only — drop
-on a Kubernetes cluster), **VM add-ons** (`vm`/`baremetal` only), **Cluster or
-VM add-ons** (both), and **Lab services** (pxe, on the automation VM).
+The add-on palette is split by where each add-on can be attached, read from the
+`layers` in the `capabilities` of its `--schema json` output: **Kubernetes cluster
+add-ons** (`kubernetes` only), **VM add-ons** (`standalone-container` and/or
+`os-native` only), **Kubernetes cluster or VM add-ons** (both), and
+**Infrastructure** (pxe: lab-wide, on the automation node). A layer badge is
+shown only when the section heading does not already state it. The canvas
+enforces the same rule when a block is dropped; any add-on can also be dropped on
+Common settings, which defines its settings without attaching it.
+
+The lab.json panel is editable and has **Open…** for a `.json`/`.yaml` file
+(YAML through the vendored `js-yaml`); the canvas is rebuilt from the definition.
+It lists the lab's errors and warnings as you build (`lintLab()` in `app.js`),
+and Download and Save to server stay greyed out while there are errors.
 
 ## Try it online (GitHub Pages)
 
@@ -48,8 +57,9 @@ that touches the add-ons, the libraries or the webui; if any add-on's schema
 can't be read, the build fails and nothing is deployed.
 
 With no server behind it, the static page hides the hypervisor status panel,
-Refresh images, Validate and Save to server. Drag VMs, clusters and add-ons onto
-the canvas, edit their settings, and use Download to get the lab.json.
+Refresh images, Validate and Save to server. Drag VMs, Kubernetes clusters and
+add-ons onto the canvas or open a lab file, edit their settings, and use Download
+to get the lab.json.
 
 Build it locally: `python3.11 scripts/build-cube-static.py [--output PATH]`
 (default output: `webui/htdocs/lab-builder-static.html`).
@@ -124,14 +134,53 @@ once on the self-signed cert.
 
 ## Endpoints
 
+`api` is open; `admin` is the login endpoint (see below). Every `admin`
+action needs a login and HTTPS: plain HTTP answers 403 "You must connect via
+HTTPS to use this UI", no login answers 401.
+
 | method | path | purpose |
 |--------|------|---------|
 | GET  | `api?action=components`     | list components + live count |
 | GET  | `api?action=schema&name=install_longhorn` | one component's schema |
 | GET  | `api?action=base`           | base topology schema (common/nodes/kclusters) |
 | GET  | `api?action=status`         | cached hypervisor status snapshot (see below) |
+| GET  | `api?action=auth`           | `{login_configured, user}`: whether a login exists |
 | POST | `api?action=validate`       | validate a lab via `libs/primary` |
-| POST | `api?action=save`           | write `lab.json` to the output dir |
+| POST | `admin?action=save`         | `{filename, config}`: write `lab.json` to the output dir |
+| GET  | `admin?action=labs`         | the saved labs, newest first |
+| GET  | `admin?action=lab&name=X.json` | one saved lab |
+| GET  | `admin?action=credentials`  | credential files (names, kinds, field names; never values) and the fields each provider/service takes |
+| POST | `admin?action=credentials-add` | `{kind: cloud\|service, type, account, fields, passphrase\|null}`: write `<type>-<account>.yaml` |
+| POST | `admin?action=credentials-encrypt` | `{file, passphrase}`: write `<file>.encrypted.yaml` with its secrets encrypted |
+| POST | `admin?action=credentials-delete` | `{file}`: delete a credential file |
+| POST | `admin?action=create`       | `{filename, keep}`: run `setup_lab.py [--keep]` on a saved lab as a job |
+| GET  | `admin?action=job&id=J`     | a job's state (`running`/`done`/`failed`), exit code and log tail |
+| GET  | `admin?action=jobs`         | every job, newest first |
+
+## Login, credentials and Create lab
+
+Save to server, Saved labs, Credentials and Create lab run on the login
+endpoint (`/lab-builder/admin` under Apache, `/admin` under `run-local.py`):
+
+- **Logins** are in `/etc/lab-builder/htpasswd` (`LABBUILDER_USERS`), managed on
+  the automation node with `lab-builder-passwd <user>` (`--delete <user>`,
+  `--list`). The file starts empty, so these actions stay locked until a user is
+  added. Apache asks for the login (HTTP Basic) over HTTPS only; plain HTTP is
+  redirected to HTTPS first, and without TLS these actions are refused.
+- **Root actions** (credentials, Create lab) run through
+  `/usr/local/sbin/lab-builder-helper` (`scripts/lab_builder_helper.py`): fixed
+  sub-commands, validated names, secrets on stdin. The Apache user may run it, and
+  nothing else, through `/etc/sudoers.d/lab-builder`; in `service` mode the UI
+  runs as root and calls it directly. A lab-builder login can therefore create
+  labs and manage credentials as root: give one only to administrators.
+- **Credentials** are the files `setup_credentials.py` writes (in
+  `/etc/lab_creation/credentials`, or `CREDENTIALS_PATH`). New ones are encrypted
+  with a passphrase unless unticked; Encrypt writes an `.encrypted.yaml` copy and
+  leaves the original until you delete it.
+- **Create lab** saves the lab, then runs `setup_lab.py` (with `--keep` unless
+  unticked) as a background job; its log is in
+  `/var/lib/lab-builder/jobs/<job>/log`. A lab whose credentials are encrypted asks
+  for a passphrase, so create it with `setup_lab.py` on the command line.
 
 ## Hypervisor status
 
@@ -163,8 +212,8 @@ Builds a **complete lab.json**:
 - **Addon sections** — every `install_*` component (e.g. `longhorn: {…}`,
   `smlm: {…}`), rendered from its own `--schema`.
 
-Possible next increment (deliberately not built): **execution** — running a
-saved lab via `setup_lab.py`'s phase functions as a library.
+Create lab runs a saved lab with `setup_lab.py` (see "Login, credentials and
+Create lab").
 
 ## Deploy note
 

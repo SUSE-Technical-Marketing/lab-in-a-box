@@ -18,6 +18,7 @@ picks it up automatically — there is <strong>no per-component code in the UI</
 <li><a href="#2c-deploy-as-a-standalone-service-no-apache">2c. Deploy as a standalone service (no Apache)</a></li>
 <li><a href="#configuration">Configuration</a></li>
 <li><a href="#using-it--build-a-lab">Using it — build a lab</a></li>
+<li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li>
 <li><a href="#http-api">HTTP API</a></li>
 <li><a href="#scope">Scope</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
@@ -25,16 +26,16 @@ picks it up automatically — there is <strong>no per-component code in the UI</
 <hr />
 <h2 id="what-it-does">What it does</h2>
 <ul>
-<li>Shows a live <strong>count of components</strong> discovered by reading the definitions
-  (61 <code>install_*</code> addons today).</li>
-<li><strong>▚ Lab topology</strong> (pinned) renders the base lab definition: <code>common</code>
-  (singleton) plus <code>nodes</code> and <code>kclusters</code> as <strong>repeatable</strong> keyed maps
-  (add/remove instances — hostname → settings, cluster name → settings).</li>
-<li>Selecting any addon renders a form from its <code>--schema</code>: required fields
-  flagged, defaults as placeholders, passwords masked, booleans as toggles,
-  arrays as comma-lists, descriptions as help text.</li>
-<li>Assembles everything into a <code>lab.json</code>, <strong>validates</strong> it through the project's
-  own <code>libs/primary</code>, then lets you <strong>download</strong> it or <strong>save</strong> it on the server.</li>
+<li>Shows a live <strong>count of add-ons</strong> discovered from the <code>install_*</code> executables.</li>
+<li>The <strong>Blocks</strong> palette holds a VM, a Kubernetes cluster and every add-on, grouped by where it can go:
+  <strong>Kubernetes cluster add-ons</strong> (kubernetes layer only), <strong>VM add-ons</strong>
+  (standalone-container and/or os-native layers only), <strong>Kubernetes cluster or VM add-ons</strong> (both), and
+  <strong>Infrastructure</strong> (lab-wide services on the automation node, e.g. pxe). A layer badge is shown
+  only when the section heading does not already state it.</li>
+<li>The <strong>Lab</strong> canvas: drag blocks in, double-click one to edit it with a form generated from its
+  schema (required fields flagged, defaults as placeholders, passwords masked).</li>
+<li>The <strong>lab.json</strong> panel shows the lab as JSON (editable) or as a diagram, lists what is wrong with
+  it, and lets you open, validate, download or save it.</li>
 </ul>
 <h2 id="how-it-stays-100-dynamic">How it stays 100% dynamic</h2>
 <p>The frontend contains no knowledge of any specific script. It walks the schema
@@ -227,22 +228,65 @@ the Apache config):</p>
 <hr />
 <h2 id="using-it--build-a-lab">Using it — build a lab</h2>
 <ol>
-<li><strong>Lab topology</strong> — click <em>▚ Lab topology</em>. Fill <code>common</code> (image, RAM, disk,
-   CPU, network). Under <code>nodes</code>, click <strong>+ add nodes</strong> for each VM: enter the
-   hostname (FQDN) as the key, its <code>myip</code>, <code>kcluster</code>, and role. Under
-   <code>kclusters</code>, add each cluster (name as key; <code>clu_type</code>, <code>clu_rel</code>, <code>mydomain</code>,
-   and the <code>addons</code> list). Click <strong>Add to lab</strong>.</li>
-<li><strong>Addons</strong> — pick e.g. <code>longhorn</code>, fill its options, <strong>Add to lab</strong>. Repeat.
-   (Remember to list the addon name in the relevant <code>kclusters.&lt;name&gt;.addons</code>
-   array so it actually gets installed.)</li>
-<li>Watch the <strong>lab.json</strong> panel assemble on the right.</li>
+<li><strong>Common settings</strong> — double-click it and fill the defaults every VM uses (image, RAM, disk,
+   CPU, network).</li>
+<li><strong>Kubernetes clusters and VMs</strong> — drag a Kubernetes cluster onto the canvas, then drag VMs onto it.
+   A VM dropped outside a Kubernetes cluster is a standalone VM. Double-click a block to set its name and settings.</li>
+<li><strong>Add-ons</strong> — drag an add-on onto where it installs:
+   <ul>
+   <li>an add-on with only the kubernetes layer goes on a Kubernetes cluster (dropped on one of its VMs, it goes to
+     that Kubernetes cluster);</li>
+   <li>an add-on with only standalone-container and/or os-native layers goes on a VM;</li>
+   <li>Infrastructure (pxe) is lab-wide and goes on Common settings only;</li>
+   <li>any add-on can go on <strong>Common settings</strong>: that defines its settings without attaching it
+     anywhere.</li>
+   </ul>
+   A place a block cannot go is not highlighted while you drag, and a click-to-add there says why.</li>
+<li><strong>Open or edit lab.json</strong> — <strong>Open…</strong> loads a <code>.json</code> or <code>.yaml</code> lab
+   definition from your computer, and the JSON view can be edited directly. Either way the canvas is rebuilt from
+   the definition: VMs join the Kubernetes cluster their <code>kcluster</code> names, each <code>addons</code> entry
+   (including per-VM overrides) becomes an add-on block, and keys the canvas does not model are kept unchanged.</li>
+<li><strong>Fix what is listed</strong> — the lab.json panel lists errors and warnings as you build. While there
+   are errors, <strong>Download</strong> and <strong>Save to server</strong> are greyed out. Errors:
+   <ul>
+   <li>a Kubernetes cluster with no VM, or a VM in a Kubernetes cluster the lab does not define;</li>
+   <li>a required common setting that is unset while some VM has no value of its own;</li>
+   <li>a VM with no <code>myip</code> on a libvirt or harvester backend, or two VMs with the same IP or MAC;</li>
+   <li>a Kubernetes cluster or add-on missing a required setting;</li>
+   <li>an add-on attached where its layers do not allow, or one this lab-builder does not have;</li>
+   <li>lab.json text that does not parse.</li>
+   </ul>
+   Warning: an add-on has settings, but no VM or Kubernetes cluster lists it.</li>
 <li><strong>Validate</strong> — runs <code>libs/primary</code> server-side; shows structural errors.</li>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
-   the usual way: <code>setup_lab.py &lt;lab&gt;.json</code>.</li>
+   the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>
+<h2 id="login-credentials-and-create-lab">Login, credentials and Create lab</h2>
+<p><strong>Save to server</strong>, <strong>Saved labs…</strong>, <strong>Credentials</strong> and <strong>Create lab</strong>
+need a login and HTTPS. Over plain HTTP they are disabled and say "You must connect via HTTPS to use this UI";
+on the static GitHub Pages build they are hidden, and Credentials is greyed out.</p>
+<ul>
+<li><strong>Logins</strong> — on the automation node, <code>lab-builder-passwd &lt;user&gt;</code> sets a user's password
+  (<code>--delete &lt;user&gt;</code>, <code>--list</code>). Users are in <code>/etc/lab-builder/htpasswd</code>, which starts
+  empty, so these actions stay locked until you add one. The browser asks for the login the first time you use one
+  of them.</li>
+<li><strong>What a login allows</strong> — credentials and Create lab run as root through
+  <code>/usr/local/sbin/lab-builder-helper</code>, which the web server may run through sudo and nothing else. A
+  login can therefore create labs and manage credentials on the automation node: give one only to
+  administrators.</li>
+<li><strong>Credentials</strong> — lists the cloud accounts (<code>cloud_account</code>) and service credentials (SCC, SUSE
+  Application Collection, …) stored on the automation node, never their values. <em>Add a credential</em> writes
+  <code>&lt;provider-or-service&gt;-&lt;account&gt;.yaml</code>, encrypted with a passphrase unless you untick it.
+  <em>Encrypt…</em> writes an <code>.encrypted.yaml</code> copy of a file with plaintext secrets and keeps the original
+  until you delete it. <em>Delete</em> removes a file.</li>
+<li><strong>Create lab</strong> — shows what the lab creates, saves it on the server, then runs <code>setup_lab.py</code>
+  as root in the background and shows its log as it runs. <em>Keep VMs that already exist</em> (<code>--keep</code>) is
+  ticked by default; unticked, existing VMs of the lab are destroyed and created again. A lab whose credentials are
+  encrypted asks for a passphrase: create it with <code>setup_lab.py</code> on the command line.</li>
+</ul>
 <h2 id="http-api">HTTP API</h2>
-<p>Same-origin JSON. Under Apache the base is <code>/lab-builder/api</code>; under <code>run-local</code>
-it's <code>/api</code>.</p>
+<p>Same-origin JSON. Under Apache the base is <code>/lab-builder/api</code> (open) and <code>/lab-builder/admin</code>
+(login, HTTPS); under <code>run-local</code> it's <code>/api</code> and <code>/admin</code>.</p>
 <table>
 <thead>
 <tr>
@@ -273,17 +317,65 @@ it's <code>/api</code>.</p>
 <td><code>{ "config": {…} }</code> → validate via <code>libs/primary</code></td>
 </tr>
 <tr>
+<td>GET</td>
+<td><code>api?action=auth</code></td>
+<td>whether a login exists</td>
+</tr>
+<tr>
 <td>POST</td>
-<td><code>api?action=save</code></td>
+<td><code>admin?action=save</code></td>
 <td><code>{ "filename": "mylab", "config": {…} }</code> → write file</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>admin?action=labs</code></td>
+<td>the saved labs</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>admin?action=lab&amp;name=mylab.json</code></td>
+<td>one saved lab</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>admin?action=credentials</code></td>
+<td>credential files (names and kinds, never values)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=credentials-add</code></td>
+<td>write a credential file</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=credentials-encrypt</code></td>
+<td>write an encrypted copy of a credential file</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=credentials-delete</code></td>
+<td>delete a credential file</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=create</code></td>
+<td><code>{ "filename": "mylab.json", "keep": true }</code> → run <code>setup_lab.py</code> as a job</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>admin?action=job&amp;id=JOB</code></td>
+<td>a job's state, exit code and log</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>admin?action=jobs</code></td>
+<td>every job</td>
 </tr>
 </tbody>
 </table>
 <h2 id="scope">Scope</h2>
 <p>Builds a <strong>complete <code>lab.json</code></strong>: base topology (<code>common</code>/<code>nodes</code>/<code>kclusters</code>)
-plus every addon config section. <strong>Not</strong> built (by design): executing a lab from
-the web UI — you save the JSON and run <code>setup_lab.py</code> yourself. Running via
-<code>setup_lab.py</code>'s phase functions as a library is a possible future increment.</p>
+plus every addon config section. Create lab runs a saved lab with <code>setup_lab.py</code>.</p>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <table>
 <thead>

@@ -11,7 +11,7 @@ from urllib.parse import parse_qs
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import api  # noqa: E402
 
-_STATUS = {200: "200 OK", 400: "400 Bad Request",
+_STATUS = {200: "200 OK", 400: "400 Bad Request", 401: "401 Unauthorized", 403: "403 Forbidden",
            404: "404 Not Found", 500: "500 Internal Server Error"}
 
 
@@ -29,7 +29,10 @@ def main():
         if n > 0:
             body = sys.stdin.buffer.read(n)
 
-    status, obj = api.dispatch(action, method, params, body)
+    # REMOTE_USER is set by Apache only on the login endpoint (/lab-builder/admin), after Basic auth.
+    status, obj = api.dispatch(action, method, params, body,
+                               user=os.environ.get("REMOTE_USER") or None,
+                               https=os.environ.get("HTTPS", "").lower() in ("on", "1"))
     payload = json.dumps(obj).encode("utf-8")
 
     out = sys.stdout.buffer

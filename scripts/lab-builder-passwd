@@ -1,0 +1,52 @@
+#!/bin/bash
+# lab-builder-passwd — manage the lab-builder logins (saved labs, credentials,
+# Create lab, Save to server need one).
+#
+#   lab-builder-passwd USER           set USER's password (prompts twice)
+#   lab-builder-passwd --delete USER  remove USER
+#   lab-builder-passwd --list         list the users
+#
+# The file is LABBUILDER_USERS (/etc/lab-builder/htpasswd): one "user:hash"
+# line per user, SHA-512 crypt(3) hashes, readable by Apache's Basic auth and by
+# run-local.py. A lab-builder login can create labs and manage credentials as
+# root on this node: give one only to administrators.
+set -euo pipefail
+
+_users="${LABBUILDER_USERS:-/etc/lab-builder/htpasswd}"
+
+usage() { sed -n '5,7s/^#   //p' "$0"; exit "${1:-1}"; }
+
+# Prints the users file without USER's line.
+without_user() { [[ -f "${_users}" ]] && awk -F: -v u="$1" '$1 != u' "${_users}"; return 0; }
+
+# Replaces the users file with stdin, keeping its owner, group and mode.
+replace_users() {
+    local _tmp
+    _tmp=$(mktemp "${_users}.XXXXXX")
+    cat > "${_tmp}"
+    if [[ -f "${_users}" ]]
+    then
+        chown --reference="${_users}" "${_tmp}"
+        chmod --reference="${_users}" "${_tmp}"
+    else
+        chmod 0640 "${_tmp}"
+    fi
+    mv -f "${_tmp}" "${_users}"
+}
+
+case "${1:-}" in
+    --list) [[ -f "${_users}" ]] && cut -d: -f1 "${_users}"; exit 0 ;;
+    --delete) [[ -n "${2:-}" ]] || usage; without_user "$2" | replace_users; echo "removed $2" ;;
+    -h|--help) usage 0 ;;
+    ""|-*) usage ;;
+    *)
+        [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid user name: $1" >&2; exit 1; }
+        read -rsp "Password for $1: " _pw; echo
+        read -rsp "Again: " _pw2; echo
+        [[ "${_pw}" == "${_pw2}" ]] || { echo "the passwords differ" >&2; exit 1; }
+        (( ${#_pw} >= 8 )) || { echo "the password must have at least 8 characters" >&2; exit 1; }
+        _hash=$(printf '%s' "${_pw}" | openssl passwd -6 -stdin)
+        { without_user "$1"; echo "$1:${_hash}"; } | replace_users
+        echo "set the password of $1"
+        ;;
+esac

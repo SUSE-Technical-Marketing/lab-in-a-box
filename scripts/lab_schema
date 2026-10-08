@@ -232,7 +232,7 @@ def base_lab_schema():
                 "fields": [
                     {"name": "myip", "required": True, "type": "string", "pattern": r"^(\d{1,3}\.){3}\d{1,3}$", "description": "VM IP address — required for libvirt/harvester; leave empty for a cloud backend (aws/gcp/hetzner/etc.), whose real IP is only known once the provider assigns it at create time"},
                     {"name": "mymac", "required": False, "type": "string", "pattern": r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", "description": "VM MAC address (generated and conflict-checked if omitted, libvirt/harvester only — a cloud backend has no MAC concept and ignores this field entirely)"},
-                    {"name": "kcluster", "required": False, "type": "string", "description": "kcluster name this node belongs to (must exist in kclusters)"},
+                    {"name": "kcluster", "required": False, "type": "string", "description": "Kubernetes cluster this node belongs to (a name in kclusters)"},
                     {"name": "KUBERNETES_NODE_TYPE", "required": False, "type": "string", "default": "server", "enum": ["server", "agent"], "show_if": "kcluster", "description": "Kubernetes node role (server/control-plane or agent/worker)"},
                     {"name": "INSTALL_RKE2_TYPE", "required": False, "type": "string", "default": "server", "enum": ["server", "agent"], "show_if": "kcluster", "hidden": True, "description": "DEPRECATED: use KUBERNETES_NODE_TYPE instead"},
                     {"name": "addons", "required": False, "type": "array", "description": "List of VM-level addon names (install_<addon> scripts). Each entry is either a plain \"<addon>\" string (runs with only that addon's shared top-level config section, same as always), or a single-key {\"<addon>\": {...fields...}} mapping to override that addon's config for this node only — e.g. a lab registering many different OSes against one shared Uyuni/SMLM server, each node needing its own client_registration_activation_key. See README's addon-config section."},
@@ -286,14 +286,14 @@ def base_lab_schema():
             },
             "kclusters": {
                 "title": "Kubernetes Clusters",
-                "description": "Map of cluster name to Kubernetes cluster configuration",
+                "description": "Map of Kubernetes cluster name to its configuration",
                 "repeatable": True,
-                "key_label": "cluster name",
+                "key_label": "Kubernetes cluster name",
                 "fields": [
-                    {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s"], "description": "Cluster type"},
+                    {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s"], "description": "Kubernetes cluster type"},
                     {"name": "clu_rel", "required": True, "type": "string", "description": "Release channel: stable, latest, or a version string"},
-                    {"name": "mydomain", "required": True, "type": "string", "description": "DNS domain for this cluster (e.g. mydemo.lab)"},
-                    {"name": "addons", "required": False, "type": "array", "description": "List of cluster-level addon names (install_<addon> scripts)"},
+                    {"name": "mydomain", "required": True, "type": "string", "description": "DNS domain for this Kubernetes cluster (e.g. mydemo.lab)"},
+                    {"name": "addons", "required": False, "type": "array", "description": "List of Kubernetes cluster add-on names (install_<addon> scripts)"},
                     {"name": "mgm_node", "required": False, "type": "string", "description": "Hostname of the node that runs addon installers (default: first server node)"},
                 ],
             },

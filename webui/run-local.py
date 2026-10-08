@@ -6,6 +6,8 @@ Portable local dev server for the lab-builder web UI — no Apache required.
     then open http://localhost:8677/
 
 Serves htdocs/ statically and routes /api to the same dispatch the CGI uses.
+/admin is the login endpoint: HTTP Basic auth against the users in
+LABBUILDER_USERS (/etc/lab-builder/htpasswd, see lab-builder-passwd).
 Stdlib only; works anywhere Python 3 runs.
 
 Set LABBUILDER_TLS_CERT and LABBUILDER_TLS_KEY (both must be set) to serve
@@ -29,6 +31,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 HERE = os.path.dirname(os.path.abspath(__file__))
 HTDOCS = os.path.join(HERE, "htdocs")
 sys.path.insert(0, os.path.join(HERE, "lib"))
+import admin  # noqa: E402
 import api  # noqa: E402
 
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -36,7 +39,9 @@ MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _api(self, method):
+    https = False
+
+    def _api(self, method, login=False):
         u = urlparse(self.path)
         params = parse_qs(u.query)
         action = (params.get("action", [""]) or [""])[0]
@@ -44,22 +49,32 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST":
             n = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(n) if n else b""
-        status, obj = api.dispatch(action, method, params, body)
+        user = None
+        if login:
+            user = admin.check_login(self.headers.get("Authorization"))
+            if not user:
+                status, obj = 401, {"error": "log in to use the lab-builder's server actions"}
+        if not login or user:
+            status, obj = api.dispatch(action, method, params, body, user=user, https=self.https)
         payload = json.dumps(obj).encode("utf-8")
         self.send_response(status)
+        if status == 401 and login:
+            self.send_header("WWW-Authenticate", 'Basic realm="lab-builder", charset="UTF-8"')
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
     def do_GET(self):
-        if urlparse(self.path).path == "/api":
-            return self._api("GET")
-        self._static(urlparse(self.path).path)
+        path = urlparse(self.path).path
+        if path in ("/api", "/admin"):
+            return self._api("GET", login=path == "/admin")
+        self._static(path)
 
     def do_POST(self):
-        if urlparse(self.path).path == "/api":
-            return self._api("POST")
+        path = urlparse(self.path).path
+        if path in ("/api", "/admin"):
+            return self._api("POST", login=path == "/admin")
         self.send_error(404)
 
     def _static(self, path):
@@ -92,6 +107,7 @@ if __name__ == "__main__":
         ctx.load_cert_chain(certfile=tls_cert, keyfile=tls_key)
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
         scheme = "https"
+        Handler.https = True
 
     print("lab-builder dev server → %s://localhost:%d/  (Ctrl-C to stop)" % (scheme, port))
     try:

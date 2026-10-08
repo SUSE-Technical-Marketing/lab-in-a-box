@@ -34,8 +34,10 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 const state = {
   components: [], lab: {}, commonDefaults: {},
   // block model behind the canvas (see compileLab); state.lab is compiled from it
-  model: { common: {}, items: [], addonCfg: {}, seq: 0 },
+  // extra: top-level lab keys the canvas does not model, kept as they are
+  model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
   sel: "common", editing: null, base: null, schemaCache: {},
+  textError: "",   // why the lab.json text does not parse, "" when it does
 };
 
 // ---- tiny DOM helpers ------------------------------------------------------
@@ -69,6 +71,31 @@ async function apiPost(action, payload) {
   return j;
 }
 
+// The login endpoint: saved labs, Save to server, credentials, Create lab. The
+// browser asks for the login (HTTP Basic) on the first call. GET without payload.
+const ADMIN_API = "admin";
+async function adminCall(action, payload, params = {}) {
+  const q = new URLSearchParams({ action, ...params });
+  const opts = payload === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+  };
+  const r = await fetch(`${ADMIN_API}?${q}`, opts);
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* not JSON: an error page */ }
+  if (r.status === 401) throw new Error("log in to use this");
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// Why the server actions (login endpoint) cannot be used here, or "" when they can.
+const HTTPS_ONLY = "You must connect via HTTPS to use this UI";
+function serverLock() {
+  if (window.LAB_STATIC) return "Available on the lab-builder of your automation node";
+  if (location.protocol !== "https:") return HTTPS_ONLY;
+  if (state.auth && !state.auth.login_configured) return "Add a login first: run lab-builder-passwd <user> on the automation node";
+  return "";
+}
+
 // ---- catalogue (palette) ----------------------------------------------------
 async function loadComponents() {
   const data = await apiGet("components");
@@ -96,9 +123,9 @@ function paletteCube(spec, label, letter, tip) {
   return d;
 }
 
-function paletteRow(spec, title, desc, meta, layers) {
+function paletteRow(spec, title, desc, meta, layers, tip) {
   const li = el("li", "pal-row");
-  li.tabIndex = 0; li.draggable = true; li.title = "Drag onto a cluster or VM, or click to add";
+  li.tabIndex = 0; li.draggable = true; li.title = tip + ", or click to add";
   const flat = el("span", "flat");
   for (let j = 0; j < 9; j++) { const t = el("span"); t.style.background = CUBE_PAL.addon[CUBE_PAT[j]]; flat.appendChild(t); }
   li.appendChild(flat);
@@ -119,18 +146,27 @@ function paletteRow(spec, title, desc, meta, layers) {
   return li;
 }
 
-// Add-on palette sections, by where an add-on can be dropped (its PLUGIN
-// targets: "container" = inside a Kubernetes cluster, "vm"/"baremetal" = on a host).
+// Add-on palette sections, by where an add-on can be dropped (its layers:
+// "kubernetes" = on a Kubernetes cluster, "standalone-container"/"os-native" =
+// on a VM). `layer` is the badge a section's title already states, so its rows
+// do not repeat it.
 const ADDON_SECTIONS = [
-  { key: "cluster", title: "Cluster add-ons", hint: "Drop on a Kubernetes cluster" },
+  { key: "cluster", title: "Kubernetes cluster add-ons", hint: "Drop on a Kubernetes cluster", layer: "kubernetes" },
   { key: "host", title: "VM add-ons", hint: "Drop on a VM" },
-  { key: "both", title: "Cluster or VM add-ons", hint: "Drop on a Kubernetes cluster or a VM" },
+  { key: "both", title: "Kubernetes cluster or VM add-ons", hint: "Drop on a Kubernetes cluster or a VM" },
 ];
 
-function addonSection(targets) {
-  const onCluster = targets.includes("container");
-  const onHost = targets.some((t) => t !== "container");
+// Where an add-on with these layers can be attached: "cluster", "host" or "both".
+function addonSection(layers) {
+  const onCluster = layers.includes("kubernetes");
+  const onHost = layers.some((l) => l !== "kubernetes");
   return onCluster && onHost ? "both" : onHost ? "host" : "cluster";
+}
+
+// The layers a row in palette section `key` shows: all but the one its title states.
+function shownLayers(layers, key) {
+  const s = ADDON_SECTIONS.find((x) => x.key === key);
+  return (layers || []).filter((l) => !s || l !== s.layer);
 }
 
 function paletteSection(title, hint, rows) {
@@ -152,7 +188,7 @@ function renderPalette(filter) {
     g.appendChild(el("h3", "pal-title", "Lab"));
     const grid = el("div", "pal-grid");
     grid.appendChild(paletteCube({ type: "node" }, "VM", "V", "A virtual machine (or an existing host)"));
-    grid.appendChild(paletteCube({ type: "cluster" }, "Cluster", "K", "A Kubernetes cluster (RKE2 or K3s)"));
+    grid.appendChild(paletteCube({ type: "cluster" }, "Kubernetes cluster", "K", "A Kubernetes cluster (RKE2 or K3s)"));
     g.appendChild(grid);
     root.appendChild(g);
   }
@@ -160,15 +196,16 @@ function renderPalette(filter) {
     .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f));
   ADDON_SECTIONS.forEach((s) => {
     const rows = matches
-      .filter((c) => addonSection(c.targets || []) === s.key)
+      .filter((c) => addonSection(c.layers || []) === s.key)
       .map((c) => paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
-        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, c.layers));
+        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, shownLayers(c.layers, s.key), s.hint));
     if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
   });
   const pxe = !f || "pxe tftp dhcp boot service".includes(f);
   if (pxe) {
-    root.appendChild(paletteSection("Lab services", "Runs on the automation VM",
-      [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation VM", "", [])]));
+    root.appendChild(paletteSection("Infrastructure", "Lab-wide services on the automation node",
+      [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation node", "", [],
+        "Drop on Common settings")]));
   }
   if (f && !matches.length && !pxe) root.appendChild(el("p", "pal-hint", `No add-on matches “${filter}”.`));
 }
@@ -289,12 +326,15 @@ function compileLab(model) {
   if (Object.keys(common).length) lab.common = common;
   const byId = {};
   model.items.forEach((i) => { byId[i.id] = i; });
+  // addons[] of item `id`: "<addon>", or {"<addon>": {...}} with that item's own overrides.
   const attached = (id) => {
-    const names = [];
+    const names = [], entries = [];
     model.items.forEach((a) => {
-      if (a.type === "addon" && a.parent === id && a.section && !names.includes(a.section)) names.push(a.section);
+      if (a.type !== "addon" || a.parent !== id || !a.section || names.includes(a.section)) return;
+      names.push(a.section);
+      entries.push(a.override && Object.keys(a.override).length ? { [a.section]: a.override } : a.section);
     });
-    return names;
+    return entries;
   };
   const nodes = {}, clusters = {};
   model.items.forEach((i) => {
@@ -319,6 +359,70 @@ function compileLab(model) {
     const frag = model.addonCfg[a.section] || {};
     if (a.flat === false) Object.assign(lab, frag); else lab[a.section] = frag;
   });
+  Object.keys(model.extra || {}).forEach((k) => { if (!(k in lab)) lab[k] = model.extra[k]; });
+  return lab;
+}
+
+// The add-on component that owns top-level lab section `section`, or undefined.
+function componentFor(section) {
+  if (section === "pxe") return PXE_SPEC.comp;
+  const c = state.components.find((x) => x.title === section) || state.components.find((x) => x.name === section);
+  return c && c.name;
+}
+
+// The block model for lab definition `lab` (the inverse of compileLab): VMs
+// join the Kubernetes cluster their kcluster names, each addons[] entry
+// becomes an add-on block (keeping per-VM overrides), add-on sections no VM or
+// Kubernetes cluster lists go under Common settings, other keys stay in extra.
+function decompileLab(lab) {
+  const m = { common: Object.assign({}, lab.common || {}), items: [], addonCfg: {}, extra: {}, seq: 0 };
+  const nextId = (type) => type[0] + (++m.seq);
+  const addonItem = (entry, parent) => {
+    const sec = typeof entry === "string" ? entry : Object.keys(entry || {})[0];
+    if (!sec) return;
+    const it = { id: nextId("addon"), type: "addon", comp: componentFor(sec), section: sec, flat: true, parent };
+    if (typeof entry === "object" && entry[sec] && Object.keys(entry[sec]).length) it.override = entry[sec];
+    m.items.push(it);
+  };
+  Object.keys(lab.kclusters || {}).forEach((name) => {
+    const cfg = Object.assign({}, lab.kclusters[name] || {});
+    const addons = cfg.addons || [];
+    delete cfg.addons;
+    const c = { id: nextId("cluster"), type: "cluster", name, cfg, parent: null };
+    m.items.push(c);
+    addons.forEach((a) => addonItem(a, c.id));
+  });
+  Object.keys(lab.nodes || {}).forEach((name) => {
+    const cfg = Object.assign({}, lab.nodes[name] || {});
+    const addons = cfg.addons || [];
+    delete cfg.addons;
+    const c = m.items.find((i) => i.type === "cluster" && i.name === cfg.kcluster);
+    if (c) delete cfg.kcluster;
+    const n = { id: nextId("node"), type: "node", name, cfg, parent: c ? c.id : null };
+    m.items.push(n);
+    addons.forEach((a) => addonItem(a, n.id));
+  });
+  Object.keys(lab).forEach((k) => {
+    if (k === "common" || k === "nodes" || k === "kclusters") return;
+    const v = lab[k];
+    const comp = componentFor(k);
+    if (!comp || !v || typeof v !== "object" || Array.isArray(v)) { m.extra[k] = v; return; }
+    m.addonCfg[k] = v;
+    if (!m.items.some((i) => i.type === "addon" && i.section === k)) {
+      m.items.push({ id: nextId("addon"), type: "addon", comp, section: k, flat: true, parent: null });
+    }
+  });
+  return m;
+}
+
+// The lab definition in `text`, JSON or YAML. Throws when it is neither, or not a mapping.
+function parseLab(text) {
+  let lab;
+  try { lab = JSON.parse(text); } catch (e) {
+    if (!window.jsyaml || /^\s*[{[]/.test(text)) throw e;
+    lab = window.jsyaml.load(text);
+  }
+  if (!lab || typeof lab !== "object" || Array.isArray(lab)) throw new Error("a lab definition is a JSON or YAML object");
   return lab;
 }
 
@@ -340,6 +444,91 @@ function missingRequired(item) {
   if (item.type === "cluster") return miss(secs.kclusters.fields, item.cfg) + (item.name ? 0 : 1);
   const sc = state.schemaCache[item.comp];
   return sc ? miss(sc.fields, m.addonCfg[item.section] || {}) : 0;
+}
+
+// Backends whose VMs get their IP from the provider, so `myip` stays empty.
+const LOCAL_BACKENDS = new Set(["", "libvirt", "harvester"]);
+
+// What is wrong with the lab in `model`: { errors, warnings }, each a list of
+// sentences. Errors block Download, Save and Create; warnings do not. Checks
+// that need a schema (state.base, state.schemaCache) are skipped until it is loaded.
+function lintLab(model) {
+  const errors = [], warnings = [];
+  const items = model.items;
+  const byId = {};
+  items.forEach((i) => { byId[i.id] = i; });
+  const nodes = items.filter((i) => i.type === "node");
+  const clusters = items.filter((i) => i.type === "cluster");
+  const addons = items.filter((i) => i.type === "addon");
+  const has = (o, k) => o && o[k] !== undefined && o[k] !== null && o[k] !== "";
+  const label = (a) => a.section || a.comp;
+
+  clusters.forEach((c) => {
+    if (!nodes.some((n) => n.parent === c.id)) errors.push("Kubernetes cluster " + c.name + " has no VM.");
+  });
+  const clusterNames = new Set(clusters.map((c) => c.name));
+  nodes.forEach((n) => {
+    if (!n.parent && has(n.cfg, "kcluster") && !clusterNames.has(n.cfg.kcluster)) {
+      errors.push("VM " + n.name + " is in Kubernetes cluster " + n.cfg.kcluster + ", which the lab does not define.");
+    }
+  });
+
+  const secs = state.base && state.base.sections;
+  if (secs) {
+    const aliases = { SOURCE_IMAGE: ["ISO_IMAGE"] };
+    const set = (o, k) => has(o, k) || (aliases[k] || []).some((a) => has(o, a));
+    secs.common.fields.filter((f) => f.required && (f.default === undefined || f.default === "")).forEach((f) => {
+      if (set(model.common, f.name)) return;
+      const without = nodes.filter((n) => !n.cfg.existing && !set(n.cfg, f.name)).map((n) => n.name);
+      if (without.length) errors.push("Common setting " + f.name + " is not set, and VM " + without.join(", ") + " has no value of its own.");
+    });
+    nodes.forEach((n) => {
+      const backend = has(n.cfg, "backend") ? n.cfg.backend : (model.common.backend || "");
+      if (!has(n.cfg, "myip") && LOCAL_BACKENDS.has(backend)) errors.push("VM " + n.name + " has no IP address (myip).");
+    });
+    clusters.forEach((c) => {
+      secs.kclusters.fields.filter((f) => f.required && !has(c.cfg, f.name)).forEach((f) => {
+        errors.push("Kubernetes cluster " + c.name + ": " + f.name + " is not set.");
+      });
+    });
+  }
+
+  const seen = {};
+  nodes.forEach((n) => {
+    ["myip", "mymac"].forEach((k) => {
+      if (!has(n.cfg, k)) return;
+      const key = k + "=" + String(n.cfg[k]).toLowerCase();
+      if (seen[key]) errors.push("VM " + seen[key] + " and VM " + n.name + " have the same " + k + " " + n.cfg[k] + ".");
+      else seen[key] = n.name;
+    });
+  });
+
+  const unknown = new Set();
+  addons.forEach((a) => {
+    if (!a.comp) { unknown.add(label(a)); return; }
+    const t = a.parent && byId[a.parent];
+    const where = addonPlacement(a.comp);
+    if (t && (where === "common" || (where === "host" && t.type === "cluster") || (where === "cluster" && t.type === "node"))) {
+      errors.push(label(a) + " cannot be attached to " + (t.type === "node" ? "VM " : "Kubernetes cluster ") + t.name + "."
+        + (where === "common" ? " It is lab-wide." : where === "host" ? " It installs on a VM." : " It installs on a Kubernetes cluster."));
+    }
+  });
+  unknown.forEach((n) => errors.push("Add-on " + n + " is not installed on this lab-builder."));
+
+  const sections = new Set(addons.map(label));
+  sections.forEach((sec) => {
+    const mine = addons.filter((a) => label(a) === sec);
+    const sc = mine[0].comp && state.schemaCache[mine[0].comp];
+    if (sc) {
+      const cfg = model.addonCfg[sec] || {};
+      (sc.fields || []).filter((f) => f.required && (f.default === undefined || f.default === "") && !has(cfg, f.name))
+        .forEach((f) => errors.push("Add-on " + sec + ": " + f.name + " is not set."));
+    }
+    if (addonPlacement(mine[0].comp) !== "common" && mine.every((a) => !a.parent)) {
+      warnings.push("Add-on " + sec + " has settings, but no VM or Kubernetes cluster lists it.");
+    }
+  });
+  return { errors, warnings };
 }
 
 async function loadBase() {
@@ -375,26 +564,56 @@ async function createItem(spec) {
     flat: Array.isArray(sc.fields) && !!sc.section, parent: null };
 }
 
-// Where a dropped block ends up: VMs join a cluster, add-ons attach to a
-// cluster or VM, clusters always sit at the top level.
-function placeItem(item, targetId) {
-  const t = targetId ? state.model.items.find((i) => i.id === targetId) : null;
-  if (item.type === "node") item.parent = t ? (t.type === "cluster" ? t.id : (t.type === "node" ? t.parent : null)) : null;
-  else if (item.type === "addon") item.parent = t && t.id !== item.id ? (t.type === "addon" ? t.parent : t.id) : null;
-  else item.parent = null;
+// Where an add-on can be attached: "common" (Infrastructure: Common settings
+// only), "cluster", "host" (a VM) or "both", from its layers.
+function addonPlacement(comp) {
+  if (comp === PXE_SPEC.comp) return "common";
+  const c = state.components.find((x) => x.name === comp);
+  return c ? addonSection(c.layers || []) : "both";
+}
+
+// The parent a block gets when dropped on `targetId` ("common", an item id, or
+// null for the empty canvas): { parent } (null = top level, for an add-on its
+// settings only, under Common settings), or { error } when it may not go there.
+// VMs join a Kubernetes cluster; Kubernetes clusters always sit at the top level.
+function dropParent(item, targetId) {
+  const items = state.model.items;
+  let t = targetId && targetId !== "common" ? items.find((i) => i.id === targetId) : null;
+  if (t && t.id === item.id) t = null;
+  if (item.type === "cluster") return { parent: null };
+  if (item.type === "node") return { parent: t ? (t.type === "cluster" ? t.id : t.parent || null) : null };
+  if (t && t.type === "addon") t = t.parent ? items.find((i) => i.id === t.parent) : null;
+  if (!t) return { parent: null };
+  const where = addonPlacement(item.comp);
+  const name = item.section || item.title || item.comp;
+  if (where === "common") return { error: name + " is lab-wide: drop it on Common settings" };
+  if (t.type === "cluster") {
+    return where === "host" ? { error: name + " installs on a VM: drop it on a VM" } : { parent: t.id };
+  }
+  if (where !== "cluster") return { parent: t.id };
+  return t.parent ? { parent: t.parent } : { error: name + " installs on a Kubernetes cluster: drop it on a Kubernetes cluster" };
+}
+
+// The block a drag payload creates or moves, as dropParent() needs it.
+function dragItem(d) {
+  if (!d) return null;
+  return d.from === "palette" ? { type: d.spec.type, comp: d.spec.comp, title: d.spec.title }
+    : state.model.items.find((i) => i.id === d.id);
 }
 
 async function handleDrop(targetId) {
   const d = drag; drag = null; clearOver();
   if (!d) return;
   const m = state.model;
+  const where = dropParent(dragItem(d) || {}, targetId);
+  if (where.error) { toast(where.error); return; }
   let item;
   try {
     if (d.from === "palette") { item = await createItem(d.spec); m.items.push(item); }
     else item = m.items.find((i) => i.id === d.id);
   } catch (e) { toast("Could not add: " + e.message); return; }
   if (!item) return;
-  if (item.type !== "cluster") placeItem(item, targetId);
+  item.parent = where.parent;
   state.sel = item.id;
   renderCanvas();
   if (window.CubeFX) CubeFX.land(item);
@@ -420,7 +639,7 @@ function removeItem(id) {
 function clearOver() { document.querySelectorAll(".drop-over").forEach((x) => x.classList.remove("drop-over")); }
 function wireDrop(elm, targetId) {
   elm.addEventListener("dragover", (e) => {
-    if (!drag) return;
+    if (!drag || dropParent(dragItem(drag) || {}, targetId).error) return;
     e.preventDefault(); e.stopPropagation();
     if (!elm.classList.contains("drop-over")) { clearOver(); elm.classList.add("drop-over"); }
   });
@@ -454,9 +673,9 @@ function blockEl(item, mini) {
   } else if (type === "node") {
     name = item.name || "unnamed VM"; sub = item.cfg.myip || "no IP yet"; letter = "V";
   } else if (type === "cluster") {
-    name = item.name || "unnamed cluster"; sub = item.cfg.clu_type || "cluster"; letter = "K";
+    name = item.name || "unnamed Kubernetes cluster"; sub = item.cfg.clu_type || "Kubernetes cluster"; letter = "K";
   } else {
-    name = item.section; sub = item.parent ? "" : "not attached"; letter = String(item.section).charAt(0).toUpperCase();
+    name = item.section; sub = ""; letter = String(item.section).charAt(0).toUpperCase();
   }
   b.appendChild(makeCube(type, mini ? BLOCK_SIZE.mini : BLOCK_SIZE[type], mini ? "" : letter));
   const txt = el("div", "block-txt");
@@ -477,7 +696,7 @@ function blockEl(item, mini) {
     b.addEventListener("dragstart", (e) => { e.stopPropagation(); drag = { from: "item", id }; e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", name); } catch (x) { /* ignore */ } });
     b.addEventListener("dragend", () => { drag = null; clearOver(); });
   }
-  if (type === "node") wireDrop(b, id);
+  if (type === "node" || type === "common") wireDrop(b, id);
   if (id === state.sel) b.classList.add("selected");
   return b;
 }
@@ -498,12 +717,21 @@ function renderCanvas() {
   if (!root) return;
   const m = state.model;
   root.innerHTML = "";
-  root.appendChild(blockEl("common"));
+  const common = el("div", "common-area");
+  common.appendChild(blockEl("common"));
+  const settings = m.items.filter((a) => a.type === "addon" && !a.parent);
+  if (settings.length) {
+    const row = el("div", "common-addons");
+    row.appendChild(el("span", "dz-label", "Add-on settings"));
+    settings.forEach((a) => row.appendChild(blockEl(a)));
+    common.appendChild(row);
+  }
+  root.appendChild(common);
 
   const zone = el("div", "dropzone");
   wireDrop(zone, null);
   root.appendChild(zone);
-  if (!m.items.length) zone.appendChild(el("p", "empty-state", "Drag a VM, a cluster or an add-on here"));
+  if (!m.items.length) zone.appendChild(el("p", "empty-state", "Drag a VM, a Kubernetes cluster or an add-on here"));
 
   m.items.filter((i) => i.type === "cluster").forEach((c) => {
     const tray = el("div", "tray");
@@ -515,7 +743,7 @@ function renderCanvas() {
     body.appendChild(nodes);
     tray.appendChild(body);
     const ads = el("div", "tray-addons");
-    ads.appendChild(el("span", "dz-label", "Cluster add-ons"));
+    ads.appendChild(el("span", "dz-label", "Kubernetes cluster add-ons"));
     const mine = m.items.filter((a) => a.type === "addon" && a.parent === c.id);
     mine.forEach((a) => ads.appendChild(blockEl(a)));
     if (!mine.length) ads.appendChild(el("span", "block-sub", "drop add-ons here"));
@@ -523,12 +751,12 @@ function renderCanvas() {
     zone.appendChild(tray);
   });
 
-  const loose = m.items.filter((i) => (i.type === "node" && !i.parent) || (i.type === "addon" && !i.parent));
+  const loose = m.items.filter((i) => i.type === "node" && !i.parent);
   if (loose.length) {
     const wrap = el("div", "loose");
-    wrap.appendChild(el("span", "dz-label", "Standalone"));
+    wrap.appendChild(el("span", "dz-label", "Standalone VMs"));
     const row = el("div", "loose-row");
-    loose.forEach((i) => row.appendChild(i.type === "node" ? nodeBlock(i) : blockEl(i)));
+    loose.forEach((i) => row.appendChild(nodeBlock(i)));
     wrap.appendChild(row);
     zone.appendChild(wrap);
   }
@@ -1156,13 +1384,68 @@ function switchLabView(view) {
 
 // ---- assemble lab ----------------------------------------------------------
 // state.lab is always compiled from the block model (see compileLab above).
-function refreshLab() {
+// fromText: the change came from the lab.json text, which is then left as typed.
+function refreshLab(fromText) {
   state.lab = compileLab(state.model);
-  $("#labPreview").textContent = JSON.stringify(state.lab, null, 2);
+  if (!fromText) { $("#labPreview").value = JSON.stringify(state.lab, null, 2); state.textError = ""; }
   const n = Object.keys(state.lab).length;
   $("#sectionCount").textContent = `${n} section${n === 1 ? "" : "s"}`;
   $("#validateResult").hidden = true;
+  renderIssues();
   if (!$("#labDiagram").hidden) renderDiagram();
+}
+
+// Lists lintLab()'s errors and warnings under lab.json, and greys out the
+// actions that write the lab while it has errors.
+function renderIssues() {
+  const r = lintLab(state.model);
+  const errors = state.textError ? ["lab.json does not parse: " + state.textError] : r.errors;
+  const box = $("#labIssues");
+  box.innerHTML = "";
+  errors.forEach((t) => box.appendChild(el("li", "issue err", t)));
+  r.warnings.forEach((t) => box.appendChild(el("li", "issue warn", t)));
+  box.hidden = !errors.length && !r.warnings.length;
+  const lock = serverLock();
+  [["#downloadBtn", ""], ["#saveBtn", lock], ["#createBtn", lock]].forEach(([b, why]) => {
+    const btn = $(b);
+    if (!btn) return;
+    btn.disabled = errors.length > 0 || !!why;
+    btn.title = why || (errors.length ? "Fix the errors listed above first" : "");
+  });
+  const saved = $("#savedBtn");
+  if (saved) { saved.disabled = !!lock; saved.title = lock || "Open a lab saved on the server"; }
+}
+
+// Replaces the canvas with lab definition `lab` and loads its add-ons' schemas,
+// so their required fields are checked.
+function loadLab(lab, fromText) {
+  state.model = decompileLab(lab);
+  state.sel = "common";
+  state.textError = "";
+  renderCanvas();
+  refreshLab(fromText);
+  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp && !state.schemaCache[i.comp]).map((i) => i.comp));
+  Promise.all([...comps].map((c) => loadAddonSchema(c).catch(() => null)))
+    .then(() => { if (comps.size) { renderCanvas(); renderIssues(); } });
+}
+
+// The lab.json text was edited: rebuild the canvas once it parses.
+function labTextChanged() {
+  clearTimeout(labTextChanged._t);
+  labTextChanged._t = setTimeout(() => {
+    try { loadLab(parseLab($("#labPreview").value), true); }
+    catch (e) { state.textError = e.message; renderIssues(); }
+  }, 400);
+}
+
+// Opens a lab definition file (.json, .yaml, .yml) from this computer.
+function openLabFile(file) {
+  if (!file) return;
+  file.text().then((text) => {
+    loadLab(parseLab(text));
+    $("#labName").value = file.name.replace(/\.(json|ya?ml)$/i, "");
+    toast("Opened " + file.name);
+  }).catch((e) => toast("Cannot open " + file.name + ": " + e.message));
 }
 
 // ---- refresh available images without losing the form ---------------------
@@ -1211,6 +1494,7 @@ async function validateLab() {
   } catch (e) { toast("Validate error: " + e.message); }
 }
 function downloadLab() {
+  if ($("#downloadBtn").disabled) return;
   const name = ($("#labName").value.trim() || "lab").replace(/[^A-Za-z0-9._-]/g, "_");
   const blob = new Blob([JSON.stringify(state.lab, null, 2) + "\n"], { type: "application/json" });
   const a = el("a"); a.href = URL.createObjectURL(blob);
@@ -1218,13 +1502,223 @@ function downloadLab() {
   a.click(); URL.revokeObjectURL(a.href);
 }
 async function saveLab() {
+  if ($("#saveBtn").disabled) return;
   try {
-    const r = await apiPost("save", { filename: $("#labName").value.trim() || "lab", config: state.lab });
+    const r = await adminCall("save", { filename: $("#labName").value.trim() || "lab", config: state.lab });
     // r.path is the full server-side path (api.py's "save" action already
     // returns it) — show it, not just the basename, so it's actually
     // findable (reported live 2026-09-01: the toast never said where).
     toast("Saved: " + (r.path || r.saved));
   } catch (e) { toast("Save error: " + e.message); }
+}
+
+// ---- saved labs (login) ---------------------------------------------------------
+async function openSavedDialog() {
+  const list = $("#savedList");
+  list.innerHTML = "";
+  showDialog("#savedDialog");
+  try {
+    const r = await adminCall("labs");
+    if (!r.labs.length) list.appendChild(el("li", "muted", "No lab is saved on the server yet."));
+    r.labs.forEach((l) => {
+      const li = el("li", "saved-row");
+      li.appendChild(el("span", "saved-name", l.name));
+      li.appendChild(el("span", "muted", new Date(l.modified * 1000).toLocaleString()));
+      const b = el("button", "btn", "Open");
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        try {
+          const got = await adminCall("lab", undefined, { name: l.name });
+          loadLab(got.lab);
+          $("#labName").value = l.name.replace(/\.json$/, "");
+          closeDialog("#savedDialog");
+          toast("Opened " + l.name);
+        } catch (e) { toast("Cannot open " + l.name + ": " + e.message); }
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+  } catch (e) { list.appendChild(el("li", "issue err", e.message)); }
+}
+
+function showDialog(sel) {
+  const dlg = $(sel);
+  if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute("open", "");
+}
+function closeDialog(sel) {
+  const dlg = $(sel);
+  if (typeof dlg.close === "function") dlg.close(); else dlg.removeAttribute("open");
+}
+
+// ---- credentials (login, HTTPS) ---------------------------------------------------
+// The field tables come from lab-builder-helper (setup_credentials.py's
+// PROVIDER_FIELDS / SERVICE_CREDENTIAL_FIELDS); values are never read back.
+async function openCredentials() {
+  showDialog("#credDialog");
+  const lock = serverLock();
+  $("#credMsg").textContent = lock;
+  $("#credMsg").hidden = !lock;
+  $("#credBody").hidden = !!lock;
+  if (!lock) await loadCredentials();
+}
+
+async function loadCredentials() {
+  const tbody = $("#credList");
+  tbody.innerHTML = "";
+  try {
+    state.cred = await adminCall("credentials");
+  } catch (e) {
+    $("#credMsg").textContent = e.message; $("#credMsg").hidden = false; return;
+  }
+  $("#credDir").textContent = state.cred.dir;
+  if (!state.cred.credentials.length) {
+    const tr = el("tr"); const td = el("td", "muted", "No credential is stored yet."); td.colSpan = 4;
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
+  state.cred.credentials.forEach((c) => {
+    const tr = el("tr");
+    tr.appendChild(el("td", "cred-name", c.file));
+    tr.appendChild(el("td", "", (c.kind === "cloud" ? "Cloud account" : c.kind === "service" ? "Service" : "Unknown") + (c.type ? ": " + c.type : "")));
+    tr.appendChild(el("td", "", c.encrypted ? "Encrypted" : c.encrypted_fields.length ? "Secrets encrypted"
+      : c.plaintext_secrets.length ? "Plaintext secrets" : "No secrets"));
+    const act = el("td", "cred-actions");
+    if (c.plaintext_secrets.length) {
+      const enc = el("button", "btn", "Encrypt…"); enc.type = "button";
+      enc.addEventListener("click", () => encryptCredential(c));
+      act.appendChild(enc);
+    }
+    const del = el("button", "btn danger", "Delete"); del.type = "button";
+    del.addEventListener("click", () => deleteCredential(c));
+    act.appendChild(del);
+    tr.appendChild(act);
+    tbody.appendChild(tr);
+  });
+  renderCredTypes();
+}
+
+function renderCredTypes() {
+  const kind = $("#credKind").value;
+  const sel = $("#credType");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  Object.keys(state.cred[kind] || {}).sort().forEach((t) => sel.appendChild(new Option(t, t)));
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  renderCredFields();
+}
+
+function renderCredFields() {
+  const box = $("#credFields");
+  box.innerHTML = "";
+  (state.cred[$("#credKind").value][$("#credType").value] || []).forEach((f) => {
+    const lab = el("label", "field");
+    lab.appendChild(el("span", "f-name", f.name + (f.required ? " *" : "")));
+    const inp = el("input");
+    inp.type = f.secret ? "password" : "text";
+    inp.autocomplete = "off";
+    inp.dataset.cred = f.name;
+    inp.required = f.required;
+    lab.appendChild(inp);
+    box.appendChild(lab);
+  });
+}
+
+// The passphrase in inputs `a` and `b`, or null with a toast when it is too short or they differ.
+function passphraseFrom(a, b) {
+  const pw = $(a).value;
+  if (pw.length < 8) { toast("The passphrase must have at least 8 characters."); return null; }
+  if (pw !== $(b).value) { toast("The passphrases differ."); return null; }
+  return pw;
+}
+
+async function addCredential() {
+  const fields = {};
+  document.querySelectorAll("#credFields [data-cred]").forEach((i) => { if (i.value !== "") fields[i.dataset.cred] = i.value; });
+  const encrypt = $("#credEncrypt").checked;
+  const passphrase = encrypt ? passphraseFrom("#credPass", "#credPass2") : null;
+  if (encrypt && passphrase === null) return;
+  try {
+    const r = await adminCall("credentials-add", {
+      kind: $("#credKind").value, type: $("#credType").value, account: $("#credAccount").value.trim(), fields, passphrase,
+    });
+    toast("Saved " + r.file);
+    ["#credAccount", "#credPass", "#credPass2"].forEach((s) => { $(s).value = ""; });
+    renderCredFields();
+    loadCredentials();
+  } catch (e) { toast("Not saved: " + e.message); }
+}
+
+async function encryptCredential(c) {
+  const pw = window.prompt("Passphrase for " + c.name + ".encrypted.yaml (at least 8 characters). It encrypts "
+    + c.plaintext_secrets.join(", ") + "; " + c.file + " is kept until you delete it.");
+  if (pw === null) return;
+  if (pw.length < 8) { toast("The passphrase must have at least 8 characters."); return; }
+  if (window.prompt("Type the passphrase again") !== pw) { toast("The passphrases differ."); return; }
+  try {
+    const r = await adminCall("credentials-encrypt", { file: c.file, passphrase: pw });
+    toast("Wrote " + r.file + ". Delete " + c.file + " once you have checked it.");
+    loadCredentials();
+  } catch (e) { toast("Not encrypted: " + e.message); }
+}
+
+async function deleteCredential(c) {
+  if (!window.confirm("Delete " + c.file + "? Labs that use it stop working.")) return;
+  try {
+    await adminCall("credentials-delete", { file: c.file });
+    toast("Deleted " + c.file);
+    loadCredentials();
+  } catch (e) { toast("Not deleted: " + e.message); }
+}
+
+// ---- Create lab (login, HTTPS) ----------------------------------------------------
+// What the lab creates, for the confirmation.
+function labSummary(lab) {
+  const nodes = Object.keys(lab.nodes || {});
+  const clusters = Object.keys(lab.kclusters || {});
+  const backends = new Set(nodes.map((n) => (lab.nodes[n].backend || (lab.common || {}).backend || "libvirt")));
+  const lines = [nodes.length + " VM" + (nodes.length === 1 ? "" : "s") + (nodes.length ? ": " + nodes.join(", ") : "")];
+  if (clusters.length) lines.push(clusters.length + " Kubernetes cluster" + (clusters.length === 1 ? "" : "s") + ": " + clusters.join(", "));
+  if (backends.size) lines.push("On: " + [...backends].join(", "));
+  return lines.join("\n");
+}
+
+function openCreate() {
+  if ($("#createBtn").disabled) return;
+  const name = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
+  $("#createTitle").textContent = name;
+  $("#createSummary").textContent = labSummary(state.lab);
+  $("#createConfirm").hidden = false;
+  $("#createJob").hidden = true;
+  $("#createGo").hidden = false;
+  showDialog("#createDialog");
+}
+
+async function startCreate() {
+  const filename = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
+  try {
+    await adminCall("save", { filename, config: state.lab });
+    const r = await adminCall("create", { filename: filename + ".json", keep: $("#createKeep").checked });
+    $("#createConfirm").hidden = true;
+    $("#createGo").hidden = true;
+    $("#createJob").hidden = false;
+    watchJob(r.job);
+  } catch (e) { toast("Not started: " + e.message); }
+}
+
+// Polls job `id` every 3 s and shows its state and log until it ends.
+async function watchJob(id) {
+  clearTimeout(watchJob._t);
+  try {
+    const j = await adminCall("job", undefined, { id });
+    const st = $("#jobState");
+    st.textContent = j.state === "running" ? "Creating… (job " + id + ")"
+      : j.state === "done" ? "Created. setup_lab.py finished." : "Failed: setup_lab.py exited with " + (j.rc == null ? "no status" : j.rc) + ".";
+    st.className = "job-state " + j.state;
+    const log = $("#jobLog");
+    const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = j.log || "";
+    if (atEnd) log.scrollTop = log.scrollHeight;
+    if (j.state === "running") watchJob._t = setTimeout(() => watchJob(id), 3000);
+  } catch (e) { $("#jobState").textContent = "Cannot read the job: " + e.message; }
 }
 
 // ---- wire up ---------------------------------------------------------------
@@ -1233,10 +1727,24 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);
+  $("#savedBtn").addEventListener("click", openSavedDialog);
+  $("#savedClose").addEventListener("click", () => closeDialog("#savedDialog"));
+  $("#credBtn").addEventListener("click", openCredentials);
+  $("#credClose").addEventListener("click", () => closeDialog("#credDialog"));
+  $("#credKind").addEventListener("change", renderCredTypes);
+  $("#credType").addEventListener("change", renderCredFields);
+  $("#credEncrypt").addEventListener("change", (e) => { $("#credPassBox").hidden = !e.target.checked; });
+  $("#credAddForm").addEventListener("submit", (e) => { e.preventDefault(); addCredential(); });
+  $("#createBtn").addEventListener("click", openCreate);
+  $("#createGo").addEventListener("click", startCreate);
+  $("#createClose").addEventListener("click", () => { clearTimeout(watchJob._t); closeDialog("#createDialog"); });
   $("#refreshImagesBtn").addEventListener("click", refreshImages);
   $("#editorImages").addEventListener("click", refreshImages);
   $("#viewTabJson").addEventListener("click", () => switchLabView("json"));
   $("#viewTabDiagram").addEventListener("click", () => switchLabView("diagram"));
+  $("#labPreview").addEventListener("input", labTextChanged);
+  $("#openBtn").addEventListener("click", () => $("#openFile").click());
+  $("#openFile").addEventListener("change", (e) => { openLabFile(e.target.files[0]); e.target.value = ""; });
 
   // editor dialog
   $("#editorApply").addEventListener("click", applyEditor);
@@ -1259,10 +1767,12 @@ window.addEventListener("DOMContentLoaded", () => {
     try { localStorage.setItem("labbuilder.requiredOnly", e.target.checked ? "1" : "0"); } catch (err) { /* ignore */ }
   });
 
+  if (window.LAB_STATIC) { $("#credBtn").disabled = true; $("#credBtn").title = serverLock(); }
   renderCanvas();
   refreshLab();
+  if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
   loadComponents().catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
-  loadBase().then(renderCanvas).catch(() => { /* shown on first edit */ });
+  loadBase().then(() => { renderCanvas(); renderIssues(); }).catch(() => { /* shown on first edit */ });
   loadStatus();
 });
 

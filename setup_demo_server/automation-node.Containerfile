@@ -12,7 +12,7 @@ RUN test -n "${KUBECTL_INSTALL}"
 
 RUN zypper --non-interactive --gpg-auto-import-keys install -y --no-recommends \
         systemd openssh-server openssh-clients apache2 bind bind-utils \
-        vim-small git-core rsync jq curl tar gzip openssl python313 python313-PyYAML \
+        vim-small git-core rsync jq curl tar gzip openssl sudo python313 python313-PyYAML python313-cryptography \
         podman libvirt-client virt-install salt-ssh fuse3 sshfs netcat-openbsd \
         xorriso mkisofs iproute2 iptables iputils hostname which lsof timezone \
     && zypper clean --all

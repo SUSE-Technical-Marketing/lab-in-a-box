@@ -187,15 +187,17 @@ def build_account_fields(provider):
     return fields
 
 
-def write_account_file(out_path, provider, fields, encrypt):
+def write_account_file(out_path, provider, fields, encrypt, passphrase=None):
     """The one place that actually assembles + writes a credentials YAML —
     used by both interactive_build() and (indirectly, via crypto_store)
-    anything else that ever needs to produce one."""
+    anything else that ever needs to produce one. With encrypt and no
+    passphrase, the passphrase is prompted for."""
     import yaml
 
     payload = {"cloudtype": provider}
     if encrypt:
-        passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
+        if passphrase is None:
+            passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
         plaintext = yaml.safe_dump(fields, sort_keys=False).encode("utf-8")
         payload.update(crypto_store.encrypt_cascade(passphrase, plaintext))
     else:
@@ -231,14 +233,15 @@ def build_service_fields(kind):
     return fields
 
 
-def write_credential_file(out_path, kind, fields, encrypt):
+def write_credential_file(out_path, kind, fields, encrypt, passphrase=None):
     """Like write_account_file(), but marks the file with 'credential_kind'
     instead of 'cloudtype' — see SERVICE_CREDENTIAL_FIELDS's own comment."""
     import yaml
 
     payload = {"credential_kind": kind}
     if encrypt:
-        passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
+        if passphrase is None:
+            passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
         plaintext = yaml.safe_dump(fields, sort_keys=False).encode("utf-8")
         payload.update(crypto_store.encrypt_cascade(passphrase, plaintext))
     else:
@@ -329,9 +332,7 @@ def encrypt_existing(path):
         die("{} is already whole-file encrypted".format(p))
 
     already = [k for k, v in data.items() if isinstance(v, dict) and v.get("encrypted") is True]
-    to_encrypt = [k for k, v in data.items()
-                  if isinstance(v, str) and k not in ("cloudtype", "credential_kind")
-                  and _looks_sensitive(k)]
+    to_encrypt = sensitive_plaintext_fields(data)
 
     if not to_encrypt:
         print("No plaintext sensitive-looking fields found in {} "
@@ -347,14 +348,28 @@ def encrypt_existing(path):
         die("Aborted")
 
     passphrase = crypto_store.prompt_passphrase("Set a passphrase for these fields: ", confirm=True)
-    for k in to_encrypt:
-        data[k] = crypto_store.encrypt_cascade(passphrase, data[k].encode("utf-8"))
-
-    out_path = p.parent / "{}.encrypted.yaml".format(p.stem)
-    out_path.write_text(yaml.safe_dump(data, sort_keys=False))
-    out_path.chmod(0o600)
+    out_path = write_encrypted_copy(p, data, to_encrypt, passphrase)
     print("\nWrote {} — review it, then move it into place yourself "
           "(the original is left untouched).".format(out_path))
+    return out_path
+
+
+def sensitive_plaintext_fields(data):
+    """The keys of credentials mapping `data` whose plaintext values look like secrets."""
+    return [k for k, v in data.items()
+            if isinstance(v, str) and k not in ("cloudtype", "credential_kind") and _looks_sensitive(k)]
+
+
+def write_encrypted_copy(path, data, keys, passphrase):
+    """Write "<stem>.encrypted.yaml" next to credentials file `path`: mapping `data`
+    with the values of `keys` encrypted with `passphrase`. Returns the new path."""
+    import yaml
+
+    for k in keys:
+        data[k] = crypto_store.encrypt_cascade(passphrase, data[k].encode("utf-8"))
+    out_path = path.parent / "{}.encrypted.yaml".format(path.stem)
+    out_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    out_path.chmod(0o600)
     return out_path
 
 
