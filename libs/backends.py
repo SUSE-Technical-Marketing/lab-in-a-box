@@ -33,6 +33,7 @@ import urllib.request
 from pathlib import Path
 
 import primary
+import provisioning
 from lab_creation import (
     _RED, _YELLOW, _RESET,
     _empty,
@@ -700,6 +701,8 @@ class LibvirtBackend(VMBackend):
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
         nested_virtualization="",  # unused here — an AWS-only override, accepted and ignored
                                    # like cloud_instance_type above.
+        provisioning_base_url="",  # lab_creation.cfg's PROVISIONING_BASE_URL, see libs/provisioning.py
+        provisioning_tls_verify="",  # lab_creation.cfg's PROVISIONING_TLS_VERIFY, see libs/provisioning.py
     ):
         """
         Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
@@ -881,17 +884,10 @@ class LibvirtBackend(VMBackend):
             # from the hypervisor instead, which works the same way regardless
             # of where virt-install itself runs.
             location_arg = ensure_iso_install_tree(remote_host, iso_loc, iso_image)
-            extra_args_by_type = {
-                "autoyast": "autoyast=http://{}/lab_creation/install_iso/{}.xml".format(mydns, vm_name),
-                # inst.text is a kernel command-line argument, separate from the kickstart's own 'text'
-                # directive, which only selects the UI style. Without it RHEL 10's Anaconda starts its
-                # graphical/WebUI path, which never completes under --noautoconsole with no display.
-                # RHEL 8 and later need the argument because the kickstart 'text' line alone is not enough.
-                "kickstart": "inst.ks=http://{}/lab_creation/install_iso/{}.ks inst.sshd inst.text".format(
-                    mydns, vm_name),
-                "preseed": "auto=true priority=critical url=http://{}/lab_creation/install_iso/{}.preseed".format(mydns, vm_name),
-            }
-            extra_args = extra_args_by_type[itype]
+            answer_file = "{}/lab_creation/install_iso/{}.{}".format(
+                provisioning.base_url(mydns, provisioning_base_url), vm_name,
+                {"autoyast": "xml", "kickstart": "ks", "preseed": "preseed"}[itype])
+            extra_args = provisioning.installer_args(itype, answer_file, provisioning.tls_verify(provisioning_tls_verify))
 
             log("- Installing via {} (this will block until the installer finishes)…".format(itype))
             r = self._virt_install(
@@ -902,10 +898,7 @@ class LibvirtBackend(VMBackend):
                 # firmware must agree with VM_BOOT (uefi by default).
                 "--boot", boot_flag,
                 "--location", location_arg,
-                # Anaconda's text UI queries the terminal's capabilities at startup and blocks until the
-                # reply arrives. With --noautoconsole nothing answers that query, so TERM=vt100 is set
-                # to skip it.
-                "--extra-args", "{} console=ttyS0,115200n8 TERM=vt100".format(extra_args),
+                "--extra-args", "{} console=ttyS0,115200n8".format(extra_args),
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                 *(extra_disk_args + [
@@ -2069,6 +2062,76 @@ class AWSBackend(VMBackend):
                    "--no-source-dest-check")
         log("- Disabled source/dest check on '{}' ({}) — required for it to forward traffic "
             "for other nodes in its site".format(vm_name, instance_id))
+
+    def secondary_ips(self, vm_name):
+        """The secondary private IPs on VM `vm_name`'s primary network interface ([] when the VM does not exist)."""
+        instance = self._find_instance(vm_name) or {}
+        enis = sorted(instance.get("NetworkInterfaces") or [],
+                      key=lambda e: (e.get("Attachment") or {}).get("DeviceIndex", 0))
+        if not enis:
+            return []
+        return [a["PrivateIpAddress"] for a in enis[0].get("PrivateIpAddresses", [])
+                if not a.get("Primary") and a.get("PrivateIpAddress")]
+
+    def free_private_ip(self):
+        """
+        An address of self.subnet_id that no network interface uses, counting down from the top of the subnet (AWS
+        reserves the first four and the last). Dies without a configured subnet.
+        """
+        import ipaddress
+        cidr = self.get_subnet_cidr() or die("backend 'aws': picking a free address needs AWS_SUBNET_ID")
+        result = self._aws("ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values={}".format(
+            self.subnet_id))
+        used = {a.get("PrivateIpAddress") for eni in (result or {}).get("NetworkInterfaces", [])
+                for a in eni.get("PrivateIpAddresses", [])}
+        hosts = list(ipaddress.ip_network(cidr).hosts())
+        for addr in reversed(hosts[3:]):
+            if str(addr) not in used:
+                return str(addr)
+        die("backend 'aws': subnet {} has no free address".format(cidr))
+
+    def assign_secondary_ip(self, vm_name, ip=""):
+        """
+        Register a secondary private IP on VM `vm_name`'s primary network interface and return it: `ip` when given, else
+        one AWS picks from the subnet. Idempotent: an IP already registered there is returned unchanged. The VPC routes
+        a secondary IP only to that interface, so it serves as a fixed address (e.g. a cluster VIP) that does not move to
+        another instance.
+        """
+        current = self.secondary_ips(vm_name)
+        if ip and ip in current:
+            return ip
+        if not ip and current:
+            return current[0]
+        instance = self._find_instance(vm_name) or die("VM '{}' not found on AWS".format(vm_name))
+        enis = sorted(instance.get("NetworkInterfaces") or [],
+                      key=lambda e: (e.get("Attachment") or {}).get("DeviceIndex", 0))
+        if not enis:
+            die("VM '{}' has no network interface".format(vm_name))
+        args = ["ec2", "assign-private-ip-addresses", "--network-interface-id", enis[0]["NetworkInterfaceId"]]
+        args += ["--private-ip-addresses", ip] if ip else ["--secondary-private-ip-address-count", "1"]
+        result = self._aws(*args)
+        assigned = [a.get("PrivateIpAddress") for a in (result or {}).get("AssignedPrivateIpAddresses", [])]
+        ip = ip or next((a for a in assigned if a), "")
+        if not ip:
+            die("AWS assigned no secondary IP to '{}'".format(vm_name))
+        log("- Registered {} on '{}'".format(ip, vm_name))
+        return ip
+
+    def allow_internal_traffic(self):
+        """
+        Allow all traffic between the instances in self.security_group_id (an ingress rule whose source is the group
+        itself). No-op without a configured security group; AWS's default security group already has this rule.
+        """
+        if not self.security_group_id:
+            return
+        sg_result = self._aws("ec2", "describe-security-groups", "--group-ids", self.security_group_id)
+        for perm in ((sg_result or {}).get("SecurityGroups") or [{}])[0].get("IpPermissions", []):
+            if perm.get("IpProtocol") == "-1" and any(
+                    g.get("GroupId") == self.security_group_id for g in perm.get("UserIdGroupPairs", [])):
+                return
+        log("- Allowing all traffic between the instances of security group {}".format(self.security_group_id))
+        self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
+                  "--protocol", "-1", "--source-group", self.security_group_id)
 
     def _ensure_internet_gateway(self):
         """
@@ -3830,9 +3893,8 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
     start and restart `named` directly. Do not add a bind9.service alias in /etc/systemd/system, because that alias
     shadows the packaged unit.
 
-    The zone is queried successfully through the DNS VM's private IP and its loopback address. Querying the same zone
-    through the instance's public IP can return a root-zone NXDOMAIN, so records on this VM are not reliably
-    resolvable from outside the cloud network. The cause is not yet identified. See TODO.
+    Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
+    the path.
     """
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
@@ -3917,9 +3979,8 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     config key is added. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
     copy_vm_image() validation is a no-op.
 
-    Known limitation: querying this DNS VM's zone through its public IP from an external client, including
-    automation.mydemo.lab, can return a root-zone NXDOMAIN, even though recursive queries through the same public IP
-    work. Use the private IP or loopback address. The cause is not yet identified. See TODO.
+    Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
+    the path.
     """
     acct = getattr(backend, "account", "") or ""
     if acct in ("", "default"):

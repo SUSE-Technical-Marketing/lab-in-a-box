@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Checks a page built by scripts/build-cube-static.py: its embedded API data
-# must list every scripts/install_*.py add-on with its full schema, the option
-# count the palette shows, and the targets/layers its own PLUGIN literal
-# declares; no hypervisor image data may be embedded; server-only controls
+# must list every scripts/install_* add-on (named without its file extension)
+# with its full schema, the option count the palette shows, and, for a Python
+# add-on, the targets/layers its own PLUGIN literal declares; no hypervisor image data may be embedded; server-only controls
 # must be hidden.
 # Usage: 66_static_webui_build_test.py <page.html> <scripts dir>
 # Run from 66_static_webui_build.sh, in its own container — see tests/run_tests.sh.
@@ -48,8 +48,8 @@ check("page embeds the static-api-data block", m is not None)
 if m:
     data = json.loads(m.group(1))
     comps = {c["name"]: c for c in data["components"]["components"]}
-    expected = sorted(p.stem for p in scripts.glob("install_*.py"))
-    check("every install_*.py add-on is listed (missing: {})".format(sorted(set(expected) - set(comps))),
+    expected = sorted({p.name.split(".", 1)[0] for p in scripts.glob("install_*")})
+    check("every install_* add-on is listed (missing: {})".format(sorted(set(expected) - set(comps))),
           sorted(comps) == expected)
     check("components count matches the list", data["components"]["count"] == len(comps))
     empty = sorted(n for n, c in comps.items() if not c["field_count"])
@@ -62,7 +62,10 @@ if m:
         n_fields = len(sc.get("fields", []))
         check("{}: option count {} matches its schema's {} fields".format(name, c["field_count"], n_fields),
               c["field_count"] == n_fields)
-        plugin = plugin_literal(scripts / (name + ".py")) or {}
+        source = scripts / (name + ".py")
+        if not source.is_file():
+            continue
+        plugin = plugin_literal(source) or {}
         check("{}: targets {} match its PLUGIN {}".format(name, c["targets"], plugin.get("targets")),
               c["targets"] == plugin.get("targets"))
         check("{}: layers {} match its PLUGIN {}".format(name, c["layers"], plugin.get("layers")),

@@ -23,6 +23,7 @@
       </div>
     </div>
     <div class="top-actions">
+      <button type="button" class="btn" id="credBtn" title="Cloud accounts and service credentials stored on the automation node">Credentials</button>
       <button type="button" class="theme-toggle" id="themeToggle" title="Theme: auto (follows your system), light, or dark"><span class="dot"></span><span class="t-label">Auto</span></button>
       <div class="count-pill" id="countPill" title="Components discovered at runtime">
         <span id="countNum">…</span> <span class="count-label">components</span>
@@ -42,7 +43,7 @@
   </section>
 
   <main class="layout">
-    <!-- blocks to drag into the lab: VM, cluster, add-ons (discovered at run time) -->
+    <!-- blocks to drag into the lab: VM, Kubernetes cluster, add-ons (discovered at run time) -->
     <aside class="panel catalogue">
       <div class="panel-head">
         <h2>Blocks</h2>
@@ -52,7 +53,7 @@
       <p class="src-note" id="srcNote"></p>
     </aside>
 
-    <!-- the lab: common settings on top, clusters and VMs below -->
+    <!-- the lab: common settings on top, Kubernetes clusters and VMs below -->
     <section class="panel canvas-area" aria-label="Lab canvas">
       <div class="panel-head">
         <h2>Lab</h2>
@@ -71,19 +72,24 @@
           <button type="button" class="view-tab" id="viewTabDiagram" role="tab" aria-selected="false">Diagram</button>
         </div>
       </div>
-      <pre id="labPreview" class="lab-preview">{}</pre>
+      <textarea id="labPreview" class="lab-preview" spellcheck="false" aria-label="lab.json, editable">{}</textarea>
       <div id="labDiagram" class="lab-diagram" hidden>
         <p class="empty-state" id="diagramEmpty">Add nodes to the lab to see an architecture preview.</p>
         <div id="diagramCanvas"></div>
       </div>
+      <ul id="labIssues" class="lab-issues" aria-live="polite" hidden></ul>
       <div id="validateResult" class="validate-result" hidden></div>
       <div class="lab-actions">
         <input id="labName" type="text" value="lab" spellcheck="false" aria-label="lab file name">
+        <button id="openBtn" class="btn" title="Open a lab definition (.json, .yaml) from this computer">Open…</button>
+        <input id="openFile" type="file" accept=".json,.yaml,.yml,application/json" hidden>
         <button id="validateBtn" class="btn">Validate</button>
         <button id="downloadBtn" class="btn">Download</button>
         <button id="saveBtn" class="btn">Save to server</button>
+        <button id="savedBtn" class="btn">Saved labs…</button>
+        <button id="createBtn" class="btn primary">Create lab</button>
       </div>
-      <p class="hint">Validation and save run through the project's own Python libraries on the server.</p>
+      <p class="hint">Edit lab.json directly or open a file: the canvas follows it. Validation runs through the project's own Python libraries on the server; Save to server, Saved labs and Create lab need a login.</p>
     </aside>
   </main>
 
@@ -111,6 +117,71 @@
     </div>
   </dialog>
 
+  <!-- labs saved on the server (login) -->
+  <dialog id="savedDialog" class="editor small-dialog" aria-labelledby="savedTitle">
+    <div class="editor-head"><h3 id="savedTitle">Saved labs</h3></div>
+    <ul id="savedList" class="saved-list"></ul>
+    <div class="editor-foot"><span class="spacer"></span><button type="button" id="savedClose" class="btn">Close</button></div>
+  </dialog>
+
+  <!-- credentials (login, HTTPS): values are written, never read back -->
+  <dialog id="credDialog" class="editor" aria-labelledby="credTitle">
+    <div class="editor-head">
+      <div><h2>Automation node</h2><h3 id="credTitle">Credentials</h3></div>
+    </div>
+    <p id="credMsg" class="issue err dialog-msg" hidden></p>
+    <div id="credBody" class="dialog-body">
+      <p class="form-desc">Cloud accounts (<code>cloud_account</code>) and service credentials (SCC, SUSE Application
+        Collection, …) in <code id="credDir"></code>. Values are never shown.</p>
+      <div class="table-wrap">
+        <table class="cred-table">
+          <thead><tr><th>File</th><th>Kind</th><th>Secrets</th><th></th></tr></thead>
+          <tbody id="credList"></tbody>
+        </table>
+      </div>
+      <form id="credAddForm" class="cred-add" autocomplete="off">
+        <h4>Add a credential</h4>
+        <div class="cred-grid">
+          <label class="field"><span class="f-name">Kind</span>
+            <select id="credKind"><option value="cloud">Cloud account</option><option value="service">Service</option></select></label>
+          <label class="field"><span class="f-name">Provider or service</span><select id="credType"></select></label>
+          <label class="field"><span class="f-name">Account name *</span>
+            <input id="credAccount" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" title="Letters, digits, dot, dash and underscore"></label>
+        </div>
+        <div id="credFields" class="cred-grid"></div>
+        <label class="opt-toggle"><input type="checkbox" id="credEncrypt" checked> Encrypt with a passphrase</label>
+        <div id="credPassBox" class="cred-grid">
+          <label class="field"><span class="f-name">Passphrase *</span><input id="credPass" type="password" autocomplete="new-password"></label>
+          <label class="field"><span class="f-name">Passphrase again *</span><input id="credPass2" type="password" autocomplete="new-password"></label>
+        </div>
+        <button type="submit" class="btn primary">Add credential</button>
+      </form>
+    </div>
+    <div class="editor-foot"><span class="spacer"></span><button type="button" id="credClose" class="btn">Close</button></div>
+  </dialog>
+
+  <!-- Create lab (login, HTTPS): runs setup_lab.py as root on the automation node -->
+  <dialog id="createDialog" class="editor" aria-labelledby="createTitle">
+    <div class="editor-head"><div><h2>Create lab</h2><h3 id="createTitle"></h3></div></div>
+    <div id="createConfirm" class="dialog-body">
+      <pre id="createSummary" class="create-summary"></pre>
+      <p class="form-desc">The lab is saved on the server, then <code>setup_lab.py</code> creates it as root on the
+        automation node. Labs whose credentials are encrypted ask for a passphrase: create those with
+        <code>setup_lab.py</code> on the command line.</p>
+      <label class="opt-toggle"><input type="checkbox" id="createKeep" checked> Keep VMs that already exist
+        (<code>--keep</code>); unticked, they are destroyed and created again</label>
+    </div>
+    <div id="createJob" class="dialog-body" hidden>
+      <p id="jobState" class="job-state"></p>
+      <pre id="jobLog" class="job-log"></pre>
+    </div>
+    <div class="editor-foot">
+      <span class="spacer"></span>
+      <button type="button" id="createClose" class="btn">Close</button>
+      <button type="button" id="createGo" class="btn primary">Create</button>
+    </div>
+  </dialog>
+
   <footer class="foot">lab&#8209;in&#8209;a&#8209;box · lab-builder · <code>__LABVERSION__</code></footer>
 
   <div id="toast" class="toast" hidden></div>
@@ -119,6 +190,8 @@
        the diagram must keep working there. mermaid.js 10.9.1, unmodified —
        see webui/htdocs/vendor/mermaid.LICENSE.txt (MIT). -->
   <script src="vendor/mermaid.min.js"></script>
+  <!-- js-yaml 4.1.0, unmodified — see vendor/js-yaml.LICENSE.txt (MIT). -->
+  <script src="vendor/js-yaml.min.js"></script>
   <script src="app.js"></script>
   <script src="cube-fx.js"></script>
 </body>

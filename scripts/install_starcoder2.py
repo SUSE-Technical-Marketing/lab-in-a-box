@@ -17,7 +17,7 @@
 # coding-focused model choice (BigCode/ServiceNow/Hugging Face/NVIDIA collaboration, transparently
 # trained), official Ollama-library model (ollama.com/library/starcoder2), 3B/7B/15B sizes.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "starcoder2",

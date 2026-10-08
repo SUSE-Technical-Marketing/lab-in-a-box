@@ -24,6 +24,11 @@ function show_nicer_messages() {
     tput sgr0
 }
 
+_SLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Configuration steps of the automation node, shared with the node itself (see automation-node-lib.sh).
+# shellcheck source=automation-node-lib.sh
+. "${_SLA_DIR}/automation-node-lib.sh"
+
 # Derive CIDR prefix length from _mynet (e.g. 192.168.8.0/24 → "24")
 _mymask_cidr="${_mynet##*/}"
 
@@ -44,6 +49,8 @@ function detect_bridge() {
 # hardcoded per OS.
 function configure_bridge() {
     [[ -z "${_bridge_nic}" ]] && return
+    # setup_kvm_node.py creates the bridge (libs/host_network.py) before running this script.
+    [[ -d "/sys/class/net/${_bridge_name}/bridge" ]] && return
     _msg="Configure network bridge ${_bridge_name} (${_bridge_nic})" show_nicer_messages
     if systemctl is-active --quiet NetworkManager; then
         nmcli con add type bridge con-name "${_bridge_name}" ifname "${_bridge_name}"
@@ -102,482 +109,148 @@ function configure_image() {
     trap 'unmount_image 2>/dev/null' EXIT
     _msg="Mount image for configuration" show_nicer_messages
     guestmount -i --rw -a /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 /mnt/
-    # guestmount only mounts the guest's own filesystem — it does NOT bind
-    # /proc, /sys, /dev the way a real chroot jail needs. Without /proc,
-    # `chroot /mnt/ zypper install NetworkManager`
-    # (install_packages() below) fails outright ("Warning: No repositories
-    # defined. Operating only with the installed resolvables." / "Failed to
-    # disable: Input/output error." on the systemctl calls) — NetworkManager
-    # never gets installed, wicked stays the active network stack, and the
-    # static IP .nmconnection file this whole flow writes (configure_os())
-    # never takes effect: the automation VM boots to a login prompt with NO
-    # IP on eth0 at all, silently, no error anywhere in this script's own
-    # log. This was masked for a long time by two OTHER, since-fixed issues
-    # (spice graphics failing outright, then --graphics=none itself causing
-    # a boot-time busy-loop) that both stopped the VM from ever reaching
-    # this point in the first place.
+    # The chroot needs /proc, /sys and /dev for zypper and systemctl.
     for _d in proc sys dev; do
         mount --bind "/${_d}" "/mnt/${_d}"
     done
 }
 
-function configure_os() {
-    rm /mnt/var/lib/YaST2/reconfig_system
-    cp /etc/resolv.conf /mnt/etc/
 
-    echo "${AUTOMATION_HOSTNAME}" > /mnt/etc/hostname
 
-    umask 077
-    mkdir -p /mnt/etc/NetworkManager/system-connections/
-    cat > /mnt/etc/NetworkManager/system-connections/static.nmconnection <<EOF
-[connection]
-id=static
-type=ethernet
-autoconnect=true
 
-[ipv4]
-method=manual
-dns-search=${_mydomain}
-dns=${_myip};${_mydns}
-address1=${_myip}/${_mymask_cidr}
-gateway=${_mygw}
-EOF
-    umask 022
 
-    echo "KEYMAP=us" >> /mnt/etc/vconsole.conf
-    ln -sf "/usr/share/zoneinfo/${_timezone:-Europe/Zurich}" /mnt/etc/localtime
+
+
+
+
+# Prints this host's IPv4 address on the lab network: the bridge's address, or the NAT network's gateway.
+function host_lab_ip() {
+    if [[ "${_network_mode:-bridge}" == "nat" ]]; then
+        echo "${_mygw}"
+    else
+        ip -4 -br addr show "${_bridge_name}" | awk '{split($3, a, "/"); print a[1]; exit}'
+    fi
 }
 
-function install_packages() {
-    _msg="Install required packages" show_nicer_messages
-    chroot /mnt/ zypper install -y vim-small git rsync apache2 bind-utils bind docker podman \
-        libvirt-client jq NetworkManager virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd
-    _msg="Enable/Disable services" show_nicer_messages
-    chroot /mnt/ bash -c "
-        systemctl disable firewalld.service wicked.service
-        systemctl enable sshd.service NetworkManager.service named apache2
-        systemctl disable jeos-firstboot.service jeos-firstboot-snapshot.service 2>/dev/null || true
-    "
+
+
+# Sets the node settings this host derives (automation-node-lib.sh's NODE_SETTINGS) for _automation_node.
+function derive_node_settings() {
+    _node_kind="${_automation_node}"
+    _host_ip="$(host_lab_ip)"
+    _host_name="$(hostname)"
+    _host_fqdn="$(hostname -f)"
+    [[ -f /root/.ssh/id_rsa ]] || ssh-keygen -q -b 4096 -N '' -t rsa -f /root/.ssh/id_rsa
+    HOST_SSH_PUB_KEY="$(cat /root/.ssh/id_rsa.pub)"
+    # shellcheck disable=SC2034  # read through NODE_SETTINGS by write_node_settings
+    [[ -z "${root_pwd}" ]] || ROOT_PWD_HASH="$(openssl passwd -6 -stdin <<< "${root_pwd}")"
+    if [[ "${_node_kind}" != vm ]]; then
+        _python_bin=python3.13 _node_netstack=none
+    elif _lab_host_is_leap16; then
+        _python_bin=python3.11 _node_netstack=wicked
+    else
+        _python_bin=python3.11 _node_netstack=nm
+    fi
 }
 
-function configure_ssh() {
-    _msg="Generate SSH key" show_nicer_messages
-    chroot /mnt/ ssh-keygen -b 4096 -N '' -t rsa -f /root/.ssh/id_rsa
-    cp /mnt/root/.ssh/id_rsa.pub /mnt/srv/www/htdocs/ && chmod 0644 /mnt/srv/www/htdocs/id_rsa.pub
-    _msg="Setup SSH keys" show_nicer_messages
-    cat /mnt/root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys
-    echo -e "\n# Automation VM public key:\n$(cat /mnt/root/.ssh/id_rsa.pub)\n"
-    echo "${ROOT_SSH_PUB_KEY}" >> /mnt/root/.ssh/authorized_keys
-    echo "root:${root_pwd}" | chroot /mnt/ chpasswd -c SHA512
+# Copies the tracked files of this lab-in-a-box tree (lab.cfg is not tracked) to directory $1, with .lab-versions:
+# the last commit of every file and directory, for install_automation_node_scripts.sh's version stamps. A setup tree
+# that is not a git checkout is replaced by a clone of the GitHub repository.
+function stage_lab_tree() {
+    local _dest="$1" _src _clone=""
+    _src="$(cd "${_SLA_DIR}/.." && pwd)"
+    if ! git -C "${_src}" rev-parse --is-inside-work-tree &>/dev/null; then
+        _clone="$(mktemp -d)"
+        git clone -q https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git "${_clone}" || return 1
+        _src="${_clone}"
+    fi
+    mkdir -p "${_dest}"
+    ( set -o pipefail
+      git -C "${_src}" ls-files -z | tar -C "${_src}" --null --ignore-failed-read -T - -cf - | tar -C "${_dest}" -xf - ) \
+        || return 1
+    git -C "${_src}" log --format='@%h' --name-only | awk '
+        /^@/ { h = substr($0, 2); next }
+        NF {
+            if (!($0 in seen)) { seen[$0] = 1; print h, $0 }
+            n = split($0, part, "/"); dir = part[1]
+            for (i = 1; i < n; i++) {
+                if (i > 1) dir = dir "/" part[i]
+                if (!(dir in seen)) { seen[dir] = 1; print h, dir }
+            }
+        }' > "${_dest}/.lab-versions"
+    [[ -z "${_clone}" ]] || rm -rf "${_clone}"
 }
 
-function install_lab_scripts() {
-    _msg="Clone repository" show_nicer_messages
-    # Clone to a real (non-FUSE) path first, then copy in. Cloning directly onto /mnt (guestmount's
-    # FUSE mount) fails on openSUSE Leap 16.0 with "update_ref failed ... trying to write ref
-    # 'refs/heads/main' with nonexistent object <sha>". The same clone to a normal path succeeds, so
-    # the failure is a git/FUSE ref-write incompatibility.
-    rm -rf /tmp/lab-in-a-box-clone
-    git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /tmp/lab-in-a-box-clone
-    rm -rf /mnt/var/tmp/lab-in-a-box
-    cp -a /tmp/lab-in-a-box-clone /mnt/var/tmp/lab-in-a-box
-    rm -rf /tmp/lab-in-a-box-clone
-    export _scripts_path=/var/tmp/lab-in-a-box/
-    _msg="Run install_automation_node_scripts.sh" show_nicer_messages
-    # install_automation_node_scripts.sh uses paths relative to its own repo root
-    # (templates/addons/*, scripts/install_*, ...), so it must run with that directory as cwd.
-    # Otherwise every relative copy fails with "cannot stat", which is non-fatal and silently skips
-    # the addon templates and scripts.
-    chroot /mnt/ bash -c "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh"
+# Writes the node's inputs under directory $1: NODE_DIR with the settings, automation-node-lib.sh and the lab tree.
+function stage_node_inputs() {
+    local _root="$1"
+    write_node_settings "${_root}"
+    install -m 0755 "${_SLA_DIR}/automation-node-lib.sh" "${_root}${NODE_DIR}/automation-node-lib.sh"
+    stage_lab_tree "${_root}${NODE_DIR}/lab-in-a-box" \
+        || { echo -e "\033[1;31mERROR\033[0m: staging lab-in-a-box for the automation node failed" >&2; exit 1; }
 }
 
-function configure_helm() {
-    _msg="Download latest helm and install it" show_nicer_messages
-    mkdir -p /mnt/srv/www/htdocs/helm /mnt/srv/www/sources
-    chmod 0755 /mnt/srv/www/htdocs/helm /mnt/srv/www/sources
-    curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS \
-        --output /mnt/srv/www/htdocs/helm/KEYS
-    chmod 0644 /mnt/srv/www/htdocs/helm/KEYS
-    curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail \
-        'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-${myarch:-amd64}.tar.gz" \
-        --output /mnt/srv/www/htdocs/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
-
-    # download_latest_helm.sh: arch embedded now, helm version resolved at runtime
-    cat > /mnt/usr/local/bin/download_latest_helm.sh << 'HELMSCRIPT'
-#!/bin/bash
-curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail 'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-MYARCH.tar.gz" \
-    --output /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
-curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS --output /srv/www/htdocs/helm/KEYS
-chmod 0644 /srv/www/htdocs/helm/KEYS /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
-HELMSCRIPT
-    sed -i "s/MYARCH/${myarch:-amd64}/g" /mnt/usr/local/bin/download_latest_helm.sh
-
-    # install_helm.sh: served by the automation VM, run on client nodes
-    cat > /mnt/srv/www/htdocs/helm/install_helm.sh << HELMSCRIPT
-#!/bin/bash
-[ -d /tmp/helm ] || mkdir /tmp/helm
-curl -SsL "http://${AUTOMATION_HOSTNAME}/helm/helm-latest-linux-${myarch:-amd64}.tar.gz" -o /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
-tar xf /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz -C /tmp/helm
-cp /tmp/helm/linux-${myarch:-amd64}/helm /usr/local/bin
-HELMSCRIPT
-
-    chmod 0755 /mnt/usr/local/bin/download_latest_helm.sh /mnt/srv/www/htdocs/helm/install_helm.sh
+# Runs a command inside the automation node through _node_transport: chroot (the VM image mounted at /mnt), ssh (the
+# running VM), podman (the container) or kubectl (the pod). -i as the first argument passes stdin through.
+function node_run() {
+    local _i=() _n=(-n)
+    [[ "$1" == -i ]] && { _i=(-i); _n=(); shift; }
+    case "${_node_transport}" in
+        chroot)  chroot /mnt "$@" ;;
+        ssh)     ssh "${_n[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@${_myip}" "$(printf '%q ' "$@")" ;;
+        podman)  podman exec "${_i[@]}" "${AUTOMATION_HOSTNAME}" "$@" ;;
+        kubectl) k8s_kubectl -n "${_k8s_namespace:-lab-automation}" exec "${_i[@]}" "${_AUTOMATION_POD}" -c automation -- "$@" ;;
+    esac
 }
 
-function configure_sshfs() {
-    echo "${_virt_srv:-root@hypervisor}:/var/lib/libvirt/images/sources /srv/www/htdocs/sources fuse.sshfs  noauto,x-systemd.automount,_netdev,reconnect,identityfile=/root/.ssh/id_rsa,allow_other,default_permissions 0 0" >> /mnt/etc/fstab
+# Puts the inputs staged under $1 into the node (replacing its lab tree), runs "automation-node-lib.sh configure"
+# there ($2: its mode option, if any) and authorizes the node's SSH key on this host.
+function configure_node_from() {
+    local _stage="$1" _mode="${2:-}" _pub
+    _msg="Configure the automation node" show_nicer_messages
+    node_run rm -rf "${NODE_DIR}/lab-in-a-box"
+    tar -C "${_stage}" -cf - . | node_run -i tar -C / --no-overwrite-dir -xf - \
+        || { echo -e "\033[1;31mERROR\033[0m: copying the configuration into the automation node failed" >&2; exit 1; }
+    node_run bash "${NODE_DIR}/automation-node-lib.sh" configure ${_mode:+"${_mode}"} \
+        || { echo -e "\033[1;31mERROR\033[0m: configuring the automation node failed" >&2; exit 1; }
+    _pub="$(node_run cat /root/.ssh/id_rsa.pub)"
+    grep -qxF "${_pub}" /root/.ssh/authorized_keys 2>/dev/null || echo "${_pub}" >> /root/.ssh/authorized_keys
+    echo -e "\n# Automation node public key:\n${_pub}\n"
 }
 
-function configure_dns_server() {
-    _msg="Configure DNS server" show_nicer_messages
-    cat > /mnt/etc/named.conf <<EOF
-options {
-        directory "/var/lib/named";
-        managed-keys-directory "/var/lib/named/dyn/";
-        dump-file "/var/log/named_dump.db";
-        statistics-file "/var/log/named.stats";
-        listen-on port 53 { any; };
-        listen-on-v6 { any; };
-        allow-query { 127.0.0.1; 0.0.0.0/0; };
-        recursion yes;
-        dnssec-validation no;
-        forward only;
-        forwarders {
-            ${_mydns};
-        };
-};
-zone "." in {
-        type hint;
-        file "root.hint";
-};
-zone "localhost" in {
-        type master;
-        file "localhost.zone";
-};
-zone "0.0.127.in-addr.arpa" in {
-        type master;
-        file "127.0.0.zone";
-};
-zone "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa" IN {
-        type master;
-        file "127.0.0.zone";
-};
-zone "${_mydomain}" in {
-        type master;
-        file "${_mydomain}.lan";
-        allow-update { none; };
-};
-zone "${_mynetrev}.in-addr.arpa" in {
-        type master;
-        file "${_mynetrev}.db";
-        allow-update { none; };
-};
-EOF
-
-    cat > /mnt/var/lib/named/${_mynetrev}.db <<EOF
-\$TTL 86400
-@   IN  SOA     ${AUTOMATION_HOSTNAME}. root.${_mydomain}. (
-        2019011601  ;Serial
-        3600        ;Refresh
-        1800        ;Retry
-        604800      ;Expire
-        86400       ;Minimum TTL
-)
-        IN  NS      ${AUTOMATION_HOSTNAME}.
-        IN  PTR     ${_mydomain}.
-
-${_myip//*.}      IN  PTR     ${AUTOMATION_HOSTNAME}.
-$(ip -4 --brief a show "${_bridge_name}" primary | awk -F'.' '{print $NF}' | cut -d/ -f1)      IN  PTR     $(hostname -f).
-
-EOF
-
-    cat > /mnt/var/lib/named/${_mydomain}.lan <<EOF
-\$TTL 86400
-@   IN  SOA     ${AUTOMATION_HOSTNAME}. root.${_mydomain}. (
-        2019011603  ;Serial
-        1m        ;Refresh
-        15m        ;Retry
-        3w        ;Expire
-        2h        ;Minimum TTL
-)
-        IN  NS      ${AUTOMATION_HOSTNAME}.
-        IN  A       ${_myip}
-        IN  MX 10   ${AUTOMATION_HOSTNAME}.
-
-${AUTOMATION_HOSTNAME//.$_mydomain}         IN  A       ${_myip}
-${MYREG//.$_mydomain}         IN  CNAME   ${AUTOMATION_HOSTNAME}
-bastion          IN  CNAME   ${AUTOMATION_HOSTNAME}.
-$(hostname)         IN  A       $(getent hosts "${HOSTNAME}" | awk '{print $1; exit}')
-
-EOF
-
-    chmod 0644 /mnt/var/lib/named/${_mydomain}.lan /mnt/var/lib/named/${_mynetrev}.db
+# Prepares the VM image with guestfish (see _lab_host_is_leap16): its network configuration and the keys this host
+# needs to reach it, plus the staged inputs under $1. The VM is configured over SSH once it runs.
+function prepare_image_via_guestfish() {
+    local _stage="$1" _gf _d
+    _msg="Copy image and resize" show_nicer_messages
+    cp "${_QCOW_IMAGE}" "/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2"
+    qemu-img resize "/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2" "${_disk_size:-40}G"
+    _msg="Prepare the image (guestfish)" show_nicer_messages
+    write_vm_system "${_stage}"
+    write_authorized_keys "${_stage}" "${ROOT_SSH_PUB_KEY}" "${HOST_SSH_PUB_KEY}"
+    _gf="$(mktemp)"
+    {
+        echo 'rm-f /var/lib/YaST2/reconfig_system'
+        echo 'sh "systemctl disable jeos-firstboot.service jeos-firstboot-snapshot.service 2>/dev/null || true"'
+        for _d in "${_stage}"/*; do echo "copy-in ${_d} /"; done
+    } > "${_gf}"
+    guestfish --rw -i -a "/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2" -f "${_gf}"
+    local _rc=$?
+    rm -f "${_gf}"
+    return "${_rc}"
 }
 
-# ── Leap 16 exception ────────────────────────────────────────────────────
-#
-# On openSUSE Leap 16.0 as a lab-host, guestmount's FUSE layer fails: `ls` of a populated
-# directory (/etc/zypp/repos.d) returns "Input/output error". guestfish (libguestfs's native RPC
-# interface, no FUSE involved) reads the same qcow2 without error.
-# libguestfs's own verbose trace shows its internal readdir/stat/xattr
-# calls all succeeding; the failure is specifically in guestmount's FUSE
-# reply layer. No older, compatible fuse3/libfuse3-3 build is available via
-# zypper on Leap 16 (only one version exists in its repos) to pin/downgrade
-# instead. Leap 15.6 and every other tested OS use the unchanged
-# guestmount+chroot path above — this is scoped to Leap 16 only, not a
-# rewrite of the whole mechanism.
+# On an openSUSE Leap 16 host guestmount's FUSE layer returns I/O errors for populated directories, so the VM image is
+# prepared with guestfish there (prepare_image_via_guestfish) and configured over SSH after its first boot.
 function _lab_host_is_leap16() {
     . /etc/os-release 2>/dev/null
     [[ "${ID}" == "opensuse-leap" && "${VERSION_ID}" == 16* ]]
 }
 
-# Does the whole configure_image()+configure_os()+install_packages()+
-# configure_ssh()+install_lab_scripts()+configure_helm()+configure_sshfs()+
-# configure_dns_server()+unmount_image() job in one guestfish session
-# instead — same sequence, same generated file content (the heredocs below
-# are the exact same text those functions produce), just delivered via
-# `upload`/`write`/`sh` instead of a live FUSE mount + chroot. guestfish's
-# own internal appliance boots a real minimal Linux environment, so `sh`
-# already has a working /proc,/sys,/dev with no bind-mount step needed.
-function configure_and_prepare_image_via_guestfish() {
-    _msg="Copy image and resize" show_nicer_messages
-    cp "${_QCOW_IMAGE}" /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2
-    qemu-img resize /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 ${_disk_size:-40}G
-
-    # finish_automation_vm_setup_over_ssh() (below) needs to SSH from THIS
-    # host into the automation VM once it boots — the original,
-    # non-Leap-16 flow never SSHes anywhere from here (everything happens
-    # offline via guestmount), so it only ever authorized ROOT_SSH_PUB_KEY
-    # (the operator's own key, on whatever machine runs this script). That
-    # assumption breaks in the nested lab-host case: this script runs ON
-    # the lab-host VM, which doesn't hold the operator's private key.
-    # Ensure this host has its own keypair and authorize both.
-    [[ -f /root/.ssh/id_rsa ]] || ssh-keygen -b 4096 -N '' -t rsa -f /root/.ssh/id_rsa
-    local _lab_host_pubkey
-    _lab_host_pubkey="$(cat /root/.ssh/id_rsa.pub)"
-
-    local _stage
-    _stage="$(mktemp -d)"
-
-    # Static IP via wicked ifcfg, not a NetworkManager .nmconnection — this
-    # image's default network stack is wicked (the boot console shows "wicked AutoIPv4/DHCPv4/DHCPv6
-    # supplicant service"), and NetworkManager isn't installed at
-    # this point at all (that install itself needs internet — see below).
-    # Same wicked ifcfg shape configure_bridge() already uses elsewhere in
-    # this project for the exact same reason.
-    cat > "${_stage}/ifcfg-eth0" <<EOF
-BOOTPROTO='static'
-IPADDR='${_myip}'
-PREFIXLEN='${_mymask_cidr}'
-STARTMODE='auto'
-EOF
-    cat > "${_stage}/routes" <<EOF
-default ${_mygw} - -
-EOF
-    cat > "${_stage}/resolv.conf" <<EOF
-search ${_mydomain}
-nameserver ${_mydns}
-EOF
-
-    cat > "${_stage}/named.conf" <<EOF
-options {
-        directory "/var/lib/named";
-        managed-keys-directory "/var/lib/named/dyn/";
-        dump-file "/var/log/named_dump.db";
-        statistics-file "/var/log/named.stats";
-        listen-on port 53 { any; };
-        listen-on-v6 { any; };
-        allow-query { 127.0.0.1; 0.0.0.0/0; };
-        recursion yes;
-        dnssec-validation no;
-        forward only;
-        forwarders {
-            ${_mydns};
-        };
-};
-zone "." in {
-        type hint;
-        file "root.hint";
-};
-zone "localhost" in {
-        type master;
-        file "localhost.zone";
-};
-zone "0.0.127.in-addr.arpa" in {
-        type master;
-        file "127.0.0.zone";
-};
-zone "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa" IN {
-        type master;
-        file "127.0.0.zone";
-};
-zone "${_mydomain}" in {
-        type master;
-        file "${_mydomain}.lan";
-        allow-update { none; };
-};
-zone "${_mynetrev}.in-addr.arpa" in {
-        type master;
-        file "${_mynetrev}.db";
-        allow-update { none; };
-};
-EOF
-
-    cat > "${_stage}/${_mynetrev}.db" <<EOF
-\$TTL 86400
-@   IN  SOA     ${AUTOMATION_HOSTNAME}. root.${_mydomain}. (
-        2019011601  ;Serial
-        3600        ;Refresh
-        1800        ;Retry
-        604800      ;Expire
-        86400       ;Minimum TTL
-)
-        IN  NS      ${AUTOMATION_HOSTNAME}.
-        IN  PTR     ${_mydomain}.
-
-${_myip//*.}      IN  PTR     ${AUTOMATION_HOSTNAME}.
-$(ip -4 --brief a show "${_bridge_name}" primary | awk -F'.' '{print $NF}' | cut -d/ -f1)      IN  PTR     $(hostname -f).
-
-EOF
-
-    cat > "${_stage}/${_mydomain}.lan" <<EOF
-\$TTL 86400
-@   IN  SOA     ${AUTOMATION_HOSTNAME}. root.${_mydomain}. (
-        2019011603  ;Serial
-        1m        ;Refresh
-        15m        ;Retry
-        3w        ;Expire
-        2h        ;Minimum TTL
-)
-        IN  NS      ${AUTOMATION_HOSTNAME}.
-        IN  A       ${_myip}
-        IN  MX 10   ${AUTOMATION_HOSTNAME}.
-
-${AUTOMATION_HOSTNAME//.$_mydomain}         IN  A       ${_myip}
-${MYREG//.$_mydomain}         IN  CNAME   ${AUTOMATION_HOSTNAME}
-bastion          IN  CNAME   ${AUTOMATION_HOSTNAME}.
-$(hostname)         IN  A       $(getent hosts "${HOSTNAME}" | awk '{print $1; exit}')
-
-EOF
-
-    cat > "${_stage}/download_latest_helm.sh" << 'HELMSCRIPT'
-#!/bin/bash
-curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail 'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-MYARCH.tar.gz" \
-    --output /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
-curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS --output /srv/www/htdocs/helm/KEYS
-chmod 0644 /srv/www/htdocs/helm/KEYS /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
-HELMSCRIPT
-    sed -i "s/MYARCH/${myarch:-amd64}/g" "${_stage}/download_latest_helm.sh"
-
-    cat > "${_stage}/install_helm.sh" <<HELMSCRIPT
-#!/bin/bash
-[ -d /tmp/helm ] || mkdir /tmp/helm
-curl -SsL "http://${AUTOMATION_HOSTNAME}/helm/helm-latest-linux-${myarch:-amd64}.tar.gz" -o /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
-tar xf /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz -C /tmp/helm
-cp /tmp/helm/linux-${myarch:-amd64}/helm /usr/local/bin
-HELMSCRIPT
-
-    _msg="Clone repository" show_nicer_messages
-    rm -rf /tmp/lab-in-a-box
-    git clone https://github.com/SUSE-Technical-Marketing/lab-in-a-box.git /tmp/lab-in-a-box
-
-    _msg="Download latest helm and install it" show_nicer_messages
-    curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS --output "${_stage}/KEYS"
-    curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail \
-        'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-${myarch:-amd64}.tar.gz" \
-        --output "${_stage}/helm-latest-linux-${myarch:-amd64}.tar.gz"
-
-    local _gf="${_stage}/script.gf"
-    {
-        echo 'rm /var/lib/YaST2/reconfig_system'
-        echo "upload ${_stage}/resolv.conf /etc/resolv.conf"
-        echo "sh \"echo '${AUTOMATION_HOSTNAME}' > /etc/hostname\""
-        echo "upload ${_stage}/ifcfg-eth0 /etc/sysconfig/network/ifcfg-eth0"
-        echo "upload ${_stage}/routes /etc/sysconfig/network/routes"
-        echo 'sh "echo KEYMAP=us >> /etc/vconsole.conf"'
-        echo "ln-sf /usr/share/zoneinfo/${_timezone:-Europe/Zurich} /etc/localtime"
-
-        # zypper install / service enable / running install_automation_node_
-        # scripts.sh all need internet or already-installed packages this
-        # image does not ship. guestfish's own --network appliance interface never gets a usable IP
-        # (up, no DHCP lease, `getent hosts` fails), unlike a booted VM's own network stack. Deferred to
-        # finish_automation_vm_setup_over_ssh(), run once wait_for_vm()
-        # confirms the VM is actually up and reachable at ${_myip} — plain
-        # SSH against a normally-booted host, no libguestfs involved at
-        # all, exactly like provisioning any other already-running KVM
-        # guest. Only jeos-firstboot is disabled here (needs no network,
-        # and must be done before first boot to have any effect).
-        echo 'sh "systemctl disable jeos-firstboot.service jeos-firstboot-snapshot.service 2>/dev/null || true"'
-
-        echo "sh \"ssh-keygen -b 4096 -N '' -t rsa -f /root/.ssh/id_rsa\""
-        echo 'sh "cp /root/.ssh/id_rsa.pub /srv/www/htdocs/id_rsa.pub && chmod 0644 /srv/www/htdocs/id_rsa.pub"'
-        echo "sh \"echo '${ROOT_SSH_PUB_KEY}' >> /root/.ssh/authorized_keys\""
-        echo "sh \"echo '${_lab_host_pubkey}' >> /root/.ssh/authorized_keys\""
-        echo "sh \"echo 'root:${root_pwd}' | chpasswd -c SHA512\""
-
-        echo 'rm-rf /var/tmp/lab-in-a-box'
-        # copy-in takes the LOCAL basename and creates it inside the given
-        # remote directory (i.e. this creates /var/tmp/lab-in-a-box because
-        # the local source dir is itself named lab-in-a-box) — not the same
-        # semantics as `cp -a src/. dst`, so the local clone dir above is
-        # named to match exactly what this needs to produce. Pure file
-        # copy, no network needed inside the guest for this part.
-        echo 'copy-in /tmp/lab-in-a-box /var/tmp'
-
-        echo 'mkdir-p /srv/www/htdocs/helm'
-        echo 'mkdir-p /srv/www/sources'
-        echo 'chmod 0755 /srv/www/htdocs/helm'
-        echo 'chmod 0755 /srv/www/sources'
-        echo "upload ${_stage}/KEYS /srv/www/htdocs/helm/KEYS"
-        echo 'chmod 0644 /srv/www/htdocs/helm/KEYS'
-        echo "upload ${_stage}/helm-latest-linux-${myarch:-amd64}.tar.gz /srv/www/htdocs/helm/helm-latest-linux-${myarch:-amd64}.tar.gz"
-        echo "upload ${_stage}/download_latest_helm.sh /usr/local/bin/download_latest_helm.sh"
-        echo "upload ${_stage}/install_helm.sh /srv/www/htdocs/helm/install_helm.sh"
-        echo 'chmod 0755 /usr/local/bin/download_latest_helm.sh'
-        echo 'chmod 0755 /srv/www/htdocs/helm/install_helm.sh'
-
-        echo "sh \"echo '${_virt_srv:-root@hypervisor}:/var/lib/libvirt/images/sources /srv/www/htdocs/sources fuse.sshfs  noauto,x-systemd.automount,_netdev,reconnect,identityfile=/root/.ssh/id_rsa,allow_other,default_permissions 0 0' >> /etc/fstab\""
-
-        echo "upload ${_stage}/named.conf /etc/named.conf"
-        echo "upload ${_stage}/${_mynetrev}.db /var/lib/named/${_mynetrev}.db"
-        echo "upload ${_stage}/${_mydomain}.lan /var/lib/named/${_mydomain}.lan"
-        echo "chmod 0644 /var/lib/named/${_mynetrev}.db"
-        echo "chmod 0644 /var/lib/named/${_mydomain}.lan"
-    } > "${_gf}"
-
-    _msg="Mount image for configuration (guestfish, Leap 16 exception)" show_nicer_messages
-    guestfish --rw -i -a /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 -f "${_gf}"
-    local _rc=$?
-
-    # id_rsa.pub only exists inside the guest now — pull it out the same
-    # way configure_ssh() does (via /mnt) so the rest of this script's
-    # own authorized_keys/pubkey-echo behavior is unaffected.
-    guestfish --ro -i -a /var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2 \
-        download /root/.ssh/id_rsa.pub "${_stage}/id_rsa.pub" 2>/dev/null
-    if [[ -s "${_stage}/id_rsa.pub" ]]; then
-        cat "${_stage}/id_rsa.pub" >> /root/.ssh/authorized_keys
-        echo -e "\n# Automation VM public key:\n$(cat "${_stage}/id_rsa.pub")\n"
-    fi
-
-    rm -rf /tmp/lab-in-a-box "${_stage}"
-    return "${_rc}"
-}
-
-# The rest of install_packages()/install_lab_scripts()'s original job
-# (zypper install, service enable, running install_automation_node_
-# scripts.sh — everything that needs real internet access or a fully
-# booted OS) — run once wait_for_vm() confirms the automation VM is
-# actually up, over plain SSH, exactly like provisioning any other
-# already-running KVM guest. The lab-in-a-box tree is already at
-# /var/tmp/lab-in-a-box (copied in offline, above).
-function finish_automation_vm_setup_over_ssh() {
-    _msg="Install required packages (post-boot, Leap 16 exception)" show_nicer_messages
-    ssh -o StrictHostKeyChecking=accept-new "root@${_myip}" \
-        "zypper --gpg-auto-import-keys install -y vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh ipcalc fuse3 sshfs netcat-openbsd"
-    ssh "root@${_myip}" "systemctl enable --now named apache2"
-
-    _msg="Run install_automation_node_scripts.sh (post-boot, Leap 16 exception)" show_nicer_messages
-    ssh "root@${_myip}" "cd /var/tmp/lab-in-a-box && bash install_automation_node_scripts.sh"
+# libguestfs on the RHEL family and Fedora cannot read the btrfs root filesystem of the openSUSE Leap image.
+function _host_can_prepare_image() {
+    . /etc/os-release 2>/dev/null
+    [[ " ${ID} ${ID_LIKE} " != *" rhel "* && " ${ID} ${ID_LIKE} " != *" fedora "* ]]
 }
 
 function unmount_image() {
@@ -597,7 +270,10 @@ function unmount_image() {
         lsof +D /mnt 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill -9
         sleep 1
     fi
-    guestunmount /mnt
+    if ! guestunmount /mnt; then
+        echo -e "\033[1;31mERROR\033[0m: guestunmount /mnt failed, so the changes to the automation VM image were not written; stopping before creating the VM" >&2
+        exit 1
+    fi
     trap - EXIT
     # guestunmount returning success only means the FUSE mountpoint is gone. libguestfs's internal
     # helper VM, which backs read/write access to the qcow2, can still hold its lock on the file for a
@@ -628,13 +304,17 @@ function vm_network_arg() {
 
 function create_vm() {
     _msg="Create virtual machine" show_nicer_messages
-    # lab.cfg's _automation_graphics — default stays "spice" (unchanged behavior),
-    # Spice graphics are a config knob, not hardcoded. Spice depends on QEMU having been
-    # built with spice support, which isn't guaranteed on a minimal host install
-    # On an openSUSE Leap Minimal-VM host, the QEMU build may lack spice support, and virt-install then
-    # fails with "spice graphics are not supported with this QEMU". libvirt-daemon-qemu's spice UI packages
-    # are only a weak zypper Recommends there. Set _automation_graphics=none in lab.cfg on such a host
-    # instead of installing the extra spice packages.
+    # lab.cfg's _automation_graphics (default spice). When it is spice and this host's QEMU lists
+    # graphics types without spice (EL 10, SLES 16, some minimal openSUSE installs), vnc is used
+    # instead, the same check libs/backends.py's LibvirtBackend._graphics() makes for lab VMs.
+    local _graphics="${_automation_graphics:-spice}"
+    if [[ "${_graphics}" == spice ]]; then
+        local _caps
+        _caps=$(virsh --connect "${_qemu_addr}" domcapabilities 2>/dev/null)
+        if [[ "${_caps}" == *"<graphics supported='yes'>"* && "${_caps}" != *"<value>spice</value>"* ]]; then
+            _graphics=vnc
+        fi
+    fi
     virt-install --connect ${_qemu_addr} \
         --name "${AUTOMATION_HOSTNAME}" \
         --autostart \
@@ -643,25 +323,18 @@ function create_vm() {
         --osinfo="${_vm_osinfo}" \
         --import \
         --disk "size=${_disk_size:-40},path=/var/lib/libvirt/images/${AUTOMATION_HOSTNAME}.qcow2,sparse=no,boot.order=1" \
-        --graphics="${_automation_graphics:-spice}" \
+        --graphics="${_graphics}" \
         --network "$(vm_network_arg)" \
         --noautoconsole
 }
 
-# Only relevant when _network_mode=nat: forward the automation VM's own
-# ports in from the KVM host's real IP, reusing the exact same rule-building
-# function libs/services.py's PortForwardService calls for lab nodes later
-# (libs/portforward.py's apply_forwarded_ports()) — invoked here as a plain
-# python3.11 call since this bash script has no importable module context
-# of its own. _SLA_DIR resolves this script's own directory regardless of
-# the caller's cwd (setup_kvm_node.py's do_it_all() runs this with cwd set
-# to this same directory, but this stays correct even if invoked directly).
-_SLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Only relevant when _network_mode=nat: forwards the automation node's ports from the KVM host's IP with
+# libs/portforward.py's apply_forwarded_ports(), run with LAB_PYTHON (the interpreter setup_kvm_node.py runs with).
 
 function configure_nat_port_forwarding() {
     [[ "${_network_mode:-bridge}" != "nat" ]] && return
     _msg="Forward automation VM ports from the KVM host" show_nicer_messages
-    python3.11 -c "
+    "${LAB_PYTHON:-python3}" -c "
 import sys
 sys.path.insert(0, '${_SLA_DIR}/../libs')
 import portforward
@@ -685,45 +358,337 @@ function wait_for_vm() {
 
 function configure_host_dns() {
     _msg="Reconfigure host to use new VM as DNS server" show_nicer_messages
-    sed "s/NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS=\"${_myip} ${_mydns}\"/;s/NETCONFIG_DNS_STATIC_SEARCHLIST=.*/NETCONFIG_DNS_STATIC_SEARCHLIST=\"${_mydomain}\"/" \
-        -i /etc/sysconfig/network/config
-    if grep -i "^search " /etc/resolv.conf &>/dev/null; then
-        sed "/search.*/a nameserver ${_myip} " -i /etc/resolv.conf
+    # netconfig (SUSE) generates /etc/resolv.conf from /etc/sysconfig/network/config; other hosts get the lines
+    # added to /etc/resolv.conf itself.
+    if [[ -f /etc/sysconfig/network/config ]] && command -v netconfig &>/dev/null; then
+        sed "s/NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS=\"${_myip} ${_mydns}\"/;s/NETCONFIG_DNS_STATIC_SEARCHLIST=.*/NETCONFIG_DNS_STATIC_SEARCHLIST=\"${_mydomain}\"/" \
+            -i /etc/sysconfig/network/config
+        netconfig update -f
+    elif grep -qi "^search " /etc/resolv.conf; then
+        sed --follow-symlinks -i "/^search /a nameserver ${_myip}" /etc/resolv.conf
     else
-        sed "1s/^/search ${_mydomain}/" -i /etc/resolv.conf
-        sed "1s/^/nameserver ${_myip}/" -i /etc/resolv.conf
+        sed --follow-symlinks -i "1i search ${_mydomain}\nnameserver ${_myip}" /etc/resolv.conf
+    fi
+}
+
+
+# ── Automation node as a container or on Kubernetes ───────────────────────
+#
+# _automation_node=container: a privileged openSUSE Leap container with systemd as init, built from
+# automation-node.Containerfile. It has no podman network: lab-automation.service connects it to the lab bridge with
+# a veth pair, so it gets _myip, _automation_mac and the default route _mygw, like the automation VM.
+# _automation_node=kubernetes: the same image as a StatefulSet in the cluster _k8s_kubeconfig points to, reachable at
+# _myip through a LoadBalancer Service (_k8s_network=loadbalancer, default; spec.loadBalancerIP, which MetalLB,
+# kube-vip and most cloud load balancers honour) or a Multus macvlan interface on the lab
+# network (_k8s_network=macvlan, interface _k8s_macvlan_master).
+# Both keep the node's configuration and user data on persistent volumes; setup never removes them.
+
+_AUTOMATION_IMAGE="localhost/lab-automation-node:latest"
+_AUTOMATION_POD="lab-automation-0"
+
+# Persistent data of the automation node, "<volume name>:<path>" per entry.
+_AUTOMATION_DATA="etc-lab-creation:/etc/lab_creation etc-lab-builder:/etc/lab-builder etc-lab-mcp:/etc/lab-mcp
+etc-ssh:/etc/ssh named:/var/lib/named root:/root provisioning:/srv/www/htdocs/lab_creation helm:/srv/www/htdocs/helm"
+
+function _automation_is_container() {
+    [[ "${_automation_node}" == container ]]
+}
+
+function _automation_is_kubernetes() {
+    [[ "${_automation_node}" == kubernetes ]]
+}
+
+# Runs kubectl against _k8s_kubeconfig (empty: kubectl's default).
+function k8s_kubectl() {
+    kubectl ${_k8s_kubeconfig:+--kubeconfig "${_k8s_kubeconfig}"} "$@"
+}
+
+
+# Prints the bridge the automation node attaches to: _bridge_name, or the libvirt NAT network's bridge with
+# _network_mode=nat.
+function container_bridge() {
+    if [[ "${_network_mode:-bridge}" == "nat" ]]; then
+        virsh -c "${_qemu_addr}" net-info "${_nat_network_name:-labnat}" | awk '/^Bridge:/{print $2}'
+    else
+        echo "${_bridge_name}"
+    fi
+}
+
+# Builds the automation node image. LAB_KUBECTL_INSTALL: the kubectl install script setup_kvm_node.py passes
+# (libs/kvm_host_profiles.py's kubectl_binary_script()).
+function build_automation_image() {
+    _msg="Build the automation node container image" show_nicer_messages
+    if [[ -z "${LAB_KUBECTL_INSTALL}" ]]; then
+        echo -e "\033[1;31mERROR\033[0m: LAB_KUBECTL_INSTALL is not set; run this through setup_kvm_node.py" >&2
+        exit 1
+    fi
+    podman build --pull=newer --build-arg KUBECTL_INSTALL="${LAB_KUBECTL_INSTALL}" -t "${_AUTOMATION_IMAGE}" \
+        -f "${_SLA_DIR}/automation-node.Containerfile" "${_SLA_DIR}" \
+        || { echo -e "\033[1;31mERROR\033[0m: building the automation node image failed" >&2; exit 1; }
+}
+
+# Writes /usr/local/sbin/lab-automation-net and lab-automation.service, which starts the container at boot and
+# connects it to the bridge.
+function install_automation_unit() {
+    _msg="Install lab-automation.service" show_nicer_messages
+    local _bridge
+    _bridge="$(container_bridge)"
+    [[ -n "${_bridge}" ]] || { echo -e "\033[1;31mERROR\033[0m: no bridge found for the automation node" >&2; exit 1; }
+    cat > /usr/local/sbin/lab-automation-net <<'EOF'
+#!/bin/bash
+# Usage: lab-automation-net CONTAINER BRIDGE IP/PREFIX MAC GATEWAY
+# Connects the running CONTAINER to BRIDGE through the veth pair labauto0 (host side) / eth0 (container side).
+set -e
+_pid=$(podman inspect -f '{{.State.Pid}}' "$1")
+ip link del labauto0 2>/dev/null || true
+ip link add labauto0 type veth peer name labauto0c
+ip link set labauto0 master "$2" up
+ip link set labauto0c netns "${_pid}"
+nsenter -t "${_pid}" -n ip link set lo up
+nsenter -t "${_pid}" -n ip link set labauto0c name eth0
+nsenter -t "${_pid}" -n ip link set eth0 address "$4" up
+nsenter -t "${_pid}" -n ip addr add "$3" dev eth0
+nsenter -t "${_pid}" -n ip route add default via "$5"
+EOF
+    chmod 0755 /usr/local/sbin/lab-automation-net
+    cat > /etc/systemd/system/lab-automation.service <<EOF
+[Unit]
+Description=lab-in-a-box automation node container (${AUTOMATION_HOSTNAME})
+Wants=network-online.target
+After=network-online.target libvirtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/podman start ${AUTOMATION_HOSTNAME}
+ExecStart=/usr/local/sbin/lab-automation-net ${AUTOMATION_HOSTNAME} ${_bridge} ${_myip}/${_mymask_cidr} ${_automation_mac} ${_mygw}
+ExecStop=/usr/bin/podman stop -t 30 ${AUTOMATION_HOSTNAME}
+ExecStopPost=-ip link del labauto0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+
+# Removes the automation node container and its unit, if present. Its volumes are kept.
+function remove_automation_container() {
+    if systemctl cat lab-automation.service &>/dev/null; then
+        systemctl disable --now lab-automation.service
+    fi
+    podman rm -f --ignore "${AUTOMATION_HOSTNAME}" >/dev/null
+}
+
+# Creates the container with one named volume (lab-automation-<name>) per _AUTOMATION_DATA entry; podman fills a new,
+# empty volume from the image's files at that path.
+function create_automation_container() {
+    _msg="Create the automation node container" show_nicer_messages
+    local _vols=() _d
+    for _d in ${_AUTOMATION_DATA}; do
+        _vols+=(-v "lab-automation-${_d%%:*}:${_d#*:}")
+    done
+    podman create --name "${AUTOMATION_HOSTNAME}" --hostname "${AUTOMATION_HOSTNAME}" --privileged \
+        --network none --systemd always "${_vols[@]}" "${_AUTOMATION_IMAGE}" >/dev/null \
+        || { echo -e "\033[1;31mERROR\033[0m: creating the automation node container failed" >&2; exit 1; }
+    systemctl enable --now lab-automation.service \
+        || { echo -e "\033[1;31mERROR\033[0m: lab-automation.service failed to start" >&2; exit 1; }
+}
+
+# Prints the Kubernetes manifests of the automation node: namespace, StatefulSet with one PersistentVolumeClaim
+# (each _AUTOMATION_DATA path a subPath of it, filled from the image by the seed init container while empty), and the
+# LoadBalancer Service at _myip or, with _k8s_network=macvlan, the Multus NetworkAttachmentDefinition.
+function k8s_manifests() {
+    local _ns="${_k8s_namespace:-lab-automation}" _image="${_automation_image:-ghcr.io/rmahique/lab-automation-node:latest}"
+    local _host="${AUTOMATION_HOSTNAME%%.*}" _mounts="" _d _annotations="{}"
+    for _d in ${_AUTOMATION_DATA}; do
+        _mounts+="
+            - {name: data, mountPath: ${_d#*:}, subPath: ${_d%%:*}}"
+    done
+    if [[ "${_k8s_network:-loadbalancer}" == macvlan ]]; then
+        _annotations="{k8s.v1.cni.cncf.io/networks: '[{\"name\": \"lab-automation-lan\", \"ips\": [\"${_myip}/${_mymask_cidr}\"], \"mac\": \"${_automation_mac}\"}]'}"
+    fi
+    cat <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${_ns}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lab-automation
+  namespace: ${_ns}
+spec:
+  serviceName: lab-automation
+  replicas: 1
+  selector:
+    matchLabels: {app: lab-automation}
+  template:
+    metadata:
+      labels: {app: lab-automation}
+      annotations: ${_annotations}
+    spec:
+      hostname: ${_host}
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: [127.0.0.1, ${_mydns}]
+        searches: [${_mydomain}]
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: seed
+          image: ${_image}
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: DATA, value: "${_AUTOMATION_DATA//$'\n'/ }"}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              for e in \$DATA; do
+                  n=\${e%%:*} p=\${e#*:}
+                  if [ -z "\$(ls -A "/data/\$n" 2>/dev/null)" ]; then
+                      mkdir -p "/data/\$n" && cp -a "\$p/." "/data/\$n/"
+                  fi
+              done
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      containers:
+        - name: automation
+          image: ${_image}
+          imagePullPolicy: IfNotPresent
+          securityContext: {privileged: true}
+          env:
+            - {name: container, value: oci}
+          lifecycle:
+            preStop:
+              exec: {command: [/bin/sh, -c, "kill -s RTMIN+3 1"]}
+          volumeMounts:
+            - {name: run, mountPath: /run}
+            - {name: tmp, mountPath: /tmp}${_mounts}
+      volumes:
+        - {name: run, emptyDir: {medium: Memory}}
+        - {name: tmp, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+${_k8s_storage_class:+        storageClassName: ${_k8s_storage_class}
+}        resources:
+          requests: {storage: ${_k8s_volume_size:-20Gi}}
+EOF
+    if [[ "${_k8s_network:-loadbalancer}" == macvlan ]]; then
+        cat <<EOF
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: lab-automation-lan
+  namespace: ${_ns}
+spec:
+  config: '{"cniVersion": "0.3.1", "type": "macvlan", "master": "${_k8s_macvlan_master}", "mode": "bridge", "capabilities": {"ips": true, "mac": true}, "ipam": {"type": "static"}}'
+EOF
+    else
+        cat <<EOF
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lab-automation
+  namespace: ${_ns}
+spec:
+  type: LoadBalancer
+  loadBalancerIP: ${_myip}
+  selector: {app: lab-automation}
+  ports:
+    - {name: dns-udp, port: 53, protocol: UDP}
+    - {name: dns-tcp, port: 53, protocol: TCP}
+    - {name: ssh, port: 22, protocol: TCP}
+    - {name: http, port: 80, protocol: TCP}
+    - {name: https, port: 443, protocol: TCP}
+EOF
+    fi
+}
+
+# Applies the manifests and waits until the pod runs. kubectl apply only changes what differs, so a re-run keeps the
+# pod and its volume.
+function deploy_automation_k8s() {
+    _msg="Deploy the automation node to Kubernetes" show_nicer_messages
+    if [[ "${_k8s_network:-loadbalancer}" == macvlan && -z "${_k8s_macvlan_master}" ]]; then
+        echo -e "\033[1;31mERROR\033[0m: _k8s_network=macvlan needs _k8s_macvlan_master (the cluster nodes' lab network interface)" >&2
+        exit 1
+    fi
+    k8s_manifests | k8s_kubectl apply -f - \
+        || { echo -e "\033[1;31mERROR\033[0m: kubectl apply of the automation node failed" >&2; exit 1; }
+    k8s_kubectl -n "${_k8s_namespace:-lab-automation}" rollout status statefulset/lab-automation --timeout=15m \
+        || { echo -e "\033[1;31mERROR\033[0m: the automation node pod did not become ready" >&2; exit 1; }
+}
+
+
+function remove_automation_vm() {
+    if virsh -c "${_qemu_addr}" desc "${AUTOMATION_HOSTNAME}" &>/dev/null; then
+        virsh -c "${_qemu_addr}" destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
+        virsh -c "${_qemu_addr}" undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
     fi
 }
 
 
 # --- Main ---
 
-_msg="Delete VM \"${AUTOMATION_HOSTNAME}\" if it exists" show_nicer_messages
-if virsh desc "${AUTOMATION_HOSTNAME}" &>/dev/null; then
-    virsh -c ${_qemu_addr} destroy  "${AUTOMATION_HOSTNAME}" 2>/dev/null
-    virsh -c ${_qemu_addr} undefine "${AUTOMATION_HOSTNAME}" --remove-all-storage
+# LAB_AUTOMATION_NODE (vm, container or kubernetes) overrides lab.cfg's _automation_node; default vm.
+_automation_node="${LAB_AUTOMATION_NODE:-${_automation_node:-vm}}"
+case "${_automation_node}" in
+    vm|container|kubernetes) ;;
+    *) echo -e "\033[1;31mERROR\033[0m: _automation_node must be vm, container or kubernetes, not '${_automation_node}'" >&2; exit 1 ;;
+esac
+
+if [[ "${_automation_node}" == vm ]] && ! _host_can_prepare_image; then
+    echo -e "\033[1;31mERROR\033[0m: the automation VM cannot be built on ${PRETTY_NAME:-this host}: libguestfs on the RHEL family and Fedora cannot read the btrfs filesystem of the openSUSE Leap automation image. Use the container automation node instead (setup_kvm_node.py --automation-node container)." >&2
+    exit 1
 fi
+
+_msg="Delete automation node \"${AUTOMATION_HOSTNAME}\" if it exists" show_nicer_messages
+remove_automation_vm
+remove_automation_container
 
 detect_bridge
 configure_bridge
 generate_mac
-detect_vm_osinfo
+derive_node_settings
+_stage="$(mktemp -d)"
+stage_node_inputs "${_stage}"
 
-if _lab_host_is_leap16; then
-    configure_and_prepare_image_via_guestfish
-else
-    configure_image
-    configure_os
-    install_packages
-    configure_ssh
-    install_lab_scripts
-    configure_helm
-    configure_sshfs
-    configure_dns_server
-    unmount_image
-fi
-create_vm
-wait_for_vm
-_lab_host_is_leap16 && finish_automation_vm_setup_over_ssh
+case "${_automation_node}" in
+    container)
+        build_automation_image
+        install_automation_unit
+        create_automation_container
+        wait_for_vm
+        _node_transport=podman configure_node_from "${_stage}"
+        ;;
+    kubernetes)
+        deploy_automation_k8s
+        wait_for_vm
+        _node_transport=kubectl configure_node_from "${_stage}"
+        ;;
+    vm)
+        detect_vm_osinfo
+        if _lab_host_is_leap16; then
+            prepare_image_via_guestfish "${_stage}" \
+                || { echo -e "\033[1;31mERROR\033[0m: preparing the automation VM image failed" >&2; exit 1; }
+            create_vm
+            wait_for_vm
+            _node_transport=ssh configure_node_from "${_stage}"
+        else
+            configure_image
+            rm -f /mnt/var/lib/YaST2/reconfig_system
+            _node_transport=chroot configure_node_from "${_stage}" --offline
+            unmount_image
+            create_vm
+            wait_for_vm
+        fi
+        ;;
+esac
+rm -rf "${_stage}"
 configure_nat_port_forwarding
 configure_host_dns

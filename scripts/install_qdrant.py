@@ -14,7 +14,7 @@
 # Kubernetes v1.24+ (gRPC readiness probe support) and a PersistentVolume provisioner. Both are already
 # assumed by the RKE2 and K3s addons of this project.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "qdrant",

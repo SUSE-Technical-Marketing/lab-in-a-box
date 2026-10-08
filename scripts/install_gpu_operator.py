@@ -28,7 +28,7 @@
 # cloud-native/gpu-operator) for the guest image before relying on driver_enabled=true (the default)
 # on a SUSE-family node.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "gpu_operator",

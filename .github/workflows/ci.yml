@@ -7,9 +7,10 @@ name: CI
 #   python311   - every .py file (and scripts/lab_schema, and every
 #                 install_<addon> script) must at minimum PARSE and IMPORT
 #                 cleanly on Python 3.11, the project's pinned minimum.
-#   addon-schemas - every install_<addon> script must print its own
-#                 configuration schema without crashing (--schema, both
-#                 JSON and YAML) -- this is the same contract the web UI
+#   addon-schemas - every install_<addon> executable (any language, with
+#                 or without a file extension) must be executable and print
+#                 its own configuration schema without crashing (--schema,
+#                 both JSON and YAML) -- this is the same contract the web UI
 #                 relies on to render its forms.
 #   test-suite  - the authoritative gate: the project's own containerized
 #                 test suite (tests/run_tests.sh), unchanged. Every check
@@ -57,7 +58,7 @@ jobs:
               *) code=true ;;
             esac
             case "$f" in
-              *.py|scripts/lab_schema|libs/*) py=true; code=true ;;
+              *.py|scripts/lab_schema|scripts/install_*|libs/*) py=true; code=true ;;
             esac
           done <<< "$files"
           echo "py=$py" >> "$GITHUB_OUTPUT"
@@ -112,15 +113,18 @@ jobs:
           python3.11 scripts/setup_lab.py --input-definition
           python3.11 scripts/setup_lab.py --input-definition yaml
       - name: install_<addon> --schema, for every addon
+        # Each add-on runs as its own executable (its shebang picks the
+        # language), exactly as setup_lab.py and the web UI run it.
         run: |
           set -euo pipefail
-          export PATH="$PWD/scripts:$PATH"
           fail=0
-          for f in scripts/install_*.py; do
+          while IFS= read -r f; do
             echo "== $f =="
-            python3.11 "$f" --schema >/dev/null || { echo "FAIL (json): $f"; fail=1; }
-            python3.11 "$f" --schema yaml >/dev/null || { echo "FAIL (yaml): $f"; fail=1; }
-          done
+            [[ -x "$f" ]] || { echo "FAIL (not executable): $f"; fail=1; continue; }
+            "./$f" --schema json | python3.11 -c 'import json,sys; assert json.load(sys.stdin)["capabilities"]' \
+              || { echo "FAIL (json): $f"; fail=1; }
+            "./$f" --schema yaml >/dev/null || { echo "FAIL (yaml): $f"; fail=1; }
+          done < <(git ls-files 'scripts/install_*')
           exit "$fail"
 
   test-suite:

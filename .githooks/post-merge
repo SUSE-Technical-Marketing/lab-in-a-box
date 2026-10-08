@@ -1,11 +1,12 @@
 #!/bin/bash
-# Expand __LABVERSION__ placeholders with the per-file last commit hash after merge/pull
+# Expand the __LABVERSION__ placeholder in version assignments (_VERSION="..." in bash,
+# __version__ = "..." in Python) with the per-file last commit hash after merge/pull
 
 _repo_root=$(git rev-parse --show-toplevel)
 
 while IFS= read -r -d '' _file; do
-    grep -q '__LABVERSION__' "${_repo_root}/${_file}" || continue
+    grep -q -E '(_VERSION="|__version__ = ")__LABVERSION__"' "${_repo_root}/${_file}" || continue
     _hash=$(git log -1 --format='%h' -- "${_file}")
     [[ -n "${_hash}" ]] || continue
-    sed -i "s/__LABVERSION__/${_hash}/" "${_repo_root}/${_file}"
+    sed -i -E "s/(_VERSION=\"|__version__ = \")__LABVERSION__\"/\1${_hash}\"/" "${_repo_root}/${_file}"
 done < <(git ls-files -z -- 'scripts/')

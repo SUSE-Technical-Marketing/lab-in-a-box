@@ -118,7 +118,7 @@
 #                             project's other Helm-chart addons don't manage separate Secret
 #                             objects either)
 
-__version__ = "fbc6e36"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "seafile",

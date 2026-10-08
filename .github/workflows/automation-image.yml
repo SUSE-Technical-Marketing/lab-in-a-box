@@ -1,0 +1,45 @@
+name: Automation node image
+
+# Builds setup_demo_server/automation-node.Containerfile and publishes it as ghcr.io/<owner>/lab-automation-node:
+# tag "latest" from main, "dev" from dev, plus the commit SHA. setup_lab_automation.sh runs this image with
+# _automation_node=kubernetes.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'setup_demo_server/automation-node.Containerfile'
+      - 'libs/kvm_host_profiles.py'
+      - '.github/workflows/automation-image.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Build and push
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lab-automation-node"
+          tag=$([[ "${GITHUB_REF_NAME}" == main ]] && echo latest || echo "${GITHUB_REF_NAME}")
+          kubectl_install=$(python3.11 -c 'import sys; sys.path.insert(0, "libs"); import kvm_host_profiles; print(kvm_host_profiles.kubectl_binary_script())')
+          echo "${REGISTRY_TOKEN}" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          podman build --build-arg KUBECTL_INSTALL="${kubectl_install}" \
+              -t "${image}:${tag}" -t "${image}:${GITHUB_SHA}" \
+              -f setup_demo_server/automation-node.Containerfile setup_demo_server
+          podman push "${image}:${tag}"
+          podman push "${image}:${GITHUB_SHA}"

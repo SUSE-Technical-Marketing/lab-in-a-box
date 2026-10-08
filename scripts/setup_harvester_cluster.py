@@ -36,9 +36,8 @@
 #
 # <cluster.json> is a small, standalone config — NOT a lab.json — see
 # templates/harvester-cluster.json.example for every key.
-__version__ = "fcbef10"
+__version__ = "__LABVERSION__"
 
-import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -47,10 +46,11 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
     if Path(_candidate).is_dir() and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 
+import harvester  # noqa: E402
 import primary  # noqa: E402
 import services  # noqa: E402
 from lab_creation import (  # noqa: E402
-    log, die, run_libvirt_tool, check_ssh_conn, process_template, ssh_run, purge_known_host,
+    log, die, run_libvirt_tool, check_ssh_conn, process_template, purge_known_host,
     yaml_scalar as _yaml_scalar,
 )
 
@@ -260,56 +260,21 @@ def _create_netboot_vm(node, cluster_cfg, config):
 
 def _fetch_harvester_kubeconfig(cluster_cfg, create_node):
     """
-    Fetch the kubeconfig from the 'create' node once the cluster is Active, so that _apply_post_install_settings() can reach the
-    cluster through kubectl. Like HarvesterBackend, this uses a local kubeconfig file, HARVESTER_KUBECONFIG.
-
-    Harvester disables root SSH by default. The connection uses the "rancher" user, which has passwordless sudo. The kubeconfig is
-    root-owned with mode 0600, so it is read with sudo.
-
-    The server address in the kubeconfig is 127.0.0.1. The function rewrites it to the cluster VIP, which the automation VM can
-    reach.
+    Fetch the kubeconfig from the 'create' node once the cluster is Active, with its server set to the cluster VIP, to
+    cluster.json's "kubeconfig_path" (default /etc/lab_creation/harvester-<version>.kubeconfig). See
+    harvester.fetch_kubeconfig().
     """
-    kubeconfig_text = ssh_run(
-        create_node["ip"], "sudo cat /etc/rancher/rke2/rke2.yaml", user="rancher", capture=True).stdout
-    # rke2.yaml points at 127.0.0.1 by default — rewrite to the cluster's
-    # own VIP so the fetched kubeconfig is usable from the automation VM,
-    # not just from the node itself.
-    kubeconfig_text = kubeconfig_text.replace(
-        "https://127.0.0.1:6443", "https://{}:6443".format(cluster_cfg["vip"]))
     dest = Path(cluster_cfg.get("kubeconfig_path") or
                 "/etc/lab_creation/harvester-{}.kubeconfig".format(cluster_cfg["harvester_version"]))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(kubeconfig_text)
-    dest.chmod(0o600)
-    return dest
+    return harvester.fetch_kubeconfig(create_node["ip"], dest, "https://{}:6443".format(cluster_cfg["vip"]))
 
 
 def _apply_post_install_settings(cluster_cfg, kubeconfig_path):
     """
-    Apply cluster.json's optional "post_install_settings" dict as
-    harvesterhci.io/v1beta1 Setting objects — the post-install counterpart
-    to _build_system_settings_block()'s install-time passthrough, for
-    whichever Settings turn out not to be settable at install time. Same
-    "operator pre-configures it, we don't validate Setting semantics"
-    stance throughout this file.
+    Apply cluster.json's optional "post_install_settings" dict as harvesterhci.io/v1beta1 Setting objects, the
+    post-install counterpart to _build_system_settings_block()'s install-time passthrough.
     """
-    settings = cluster_cfg.get("post_install_settings")
-    if not settings:
-        return
-    for name, value in settings.items():
-        manifest = (
-            "apiVersion: harvesterhci.io/v1beta1\n"
-            "kind: Setting\n"
-            "metadata:\n"
-            "  name: {}\n"
-            "value: {}\n"
-        ).format(name, _yaml_scalar(value))
-        log("- applying Harvester Setting '{}'".format(name))
-        r = subprocess.run(
-            ["kubectl", "--kubeconfig", str(kubeconfig_path), "apply", "-f", "-"],
-            input=manifest, universal_newlines=True)
-        if r.returncode != 0:
-            die("failed to apply Harvester Setting '{}'".format(name))
+    harvester.apply_settings(kubeconfig_path, cluster_cfg.get("post_install_settings"))
 
 
 def main():

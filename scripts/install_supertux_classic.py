@@ -19,7 +19,7 @@
 # into a shared volume, an ordinary nginx container serves it. No Godot build toolchain needed;
 # this is the developer's own already-exported web build, not something built from source here.
 
-__version__ = "87e323b"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "supertux_classic",

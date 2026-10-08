@@ -41,7 +41,7 @@
 # Resources: GitLab needs at least 4 vCPU and 8 GB of RAM. 4 vCPU and 16 GB is more comfortable. GitLab runs its own PostgreSQL,
 # Redis and Gitaly services.
 
-__version__ = "8e8d2f1"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "gitlab",

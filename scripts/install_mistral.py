@@ -17,7 +17,7 @@
 # as the "deepseek"/"apertus"/"qwen" addons. Official Ollama-library model (ollama.com/library/mistral),
 # no community-GGUF caveat needed.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "mistral",

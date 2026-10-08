@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from lab_creation import (
-    die, log, warn,
+    die, log, warn, _RED, _RESET,
     ssh_run, ssh_output,
     prepare_local_as_kubeclient,
 )
@@ -104,6 +104,21 @@ class K8sDistro(object):
     """Interface a Kubernetes distribution implements."""
 
     name = None
+
+    def install_cluster(self, definition, clu_name, clu_ctx):
+        """Install the cluster on its nodes: install_server() or install_agent() on each, in the lab definition's
+        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server."""
+        token = None
+        rancher1_ip = None
+        for vm_name, node_cfg in (definition.get("nodes") or {}).items():
+            if node_cfg.get("kcluster") != clu_name:
+                continue
+            node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
+            if node_type == "agent":
+                token, rancher1_ip = self.install_agent(vm_name, clu_name, clu_ctx, token, rancher1_ip)
+            else:
+                token, rancher1_ip = self.install_server(vm_name, clu_name, clu_ctx, token=token,
+                                                         rancher1_ip=rancher1_ip)
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         raise NotImplementedError
@@ -291,7 +306,41 @@ class RKE2Distro(K8sDistro):
             return token, rancher1_ip
 
 
+class HarvesterDistro(K8sDistro):
+    """
+    Harvester / SUSE Virtualization (see libs/harvester.py). Nothing is installed over SSH: the cluster forms at first
+    boot from each node's user-data (written by setup_vm.py). install_cluster() waits until the create node answers on
+    HTTPS, fetches the kubeconfig to harvester.kubeconfig_path(), waits until every node is Ready and applies
+    harvester_settings.
+    """
+    name = "harvester"
+
+    def kubeconfig_path(self):
+        return "/etc/rancher/rke2/rke2.yaml"
+
+    def token_path(self):
+        return "/var/lib/rancher/rke2/server/node-token"
+
+    def install_cluster(self, definition, clu_name, clu_ctx):
+        import socket
+        import harvester
+        nodes = harvester.cluster_nodes(definition, clu_name)
+        first = nodes[0]
+        address = socket.gethostbyname(first)
+        log("Waiting for Harvester on \"{}{}{}\" ({}) to answer on HTTPS".format(_RED, first, _RESET, address))
+        harvester.wait_https(address)
+        # The API server certificate covers "localhost", not the node's public address.
+        kubeconfig = harvester.fetch_kubeconfig(address, harvester.kubeconfig_path(clu_name),
+                                                "https://{}:6443".format(address), tls_server_name="localhost")
+        log("Waiting for {} Harvester node(s) to be Ready".format(len(nodes)))
+        harvester.wait_nodes_ready(kubeconfig, len(nodes))
+        harvester.apply_settings(kubeconfig, harvester.cluster_cfg(definition, clu_name).get("harvester_settings"))
+        log("Harvester cluster \"{}{}{}\": https://{}/ (kubeconfig {})".format(
+            _RED, clu_name, _RESET, address, kubeconfig))
+
+
 DISTROS = {
+    "harvester": HarvesterDistro,
     "k3s": K3sDistro,
     "rke2": RKE2Distro,
 }

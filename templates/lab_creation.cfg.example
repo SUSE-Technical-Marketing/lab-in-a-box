@@ -37,6 +37,13 @@ VIRT_SRV="qemu+ssh://root@${REMOTE_HOST}/system?keyfile=.ssh/id_rsa"
 ## This is the hostname of the lab automation server.
 mysource='automation.mydemo.lab'
 
+## The automation server serves its files over HTTP (port 80) and HTTPS (port 443, self-signed certificate).
+## Installers and helm fetch them over HTTPS by default. PROVISIONING_BASE_URL replaces the "https://<host>" part of
+## those URLs, e.g. "http://192.168.88.250" for installers without HTTPS support.
+#PROVISIONING_BASE_URL=''
+## 1 verifies the server certificate (install a trusted one in /etc/lab_creation/tls first); 0 accepts any certificate.
+#PROVISIONING_TLS_VERIFY=0
+
 
 ###############################################################
 #### ADVANCED SETTINGS, this unlikely needs to be changed: ####

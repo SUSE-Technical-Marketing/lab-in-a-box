@@ -37,7 +37,7 @@
 #   hermes_storage_class          : StorageClass (default: the cluster's own default). A bare RKE2 cluster has none, so install one first,
 #                                   for example with the longhorn addon.
 
-__version__ = "fbc6e36"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "hermes",

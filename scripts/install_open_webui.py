@@ -31,7 +31,7 @@
 # stay Pending with no error in this addon's output. Install a storage addon (for example "longhorn")
 # or another default StorageClass before this addon.
 
-__version__ = "0259515"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "open_webui",

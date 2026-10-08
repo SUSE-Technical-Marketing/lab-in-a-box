@@ -24,7 +24,7 @@
 # third party, not the Apertus team or Ollama itself. The Ollama client must be 0.12.6 or newer for Apertus'
 # architecture to load. If the pull fails with an unrecognized-architecture error, update Ollama first.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "apertus",

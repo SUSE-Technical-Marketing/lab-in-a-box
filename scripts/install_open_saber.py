@@ -19,7 +19,7 @@
 # nesting defensively) into a shared volume; an ordinary nginx container serves it. No Godot build
 # toolchain needed; this is the developer's own already-exported web build.
 
-__version__ = "87e323b"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "open_saber",

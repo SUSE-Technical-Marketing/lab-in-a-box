@@ -19,7 +19,7 @@
 # Chart repo and name, and the fallback behavior on ordinary nodes, follow agones.dev's install docs
 # and the chart's README.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "agones",

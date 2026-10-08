@@ -1,35 +1,27 @@
 #!/bin/bash
-# Every scripts/install_<addon>*.py must correctly handle --schema/--version
-# (addon_common.handle_common_args, called as the first line of main()).
-# 22_addon_common_schema_test.py exercises addon_common.print_schema() against a synthetic
-# fixture only. This test runs each real install_<addon> script's own main(), so it covers
-# every current and future addon script.
+# Every tracked scripts/install_<addon> executable must handle --schema/--version, run as its own executable (its shebang
+# picks the language), exactly as setup_lab.py and the web UI run it. --schema must print a JSON object with
+# "capabilities". PATH is left alone: an add-on finds lab_schema next to itself.
+# 22_addon_common_schema_test.py exercises addon_common.print_schema() against a synthetic fixture only.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
 
-# print_schema() resolves lab_schema via shutil.which() (PATH lookup) — the
-# real, installed automation VM always has it there (install_automation_node_
-# scripts.sh puts every scripts/* on PATH), but this container only mounts
-# the raw repo, so it isn't found unless added here too.
-export PATH="$(pwd)/scripts:$PATH"
-
 _pass=0
 _fail=0
 
-for f in scripts/install_*.py; do
+while IFS= read -r f; do
     name=$(basename "$f")
 
-    out=$(python3 "$f" --schema 2>&1)
+    out=$("./$f" --schema json 2>&1)
     rc=$?
-    first_line=$(printf '%s\n' "$out" | head -1)
-    if [[ $rc -ne 0 || "$first_line" != "{" ]]; then
+    if [[ $rc -ne 0 ]] || ! printf '%s' "$out" | python3.11 -c 'import json,sys; assert json.load(sys.stdin)["capabilities"]' 2>/dev/null; then
         _fail=$((_fail + 1))
-        echo "FAIL: $name --schema did not print JSON (rc=$rc): $first_line"
+        echo "FAIL: $name --schema json did not print a JSON object with capabilities (rc=$rc): $(printf '%s\n' "$out" | head -1)"
         continue
     fi
 
-    out=$(python3 "$f" --version 2>&1)
+    out=$("./$f" --version 2>&1)
     rc=$?
     if [[ $rc -ne 0 || "$out" != "$name "* ]]; then
         _fail=$((_fail + 1))
@@ -38,7 +30,7 @@ for f in scripts/install_*.py; do
     fi
 
     _pass=$((_pass + 1))
-done
+done < <(git -c safe.directory="$PWD" ls-files 'scripts/install_*')
 
 echo "Passed: $_pass  Failed: $_fail"
 [[ $_fail -eq 0 ]]
