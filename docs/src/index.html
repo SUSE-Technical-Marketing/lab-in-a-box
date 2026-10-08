@@ -1371,7 +1371,7 @@ install_longhorn --schema yaml      # ...or YAML
 <li><code>install_&lt;name&gt; --version</code> and <code>--help</code></li>
 <li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> installs it on the VM named in <code>$_vm_name</code> (and the cluster in <code>$clu_name</code> for a cluster add-on)</li>
 </ul>
-<p>A Python add-on gets all of these from <code>addon_common.handle_common_args()</code> and a module-level <code>PLUGIN</code> dict; follow the pattern of an existing one (load the relevant JSON section via <code>load_definition()</code>, do the work over SSH).</p>
+<p>A Python add-on gets all of these from <code>addon_common.handle_common_args()</code> and a module-level <code>PLUGIN</code> dict. The <a href="addons.html">Add-on Guide</a> describes the whole contract, the schema, how an add-on reads its configuration and how to test it with <code>check_addon.py</code>; <code>examples/addons/</code> has a Python and a bash example.</p>
 <h3 id="add-on-version-matrix">Add-on version matrix</h3>
 <p>An add-on can declare the versions it can install, as <code>versions</code> in its capabilities (in a Python add-on, a <code>"versions"</code> key in <code>PLUGIN</code>). It is optional, and so is every part of an entry except <code>version</code>; what is not declared is not checked. The key is a version field of the add-on's JSON section; its entries go newest first:</p>
 <pre><code class="language-python">"versions": {
