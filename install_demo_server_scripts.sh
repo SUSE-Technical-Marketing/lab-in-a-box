@@ -14,8 +14,8 @@
 #
 # Installs git and Python 3 (python311 on openSUSE Leap / SLES 15, the distribution's python3
 # elsewhere), fetches lab-in-a-box into /var/tmp/setup_demo_server and runs
-# setup_demo_server/setup_kvm_node.py with every other option (see its --help). Prompts are read
-# from the terminal; without one (cloud-init, CI) pass --non-interactive.
+# setup_demo_server/setup_kvm_node.py with every other option (see its --help). Nothing is asked
+# unless --interactive is given; its prompts are then read from the terminal.
 #
 # Options handled here:
 #   --source DIR    use the lab-in-a-box checkout in DIR instead of cloning

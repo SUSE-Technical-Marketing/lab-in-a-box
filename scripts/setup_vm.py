@@ -14,7 +14,7 @@ Usage:
     setup_vm.py <lab.json> <vm_hostname>
 """
 
-__version__ = "ca2d2d5"
+__version__ = "__LABVERSION__"
 
 import ipaddress
 import socket
@@ -165,6 +165,10 @@ def provision_vm(definition, config, defaults, vm_name):
         # aws_nested_virtualization: opt-in. "true" enables nested KVM on an EC2 node. The default, off, leaves existing labs unchanged.
         # Other backends ignore it. See AWSBackend's docstring.
         nested_virtualization=env.get("aws_nested_virtualization") or "",
+        # Where installers fetch their answer files from the automation node, and whether its certificate is verified. See
+        # libs/provisioning.py.
+        provisioning_base_url=env.get("PROVISIONING_BASE_URL", ""),
+        provisioning_tls_verify=env.get("PROVISIONING_TLS_VERIFY", ""),
     )
     if created_ip:
         env["myip"] = created_ip

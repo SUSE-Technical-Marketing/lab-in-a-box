@@ -6,7 +6,7 @@
 # convention: never rely on the host having any particular init system).
 FROM registry.opensuse.org/opensuse/leap:15.6
 RUN zypper --non-interactive install --no-recommends \
-        bash python3 python3-xml python311-base python311-pip systemd git tar xz curl iproute2 nodejs22 \
+        bash python3 python3-xml python311-base python311-pip systemd git tar xz curl iproute2 nodejs22 openssl apache2 \
     && zypper clean --all \
     && ln -sf /usr/bin/node22 /usr/local/bin/node 2>/dev/null || ln -sf /usr/bin/node /usr/local/bin/node 2>/dev/null || true
 # python311-cryptography (the zypper package) is Leap 15.6's own 41.0.3 build, which predates

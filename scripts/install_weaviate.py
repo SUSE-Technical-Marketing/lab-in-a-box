@@ -14,7 +14,7 @@
 # and resources.limits through a values override on a host without generous defaults, or the pod may
 # be unbounded.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "weaviate",

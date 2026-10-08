@@ -18,7 +18,7 @@
 # C++, Java, PHP, TypeScript, C#, Bash, and more) — the coding-model pick for this project's own
 # dev/CI-heavy audience, per the earlier model-catalog discussion.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "codellama",

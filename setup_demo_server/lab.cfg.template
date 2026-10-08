@@ -92,6 +92,30 @@ SUSE_regcode=""
 SUSE_email=""
 SUSE_url=""
 
+# How the automation node runs: "vm" (default), a libvirt VM built from _QCOW_IMAGE; "container", a privileged
+# openSUSE Leap podman container on this host (setup_demo_server/automation-node.Containerfile) attached to the
+# same network with the same _myip, its data on podman volumes lab-automation-*; or "kubernetes" (see below).
+# setup_kvm_node.py switches "vm" to "container" when the VM cannot be built.
+_automation_node="vm"
+
+# Only used when _automation_node="kubernetes". The automation node runs as a StatefulSet with its configuration and
+# user data on a persistent volume; the lab reaches it at _myip.
+#   _k8s_kubeconfig     kubeconfig of the cluster (empty: kubectl's default)
+#   _k8s_namespace      namespace (default lab-automation)
+#   _k8s_network        "loadbalancer" (default): a LoadBalancer Service at _myip (MetalLB or the cloud's load
+#                       balancer must be able to give it that address); "macvlan": a Multus macvlan interface with
+#                       _myip on the cluster nodes' lab network interface _k8s_macvlan_master
+#   _k8s_storage_class  storage class of the persistent volume (empty: the cluster's default)
+#   _k8s_volume_size    size of the persistent volume (default 20Gi)
+#   _automation_image   image to run (empty: ghcr.io/rmahique/lab-automation-node:latest)
+_k8s_kubeconfig=""
+_k8s_namespace="lab-automation"
+_k8s_network="loadbalancer"
+_k8s_macvlan_master=""
+_k8s_storage_class=""
+_k8s_volume_size="20Gi"
+_automation_image=""
+
 # MAC address for the automation VM (leave empty to auto-generate from _myip using QEMU OUI 52:54:00)
 _automation_mac=""
 

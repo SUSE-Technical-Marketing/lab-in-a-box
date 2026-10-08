@@ -8,13 +8,17 @@ automatically — there is no per-component code in the UI.
 
 ## Design
 
-Thin web layer over the existing Python libraries — **no subprocess fan-out**:
+Thin web layer over the existing Python libraries. Add-ons are executables in
+any language, so each one is asked for its own `install_<name> --schema json`
+(run in parallel, cached per file in `~/.cache/lab_creation/addons.json` or
+`$LAB_ADDON_CACHE`); everything else is imported in-process:
 
 ```
 htdocs/            single-page app (vanilla HTML/CSS/JS)
  └─ app.js         generic schema walker: fields recognised by shape (name+type),
                    `fields`/`sections` treated as structural wrappers
-lib/discovery.py   imports scripts/lab_schema (parse_script) and libs/primary
+lib/discovery.py   add-ons via libs/apps (describe: --schema json); imports
+                   scripts/lab_schema (base_lab_schema) and libs/primary
                    (validate_definition) in-process
 lib/api.py         transport-agnostic request dispatch (one place)
 cgi-bin/labbuilder.py   Apache CGI shim
@@ -27,7 +31,7 @@ with `name` + `type`; `fields`/`sections` are structural; a section may carry
 `repeatable`. Everything else is discovered.
 
 The add-on palette is split by where each add-on can be dropped, read from the
-`targets` in its own `PLUGIN` dict: **Cluster add-ons** (`container` only — drop
+`targets` in the `capabilities` of its `--schema json` output: **Cluster add-ons** (`container` only — drop
 on a Kubernetes cluster), **VM add-ons** (`vm`/`baremetal` only), **Cluster or
 VM add-ons** (both), and **Lab services** (pxe, on the automation VM).
 
@@ -98,12 +102,15 @@ on you there.
 
 Browse to `http://<automation-vm>/lab-builder/`.
 
-**TLS**: on by default (`_webui_tls=1`) for both deploy modes — a self-signed
-cert/key is generated once at `/etc/lab-builder/tls/{cert,key}.pem` and wired
-into whichever mode is active (`run-local.py` wraps its own socket; Apache
-gets an additional `lab-builder-ssl.conf` vhost + an HTTP→HTTPS redirect for
-`/lab-builder`). Set `_webui_tls=0` for plain HTTP only. Browsers warn once
-on the self-signed cert.
+**TLS**: on by default (`_webui_tls=1`) for both deploy modes. The webui uses
+the automation node's self-signed cert/key at `/etc/lab_creation/tls/{cert,key}.pem`,
+generated once by `install_automation_node_scripts.sh` (an existing
+`/etc/lab-builder/tls` pair is reused). `run-local.py` wraps its own socket;
+in Apache mode the whole document root is served on port 443 by
+`templates/apache/lab_creation-ssl.conf`, and `lab-builder-ssl.conf` adds an
+HTTP→HTTPS redirect for `/lab-builder`. Set `_webui_tls=0` for plain HTTP only
+(no redirect; port 443 stays open for the provisioning files). Browsers warn
+once on the self-signed cert.
 
 ## Configuration (env vars, all optional)
 
@@ -151,7 +158,7 @@ Builds a **complete lab.json**:
 - **Base topology** — the pinned *▚ Lab topology* entry renders `common`
   (singleton) plus `nodes` and `kclusters` as **repeatable** keyed maps
   (add/remove instances). Its schema is the single source of truth in
-  `lab_schema.base_lab_schema()`, which `setup_lab.sh --schema` also emits — so
+  `lab_schema.base_lab_schema()`, which `setup_lab.py --schema` also emits — so
   there is one definition, consumed in-process here (no subprocess).
 - **Addon sections** — every `install_*` component (e.g. `longhorn: {…}`,
   `smlm: {…}`), rendered from its own `--schema`.

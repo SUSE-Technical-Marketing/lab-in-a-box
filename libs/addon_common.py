@@ -182,18 +182,21 @@ def print_help(script_path, usage=None):
 _lab_schema_mod = None
 
 
-def _lab_schema():
+def _lab_schema(script_path=None):
     """
-    lab_schema, loaded in-process from its PATH location. An explicit
-    SourceFileLoader is required since a deployed lab_schema has no .py
-    suffix, same reason apps.py needs one for install_<addon> scripts.
-    Cached like apps.py's own plugin cache.
+    lab_schema, loaded in-process: the copy next to script_path when there is one (a repo checkout's scripts/, or the
+    deployed /usr/local/bin), else the one on PATH. An explicit SourceFileLoader is required since a deployed lab_schema
+    has no .py suffix. Cached like apps.py's own describe() results.
     """
     global _lab_schema_mod
     if _lab_schema_mod is None:
-        exe = shutil.which("lab_schema")
+        exe = None
+        if script_path:
+            beside = Path(script_path).resolve().parent / "lab_schema"
+            exe = str(beside) if beside.is_file() else None
+        exe = exe or shutil.which("lab_schema")
         if not exe:
-            print("[ERROR] lab_schema not found in PATH", file=sys.stderr)
+            print("[ERROR] lab_schema not found next to {} or in PATH".format(script_path), file=sys.stderr)
             sys.exit(1)
         loader = SourceFileLoader("lab_schema", exe)
         spec = importlib.util.spec_from_loader("lab_schema", loader)
@@ -214,7 +217,7 @@ def print_schema(script_path, fmt, plugin=None):
     """
     import apps  # deferred: avoids a hard dependency for callers that never hit --schema
 
-    ls = _lab_schema()
+    ls = _lab_schema(script_path)
     schema = ls.parse_script(script_path)
     apps.attach_capabilities(schema, plugin or {})
     ls._emit(schema, fmt)

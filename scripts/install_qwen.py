@@ -18,7 +18,7 @@
 # 0.5B to 72B, confirmed on Ollama's own curated library (ollama.com/library/qwen2.5), so — unlike
 # apertus — this is an OFFICIAL Ollama-library model, no community-GGUF caveat needed.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "qwen",

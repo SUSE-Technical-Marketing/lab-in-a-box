@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>lab-in-a-box · العربية</title>
-<meta name="description" content="lab-in-a-box ينشئ معامل كاملة من ملف JSON أو YAML واحد: أجهزة الافتراضية، DNS، عناقيد Kubernetes والإضافات التي تصفها. يمكن تشغيل أجهزة الافتراضية على أجهزة KVM">
+<meta name="description" content="يبني lab-in-a-box مختبرات كاملة من ملف JSON أو YAML واحد: الأجهزة الافتراضية ونظام DNS وعناقيد Kubernetes والإضافات التي تصفها. يمكن تشغيل الأجهزة الافتراضية عل">
 <meta name="theme-color" content="#12a99d">
 <link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -219,127 +219,127 @@ footer.site {
 <div class="opening-text">
 <p class="eyebrow">IT labs, deployed automatically</p>
 <h1><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · العربية</h1>
-<p class="lead"><strong>lab-in-a-box</strong> ينشئ معامل كاملة من ملف JSON أو YAML واحد: أجهزة الافتراضية، DNS، عناقيد Kubernetes والإضافات التي تصفها. يمكن تشغيل أجهزة الافتراضية على أجهزة KVM التي تملكها أو على Harvester أو على واحدة من ثماني سحب عامة، وينجح الملف ذاته على جميعها.</p>
+<p class="lead">يبني <strong>lab-in-a-box</strong> مختبرات كاملة من ملف JSON أو YAML واحد: الأجهزة الافتراضية ونظام DNS وعناقيد Kubernetes والإضافات التي تصفها. يمكن تشغيل الأجهزة الافتراضية على مضيفات KVM الخاصة بك أو على Harvester أو على أيٍّ من ثماني سحابات عامة، ويعمل الملف نفسه عليها جميعًا.</p>
 <div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">لماذا lab-in-a-box؟</a></li><li><a href="#architecture">العمارة</a></li><li><a href="#how-it-works">كيفية عمله</a></li><li><a href="#quick-start">البدء السريع</a></li><li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li><li><a href="#lab-definition-format">صيغة تعريف المعمل</a></li><li><a href="#testing">الاختبار</a></li><li><a href="#contributing--developer-setup">المساهمة / إعداد المطور</a></li><li><a href="#author">المؤلف</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">لماذا lab-in-a-box؟</a></li><li><a href="#architecture">البنية</a></li><li><a href="#how-it-works">آلية العمل</a></li><li><a href="#quick-start">البدء السريع</a></li><li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li><li><a href="#lab-definition-format">صيغة تعريف المختبر</a></li><li><a href="#examples">أمثلة</a></li><li><a href="#step-by-step-walkthroughs">أدلة خطوة بخطوة</a></li><li><a href="#available-commands">الأوامر المتاحة</a></li><li><a href="#available-addons">الإضافات المتاحة</a></li><li><a href="#configuration-reference">مرجع الإعدادات</a></li><li><a href="#testing">الاختبار</a></li><li><a href="#contributing--developer-setup">المساهمة / بيئة التطوير</a></li><li><a href="#author">المؤلف</a></li></ol></aside>
 <main class="doc">
-<html dir="rtl" lang="ar">
+
 <h2 id="why-lab-in-a-box">لماذا lab-in-a-box؟</h2>
 <ul>
-<li><strong>ملف واحد، أمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes (RKE2 أو K3s) والإضافات بشكل إعلاني. ينشئهما <code>setup_lab.py</code> بترتيب الاعتماديات، دون الحاجة لتشغيل <code>virt-install</code> أو Ansible بيدويًا.</li>
-<li><strong>معمل في البيت أو السحابة، نفس التعريف.</strong> تعمل أجهزة المعمل الافتراضية على أجهزة KVM التي تملكها أو على Harvester HCI أو على AWS أو Google Cloud أو Alibaba Cloud أو Hetzner أو Scaleway أو UpCloud أو OVHcloud أو Exoscale. يمكن للمعامل أن تمتد عبر أجهزة KVM متعددة، ومعمل واحدة يمكن أن تجمع السحب والمواقع عبر <a href="#cross-cloud-wireguard-overlay">تراكب WireGuard بين السحب</a>.</li>
-<li><strong>71 إضافة مسبقة التكامل.</strong> Rancher و Longhorn و NeuVector و Harbor و Keycloak و Jenkins و Argo CD و SUSE Multi-Linux Manager/Uyuni و Nextcloud وأكثر، بالإضافة إلى تطبيقات عرض توضيحي عرضية الضعف لتدريب الأمان.</li>
-<li><strong>واجهة ويب تتابع الكود.</strong> <a href="#web-ui-lab-builder">lab-builder</a> يصيّر كل نموذج مباشرة من مخطط الإضافة الخاص بها. يظهر الحقل الجديد في نص برمجي في الواجهة دون تغييرات الواجهة الأمامية.</li>
-<li><strong>توفير قابل للاستبدال.</strong> Ignition و Combustion لـ SLE Micro و cloud-init لـ openSUSE و Ubuntu و <code>virt-customize</code> للصور القديمة أو التثبيت المأمور من ISO تثبيت فعلي (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
-<li><strong>بيانات الاعتماد خارج ملف المعمل.</strong> يمكن لبيانات اعتماد السحابة والخدمات أن تسكن في ملفات مشفرة لكل حساب (استخراج المفتاح بـ Argon2id متبوعًا بـ AES-256-GCM و ChaCha20-Poly1305 متسلسلة).</li>
-<li><strong>اختبارات مُحاوية.</strong> يعمل كل فحص في حاويته <code>podman</code> القابلة للتجاهل الخاصة والمستقلة، وخطاف قبل الالتزام يشغل الفحوصات ذات الصلة.</li>
+<li><strong>ملف واحد وأمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes ‏(RKE2 أو K3s) والإضافات بأسلوب تصريحي. يبنيها <code>setup_lab.py</code> بترتيب الاعتماديات دون أن تشغّل <code>virt-install</code> أو Ansible يدويًا.</li>
+<li><strong>مختبر منزلي أو سحابي، والتعريف نفسه.</strong> تعمل الأجهزة الافتراضية للمختبر على مضيفات KVM تملكها، أو على Harvester HCI، أو على AWS وGoogle Cloud وAlibaba Cloud وHetzner وScaleway وUpCloud وOVHcloud وExoscale. يمكن أن يمتد المختبر على عدة مضيفات KVM، وأن يجمع سحابات ومواقع مختلفة عبر <a href="#cross-cloud-wireguard-overlay">شبكة WireGuard متراكبة بين السحابات</a>.</li>
+<li><strong>71 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
+<li><strong>واجهة ويب تتبع الشيفرة.</strong> يبني <a href="#web-ui-lab-builder">lab-builder</a> كل نموذج من مخطط الإضافة نفسها، فيظهر أي حقل جديد في السكربت في الواجهة دون تعديل الواجهة الأمامية.</li>
+<li><strong>تجهيز قابل للتبديل.</strong> Ignition وCombustion لـ SLE Micro، وcloud-init لـ openSUSE وUbuntu، و<code>virt-customize</code> للصور القديمة، أو تثبيت آلي من صورة ISO للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
+<li><strong>بيانات الاعتماد خارج ملف المختبر.</strong> يمكن حفظ بيانات اعتماد السحابات والخدمات في ملفات مشفّرة لكل حساب (اشتقاق المفتاح بـ Argon2id ثم AES-256-GCM وChaCha20-Poly1305 على التوالي).</li>
+<li><strong>اختبارات داخل الحاويات.</strong> يعمل كل فحص في حاوية podman تُستخدم مرة واحدة، ويشغّل خطاف pre-commit الفحوص ذات الصلة.</li>
 </ul>
 <hr />
-<h2 id="table-of-contents">جدول المحتويات</h2>
+<h2 id="table-of-contents">المحتويات</h2>
 <ul>
-<li><a href="#architecture">العمارة</a></li>
-<li><a href="#how-it-works">كيفية عمله</a></li>
+<li><a href="#architecture">البنية</a></li>
+<li><a href="#how-it-works">آلية العمل</a></li>
 <li><a href="#quick-start">البدء السريع</a></li>
 <li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li>
-<li><a href="#lab-definition-format">صيغة تعريف المعمل</a></li>
+<li><a href="#lab-definition-format">صيغة تعريف المختبر</a></li>
 <li><a href="#examples">أمثلة</a></li>
-<li><a href="#step-by-step-walkthroughs">نزهات خطوة بخطوة</a></li>
+<li><a href="#step-by-step-walkthroughs">أدلة خطوة بخطوة</a></li>
 <li><a href="#available-commands">الأوامر المتاحة</a></li>
 <li><a href="#available-addons">الإضافات المتاحة</a></li>
-<li><a href="#configuration-reference">مرجع التكوين</a></li>
+<li><a href="#configuration-reference">مرجع الإعدادات</a></li>
 <li><a href="#testing">الاختبار</a></li>
-<li><a href="#contributing--developer-setup">المساهمة / إعداد المطور</a></li>
+<li><a href="#contributing--developer-setup">المساهمة / بيئة التطوير</a></li>
 </ul>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
-<h2 id="architecture">العمارة</h2>
+<h2 id="architecture">البنية</h2>
 <p align="center" float="left">
 </p>
 
-<p>يعتمد النظام على <strong>عمارة ذات مستويين</strong>:</p>
+<p>يقوم النظام على <strong>بنية من طبقتين</strong>:</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
-<h3 id="hypervisor-nodes">عقد المراقب</h3>
-<p>واحد أو أكثر من أجهزة فيزيائية (معادن عارية) مع KVM/QEMU. يستضيف كل واحد أجهزة افتراضية معمل ويحتفظ بصور QCOW2 المصدر في <code>/var/lib/libvirt/images/sources/</code>. يكفي NUC أو محطة عمل أو أي آلة x86_64 تشغل KVM. يمكن للمعامل التي تتطلب سعة أكثر مما توفره آلة واحدة أن تمتد عبر <strong>أجهزة KVM متعددة</strong> — انظر <a href="#multi-host-labs">معامل متعددة الأجهزة</a> أدناه.</p>
-<h3 id="automation-vm">جهاز الأتمتة الافتراضي</h3>
-<p>جهاز افتراضي صغير على المراقب يعمل كمستوى التحكم لجميع المعمل. يوفر:</p>
+<h3 id="hypervisor-nodes">عقدة (عقد) المضيف الافتراضي</h3>
+<p>جهاز فعلي واحد أو أكثر يشغّل KVM/QEMU. يستضيف كل منها أجهزة المختبر الافتراضية ويحتفظ بصور QCOW2 المصدرية في <code>/var/lib/libvirt/images/sources/</code>. يكفي جهاز NUC أو محطة عمل أو أي جهاز x86_64 قادر على تشغيل KVM. ويمكن للمختبرات التي تحتاج إلى سعة أكبر من جهاز واحد أن تمتد على <strong>عدة مضيفات KVM</strong>؛ راجع <a href="#multi-host-labs">المختبرات متعددة المضيفات</a> أدناه.</p>
+<h3 id="automation-vm">آلة الأتمتة الافتراضية</h3>
+<p>جهاز افتراضي صغير يعمل على المضيف ويؤدي دور مستوى التحكم للمختبر كله. يوفّر:</p>
 <ul>
-<li><strong>DNS</strong> — BIND (<code>named</code>) يخدم نطاق المعمل ويعيد توجيه الاستعلامات الخارجية، بحيث يتم حل جميع أسماء مضيفي المعمل من أي عميل يشير إليه</li>
-<li><strong>HTTP</strong> — تقديم الملفات المؤقتة (Ignition و Combustion و cloud-init) في <code>/srv/www/htdocs/lab_creation/</code></li>
-<li><strong>النصوص</strong> — جميع أوامر إدارة المعمل مثبتة في <code>/usr/local/bin/</code></li>
-<li><strong>واجهة الويب</strong> (اختيارية) — <a href="#web-ui-lab-builder">lab-builder</a> ومصمم قائم على المتصفح لملفات lab.json</li>
+<li><strong>DNS</strong>: يخدم BIND ‏(<code>named</code>) نطاق المختبر ويمرّر الاستعلامات الخارجية، فتُحل جميع أسماء المختبر من أي عميل يستخدمه</li>
+<li><strong>HTTP</strong>: يقدّم ملفات التجهيز (Ignition وCombustion وcloud-init) في <code>/srv/www/htdocs/lab_creation/</code></li>
+<li><strong>السكربتات</strong>: جميع أوامر إدارة المختبر، مثبّتة في <code>/usr/local/bin/</code></li>
+<li><strong>واجهة الويب</strong> (اختيارية): <a href="#web-ui-lab-builder">lab-builder</a>، أداة لتصميم lab.json في المتصفح</li>
 </ul>
-<p>يتم تشغيل جميع أوامر المستخدم <strong>على جهاز الأتمتة الافتراضي</strong>. يتصل عبر SSH مع المراقب أو المراقبين والأجهزة الافتراضية المنشأة. بعد الإعداد الأول لا يتطلب الوصول المباشر إلى المراقب.</p>
-<h3 id="under-the-hood">تحت الغطاء</h3>
-<p>أدوات سطر الأوامر وكل إضافة هي Python 3.11 وتوجد في <code>libs/</code> و <code>scripts/</code> ومثبتة في <code>/usr/local/lib/lab_creation/</code>. يتم تنظيمها حول مجموعة صغيرة من وحدات مكتبة مشتركة (<code>lab_creation.py</code> و <code>backends.py</code> و <code>services.py</code> و <code>spacecmd_common.py</code> إلخ) التي لا تعتمد على بعضها البعض. ينفذ إنشاء الجهاز الافتراضي عبر واجهة <code>VMBackend</code> قابلة للاستبدال مع عشر تطبيقات: libvirt و Harvester وثماني سحب عامة (انظر <a href="#compute-backends">الواجهات الخلفية الحسابية</a>). لا تتغير الإضافات وكود التنسيق بينها. يتم أرشفة تطبيقات Bash التي استبدلت تحت <code>legacy_bash/</code> — بما في ذلك <code>install_ds389</code> الأصلي.</p>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p>تُشغَّل جميع أوامر المستخدم <strong>على آلة الأتمتة الافتراضية</strong>. تتصل هذه الآلة عبر SSH بالمضيفات وبالأجهزة الافتراضية المنشأة. لا حاجة إلى الوصول المباشر إلى المضيف بعد الإعداد الأولي.</p>
+<h3 id="under-the-hood">من الداخل</h3>
+<p>أدوات سطر الأوامر وجميع الإضافات مكتوبة بلغة Python 3.11 في <code>libs/</code> و<code>scripts/</code>، وتُثبَّت في <code>/usr/local/lib/lab_creation/</code>. وهي منظّمة حول مجموعة صغيرة من وحدات المكتبة المشتركة (<code>lab_creation.py</code> و<code>backends.py</code> و<code>services.py</code> و<code>spacecmd_common.py</code> وغيرها) بدلًا من أن يعتمد بعضها على بعض. يمر إنشاء الأجهزة الافتراضية عبر واجهة <code>VMBackend</code> قابلة للتبديل لها عشرة تطبيقات: libvirt وHarvester وثماني سحابات عامة (راجع <a href="#compute-backends">خلفيات الحوسبة</a>)، فلا تتغير الإضافات ولا شيفرة التنسيق بينها. أما تطبيقات bash القديمة التي استُبدلت فمؤرشفة في <code>legacy_bash/</code>، بما فيها <code>install_ds389</code> الأصلي.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
-<h2 id="how-it-works">كيفية عمله</h2>
-<h3 id="deploy-pipeline">خط أنابيب النشر</h3>
-<p>ينفذ <code>setup_lab.py</code> تسلسلاً ثابتًا من المراحل. يتم تخطي المرحلتين الخاصتين بـ Kubernetes تمامًا لمعمل بدون قسم <code>kclusters</code>:</p>
+<h2 id="how-it-works">آلية العمل</h2>
+<h3 id="deploy-pipeline">مسار النشر</h3>
+<p>يشغّل <code>setup_lab.py</code> سلسلة ثابتة من المراحل؛ وتُتخطى المرحلتان الخاصتان بـ Kubernetes كليًا في مختبر يقتصر على الأجهزة الافتراضية (بلا قسم <code>kclusters</code>):</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
-<h3 id="vm-provisioning">توفير الجهاز الافتراضي</h3>
-<p>ينشأ كل جهاز افتراضي كالتالي:
-1. تحديد أي مراقب KVM يقيم عليه (الحقل الصريح <code>kvm_host</code> أو الاختيار التلقائي بالسعة الحرة — انظر <a href="#multi-host-labs">معامل متعددة الأجهزة</a>)
-2. نسخ وتوسيع صورة QCOW2 المصدر على ذلك المراقب
-3. إنشاء ملفات المؤقت من القوالب وفقًا لـ <code>config_method</code>
-4. تسجيل إدخال DNS في BIND
-5. تشغيل <code>virt-install</code> على المراقب عبر SSH
+<h3 id="vm-provisioning">تجهيز الأجهزة الافتراضية</h3>
+<p>يُنشأ كل جهاز افتراضي على النحو التالي:
+1. تحديد مضيف KVM الذي يوضع عليه (الحقل الصريح <code>kvm_host</code>، أو الاختيار التلقائي حسب السعة المتاحة؛ راجع <a href="#multi-host-labs">المختبرات متعددة المضيفات</a>)
+2. نسخ صورة QCOW2 المصدرية وتغيير حجمها على ذلك المضيف
+3. توليد ملفات التجهيز من القوالب حسب قيمة <code>config_method</code>
+4. تسجيل سجل DNS في BIND
+5. تشغيل <code>virt-install</code> على المضيف عبر SSH
 6. انتظار توفر SSH</p>
-<p>يتم التحكم في طريقة التوفير بواسطة <code>config_method</code> في JSON المعمل (لكل عقدة أو في <code>common</code>):</p>
+<p>تُحدَّد طريقة التجهيز بالحقل <code>config_method</code> في ملف JSON للمختبر (لكل عقدة أو في <code>common</code>):</p>
 <table>
 <thead>
 <tr>
 <th>القيمة</th>
 <th>الطريقة</th>
-<th>تستخدم ل</th>
+<th>تُستخدم لـ</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><em>(فارغ، الافتراضي)</em></td>
+<td><em>(فارغة، الافتراضية)</em></td>
 <td>Ignition + Combustion</td>
 <td>SLE Micro</td>
 </tr>
 <tr>
 <td><code>cloud-init</code></td>
-<td>cloud-init ISO</td>
-<td>openSUSE Leap و Ubuntu</td>
+<td>صورة ISO لـ cloud-init</td>
+<td>openSUSE Leap وUbuntu</td>
 </tr>
 <tr>
 <td><code>virt_customize</code></td>
-<td>يعدل QCOW2 مباشرة على المراقب (<code>virt-customize</code>) — لا يوجد دعم Ignition/cloud-init مطلوب على الضيف</td>
-<td>CentOS 7 و RHEL/Debian القديم أو أي صورة بدون Ignition/cloud-init</td>
+<td>تعديل QCOW2 مباشرة على المضيف (<code>virt-customize</code>) دون حاجة إلى دعم Ignition أو cloud-init في النظام الضيف</td>
+<td>CentOS 7، وDebian/RHEL القديمة، أو أي صورة بلا Ignition/cloud-init</td>
 </tr>
 <tr>
 <td><code>install_iso</code></td>
-<td>التثبيت المأمور من ISO تثبيت فعلي (AutoYaST أو Kickstart أو Preseed أو AutoInstall محدد عبر <code>install_type</code>)</td>
-<td>التوزيعات بدون مسار توفير آخر</td>
+<td>تثبيت آلي من صورة ISO حقيقية للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall، حسب <code>install_type</code>)</td>
+<td>التوزيعات التي لا تتوفر لها طريقة تجهيز أخرى</td>
 </tr>
 </tbody>
 </table>
-<h3 id="compute-backends">الواجهات الخلفية الحسابية</h3>
-<p>حيث تنشأ جهاز المعمل الافتراضي يقرره واجهة <code>VMBackend</code> قابلة للاستبدال. يتم حلها مرة واحدة لكل عقدة من حقل <code>backend</code> الخاص بها (أو من <code>cloud_account</code> الذي يعني الواجهة الخلفية). الافتراضي هو <code>libvirt</code>. تتحدث كل إضافة وسكريبت تنسيق مع الواجهة الخلفية المحللة بنفس الطريقة بغض النظر عما هي:</p>
+<h3 id="compute-backends">خلفيات الحوسبة</h3>
+<p>تحدد واجهة <code>VMBackend</code> القابلة للتبديل مكان إنشاء الجهاز الافتراضي لكل عقدة، ويُحسم ذلك مرة واحدة لكل عقدة من حقل <code>backend</code> (أو من <code>cloud_account</code> الذي يحدد الخلفية ضمنًا). الخلفية الافتراضية هي <code>libvirt</code>. تتعامل جميع الإضافات وسكربتات التنسيق مع الخلفية المحددة بالطريقة نفسها أيًا كانت:</p>
 <table>
 <thead>
 <tr>
-<th>الواجهة الخلفية</th>
-<th>حيث يعمل الجهاز الافتراضي</th>
+<th>Backend</th>
+<th>مكان تشغيل الجهاز الافتراضي</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>libvirt</code></td>
-<td>مراقب KVM/QEMU تشغله (الافتراضي)</td>
+<td>مضيف KVM/QEMU تديره بنفسك (الافتراضي)</td>
 </tr>
 <tr>
 <td><code>harvester</code></td>
-<td>عنقود Harvester HCI كـ KubeVirt VirtualMachines</td>
+<td>عنقود Harvester HCI، على شكل VirtualMachines في KubeVirt</td>
 </tr>
 <tr>
 <td><code>aws</code></td>
@@ -375,49 +375,166 @@ footer.site {
 </tr>
 </tbody>
 </table>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بمجرد تشغيل الأجهزة الافتراضية ينشر <code>setup_lab.py</code> Kubernetes على كل عقدة وفقًا لقسم <code>kclusters</code> من JSON. يدعم كل من RKE2 و K3s. بمجرد أن يكون عنقود جاهزًا تعمل إضافاته بالتتابع. الإضافات الافتراضية (المخصصة لعقدة فردية بدلاً من عنقود) تعمل لاحقًا مرة يكون هذا العقدة موفرة.</p>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة.</p>
+<h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
+<p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
+<pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
+</code></pre>
+<p>ثم اختر لكل عقدة في ملف JSON للمختبر:
+- <strong>تثبيتها صراحةً</strong>: <code>"kvm_host": "hv2.mydemo.lab"</code> في إعدادات تلك العقدة، أو
+- <strong>الاختيار التلقائي</strong>: احذف <code>kvm_host</code>، فتوضع العقدة على المضيف المضبوط الذي تتوفر لديه حاليًا موارد كافية من المعالج والذاكرة والقرص (يُفحص مباشرة عبر SSH).</p>
+<p>تتصرف العقد التي لا تحدد <code>kvm_host</code>، والبيئات التي فيها مضيف واحد فقط، تمامًا كما قبل وجود هذه الميزة: لا يتغير شيء في مختبر بمضيف واحد.</p>
+<h3 id="cross-cloud-wireguard-overlay">شبكة WireGuard المتراكبة بين السحابات</h3>
+<p>لا تستطيع عقدة مختبر سحابية عادةً الوصول عبر الشبكة إلى الشبكة الخاصة لحساب سحابي آخر ولا إلى مختبر libvirt المنزلي، فكل منها شبكة أو VPC معزولة. يؤدي <code>common.overlay: true</code> في ملف JSON للمختبر إلى توجيه مواقع هذا المختبر بعضها إلى بعض، من موقع إلى موقع وعبر شبكاتها الفرعية الحقيقية، من خلال شبكة WireGuard متراكبة نجمية (<code>libs/overlay.py</code>):</p>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/overlay.svg" alt="Cross-cloud WireGuard overlay: site gateways connect to a hub; nodes route through their own gateway" loading="lazy"><img class="diagram--dark" src="media/diagrams/overlay-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<p>لا ينضم إلى الشبكة المتراكبة سوى بوابة كل موقع، ولا تنضم إليها أي عقدة مختبر منفردة. "الموقع" هو مختبر libvirt المنزلي أو حساب سحابي واحد؛ وبوابته هي آلة الأتمتة الافتراضية للموقع المنزلي (<code>mysource</code> في <code>/etc/lab_creation.cfg</code>)، أو في الحساب السحابي جهاز افتراضي صغير مخصص يُنشأ أو يُعاد استخدامه تلقائيًا هناك (<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>، بتسمية آلة DNS السحابية نفسها). أما بقية العقد فتحصل فقط على مسار محلي دائم إلى الشبكة الفرعية الحقيقية لكل موقع آخر عبر بوابة موقعها؛ هذه هي الآلية كلها، ولا تنضم أي عقدة إلى WireGuard.</p>
+<p>يحدد <code>OVERLAY_HUB_ACCOUNT</code> (إلزامي، في <code>/etc/lab_creation.cfg</code>) الحساب السحابي الذي تكون آلة بوابته هي المحور، أي الموقع الوحيد ذا عنوان IP عام ثابت يتصل به الجميع. يُستخدم <code>OVERLAY_CIDR</code> (الافتراضي <code>10.99.0.0/16</code>) لعناوين البوابات على النفق فقط، لا لتوجيه الحركة الفعلية؛ و<code>OVERLAY_WG_PORT</code> (الافتراضي <code>51820</code>) هو منفذ استماع المحور. يتم الانضمام والمغادرة ونشر المسارات تلقائيًا ضمن <code>setup_vm.py</code>، ولا شيء آخر يُشغَّل يدويًا.</p>
+<p><strong>قيود معروفة:</strong> لا تُجرى أي تغييرات على DNS (يمكن الوصول إلى العقدة باسمها الحقيقي حين يُحل ذلك الاسم إلى شبكة فرعية موجَّهة، لا قبل ذلك)؛ ولا يُعاد توجيه عقد الموقع المجهزة سابقًا عند انضمام موقع بعيد جديد لاحقًا، بل تُحدَّث فقط عند تجهيز كل عقدة؛ وتتطلب AWS تعطيل "فحص المصدر/الوجهة" لبوابة الموقع لتمرير الحركة (يتم تلقائيًا)، ولا يوجد مقابل لذلك بعد في خلفيات السحابة السبع الأخرى.</p>
+<h3 id="library-loading-order">ترتيب تحميل المكتبات</h3>
+<p>يحمّل كل سكربت الإعدادات بهذا الترتيب:</p>
+<ol>
+<li><code>/etc/lab_creation.defaults</code>: القيم الافتراضية للنظام والمسارات وقوائم الحزم</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code>: التحقق من المدخلات وتحميل الإعدادات</li>
+<li><code>/etc/lab_creation.cfg</code>: إعدادات خاصة بالعقدة (<code>REMOTE_HOST</code> و<code>ROOT_SSH_KEY</code> و<code>VIRT_SRV</code> و<code>KVM_HOSTS</code> وغيرها)</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code>: دوال الأجهزة الافتراضية وDNS والتنسيق</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code>: دوال عناقيد Kubernetes</li>
+</ol>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
 <h2 id="quick-start">البدء السريع</h2>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="requirements">المتطلبات</h3>
 <ul>
-<li>آلة يمكن تشغيل KVM عليها (Intel VT-x أو AMD-V مفعل)</li>
-<li>إمكانية الوصول للإنترنت (أو مرآة محلية) لتحميل الحزم والصور</li>
-<li>صورة QCOW2 لنظام التشغيل المختار في <code>/var/lib/libvirt/images/sources/</code> على المراقب</li>
+<li>جهاز قادر على تشغيل KVM (مع تفعيل Intel VT-x أو AMD-V)</li>
+<li>اتصال بالإنترنت (أو مرآة محلية) لتنزيل الحزم والصور</li>
+<li>صورة QCOW2 لنظام التشغيل المختار في <code>/var/lib/libvirt/images/sources/</code> على المضيف</li>
 </ul>
-<aside class="callout callout-important"><p>لا يحتاج المضيف إلى تثبيت Python مسبقًا: يثبّت أمر الإعداد <code>python311</code> على openSUSE Leap / SLES 15، و<code>python3</code> الخاص بالتوزيعة (3.9 أو أحدث) في غيرها.</p></aside>
+<aside class="callout callout-important"><p>لا يحتاج المضيف إلى تثبيت Python مسبقًا: يثبّت أمر الإعداد <code>python311</code> على openSUSE Leap / SLES 15، و<code>python3</code> الخاص بالتوزيعة (3.9 أو أحدث) في سائر التوزيعات.</p></aside>
 <p>الصور المختبرة:
-- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — موصى بها تستخدم مع Ignition+Combustion
-- openSUSE Leap Micro — مدعومة تستخدم مع cloud-init</p>
-<h3 id="step-1--prepare-the-hypervisor-os">الخطوة 1 — تثبيت نظام تشغيل المضيف (Hypervisor)</h3>
-<p>ثبّت أحد هذه الأنظمة على جهازك: openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora. يكفي تثبيت أدنى أو تثبيت خادم؛ لا حاجة إلى إنشاء جسر أو تثبيت حزم إضافية مسبقًا.</p>
-<p>على مضيفات عائلة RHEL وFedora يكتمل إعداد المضيف، لكن لا يمكن بعدُ إنشاء الآلة الافتراضية للأتمتة عليها: لا تستطيع libguestfs على هذه الأنظمة قراءة نظام ملفات btrfs في صورة openSUSE Leap الخاصة بها. أنشئ عقدة الأتمتة حاليًا على مضيف من عائلة أخرى.</p>
-<h3 id="step-2--bootstrap-the-setup-scripts">الخطوة 2 — تشغيل أمر الإعداد</h3>
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>: موصى بها، تُستخدم مع Ignition+Combustion
+- openSUSE Leap Micro: مدعومة، تُستخدم مع cloud-init</p>
+<h3 id="step-1--prepare-the-hypervisor-os">الخطوة 1: تثبيت نظام تشغيل المضيف</h3>
+<p>ثبّت أحد هذه الأنظمة على جهازك؛ يكفي تثبيت أدنى أو تثبيت خادم، ولا حاجة إلى جسر شبكي أو حزم إضافية مسبقًا:</p>
+<table>
+<thead>
+<tr>
+<th>العائلة</th>
+<th>الإصدارات</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>openSUSE Leap, SLES</td>
+<td>15 (SP6+), 16</td>
+</tr>
+<tr>
+<td>Debian, Ubuntu</td>
+<td>Debian 12 و13؛ Ubuntu 22.04 و24.04</td>
+</tr>
+<tr>
+<td>RHEL, Rocky Linux, AlmaLinux, CentOS Stream, Fedora</td>
+<td>9 و10؛ إصدار Fedora الحالي</td>
+</tr>
+</tbody>
+</table>
+<p>تحصل الإصدارات الأخرى من هذه العائلات على أحدث قائمة حزم مطابقة، مع تحذير بأنها لم تُختبر عليها. يحتاج SLES إلى رمز تسجيل (يُطلب أثناء الإعداد) ما لم يكن المضيف مسجّلًا مسبقًا.</p>
+<p>على مضيفات عائلة RHEL وFedora يكتمل إعداد المضيف، لكن لا يمكن بعد بناء آلة الأتمتة الافتراضية عليها: لا تستطيع libguestfs في هذه الأنظمة قراءة نظام ملفات btrfs في صورة openSUSE Leap. أنشئ عقدة الأتمتة حاليًا على مضيف من عائلة أخرى.</p>
+<details>
+<summary>كتابة وحدة USB قابلة للإقلاع من Linux</summary>
+
+
+<pre><code class="language-shell"># Before inserting USB:
+cat /proc/partitions &gt; /tmp/partb4
+
+# Insert USB, then:
+cat /proc/partitions &gt; /tmp/parta
+
+# Find the new device:
+diff /tmp/part*
+</code></pre>
+
+
+<aside class="callout callout-warning"><p>يؤدي الأمر التالي إلى <strong>محو جميع البيانات</strong> على الجهاز الهدف. تحقق مرتين من <code>sdX</code> مقابل مخرجات <code>diff</code> أعلاه قبل تشغيله.</p></aside>
+
+
+<pre><code class="language-shell"># Write the ISO (replace sdX with your device):
+dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
+</code></pre>
+
+
+</details>
+
+<h3 id="step-2--bootstrap-the-setup-scripts">الخطوة 2: تشغيل أمر الإعداد</h3>
 <p>على المضيف، بصلاحيات root:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>يثبّت الأمر git وPython، وينزّل lab-in-a-box إلى <code>/var/tmp/setup_demo_server/</code>، ثم يسأل عن إعدادات المختبر مع قيم هذا المضيف كقيم افتراضية: شبكة جسر أو NAT، ونطاق DNS للمختبر، وعنوان IP وكلمة مرور root للآلة الافتراضية للأتمتة (ورمز التسجيل على SLES). بعد ذلك يثبّت حزم المضيف، ويجعل بطاقة الشبكة التي تحمل المسار الافتراضي منفذًا للجسر <code>br0</code> مع الاحتفاظ بعنوان المضيف (إذا توقفت البوابة عن الاستجابة تُستعاد إعدادات الشبكة السابقة تلقائيًا)، وينشئ الآلة الافتراضية للأتمتة.</p>
-<p>يمكن أيضًا تمرير كل إجابة كخيار، للتشغيل دون تدخل (مثلًا من cloud-init):</p>
+<p>يثبّت الأمر git وPython، وينزّل lab-in-a-box إلى <code>/var/tmp/setup_demo_server/</code>، ثم يشغّل <code>setup_demo_server/setup_kvm_node.py</code> الذي يأخذ إعدادات المختبر من خياراته ومن قيم هذا المضيف؛ ومع <code>--interactive</code> يسأل عنها واحدًا واحدًا مقترحًا تلك القيم افتراضيًا:</p>
+<ul>
+<li><strong>شبكة المختبر</strong>: يضع <code>bridge</code> أجهزة المختبر الافتراضية على شبكة المضيف المحلية، بينما يستخدم <code>nat</code> شبكة libvirt خاصة بدلًا منها (لحاسوب محمول أو مضيف ببطاقة شبكة واحدة)</li>
+<li><strong>نطاق DNS للمختبر</strong> (الافتراضي <code>mydemo.lab</code>)، و<strong>عنوان IP لآلة الأتمتة الافتراضية</strong> (يُقترح عنوان متاح على شبكة المختبر) و<strong>كلمة مرور root</strong> لها</li>
+<li>على SLES، <strong>رمز التسجيل</strong></li>
+</ul>
+<p>تؤخذ الشبكة والبوابة وخادم DNS والمنطقة الزمنية ومفتاح SSH (<code>~/.ssh/id_ed25519.pub</code>، ويُنشأ إن لم يوجد) من المضيف. تُكتب الإجابات في <code>setup_demo_server/lab.cfg</code>؛ وبعد عرض ملخص (وطلب التأكيد مع <code>--interactive</code>) يقوم الإعداد بما يلي:</p>
+<ol>
+<li>يثبّت حزم المضيف الخاصة بالتوزيعة المكتشفة (ويُفعّل EPEL وCRB على مضيفات عائلة RHEL)؛</li>
+<li>في وضع bridge، يحوّل بطاقة الشبكة التي تحمل المسار الافتراضي إلى منفذ في <code>br0</code> مع الإبقاء على عنوان المضيف. يدعم NetworkManager وnetplan وwicked وsystemd-networkd وifupdown. يستعيد مؤقت إعدادات الشبكة السابقة ما لم تبقَ البوابة تستجيب عبر الجسر، فلا يمكن لتغيير فاشل أن يجعل المضيف غير قابل للوصول؛</li>
+<li>يضبط libvirt وينشئ آلة الأتمتة الافتراضية.</li>
+</ol>
+<p>يمكن تمرير كل إعداد كخيار، مثلًا في تشغيل دون تدخل من cloud-init:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
-  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+  | sudo bash -s -- --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">الخطوة 3 — إعادة التشغيل أو تغيير الإعداد</h3>
-<p>إعادة التشغيل تستخدم الملف الموجود <code>setup_demo_server/lab.cfg</code>؛ والخيار <code>--reconfigure</code> يعيد طرح كل الأسئلة. لتحرير <code>lab.cfg</code> قبل أي تغيير، نزّل الشيفرة فقط:</p>
+<p>دون <code>--root-password</code> (أو <code>LAB_ROOT_PASSWORD</code>)، تُولَّد كلمة مرور وتُعرض في النهاية، ما لم يطلبها <code>--interactive</code>. شغّل <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> لعرض جميع الخيارات.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">الخطوة 3: إعادة تشغيل الإعداد أو تغييره</h3>
+<p>عند تشغيل الأمر مرة أخرى يُستخدم ملف <code>lab.cfg</code> الموجود كما هو؛ والخيارات المقابلة لإعداداته (مثل <code>--network-mode nat</code>) تحدّثها أولًا، بينما يعيد <code>--reconfigure</code> طرح جميع الأسئلة. لمراجعة <code>lab.cfg</code> أو تعديله قبل تغيير أي شيء، نزّل الشيفرة فقط:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p>الأمر <code>setup_kvm_node.py &lt;IP&gt;</code> يُعدّ جهازًا آخر عبر SSH؛ و<code>setup_kvm_node.py --help</code> يعرض كل الخيارات.</p>
-<h3 id="step-4--configure-the-automation-vm">الخطوة 4 — تكوين جهاز الأتمتة الافتراضي</h3>
-<p>اتصل عبر SSH بجهاز الأتمتة الافتراضي وثبّت سكريبتات المعمل:</p>
+<p>لإعداد جهاز آخر من هذا الجهاز، مرّر عنوانه؛ تُنسخ الشيفرة إليه عبر SSH وتنطبق الخيارات نفسها:</p>
+<pre><code class="language-shell">python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>أهم الإعدادات في <code>lab.cfg</code>:</p>
+<table>
+<thead>
+<tr>
+<th>الإعداد</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_network_mode</code>, <code>_bridge_name</code>, <code>_bridge_nic</code></td>
+<td>شبكة جسرية أو NAT؛ الجسر الذي تتصل به أجهزة المختبر الافتراضية وبطاقة الشبكة التي تصبح منفذًا له</td>
+</tr>
+<tr>
+<td><code>_mynet</code>, <code>_mygw</code>, <code>_mydns</code>, <code>_myip</code></td>
+<td>شبكة المختبر والبوابة وخادم DNS الأعلى وعنوان آلة الأتمتة الافتراضية</td>
+</tr>
+<tr>
+<td><code>ROOT_PWD_HASH</code>, <code>ROOT_SSH_PUB_KEY</code></td>
+<td>تجزئة كلمة مرور root لآلة الأتمتة الافتراضية ومفتاح SSH المسموح له بتسجيل الدخول</td>
+</tr>
+<tr>
+<td><code>AUTOMATION_HOSTNAME</code></td>
+<td>اسم مضيف آلة الأتمتة الافتراضية (مثل <code>automation.mydemo.lab</code>)</td>
+</tr>
+<tr>
+<td><code>_QCOW_IMAGE</code></td>
+<td>اسم ملف صورة QCOW2 المصدرية</td>
+</tr>
+</tbody>
+</table>
+<h3 id="step-4--configure-the-automation-vm">الخطوة 4: إعداد آلة الأتمتة الافتراضية</h3>
+<p>اتصل بآلة الأتمتة الافتراضية عبر SSH وثبّت سكربتات المختبر:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
 cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
-<p>الإعدادات المهمة في <code>lab_creation.cfg</code>:</p>
+<p>أهم الإعدادات في <code>lab_creation.cfg</code>:</p>
 <table>
 <thead>
 <tr>
@@ -428,19 +545,19 @@ vim /etc/lab_creation.cfg
 <tbody>
 <tr>
 <td><code>REMOTE_HOST</code></td>
-<td>اسم مضيف أو IP مراقب KVM (الأساسي)</td>
+<td>اسم المضيف أو عنوان IP لمضيف KVM (الرئيسي)</td>
 </tr>
 <tr>
 <td><code>KVM_HOSTS</code></td>
-<td><em>(اختياري)</em> قائمة مفصولة بمسافات من أجهزة المراقب الإضافية لـ <a href="#multi-host-labs">معمل متعددة الأجهزة</a></td>
+<td><em>(اختياري)</em> قائمة مفصولة بمسافات بالمضيفات الإضافية لـ<a href="#multi-host-labs">مختبر متعدد المضيفات</a></td>
 </tr>
 <tr>
 <td><code>ROOT_SSH_KEY</code></td>
-<td>محتوى المفتاح العام SSH للإدراج في الأجهزة الافتراضية</td>
+<td>محتوى مفتاح SSH العام الذي يُحقن في الأجهزة الافتراضية</td>
 </tr>
 <tr>
 <td><code>VIRT_SRV</code></td>
-<td>URI اتصال libvirt (مثل <code>qemu+ssh://root@hypervisor/system</code>)</td>
+<td>عنوان URI للاتصال بـ libvirt (مثل <code>qemu+ssh://root@hypervisor/system</code>)</td>
 </tr>
 <tr>
 <td><code>NETWORK</code></td>
@@ -448,49 +565,1209 @@ vim /etc/lab_creation.cfg
 </tr>
 </tbody>
 </table>
-<h3 id="step-5--point-your-client-dns-at-the-automation-vm">الخطوة 5 — الإشارة إلى DNS للعميل جهاز الأتمتة الافتراضي</h3>
-<p>لحل أسماء المضيفين من سطح المكتب الخاص بك:</p>
+<p><strong>HTTP و HTTPS.</strong> تقدّم آلة الأتمتة الافتراضية ملفاتها على المنفذ 80 (HTTP) والمنفذ 443 (HTTPS، بشهادة موقّعة ذاتيًا في <code>/etc/lab_creation/tls/</code>). تنزّل برامج التثبيت (AutoYaST وkickstart وpreseed) وHelm الملفات عبر HTTPS وتقبل الشهادة الموقّعة ذاتيًا. اضبط <code>PROVISIONING_TLS_VERIFY=1</code> للتحقق منها، أو <code>PROVISIONING_BASE_URL</code> (مثل <code>http://192.168.88.250</code>) لاستخدام عنوان آخر أو للعودة إلى HTTP. يستخدم إقلاع iPXE الشبكي في Harvester بروتوكول HTTP دائمًا، لأن iPXE لا يقبل الشهادات الموقّعة ذاتيًا.</p>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">الخطوة 5: توجيه DNS العميل إلى آلة الأتمتة الافتراضية</h3>
+<p>لكي تُحل أسماء المضيفات من حاسوبك:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
 nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
 
-# أو أضفه إلى /etc/resolv.conf:
+# Or add to /etc/resolv.conf:
 nameserver &lt;AUTOMATION_IP&gt;
 </code></pre>
-<h3 id="step-6--build-your-first-lab">الخطوة 6 — بناء أول معمل</h3>
+<h3 id="step-6--build-your-first-lab">الخطوة 6: بناء أول مختبر</h3>
 <pre><code class="language-shell">setup_lab.py examples/cluster.json.template
 </code></pre>
-<p>ستجد نقاط بداية أكثر أدناه في <a href="#examples">أمثلة</a>. بدلاً من ذلك يمكنك فتح <a href="#web-ui-lab-builder">الواجهة</a> بدلاً من كتابة JSON يدويًا.</p>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p>راجع <a href="#examples">الأمثلة</a> أدناه لنقاط بداية أخرى، أو افتح <a href="#web-ui-lab-builder">واجهة الويب</a> بدلًا من كتابة JSON يدويًا.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
 <h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
-<p>مصمم ملفات <code>lab.json</code> قائم على المتصفح يقيّم <strong>مكتبات Python الخاصة بالمشروع في وقت التشغيل</strong>. لا يملك معرفة مدمجة عن أي إضافة. حدد مكون وسيُصيّر نموذج مباشرة من مخططها. أضفِ حقل إلى سكريبت وستعرضه الواجهة دون تغييرات الواجهة الأمامية.</p>
-<pre><code class="language-shell"># الطريقة الأسرع لتجربتها — لا توجد مسؤوليات خارج Python:
+<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية.</p>
+<pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
-<p>للإنتاج (Apache أو خدمة systemd/init مستقلة بالإضافة إلى HTTPS فوق شهادة موقعة ذاتيًا) انظر <strong><a href="webui.html">README.webui.md</a></strong>. هناك توصيف الأنماط الثلاثة و HTTP API وحل المشاكل.</p>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p>للنشر في بيئة الإنتاج (Apache، أو خدمة مستقلة لا تعتمد على systemd/init، مع HTTPS عبر شهادة موقّعة ذاتيًا تُولَّد مرة واحدة)، راجع <strong><a href="webui.html">README.webui.md</a></strong>؛ فهو يغطي أوضاع النشر الثلاثة وواجهة HTTP البرمجية وحل المشكلات.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
-<h2 id="lab-definition-format">صيغة تعريف المعمل</h2>
-<p>تُعرّف المعامل كملفات JSON أو YAML (يُكتشف تلقائيًا انظر الملاحظة أدناه). التنسيق الحالي يدعم عناقيد Kubernetes متعددة لكل معمل (<code>kclusters</code>). التنسيق لعنقود واحد (<code>cluster</code>) يجد في <code>examples/cluster.json.template</code>.</p>
-<p>المزيد من الأقسام (خطوات توضيحية تفصيلية والمراجع والأمثلة) موجودة في الوثائق الكاملة على <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<h2 id="lab-definition-format">صيغة تعريف المختبر</h2>
+<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>.</p>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<aside class="callout callout-note"><p>يعمل ملف <code>.yaml</code>/<code>.yml</code> أيضًا: تُكتشف الصيغة من الامتداد (أو تُجرَّب YAML إن لم يكن الملف JSON صالحًا)، بالطريقة نفسها في الفحص المسبق لـ <code>setup_lab.py</code> وفي <code>install_&lt;addon&gt; --validate</code> وفي مسار التحميل الخاص بكل إضافة. يتطلب إدخال YAML وجود <code>pyyaml</code> (<code>pip install pyyaml</code>) على آلة الأتمتة الافتراضية؛ ودونه تظهر رسالة خطأ واضحة تطلب تثبيته، لا فشل صامت يقبل JSON فقط.</p></aside>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;node101.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.101&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
+      &quot;kcluster&quot;: &quot;cluster1&quot;           // which kclusters entry this node belongs to
+    },
+    &quot;node102.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.102&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;kcluster&quot;: &quot;cluster1&quot;
+    }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;:     &quot;24576&quot;,
+    &quot;VM_DSK&quot;:     &quot;80&quot;,
+    &quot;VM_CPU&quot;:     &quot;6&quot;,
+    &quot;VM_BOOT&quot;:    &quot;uefi&quot;,             // uefi (default), firmware=bios, bios, uefi=off
+    &quot;mymask&quot;:     &quot;24&quot;,
+    &quot;mygw&quot;:       &quot;192.168.88.1&quot;,
+    &quot;mydns&quot;:      &quot;192.168.88.73&quot;,
+    &quot;mynet_reverse&quot;: &quot;88.168.192&quot;
+  },
+  &quot;kclusters&quot;: {
+    &quot;cluster1&quot;: {
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_rel&quot;:   &quot;stable&quot;,
+      &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
+      &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
+    }
+  },
+  &quot;rancher&quot;: {
+    &quot;rancher_shorthn&quot;:   &quot;rancher&quot;,
+    &quot;rancher_rel&quot;:       &quot;rancher-prime&quot;,
+    &quot;rancher_repo_url&quot;:  &quot;https://charts.rancher.com/server-charts/prime&quot;,
+    &quot;rancher_helm_rel&quot;:  &quot;rancher&quot;,
+    &quot;rancher_helm_chart&quot;: &quot;rancher-prime/rancher&quot;,
+    &quot;rancher_Version&quot;:   &quot;--version 2.13.3&quot;,
+    &quot;cert_manager_ver&quot;:  &quot;--version v1.14.4&quot;
+  }
+}
+</code></pre>
+<details>
+<summary>المختبر نفسه بصيغة YAML</summary>
+
+
+<pre><code class="language-yaml">nodes:
+  node101.mydemo.lab:
+    myip: &quot;192.168.88.101&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c1&quot;
+    INSTALL_RKE2_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
+    kcluster: cluster1          # which kclusters entry this node belongs to
+  node102.mydemo.lab:
+    myip: &quot;192.168.88.102&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c2&quot;
+    INSTALL_RKE2_TYPE: agent
+    kcluster: cluster1
+
+common:
+  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  VM_MEM: &quot;24576&quot;
+  VM_DSK: &quot;80&quot;
+  VM_CPU: &quot;6&quot;
+  VM_BOOT: uefi                # uefi (default), firmware=bios, bios, uefi=off
+  mymask: &quot;24&quot;
+  mygw: &quot;192.168.88.1&quot;
+  mydns: &quot;192.168.88.73&quot;
+  mynet_reverse: &quot;88.168.192&quot;
+
+kclusters:
+  cluster1:
+    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_rel: stable
+    mydomain: mydemo.lab
+    addons: [rancher, longhorn]
+
+rancher:
+  rancher_shorthn: rancher
+  rancher_rel: rancher-prime
+  rancher_repo_url: https://charts.rancher.com/server-charts/prime
+  rancher_helm_rel: rancher
+  rancher_helm_chart: rancher-prime/rancher
+  rancher_Version: &quot;--version 2.13.3&quot;
+  cert_manager_ver: &quot;--version v1.14.4&quot;
+</code></pre>
+
+
+</details>
+
+<p>حقول اختيارية على مستوى العقدة:</p>
+<table>
+<thead>
+<tr>
+<th>الحقل</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>addons</code></td>
+<td>قائمة الإضافات التي تُشغَّل لهذا الجهاز الافتراضي فقط؛ راجع أدناه تجاوز الإعدادات لكل عقدة</td>
+</tr>
+<tr>
+<td><code>config_method</code></td>
+<td>تجاوز طريقة التجهيز (<code>cloud-init</code> أو <code>virt_customize</code> أو <code>install_iso</code>)</td>
+</tr>
+<tr>
+<td><code>kvm_host</code></td>
+<td>تثبيت هذا الجهاز الافتراضي على مضيف محدد في <a href="#multi-host-labs">مختبر متعدد المضيفات</a></td>
+</tr>
+<tr>
+<td><code>extra_dsk</code></td>
+<td>أقراص إضافية تُرفق: <code>"/dev/sdb"</code>، أو <code>"/dev/sdb,bus=scsi"</code> لتغيير الناقل الافتراضي لقرص بعينه</td>
+</tr>
+<tr>
+<td><code>salt_states</code></td>
+<td>حالات Salt التي تُطبَّق (في طريقة cloud-init فقط)</td>
+</tr>
+<tr>
+<td><code>VM_MACHINE</code></td>
+<td>تجاوز نوع الجهاز في virt-install: <code>""</code> (الافتراضي، اختيار virt-install وهو حاليًا <code>q35</code>) أو <code>"pc"</code> (i440fx القديم)، لنظام ضيف قديم لا تجد نواته أو GRUB قرص الجذر مع q35؛ راجع <a href="#deploying-a-legacy-image-centos-7">نشر صورة قديمة (CentOS 7)</a></td>
+</tr>
+</tbody>
+</table>
+<p><strong>تجاوز إعدادات الإضافة لكل عقدة:</strong> لكل إضافة قسم إعدادات مشترك واحد في المستوى الأعلى
+(مثل <code>client_registration</code> في مثال SMLM السابق) تستخدمه كل عقدة تذكرها
+في <code>addons</code>. وعندما تحتاج عقد مختلفة فعلًا إلى قيم مختلفة للإضافة نفسها (الحالة التي
+دفعت إلى ذلك: مختبر يسجّل أنظمة تشغيل كثيرة مختلفة في خادم Uyuni/SMLM مشترك،
+وتحتاج كل عقدة إلى <code>client_registration_activation_key</code> <em>خاص بها</em>)، اجعل مدخل
+<code>addons[]</code> لتلك العقدة تجاوزًا متداخلًا بدلًا من سلسلة نصية بسيطة:</p>
+<pre><code class="language-jsonc">&quot;nodes&quot;: {
+  &quot;mercury.mydemo.lab&quot;: {
+    &quot;addons&quot;: [
+      { &quot;client_registration&quot;: { &quot;client_registration_activation_key&quot;: &quot;1-sles15sp7&quot; } }
+    ]
+  },
+  &quot;callisto.mydemo.lab&quot;: {
+    &quot;addons&quot;: [
+      &quot;mariadb&quot;,
+      { &quot;client_registration&quot;: { &quot;client_registration_activation_key&quot;: &quot;1-debian13&quot; } }
+    ]
+  }
+}
+</code></pre>
+<p>يتصرف المدخل النصي البسيط <code>"mariadb"</code> تمامًا كما في السابق (يُطبَّق القسم المشترك <code>mariadb</code> وحده).
+أما الصيغة <code>{"client_registration": {...}}</code> فتتجاوز <em>تلك الحقول فقط</em>، <em>لتلك العقدة وحدها</em>؛
+وكل ما لا يذكره التجاوز (الخادم، المستخدم الإداري، …) يبقى مأخوذًا من القسم المشترك
+<code>client_registration</code>. يعمل ذلك بالطريقة نفسها لأي إضافة، لا لـ
+<code>client_registration</code> وحدها؛ إذ تدعمه كل إضافة <code>install_&lt;addon&gt;.py</code> بقراءة إعداداتها عبر
+<code>k8s.addon_node_config(definition, "&lt;addon&gt;", vm_name)</code> بدلًا من <code>definition.get("&lt;addon&gt;", {})</code>
+مباشرة؛ راجع <code>addon_entry_name()</code>/<code>addon_entry_overrides()</code> في <code>libs/apps.py</code>، وهو التحليل
+المشترك الذي تمر به كل شيفرة تستخدم قائمة <code>addons[]</code>.</p>
+<p>حقول kcluster الاختيارية:</p>
+<table>
+<thead>
+<tr>
+<th>الحقل</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgm_node</code></td>
+<td>اسم مضيف العقدة التي تشغّل مثبّتات إضافات العنقود؛ الافتراضي هو أول عقدة خادم</td>
+</tr>
+</tbody>
+</table>
+<p>يقبل كل سكربت إضافة أيضًا <code>--schema</code> (اسم بديل لـ <code>--input-definition</code>)، فيطبع مفاتيح إعداداته بصيغة JSON أو YAML قابلة للقراءة آليًا، وهو المخطط نفسه الذي تقرؤه <a href="#web-ui-lab-builder">واجهة الويب</a> لبناء نماذجها:</p>
+<pre><code class="language-shell">install_longhorn --schema
+setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
+</code></pre>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
+<hr />
+<h2 id="examples">أمثلة</h2>
+<h3 id="minimal-single-vm-lab">أصغر مختبر بجهاز افتراضي واحد</h3>
+<p>أصغر مختبر ممكن: جهاز افتراضي واحد دون Kubernetes:</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
+    &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
+  }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py standalone.json
+</code></pre>
+<h3 id="rke2--rancher--longhorn-the-hello-world-cluster">RKE2 + Rancher + Longhorn (عنقود "hello world")</h3>
+<p>عنقود من عقدتين مع منصة إدارة وتخزين موزّع؛ راجع المثال الكامل في <a href="#lab-definition-format">صيغة تعريف المختبر</a> أعلاه.</p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+# Re-run later, skipping any VM that's already up and reachable:
+setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<h3 id="spreading-a-cluster-across-two-hosts">توزيع عنقود على مضيفين</h3>
+<p>ثبّت الخادم على مضيف واحد، ودع الوكلاء يوضعون تلقائيًا على أي من <a href="#multi-host-labs">المضيفات المضبوطة</a> تتوفر فيه مساحة:</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;srv1.mydemo.lab&quot;:   { &quot;myip&quot;: &quot;192.168.88.10&quot;, &quot;kvm_host&quot;: &quot;hv1.mydemo.lab&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
+}
+</code></pre>
+<h3 id="suse-multi-linux-manager-uyuni-server--a-registered-client">خادم SUSE Multi-Linux Manager (Uyuni) + عميل مسجّل</h3>
+<p>أنشئ خادم Uyuni بمفتاح تفعيل، ثم سجّل جهازًا افتراضيًا ثانيًا لديه كعميل Salt؛ راجع <a href="#available-addons">الإضافات المتاحة</a> لمجموعة الميزات الكاملة (<code>orgs</code> وRBAC وContent Lifecycle Management والتكامل مع Ansible وغيرها):</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
+    &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;uyuni&quot;: {
+    &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
+    &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
+  },
+  &quot;client_registration&quot;: {
+    &quot;client_registration_server_type&quot;: &quot;uyuni&quot;,
+    &quot;client_registration_server&quot;: &quot;uyuni.mydemo.lab&quot;,
+    &quot;client_registration_activation_key&quot;: &quot;1-lab-clients&quot;
+  }
+}
+</code></pre>
+<h3 id="deploying-a-legacy-image-centos-7">نشر صورة قديمة (CentOS 7)</h3>
+<p>لا يتضمن CentOS 7 (ولا صور <code>.qcow2</code> الجاهزة القديمة مثله) أيًّا من Ignition/Combustion أو
+cloud-init، لذا يجب أن تكون قيمة <code>config_method</code> هي <code>virt_customize</code> (راجع
+<a href="#vm-provisioning">تجهيز الأجهزة الافتراضية</a>)، إذ يعدّل نظام ملفات qcow2 مباشرة بدلًا من الاعتماد
+على وكيل داخل النظام الضيف. ويهم تجاوزان آخران لصورة بهذا القِدم:</p>
+<ul>
+<li><code>VM_BOOT: "bios"</code>: يتوقع GRUB في CentOS 7 نظام BIOS التقليدي، لا UEFI الافتراضي في هذا المشروع.</li>
+<li><code>VM_MACHINE: "pc"</code>: يعمل مع صورة CentOS 7 GenericCloud لعام 2015 (النواة
+  <code>3.10.0-229</code>). عند إقلاعها بنوع الجهاز الافتراضي في virt-install (حاليًا <code>q35</code>) تتوقف إلى الأبد
+  في صدفة الطوارئ الخاصة بـ dracut (<code>Not all disks have been found</code>)، لأن قرص الجذر virtio-blk
+  لا يظهر في الوقت المناسب مع طوبولوجيا PCIe في Q35. أما القرص نفسه فيقلع دون مشكلة
+  مع شريحة i440fx القديمة (<code>"pc"</code>). هذا عدم توافق بين الشريحة والنواة القديمة، وليس أمرًا
+  خاصًا بهذا المشروع: ينطبق التجاوز نفسه على أي نظام ضيف قديم بما يكفي.</li>
+</ul>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;legacy1.mydemo.lab&quot;: {
+      &quot;myip&quot;: &quot;192.168.88.120&quot;,
+      &quot;config_method&quot;: &quot;virt_customize&quot;,
+      &quot;ISO_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
+      &quot;VM_BOOT&quot;: &quot;bios&quot;,
+      &quot;VM_MACHINE&quot;: &quot;pc&quot;
+    }
+  },
+  &quot;common&quot;: { &quot;VM_MEM&quot;: &quot;2048&quot;, &quot;VM_DSK&quot;: &quot;30&quot;, &quot;VM_CPU&quot;: &quot;1&quot;, &quot;VM_ROOT_PASS&quot;: &quot;12345678&quot; }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py legacy.json
+</code></pre>
+<p>يضبط <code>VM_ROOT_PASS</code> (في <code>common</code> أو لكل عقدة) كلمة مرور root التي يكتبها <code>virt_customize</code>
+مباشرة في الصورة؛ احذفه لإعادة استخدام <code>ROOT_PWD_HASH</code> من <code>lab_creation.cfg</code>، وهو البديل
+نفسه الذي يستخدمه cloud-init وIgnition.</p>
+<p>توجد توزيعات أخرى (AlmaLinux وDebian وRocky Linux وAlibaba Cloud Linux، ومحاولة موثقة
+لم تنجح بعد مع Raspberry Pi OS) في <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/EXAMPLES.md">EXAMPLES.md</a></strong>، وهي منفصلة
+كي لا يكبر هذا القسم بلا حدود.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
+<hr />
+<h2 id="step-by-step-walkthroughs">أدلة خطوة بخطوة</h2>
+<p><a href="#examples">الأمثلة</a> أعلاه نقاط بداية للنسخ واللصق. أما هذه الأدلة الثلاثة فتشرح سيناريوهات حقيقية كاملة من البداية إلى النهاية: ما الذي تشغّله، وما الذي يحدث في كل خطوة، وكيف تتحقق من أنه نجح فعلًا. كل حقل JSON وكل صيغة أمر أدناه مطابقان لمجموعة اختبارات المشروع نفسه (<code>tests/run_tests.sh</code>) ولشيفرته.</p>
+<h3 id="walkthrough-1--your-first-cluster-rke2--rancher--longhorn">الدليل 1: عنقودك الأول، RKE2 + Rancher + Longhorn</h3>
+<p>الهدف: جهازان افتراضيان بنظام SLE Micro، وعنقود RKE2، وRancher للإدارة، وLonghorn للتخزين، يمكن الوصول إليها من متصفحك في النهاية.</p>
+<ol>
+<li><strong>اكتب ملف المختبر.</strong> احفظه باسم <code>rancher-cluster.json</code> (عدّل عناوين IP والشبكة حسب نطاق مختبرك):</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>ابنِه:</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
+<p>يفحص <code>setup_lab.py</code> الملف تلقائيًا قبل أي شيء آخر: عناوين IP الخاطئة، والإشارة إلى <code>kcluster</code> غير موجود، و<code>ISO_IMAGE</code> المفقود، وأخطاء مشابهة تُكتشف وتُعرض (<code>✗ Preflight FAILED — N error(s)</code>) دون إنشاء أي شيء، بدلًا من الفشل في منتصف الطريق. أما الملف السليم فيعرض <code>✓ Preflight passed</code> وينتقل مباشرة إلى البناء.</p>
+<p>بالترتيب: يسجّل العقدتين في DNS ← ينشئ الجهازين الافتراضيين (ينسخ صورة QCOW2، ويولّد ملفات Combustion، ويقلعهما، وينتظر SSH) ← يثبّت RKE2 على <code>node101</code> كخادم ثم على <code>node102</code> كوكيل ← يثبّت <code>rancher</code> و<code>longhorn</code> على عقدة إدارة العنقود (<code>mgm_node</code>، وافتراضيًا أول عقدة خادم، وهي هنا <code>node101</code>). يستغرق عنقود من عقدتين مع Rancher عادةً بين 15 و25 دقيقة، معظمها في إقلاع RKE2 وتثبيت Rancher عبر Helm.</p>
+<ol start="3">
+<li><strong>تحقق من حل أسماء DNS</strong> (من حاسوبك، بعد <a href="#step-5--point-your-client-dns-at-the-automation-vm">توجيهه إلى DNS آلة الأتمتة الافتراضية</a>):</li>
+</ol>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
+<p>يجب أن يعيد كلاهما <code>192.168.88.101</code> (اسم مضيف ingress الخاص بـ Rancher هو قيمة <code>rancher_shorthn</code>، أي <code>rancher</code>، ضمن <code>mydomain</code> الخاص بالعنقود).</p>
+<ol start="4">
+<li>
+<p><strong>سجّل الدخول.</strong> افتح <code>https://rancher.mydemo.lab</code> (شهادة موقّعة ذاتيًا، فسيحذّرك المتصفح مرة واحدة) وسجّل الدخول بقيمة <code>rancher_initial_pwd</code> من <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية.</p>
+</li>
+<li>
+<p><strong>كرّر دون إعادة بناء كل شيء.</strong> هل غيّرت إعدادات عقدة، أو تعطل جهاز افتراضي؟ أعد التشغيل مع <code>--keep</code>: أي جهاز افتراضي موجود ويطابق عنوان IP/MAC المحدد له ويمكن الوصول إليه عبر SSH يُترك كما هو؛ ولا يُعاد إنشاء إلا ما هو مفقود أو معطل فعلًا:</p>
+</li>
+</ol>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<ol start="6">
+<li><strong>أزله</strong> عندما تنتهي:</li>
+</ol>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
+<h3 id="walkthrough-2--suse-multi-linux-manager-uyuni-server-with-a-registered-client">الدليل 2: خادم SUSE Multi-Linux Manager (Uyuni) مع عميل مسجّل</h3>
+<p>الهدف: خادم Uyuni بمفتاح تفعيل حقيقي، وجهاز افتراضي ثانٍ يسجّل نفسه لديه كعميل يديره Salt. <strong>اختُبر فعليًا</strong> من البداية إلى النهاية مع خادم Uyuni حقيقي.</p>
+<ol>
+<li><strong>اكتب ملف المختبر</strong>: عقدة لخادم Uyuni وأخرى للعميل:</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>ابنِه:</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
+<p>تعمل إضافات الأجهزة الافتراضية (<code>uyuni</code> و<code>client_registration</code> كلتاهما مرتبطتان بعقد لا بعنقود، لعدم وجود قسم <code>kclusters</code> هنا) بمجرد تشغيل عقدتها. يشغّل <code>install_uyuni</code> الخادم وينتظر حتى يصبح متاحًا ثم ينشئ مفتاح التفعيل. بعدها يسجّل <code>install_client_registration</code> العقدة <code>client1</code> لديه: يثبّت سكربت الإقلاع ويشغّله، وينتظر حتى يظهر مفتاح Salt للعميل الجديد معلّقًا، ثم يقبله.</p>
+<ol start="3">
+<li><strong>تحقق من أن العميل سُجّل فعلًا.</strong> اتصل بخادم Uyuni عبر SSH واسأله مباشرة:</li>
+</ol>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
+<p>يجب أن يظهر <code>client1.mydemo.lab</code> في القائمة.</p>
+<ol start="4">
+<li><strong>سجّل الدخول إلى واجهة الويب</strong> على <code>https://uyuni.mydemo.lab</code> باستخدام <code>uyuni_admin</code>/<code>uyuni_password</code> لرؤية الشيء نفسه بصريًا، أو تصفح مفتاح التفعيل، أو تشغيل highstate.</li>
+</ol>
+<p>مشكلة معروفة في المشروع الأصلي (ليست خللًا في هذا المشروع، وتُذكر هنا تحسبًا لمصادفتها): قد يترك سكربت ترقية حزمة <code>salt-transactional-update</code> مفتاح YAML مكررًا في <code>/etc/salt/minion.d/transactional_update.conf</code> على العميل، فيعيد <code>salt-minion</code> التشغيل في حلقة حتى يُزال التكرار يدويًا. لا يلمس أي شيء في هذا المستودع ذلك الملف.</p>
+<h3 id="walkthrough-3--automation-vm-under-nat-single-nic-laptop-as-the-hypervisor">الدليل 3: آلة الأتمتة الافتراضية خلف NAT (حاسوب محمول ببطاقة شبكة واحدة كمضيف)</h3>
+<p>الهدف: إقلاع آلة الأتمتة الافتراضية على مضيف لا توجد فيه بطاقة شبكة فائضة لعمل جسر، باستخدام شبكة خاصة تديرها libvirt بدلًا من ذلك، مع تحويل منافذ محددة (DNAT) من عنوان IP الحقيقي للمضيف. <strong>اختُبر فعليًا</strong> من البداية إلى النهاية على جهاز افتراضي متداخل يُستخدم مرة واحدة.</p>
+<p>إن لم تفعّله فلن يتغير شيء في مسار <a href="#quick-start">البدء السريع الافتراضي</a>: قيمة <code>_network_mode</code> الافتراضية هي <code>"bridge"</code>، مطابقة تمامًا لأي إعداد موجود.</p>
+<ol>
+<li><strong>في <code>lab.cfg</code></strong> (<a href="#step-3--configure-and-run-the-kvm-node-setup">الخطوة 3</a> من البدء السريع)، اضبط:</li>
+</ol>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # default shown — a new libvirt virtual network, not your host's real LAN
+_nat_network_cidr="192.168.150.0/24" # default shown
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # default shown — "&lt;port on the HYPERVISOR's real IP&gt;:&lt;port on the AUTOMATION VM&gt;/&lt;protocol&gt;"
+</code></pre>
+<p>يحوّل هذا المنافذ 22/80/443 على <strong>عنوان IP الحقيقي للمضيف القابل للوصول من الخارج</strong> (<code>&lt;external&gt;</code>) إلى المنافذ نفسها على <strong>عنوان NAT الخاص بآلة الأتمتة الافتراضية</strong> (<code>&lt;internal&gt;</code>)؛ ففي هذه المرحلة آلة الأتمتة هي الوحيدة التي تستمع على هذه الشبكة الخاصة، لذا تعني "داخلي" هنا دائمًا "على آلة الأتمتة الافتراضية". (تعيد الخطوة 5 أدناه استخدام الصيغة نفسها <code>&lt;external&gt;:&lt;internal&gt;/&lt;protocol&gt;</code> للتحويل إلى جهاز افتراضي <em>في المختبر</em> بعد وجوده؛ وهناك تعني "داخلي" عنوان NAT الخاص بذلك الجهاز، لا بآلة الأتمتة.)</p>
+<ol start="2">
+<li><strong>شغّل الإعداد كالمعتاد:</strong></li>
+</ol>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
+<p>يعرّف هذا شبكة libvirt باسم <code>labnat</code> (NAT، ويتولى libvirt نفسه DHCP والبوابة، بالآلية نفسها لشبكة <code>default</code> المدمجة في libvirt لكن باسم هذا المشروع ونطاق CIDR الخاص به) بدلًا من جسر، ثم ينشئ عليها آلة الأتمتة الافتراضية بعنوان IP ثابت ضمن ذلك النطاق الخاص، ثم يحوّل بـ DNAT المنافذ الثلاثة أعلاه من عنوان IP الحقيقي للمضيف.</p>
+<ol start="3">
+<li><strong>تحقق من وجود الشبكة وقواعد التحويل</strong>، على المضيف:</li>
+</ol>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # DNAT rules to the automation VM's private IP
+iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rules
+</code></pre>
+<ol start="4">
+<li><strong>صِل إلى آلة الأتمتة الافتراضية من خارج المضيف</strong> باستخدام عنوان IP الحقيقي للمضيف، لا العنوان الخاص <code>192.168.150.x</code> لآلة الأتمتة، فهو غير قابل للتوجيه من أي مكان آخر:</li>
+</ol>
+<pre><code class="language-shell">ssh root@&lt;hypervisor-real-ip&gt;          # DNAT'd to the automation VM's SSH, port 22
+</code></pre>
+<p>يُحوَّل المنفذان 80 و443 أيضًا افتراضيًا (خادم HTTP لملفات التجهيز، ومستمع HTTPS الخاص بـ<a href="#web-ui-lab-builder">واجهة الويب</a> بعد إعدادها)، ويمكن الوصول إليهما بالطريقة نفسها عبر عنوان IP الحقيقي للمضيف.</p>
+<ol start="5">
+<li><strong>أضف تحويلًا لجهاز افتراضي في المختبر</strong>، لا لآلة الأتمتة وحدها: أعطِ تلك العقدة حقل <code>forwarded_ports</code> وفعّل خدمة <code>portforward</code> مرة واحدة في <code>common.services</code>:</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…rest of common as usual" }
+}
+</code></pre>
+<p>يحوّل <code>setup_lab.py</code>/<code>setup_vm.py</code> هذين المنفذين بـ DNAT من عنوان IP الحقيقي للمضيف بالطريقة نفسها، في أول مرة تعلن فيها أي عقدة في المختبر عن <code>forwarded_ports</code>.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
+<hr />
+<h2 id="available-commands">الأوامر المتاحة</h2>
+<p>تعمل جميع الأوامر على <strong>آلة الأتمتة الافتراضية</strong>، وتأخذ ملف JSON لتعريف المختبر وسيطًا أول.</p>
+<table>
+<thead>
+<tr>
+<th>الأمر</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_lab.py [--keep] &lt;lab.json&gt;</code></td>
+<td>ينشئ جميع الأجهزة الافتراضية، ويُعدّ عناقيد Kubernetes، ويثبّت بالترتيب كل إضافات العناقيد والأجهزة الافتراضية. يتخطى <code>--keep</code> أي جهاز افتراضي موجود ويطابق عنوان IP/MAC المحدد ويمكن الوصول إليه عبر SSH؛ ودونه يُحذف كل جهاز افتراضي ويُعاد إنشاؤه.</td>
+</tr>
+<tr>
+<td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>إنشاء جهاز افتراضي واحد أو إعادة إنشائه</td>
+</tr>
+<tr>
+<td><code>destroy_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>حذف جهاز افتراضي واحد</td>
+</tr>
+<tr>
+<td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
+<td>حذف جميع الأجهزة الافتراضية في مختبر</td>
+</tr>
+</tbody>
+</table>
+<p>يدعم كل أمر وكل سكربت <code>install_&lt;addon&gt;</code>:</p>
+<pre><code class="language-shell">setup_lab.py --version              # print the installed version
+install_longhorn --schema           # print this addon's configuration schema (JSON)
+install_longhorn --schema yaml      # ...or YAML
+</code></pre>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
+<hr />
+<h2 id="available-addons">الإضافات المتاحة</h2>
+<p>يُشار إلى الإضافات بأسمائها في مصفوفة <code>addons</code> لعنقود kcluster أو لعقدة. ويجب أن يكون السكربت <code>install_&lt;name&gt;</code> المقابل في <code>PATH</code>.</p>
+<p><sub>انتقل إلى: <a href="#addons-k8s">Kubernetes وGitOps</a> · <a href="#addons-security">الأمن والامتثال</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">التخزين وقواعد البيانات</a> · <a href="#addons-collaboration">التعاون ومشاركة الملفات</a> · <a href="#addons-cicd">CI/CD والأدوات</a> · <a href="#addons-ai">الذكاء الاصطناعي / تعلم الآلة</a> · <a href="#addons-virt">المحاكاة الافتراضية</a> · <a href="#addons-demos">التطبيقات التجريبية</a> · <a href="#addons-games">الألعاب</a></sub></p>
+<p><a id="addons-k8s"></a></p>
+<details open>
+<summary><strong>منصة Kubernetes وGitOps</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
+<td>منصة SUSE Rancher Prime لإدارة Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
+<td>تخزين كتلي موزّع SUSE Longhorn</td>
+</tr>
+<tr>
+<td><a href="https://goharbor.io/"><code>harbor</code></a></td>
+<td>سجل حاويات</td>
+</tr>
+<tr>
+<td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
+<td>وحدة التحكم Argo CD لـ GitOps</td>
+</tr>
+<tr>
+<td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
+<td>محرك سياسات Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://istio.io/"><code>istio</code></a></td>
+<td>شبكة خدمات (Service mesh)</td>
+</tr>
+<tr>
+<td><a href="https://linkerd.io/"><code>linkerd</code></a></td>
+<td>شبكة خدمات (Service mesh)</td>
+</tr>
+<tr>
+<td><a href="https://traefik.io/"><code>traefik</code></a></td>
+<td>وحدة تحكم Ingress</td>
+</tr>
+<tr>
+<td><a href="https://nginx.org/"><code>nginx</code></a></td>
+<td>وحدة تحكم Ingress / وكيل عكسي</td>
+</tr>
+<tr>
+<td><a href="https://coredns.io/"><code>coredns</code></a></td>
+<td>DNS العنقود</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
+<td>تدوير شهادات عنقود Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
+<td>تنسيق البيانات وتخزينها المؤقت لأحمال العمل السحابية الأصلية</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/suse-observability/"><code>suse_observability</code></a></td>
+<td>SUSE Observability (مقاييس وتتبّعات وطوبولوجيا قائمة على StackState)</td>
+</tr>
+<tr>
+<td><a href="https://agones.dev/"><code>agones</code></a></td>
+<td>استضافة خوادم الألعاب المخصصة وتوسيعها (agones.dev)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-security"></a></p>
+<details open>
+<summary><strong>الأمن والامتثال</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>neuvector</code></a></td>
+<td>منصة SUSE NeuVector لأمن الحاويات</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/testing/testing"><code>nv_testing</code></a></td>
+<td>أحمال عمل لاختبار أمن NeuVector (حاويات nginx/node/redis)</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>nv-demo-helm</code></a></td>
+<td>أحمال عمل تجريبية لـ NeuVector قائمة على Helm</td>
+</tr>
+<tr>
+<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
+<td>مشغّل OpenSCAP/ComplianceAsCode</td>
+</tr>
+<tr>
+<td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
+<td>إدارة الهوية والوصول</td>
+</tr>
+<tr>
+<td><a href="https://kagent.dev/"><code>kagent</code></a></td>
+<td>مساعد أمني لـ Kubernetes بالذكاء الاصطناعي الوكيلي</td>
+</tr>
+<tr>
+<td><code>insecure_app</code></td>
+<td>تطبيق ويب ضعيف عمدًا (للعرض/التدريب)</td>
+</tr>
+<tr>
+<td><a href="https://struts.apache.org/"><code>struts_demo</code></a></td>
+<td>تطبيق تجريبي ضعيف لـ Apache Struts2 ‏(CVE-2017-5638)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-smlm"></a></p>
+<details open>
+<summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.uyuni-project.org/"><code>uyuni</code></a></td>
+<td>خادم Uyuni (المشروع الأصلي): مفاتيح التفعيل، والمؤسسات، وRBAC، وContent Lifecycle Management، والتكامل مع Ansible، وتدقيق SCAP/CVE، وطوبولوجيا بيئات dev/QA/prod؛ راجع <code>install_uyuni --schema</code> لقائمة الحقول الكاملة</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
+<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
+<td>وكيل SMLM</td>
+</tr>
+<tr>
+<td><code>client_registration</code></td>
+<td>تسجيل أي جهاز افتراضي كعميل Salt لخادم <code>uyuni</code>/<code>smlm</code> موجود (إقلاع بمفتاح التفعيل + قبول salt-key)</td>
+</tr>
+<tr>
+<td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
+<td>يجهّز عقدة تحكم Ansible حقيقية: يثبّت <code>ansible-core</code>، وينشر أمثلة Playbook وسكربت جرد ديناميكي يستعلم قائمة أنظمة <code>uyuni</code>/<code>smlm</code>، ويضبط الوصول عبر SSH إلى بقية المختبر. يُستخدم مع حقل <code>*_ansible_control_nodes</code> في <code>uyuni</code>/<code>smlm</code>، الذي يفعّل على الخادم ترخيص "Ansible Control Node"</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-storage"></a></p>
+<details open>
+<summary><strong>التخزين وقواعد البيانات</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://mariadb.org/"><code>mariadb</code></a></td>
+<td>قاعدة بيانات MariaDB: على Kubernetes (ملف بيان دون Helm) أو مثبّتة مباشرة على نظام التشغيل؛ ويُعاد استخدام المسار المباشر (<code>libs/db_common.py</code>) أيضًا من إضافات أخرى (<code>nextcloud</code> و<code>seafile</code>) تحتاج إلى قاعدة بيانات على المضيف نفسه</td>
+</tr>
+<tr>
+<td><a href="https://www.postgresql.org/"><code>postgresql</code></a></td>
+<td>قاعدة بيانات PostgreSQL: على Kubernetes (Helm) أو مثبّتة مباشرة على نظام التشغيل؛ ويُعاد استخدام المسار المباشر (<code>libs/db_common.py</code>) أيضًا من إضافات أخرى (مثل <code>nextcloud</code>) تحتاج إلى قاعدة بيانات على المضيف نفسه</td>
+</tr>
+<tr>
+<td><a href="https://www.openldap.org/"><code>openldap</code></a></td>
+<td>خدمة الدليل OpenLDAP</td>
+</tr>
+<tr>
+<td><a href="https://www.port389.org/"><code>ds389</code></a></td>
+<td>389 Directory Server ‏(LDAP)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-collaboration"></a></p>
+<details open>
+<summary><strong>التعاون ومشاركة الملفات</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://nextcloud.com/"><code>nextcloud</code></a></td>
+<td>Nextcloud: حاويات podman مستقلة افتراضيًا (دون Kubernetes، وهو الوضع الوحيد الذي يدعم تثبيت التطبيقات دون اتصال)، أو مخطط Helm الرسمي للمجتمع على عنقود Kubernetes؛ مع تطبيقات Talk/Groupware/Flow/Assistant الاختيارية والتكامل مع تحرير المستندات عبر ONLYOFFICE/Euro-Office/Collabora</td>
+</tr>
+<tr>
+<td><a href="https://www.seafile.com/"><code>seafile</code></a></td>
+<td>Seafile: حاويات podman مستقلة افتراضيًا (دون Kubernetes)، أو مخطط Helm الرسمي على عنقود Kubernetes</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-cicd"></a></p>
+<details open>
+<summary><strong>CI/CD وأدوات التطوير</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.jenkins.io/"><code>jenkins</code></a></td>
+<td>Jenkins CI</td>
+</tr>
+<tr>
+<td><a href="https://about.gitlab.com/"><code>gitlab</code></a></td>
+<td>GitLab: حاوية podman مستقلة من Omnibus افتراضيًا (دون Kubernetes)، أو مخطط Helm الرسمي على عنقود Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
+<td>SUSE Application Collection</td>
+</tr>
+<tr>
+<td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
+<td>التكامل مع مراقبة StackState</td>
+</tr>
+<tr>
+<td><a href="https://www.trento-project.io/"><code>trento</code></a></td>
+<td>مراقبة بنية SAP التحتية</td>
+</tr>
+<tr>
+<td><a href="https://prometheus.io/"><code>prometheus</code></a></td>
+<td>خادم Prometheus مستقل (حاوية podman دون Kubernetes): يجمع مقاييس المصدّرات المضمّنة في خادم <code>smlm</code>/<code>uyuni</code> ‏(<code>smlm_monitoring_enabled</code>) أو أي أهداف في <code>prometheus_scrape_configs</code></td>
+</tr>
+<tr>
+<td><a href="https://grafana.com/"><code>grafana</code></a></td>
+<td>خادم Grafana مستقل (حاوية podman دون Kubernetes): يضبط تلقائيًا مصدر بيانات Prometheus، واختياريًا لوحة المعلومات الرسمية من مجتمع Grafana Labs لمصدّرات خادم <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-ai"></a></p>
+<details open>
+<summary><strong>الذكاء الاصطناعي / تعلم الآلة</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://ollama.com/"><code>ollama</code></a></td>
+<td>بيئة تشغيل محلية لنماذج اللغة الكبيرة</td>
+</tr>
+<tr>
+<td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
+<td>نموذج DeepSeek، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://www.swiss-ai.org/apertus"><code>apertus</code></a></td>
+<td>نموذج Apertus ‏(Swiss AI Initiative)، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemini-api"><code>gemini</code></a></td>
+<td>وكيل لواجهة Google Gemini البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.anthropic.com/"><code>anthropic</code></a></td>
+<td>وكيل لواجهة Anthropic Claude البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openai.com/"><code>openai</code></a></td>
+<td>وكيل لواجهة OpenAI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.moonshot.ai/"><code>kimi</code></a></td>
+<td>وكيل لواجهة Kimi البرمجية من Moonshot AI ‏(LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openwebui.com/"><code>open_webui</code></a></td>
+<td>واجهة دردشة لـ Ollama ونقاط النهاية المتوافقة مع OpenAI</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
+<td>Hermes Agent: وكيل الذكاء الاصطناعي الشخصي ذاتي التحسن من Nous Research (روبوت Telegram/Discord/Slack + لوحة معلومات ويب)</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
+<td>حزمة الذكاء الاصطناعي من SUSE: Ollama + Open WebUI + Milvus</td>
+</tr>
+<tr>
+<td><a href="https://milvus.io/"><code>milvus</code></a></td>
+<td>قاعدة بيانات المتجهات Milvus ‏(RAG/البحث بالتضمينات)</td>
+</tr>
+<tr>
+<td><a href="https://qdrant.tech/"><code>qdrant</code></a></td>
+<td>قاعدة بيانات المتجهات Qdrant ‏(RAG/البحث بالتضمينات)</td>
+</tr>
+<tr>
+<td><a href="https://weaviate.io/"><code>weaviate</code></a></td>
+<td>قاعدة بيانات المتجهات Weaviate ‏(RAG/البحث بالتضمينات)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/gpu-operator"><code>gpu_operator</code></a></td>
+<td>NVIDIA GPU Operator (جدولة وحدات GPU لأحمال الذكاء الاصطناعي)</td>
+</tr>
+<tr>
+<td><a href="https://qwenlm.github.io/"><code>qwen</code></a></td>
+<td>نموذج Qwen2.5، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://mistral.ai/"><code>mistral</code></a></td>
+<td>نموذج Mistral، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/meta-llama/codellama"><code>codellama</code></a></td>
+<td>نموذج Code Llama، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
+<td>نموذج StarCoder2، يُقدَّم عبر Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
+<td>(راجع <code>install_phoebe --schema</code>)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-virt"></a></p>
+<details open>
+<summary><strong>المحاكاة الافتراضية</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
+<td>تجهيز عقد SUSE Virtualization ‏(Harvester/KubeVirt)</td>
+</tr>
+<tr>
+<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
+<td>أداة بناء أجهزة KIWI</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-demos"></a></p>
+<details open>
+<summary><strong>التطبيقات التجريبية</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://wordpress.org/"><code>wordpress</code></a></td>
+<td>تطبيق تجريبي WordPress + MySQL</td>
+</tr>
+<tr>
+<td><a href="https://www.fluentd.org/"><code>fluentd</code></a></td>
+<td>تجميع السجلات</td>
+</tr>
+<tr>
+<td><a href="https://www.list.org/"><code>mailman</code></a></td>
+<td>إدارة القوائم البريدية GNU Mailman 3 + واجهة ويب</td>
+</tr>
+<tr>
+<td><a href="https://www.mediagoblin.org/"><code>mediagoblin</code></a></td>
+<td>منصة النشر الإعلامي الاتحادية GNU MediaGoblin</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.com/NalaGinrut/colt"><code>colt</code></a></td>
+<td>Colt، محرك مدونات قائم على git فوق GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://codeberg.org/jjba23/wikimusic"><code>wikimusic</code></a></td>
+<td>WikiMusic، نظام إدارة محتوى للمعرفة الموسيقية فوق GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
+<td>منصة أتمتة المنزل Home Assistant</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-games"></a></p>
+<details open>
+<summary><strong>الألعاب</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/Alzter/SuperTux-Classic"><code>supertux_classic</code></a></td>
+<td>SuperTux Classic، لعبة منصات مفتوحة المصدر مبنية بـ Godot تستضيفها بنفسك</td>
+</tr>
+<tr>
+<td><a href="https://github.com/edisgreat/skynet-simulator"><code>skynet_simulator</code></a></td>
+<td>Skynet Simulator، لعبة ألغاز/خمول مفتوحة المصدر في المتصفح تستضيفها بنفسك</td>
+</tr>
+<tr>
+<td><a href="https://github.com/leandrodreamer/BeepSaber"><code>open_saber</code></a></td>
+<td>Open Saber، لعبة إيقاع وتقطيع كتل مفتوحة المصدر تستضيفها بنفسك</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p>لإضافة إضافة جديدة: أنشئ ملفًا تنفيذيًا <code>scripts/install_&lt;name&gt;</code> بأي لغة، بامتداد أو دونه (<code>install_&lt;name&gt;.py</code> أو <code>install_&lt;name&gt;.sh</code> أو ملف ثنائي مترجم)، وأضف قوالب ضمن <code>templates/addons/&lt;name&gt;/</code> عند الحاجة، وأشر إلى <code>"&lt;name&gt;"</code> في مصفوفة <code>addons</code> في ملف JSON. يثبّتها <code>install_automation_node_scripts.sh</code> باسم <code>/usr/local/bin/install_&lt;name&gt;</code>، ولا يستخدمها <code>setup_lab.py</code> وواجهة الويب إلا عبر واجهة سطر الأوامر الخاصة بها:</p>
+<ul>
+<li>يطبع <code>install_&lt;name&gt; --schema json</code> مخططها بصيغة JSON، متضمنًا كائن <code>capabilities</code> (<code>targets</code> و<code>layers</code> و<code>requires_kubernetes</code> و<code>aux_services</code>)؛ ويطبع <code>--schema yaml</code> المحتوى نفسه بصيغة YAML</li>
+<li>يطبع <code>install_&lt;name&gt; --capabilities</code> القدرات نفسها بصيغة JSON</li>
+<li>ينتهي <code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> برمز غير صفري ويطبع أسطر <code>[ERROR]</code> عندما تكون إعداداتها غير صالحة</li>
+<li><code>install_&lt;name&gt; --version</code> و<code>--help</code></li>
+<li>يثبّتها <code>install_&lt;name&gt; &lt;lab.json&gt;</code> على الجهاز الافتراضي المحدد في <code>$_vm_name</code> (وعلى العنقود المحدد في <code>$clu_name</code> لإضافة عنقود)</li>
+</ul>
+<p>تحصل إضافة Python على كل ذلك من <code>addon_common.handle_common_args()</code> ومن قاموس <code>PLUGIN</code> على مستوى الوحدة؛ اتبع نمط إضافة موجودة (حمّل قسم JSON المعني عبر <code>load_definition()</code> ونفّذ العمل عبر SSH).</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
+<hr />
+<h2 id="configuration-reference">مرجع الإعدادات</h2>
+<h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
+<p>قيم افتراضية على مستوى النظام يحمّلها كل سكربت. تحدد المسارات ومؤقتات الانتظار الافتراضية وقوائم الحزم. <strong>لا تعدّله</strong> إلا إذا كنت تعرف ما تفعل.</p>
+<h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
+<p>إعدادات خاصة بالعقدة لآلة الأتمتة الافتراضية. تُنسخ من <code>/etc/lab_creation.cfg.example</code> أثناء الإعداد. أهم المتغيرات:</p>
+<table>
+<thead>
+<tr>
+<th>المتغير</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>اسم المضيف أو عنوان IP لمضيف KVM</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(اختياري)</em> قائمة مفصولة بمسافات بالمضيفات لـ<a href="#multi-host-labs">مختبر متعدد المضيفات</a>؛ الافتراضي هو <code>REMOTE_HOST</code> وحده</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>عنوان URI لـ libvirt للمضيف البعيد</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>محتوى مفتاح SSH العام الذي يُحقن في الأجهزة الافتراضية المجهزة</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>سلسلة شبكة libvirt الافتراضية</td>
+</tr>
+<tr>
+<td><code>REMOTE_DNS_SERVERS</code></td>
+<td>قائمة مفصولة بمسافات بخوادم DNS إضافية تُحدَّث</td>
+</tr>
+<tr>
+<td><code>delay_min</code></td>
+<td>عدد دقائق الانتظار بين مراحل التجهيز (زِده على الأجهزة البطيئة)</td>
+</tr>
+<tr>
+<td><code>PROVISIONING_BASE_URL</code></td>
+<td><em>(اختياري)</em> يستبدل <code>https://&lt;automation VM&gt;</code> في العناوين التي تنزّل منها برامج التثبيت وHelm الملفات، مثل <code>http://192.168.88.250</code></td>
+</tr>
+<tr>
+<td><code>PROVISIONING_TLS_VERIFY</code></td>
+<td>تقبل القيمة <code>0</code> (الافتراضية) الشهادة الموقّعة ذاتيًا لآلة الأتمتة الافتراضية؛ وتتحقق منها القيمة <code>1</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends_1">خلفيات الحوسبة</h3>
+<p>تستخدم أجهزة المختبر الافتراضية افتراضيًا <code>libvirt</code> (مضيفات KVM أعلاه). اضبط <code>common.backend</code> (أو <code>backend</code> لكل عقدة، وهو الأولى) لاستهداف خلفية أخرى؛ راجع <code>enum</code> الخاص بحقل <code>backend</code> للقائمة الحالية الكاملة. تحتاج كل خلفية غير افتراضية إلى بيانات اعتمادها في <code>/etc/lab_creation.cfg</code>:</p>
+<p><strong>رسوميات وحدة التحكم على <code>libvirt</code>:</strong> تحصل أجهزة المختبر الافتراضية على شاشة SPICE ‏(<code>--graphics spice,listen=0.0.0.0</code>) ما لم يكن QEMU على المضيف بلا دعم لـ SPICE (مثل SLES 16)، فتحصل حينها على VNC. يقرأ lab-in-a-box ذلك من <code>virsh domcapabilities</code> مرة واحدة في كل تشغيل؛ وإذا فشل الاستعلام يستخدم SPICE.</p>
+<p><strong>عدة حسابات سحابية، بالطريقة نفسها التي يمنحك بها <code>KVM_HOSTS</code> عدة مضيفات:</strong> ضع كل حساب سحابي في ملف خاص به ضمن <code>/etc/lab_creation/credentials/</code> (يمكن تغيير المسار عبر <code>CREDENTIALS_PATH</code> في <code>lab_creation.cfg</code>)، باسم <code>&lt;name&gt;.yaml</code> (أو <code>.json</code>/<code>.cfg</code>: يحدد الامتداد المحلل؛ ولا يدعم الصيغة المشفّرة الموضحة أدناه إلا <code>.yaml</code>/<code>.json</code>، لأن صيغة <code>KEY=value</code> المسطحة في <code>.cfg</code> لا تتسع لها). يعلن كل ملف <code>cloudtype</code> ‏(<code>aws</code>/<code>gcp</code>/<code>hetzner</code>/…) ومفاتيح الاتصال المعتادة لذلك المزوّد، وهي المفاتيح نفسها تمامًا التي تقرؤها الخلفية من <code>lab_creation.cfg</code> ‏(<code>AWS_REGION</code> و<code>AWS_PROFILE</code> و<code>AWS_SUBNET_ID</code> وغيرها). ثم تختار العقدة (أو <code>common</code>) أحدها بـ <code>"cloud_account": "&lt;name&gt;"</code>، تمامًا مثل <code>"kvm_host": "&lt;host&gt;"</code>:</p>
+<pre><code class="language-jsonc">// /etc/lab_creation/credentials/aws-sandbox.yaml  (built with setup_credentials.py, below)
+&quot;nodes&quot;: {
+  &quot;jupiter.mydemo.lab&quot;: { &quot;cloud_account&quot;: &quot;aws-sandbox&quot; },
+  &quot;saturn.mydemo.lab&quot;:  { &quot;cloud_account&quot;: &quot;aws-prod&quot; }
+}
+</code></pre>
+<p>عند ضبط <code>cloud_account</code> يصبح <code>cloudtype</code> الخاص به <strong>هو</strong> الخلفية (فيصبح حقل <code>backend</code> اختياريًا؛ وإذا ضبطت الاثنين واختلفا يفشل الفحص المسبق)، وتُطبَّق مفاتيح ملف الحساب فوق <code>lab_creation.cfg</code> لتلك العقدة وحدها. احذف <code>cloud_account</code> من كل مكان لتبقى على سلوك الحساب الواحد الحالي دون تغيير. كل حساب شبكة معزولة، لذا تصبح <a href="#compute-backends">آلة DNS السحابية</a> الموضحة أدناه خاصة بكل حساب (<code>lab-dns-aws-sandbox</code> و<code>lab-dns-aws-prod</code> وغيرها)؛ ويحتفظ الحساب الافتراضي غير المسمّى بالاسم البسيط <code>lab-dns-&lt;backend&gt;</code>.</p>
+<p><strong>تُشفَّر ملفات بيانات الاعتماد افتراضيًا أثناء التخزين.</strong> أنشئ ملفًا بالأمر:</p>
+<pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
+setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
+</code></pre>
+<p>التشفير (راجع <code>libs/crypto_store.py</code>): تمر عبارة المرور عبر <strong>Argon2id</strong> (دالة اشتقاق مفاتيح بطيئة ومستهلكة للذاكرة عمدًا؛ وهي، لا خوارزمية التشفير، حدّ الأمان الحقيقي لملف مشفّر بعبارة مرور) لاشتقاق سر رئيسي بطول 512 بت؛ ثم تشتق <strong>HKDF-SHA512</strong> مفتاحين فرعيين مستقلين بطول 256 بت (مفصولين بوسم، لا مجرد تقسيم إلى نصفين)؛ وتُشفَّر البيانات بـ <strong>AES-256-GCM ثم ChaCha20-Poly1305 على التوالي</strong>، وهما خوارزميتا AEAD مختلفتان بنيويًا وبمفاتيح مستقلة، فلا يكفي كسر إحداهما كسرًا كاملًا وحده. تطلب كل أداة تحتاج إلى بيانات اعتماد (<code>setup_lab.py</code> و<code>setup_vm.py</code> وغيرهما) عبارة المرور مرة واحدة في كل تشغيل (تُحفظ في ذاكرة العملية فقط ولا تُكتب في أي مكان) عبر <code>try_load_cloud_account()</code> في <code>libs/primary.py</code>، وهي الدالة الوحيدة التي يمر بها كل شيء.</p>
+<p>يمكن للملف أن يتخلى عن التشفير بـ <code>unencrypted: true</code> في المستوى الأعلى (ليس الافتراضي: يسأل <code>setup_credentials.py</code> قبل كتابة ملف كهذا). يشفّر <code>--encrypt-existing</code> في مكانها الحقول التي تبدو حساسة فقط (الأسماء الشبيهة بسر أو كلمة مرور أو رمز مميز)، ويترك مثلًا <code>AWS_REGION</code>/<code>AWS_PROFILE</code> مقروءة، ولا يكتب أبدًا فوق ملف الإدخال: بل يكتب <code>&lt;name&gt;.encrypted.yaml</code> بجانبه لتراجعه وتضعه في مكانه. يتطلب حزمة Python ‏<code>cryptography</code> ‏(<code>python311-cryptography</code>، أو <code>pip install cryptography</code>، الإصدار 41 أو أحدث لـ Argon2id) على آلة الأتمتة الافتراضية؛ ولا تُستورد إلا عند استخدام ملف مشفّر فعلًا، فلا يحتاج مختبر لا يضبط <code>cloud_account</code> أبدًا إلى أي اعتمادية جديدة.</p>
+<p><strong>بيانات اعتماد الخدمات الخارجية (SCC وSUSE Application Collection وHermes وغيرها).</strong> يغطي المخزن نفسه <code>/etc/lab_creation/credentials/</code> والتشفير نفسه والأداة نفسها <code>setup_credentials.py</code> أيضًا بيانات اعتماد الخدمات الخارجية غير السحابية، لا مزودي السحابة وحدهم. يُعلَّم الملف بـ <code>credential_kind</code> (مثل <code>scc</code> و<code>appcollection</code> و<code>hermes</code>) بدلًا من <code>cloudtype</code>، فيتشارك المفهومان المجلد والصيغة دون أي تعارض. توثّق كل إضافة تحتاج إلى بيانات اعتماد خدمة خارجية حقلها الاختياري <code>&lt;field&gt;_account</code> (مثل <code>smlm_scc_account</code> و<code>suse_ai_registry_account</code> و<code>hermes_account</code>) لتحديده صراحة؛ وإن لم يُضبط، يُكتشف تلقائيًا الملف الوحيد المطابق لـ <code>credential_kind</code> بالطريقة نفسها المتبعة مع <code>cloud_account</code>. <strong>يبقى وضع بيانات الاعتماد نصًا صريحًا في ملف JSON للمختبر صالحًا تمامًا</strong>: هذا المخزن بديل اختياري لا شرط؛ وتظل الحقول النصية الصريحة لكل إضافة (<code>smlm_scc_user</code> و<code>suse_ai_registry_user</code> و<code>hermes_llm_api_key</code> وغيرها) تعمل دون تغيير إن لم تستخدم مخزن بيانات الاعتماد أبدًا.</p>
+<pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first
+</code></pre>
+<p>يمكن إعادة استخدام ملف بيانات اعتماد واحد لكل نوع في كل إضافة تحتاج إلى ذلك النوع (مثلًا يغطي ملف <code>scc</code> واحد بيانات اعتماد SCC لأي إضافة)، أيًا كانت بادئة حقول JSON في كل إضافة؛ راجع <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> في <code>libs/addon_common.py</code> ودوال <code>*_service_credential*</code> في <code>libs/primary.py</code> للآلية الأساسية.</p>
+<p><strong>الخلفيات السحابية (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) و<code>myip</code>:</strong> اترك <code>myip</code> فارغًا لعقدة الخلفية السحابية في ملف JSON للمختبر: فعنوان IP الحقيقي لا يُعرف إلا حين يعيّنه المزوّد عند الإنشاء، وليس شيئًا يُقرر مسبقًا كعنوان IP ثابت في libvirt/Harvester. يأخذ <code>setup_vm.py</code> عنوان IP الحقيقي من القيمة التي تعيدها <code>create_vm()</code> ويسجّله في DNS <em>بعد</em> وجود العقدة فعلًا لا قبله (خلل حقيقي اكتُشف أثناء الاختبار الفعلي لـ AWSBackend في 2026-09-06؛ راجع TODO). كذلك لا معنى لـ <code>mymac</code> مع خلفية سحابية: اتركه دون ضبط؛ إذ يُتجاهل بدلًا من توليده أو فحص تعارضه.</p>
+<p><strong>آلة DNS السحابية:</strong> في أول مرة تستخدم فيها عقدة من المختبر خلفية سحابية معينة، يجهّز <code>setup_vm.py</code> أيضًا (أو يعيد استخدام الموجودة إن وُجدت) آلة افتراضية صغيرة رخيصة تقدّم DNS داخل الشبكة السحابية نفسها، <code>lab-dns-&lt;backend&gt;</code>، مثل <code>lab-dns-aws</code>، وتشغّل BIND. وجودها ضروري لأن العقد السحابية لا تستطيع عادةً الوصول إطلاقًا إلى خادم BIND في <code>automation.mydemo.lab</code> (فهو خلف NAT/موجّه المختبر المنزلي ولا يمكن الوصول إليه من الإنترنت)؛ ويحتاج عنقود سحابي حقيقي متعدد العقد إلى خادم DNS خاص به داخل الشبكة نفسها كي تحل عقده أسماء بعضها. يُسجَّل سجل DNS لكل عقدة سحابية في آلة DNS هذه <em>وفي</em> المنطقة المركزية لـ <code>automation.mydemo.lab</code> معًا. <strong>قيود معروفة:</strong> (1) لا تستخدم العقدة السحابية المنشأة حديثًا آلة DNS هذه تلقائيًا بعد لحل الأسماء، فلا تستطيع عقدة سحابية ثانية في المختبر نفسه حل اسم الأولى دون إعداد إضافي؛ (2) يعيد الاستعلام عن منطقة آلة DNS هذه عبر عنوان AWS المرن/العام من عميل خارجي (بما فيه automation.mydemo.lab نفسه) حاليًا استجابة NXDOMAIN زائفة من منطقة الجذر بدلًا من الإجابة الحقيقية؛ أما الاستعلام عبر العنوان الخاص أو الاسترجاع المحلي فيعمل، ولم يُعرف بعد سبب مشكلة العنوان العام. راجع سلسلة توثيق <code>ensure_cloud_dns_vm()</code> في <code>libs/backends.py</code> وملف TODO.</p>
+<p><strong>أحجام المثيلات السحابية:</strong> تحوّل كل خلفية سحابية <code>VM_CPU</code>/<code>VM_MEM</code> إلى أصغر نوع مثيل أو نوع خادم أو خطة أو فئة كافية لدى المزوّد، من جدول صغير مدمج (يذكر عمود "ملاحظات" لكل منها أيها)؛ ولم يُقصد بهذا الجدول أن يكون حدًا أعلى. هناك طريقتان لتجاوزه، بترتيب الأولوية:
+1. <strong><code>cloud_instance_type</code></strong> (في common أو لكل عقدة، وتغلب قيمة العقدة): الاسم الدقيق لنوع مثيل أو نوع خادم أو خطة أو فئة، يُستخدم كما هو دون أي اختيار تلقائي. يعمل بالطريقة نفسها في كل الخلفيات السحابية، بما فيها OVHcloud (يتخطى استدعاء API الفوري لقائمة الفئات) وGCP (لا ينشئ نوعًا مخصصًا <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>؛ أعطه بدلًا من ذلك نوعًا محددًا مسبقًا حقيقيًا مثل <code>n2-standard-4</code>).
+2. <strong>مفتاح إعداد <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (راجع صف كل مزوّد أدناه): يستبدل الجدول المدمج بالكامل، فيبقى الاختيار التلقائي حسب <code>VM_CPU</code>/<code>VM_MEM</code> عاملًا لكن على قائمتك. الصيغة: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>، مثل <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. يستبدل هذا الجدول كله ولا يدمجه: كرر أي مدخلات مدمجة ما زلت تريدها. لا يوجد هذا المفتاح لدى GCP وOVHcloud: إذ ينشئ GCP نوع جهاز مخصصًا حقيقيًا مباشرة من <code>VM_CPU</code>/<code>VM_MEM</code> (لا يوجد كتالوج لاستبداله)، ويستعلم OVHcloud أصلًا قائمة فئاته الحقيقية مباشرة عند الإنشاء (راجع صفه).</p>
+<table>
+<thead>
+<tr>
+<th>الخلفية</th>
+<th>مفاتيح <code>/etc/lab_creation.cfg</code> المطلوبة</th>
+<th>ملاحظات</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>harvester</code></td>
+<td><code>HARVESTER_KUBECONFIG</code> (مطلوب)، <code>HARVESTER_NAMESPACE</code> (اختياري، الافتراضي <code>default</code>)، <code>HARVESTER_NETWORK</code> (اختياري، NetworkAttachmentDefinition موجود في Multus)</td>
+<td><code>config_method: cloud-init</code> فقط؛ ويجب أن يكون ISO_IMAGE صورة VirtualMachineImage مستوردة مسبقًا في Harvester</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td><code>HETZNER_TOKEN</code> (مطلوب، رمز API لـ Hetzner Cloud مقصور على مشروع واحد)، <code>HETZNER_LOCATION</code> (اختياري، مثل <code>nbg1</code>/<code>fsn1</code>/<code>hel1</code>/<code>ash</code>/<code>hil</code>)، <code>HETZNER_SERVER_TYPES</code> (اختياري، يستبدل جدول server_type المدمج؛ راجع أعلاه)</td>
+<td><code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE اسم صورة حقيقيًا لدى Hetzner (مثل <code>ubuntu-24.04</code>) أو معرّف لقطة خاصة بك، لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر server_type لدى Hetzner يلبّي الاثنين، ولا يمكن أن يتجاوز vm_dsk_gb القرص المرفق بذلك النوع. أنواع الخوادم الحالية: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (لا تملك Hetzner صفحة قائمة واحدة مستقلة عن API؛ ووحدة التحكم أو صفحة الأسعار هي المصدر العملي). راجع سلسلة توثيق الصنف <code>HetznerBackend</code> في <code>libs/backends.py</code> للجدول المدمج والقائمة الكاملة للقيود</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td><code>AWS_REGION</code> (مطلوب)، إضافة إلى <code>AWS_PROFILE</code> أو <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code> (مطلوبة)؛ <code>AWS_SESSION_TOKEN</code> (مطلوب عمليًا لمفتاح مؤقت صادر عن STS، أي يبدأ بـ <code>ASIA</code> لا <code>AKIA</code>، مثل مفاتيح SSO/IAM Identity Center أو دور مُفترض؛ وتنتهي <code>resolve()</code> برسالة واضحة إن غاب مع هذا النوع من المفاتيح)؛ <code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code> (كلها اختيارية، وعند عدم ضبطها تُستخدم شبكة VPC ومجموعة الأمان الافتراضيتان للحساب، ولا تملكهما حسابات حقيقية كثيرة؛ راجع نتائج الاختبار الفعلي في TODO)؛ <code>AWS_INSTANCE_TYPES</code> (اختياري، يستبدل جدول أنواع المثيلات المدمج؛ راجع أعلاه)</td>
+<td>يتطلب أداة <code>aws</code> الحقيقية على آلة الأتمتة الافتراضية؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE معرّف AMI حقيقيًا لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر نوع مثيل EC2 كافٍ، لكن vm_dsk_gb يُطبَّق مباشرة (بخلاف Hetzner) عبر وحدة EBS الجذرية الحقيقية للـ AMI. أنواع المثيلات الحالية: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>؛ يؤدي <code>aws_nested_virtualization: "true"</code> لكل عقدة أو في common (اختياري ومعطّل افتراضيًا) إلى تشغيل المثيل مع دعم KVM المتداخل الحقيقي من AWS ‏(<code>--cpu-options "NestedVirtualization=enabled"</code>، التوثيق: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>)، مما يسمح لمسار kickstart/combustion في هذا المشروع، بما فيه تثبيت حقيقي من صورة ISO لـ Harvester HCI، بالعمل على عقدة "مضيف" مجهزة سحابيًا كما يعمل على جهاز فعلي؛ ويتطلب <code>cloud_instance_type</code> صريحًا من عائلة مدعومة حقيقية (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i ونسخها <code>-flex</code>؛ وينتهي برسالة واضحة تذكر القائمة الدقيقة إن لم يكن نوع المثيل المحدد منها، لأن جدول T3 الافتراضي المدمج لا يدعمها أبدًا). راجع سلسلة توثيق الصنف <code>AWSBackend</code> في <code>libs/backends.py</code> للجدول المدمج والقائمة الكاملة للقيود</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td><code>GCP_PROJECT</code>/<code>GCP_ZONE</code> (كلاهما مطلوب)، <code>GCP_SERVICE_ACCOUNT_KEY</code> (مسار ملف مفتاح JSON لحساب خدمة)؛ <code>GCP_IMAGE_PROJECT</code>/<code>GCP_NETWORK</code>/<code>GCP_SUBNET</code> (كلها اختيارية)</td>
+<td>يتطلب أداة <code>gcloud</code> الحقيقية على آلة الأتمتة الافتراضية؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE اسم صورة GCE حقيقيًا لا اسم ملف qcow2/ISO؛ وينشئ VM_CPU/VM_MEM نوع جهاز مخصصًا حقيقيًا (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>، وهي الخلفية الوحيدة هنا التي لا تختار من جدول SKU ثابت، لذا لا يوجد مفتاح تجاوز على غرار <code>*_INSTANCE_TYPES</code>؛ استخدم <code>cloud_instance_type</code> لفرض نوع محدد مسبقًا حقيقي). أنواع الأجهزة المحددة مسبقًا: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>. راجع سلسلة توثيق الصنف <code>GCPBackend</code> في <code>libs/backends.py</code> لقواعد تقريب الأشكال المخصصة والقائمة الكاملة للقيود</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td><code>ALIBABA_ACCESS_KEY_ID</code>/<code>ALIBABA_ACCESS_KEY_SECRET</code>/<code>ALIBABA_REGION</code> (كلها مطلوبة)، <code>ALIBABA_SECURITY_GROUP_ID</code>/<code>ALIBABA_VSWITCH_ID</code> (كلاهما مطلوب: بخلاف AWS/GCP لا توجد شبكة VPC افتراضية يُرجع إليها)، <code>ALIBABA_INSTANCE_TYPES</code> (اختياري، يستبدل جدول أنواع المثيلات المدمج؛ راجع أعلاه)</td>
+<td>يتطلب أداة <code>aliyun</code> الحقيقية على آلة الأتمتة الافتراضية؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE معرّف ImageId حقيقيًا لدى Alibaba Cloud لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر InstanceType كافٍ في ECS، ويُطبَّق vm_dsk_gb مباشرة عبر <code>--SystemDisk.Size</code>. عائلات المثيلات الحالية: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>. راجع سلسلة توثيق الصنف <code>AlibabaBackend</code> في <code>libs/backends.py</code> للجدول المدمج والقائمة الكاملة للقيود</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td><code>SCALEWAY_SECRET_KEY</code>/<code>SCALEWAY_PROJECT_ID</code>/<code>SCALEWAY_ZONE</code> (كلها مطلوبة)، <code>SCALEWAY_SERVER_TYPES</code> (اختياري، يستبدل جدول commercial_type المدمج؛ راجع أعلاه)</td>
+<td>استدعاءات REST مباشرة إلى <code>api.scaleway.com</code> (لا حاجة إلى أداة سطر أوامر)؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE معرّف صورة حقيقيًا لدى Scaleway لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر <code>commercial_type</code> كافٍ (DEV1-S/M/L وGP1-S). الأنواع التجارية الحالية: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>؛ ويُمرَّر cloud-init باستدعاء منفصل <code>PATCH .../user_data/cloud-init</code> بعد إنشاء الخادم. <strong>لم يُعَد التحقق الفعلي المستقل من هذه الآلية تحديدًا في هذه الجلسة</strong>، وتصفها سلسلة توثيق الصنف <code>ScalewayBackend</code> في <code>libs/backends.py</code> بأنها الجزء الأضعف تحققًا في هذه الخلفية</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td><code>UPCLOUD_USERNAME</code>/<code>UPCLOUD_PASSWORD</code>/<code>UPCLOUD_ZONE</code> (كلها مطلوبة: حساب فرعي في UpCloud مع تفعيل الوصول إلى API من لوحة التحكم)، <code>UPCLOUD_PLANS</code> (اختياري، يستبدل جدول الخطط المدمج؛ راجع أعلاه)</td>
+<td>استدعاءات REST مباشرة إلى <code>api.upcloud.com</code> بمصادقة HTTP Basic (لا حاجة إلى أداة سطر أوامر، ولا دعم للمصادقة بالرمز)؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE معرّف UUID حقيقيًا لتخزين/قالب في UpCloud لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر <code>plan</code> كافٍ (بتسمية UpCloud "NxCPU-MGB"). الخطط الحالية: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>؛ ويُطبَّق vm_dsk_gb مباشرة عبر حقل <code>size</code> لجهاز التخزين؛ والبحث عن خادم بالاسم مرشّح من جهة العميل على قائمة الخوادم الكاملة (لم يتأكد وجود مرشّح بالاسم من جهة الخادم). راجع سلسلة توثيق الصنف <code>UpCloudBackend</code> في <code>libs/backends.py</code> للجدول المدمج والقائمة الكاملة للقيود، بما فيها حقل <code>user_data</code> غير المؤكد</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td><code>OVH_APPLICATION_KEY</code>/<code>OVH_APPLICATION_SECRET</code>/<code>OVH_CONSUMER_KEY</code>/<code>OVH_SERVICE_NAME</code>/<code>OVH_REGION</code> (كلها مطلوبة)، <code>OVH_ENDPOINT</code> (اختياري، الافتراضي <code>https://eu.api.ovh.com/1.0</code>؛ غيّره لحساب OVH مسجّل في <code>ca</code>/<code>us</code>)</td>
+<td>استدعاءات REST مباشرة إلى واجهة OVHcloud البرمجية باستخدام مخطط توقيع الطلبات الخاص بـ OVH (لا رمز Bearer بسيط ولا Basic Auth؛ وهي الخلفية الأقل تحققًا في هذا الملف، إذ لم يُجرَّب شيء منها على حساب OVHcloud حقيقي)؛ <code>config_method: cloud-init</code> فقط؛ يجب أن يكون ISO_IMAGE معرّف imageId حقيقيًا لدى OVHcloud Public Cloud خاصًا بالمنطقة (UUID)؛ ولا يعتمد تحديد حجم الفئة على جدول ثابت كبقية الخلفيات (لذا لا يوجد هنا أيضًا مفتاح على غرار <code>*_INSTANCE_TYPES</code>): فمعرّفات الفئات في OVH معرّفات UUID لكل منطقة، لذا تجري <code>_pick_flavor()</code> استدعاء API حقيقيًا عند الإنشاء؛ استخدم <code>cloud_instance_type</code> لتخطي هذا الاستدعاء وإعطاء flavorId حقيقي مباشرة. الفئات والأسعار الحالية: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (لا تظهر معرّفات UUID الحقيقية للفئات لكل منطقة إلا عبر API أو وحدة التحكم، لا في صفحة الأسعار تلك). راجع سلسلة توثيق الصنف <code>OVHcloudBackend</code> في <code>libs/backends.py</code> للقائمة الكاملة، المعلَّمة صراحة، لما لم يتأكد بعد</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td><code>EXOSCALE_API_KEY</code>/<code>EXOSCALE_API_SECRET</code>/<code>EXOSCALE_ZONE</code> (كلها مطلوبة)، <code>EXOSCALE_INSTANCE_TYPES</code> (اختياري، يستبدل جدول أنواع المثيلات المدمج؛ راجع أعلاه)</td>
+<td>يتطلب أداة <code>exo</code> الحقيقية على آلة الأتمتة الافتراضية؛ <code>config_method: cloud-init</code> فقط (يُمرَّر مباشرة إلى خيار <code>--cloud-init &lt;file&gt;</code> في <code>exo</code>، وهو أبسط طريقة لتمرير cloud-init بين الخلفيات السحابية هنا)؛ يجب أن يكون ISO_IMAGE معرّف قالب أو اسمًا حقيقيًا لدى Exoscale لا اسم ملف qcow2/ISO؛ ويُطابَق VM_CPU/VM_MEM مع أصغر <code>instance-type</code> كافٍ (عائلة "standard.<size>" في Exoscale). أنواع المثيلات الحالية: شغّل <code>exo compute instance-type list</code> (المصدر المعتمد وفق <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>؛ ولم تُعَد مطابقة أرقام المعالجات والذاكرة الدقيقة في الجدول المدمج مع ذلك الأمر في هذه الجلسة)؛ ويُطبَّق vm_dsk_gb مباشرة عبر <code>--disk-size</code>. راجع سلسلة توثيق الصنف <code>ExoscaleBackend</code> في <code>libs/backends.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="usrlocalliblab_creation"><code>/usr/local/lib/lab_creation/</code></h3>
+<p>وحدات مكتبة Python المثبّتة. تُحدَّث بتشغيل <code>install_automation_node_scripts.sh</code> من المستودع على آلة الأتمتة الافتراضية.</p>
+<table>
+<thead>
+<tr>
+<th>الملف</th>
+<th>المحتوى</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lab_creation.py</code></td>
+<td>دورة حياة الأجهزة الافتراضية وDNS وتحديد المضيفات المتعددة وأدوات التنسيق المساعدة</td>
+</tr>
+<tr>
+<td><code>backends.py</code></td>
+<td>واجهة <code>VMBackend</code> + <code>LibvirtBackend</code> (إنشاء جهاز افتراضي وحذفه وإعادة تشغيله، ودفع ملفات التجهيز)</td>
+</tr>
+<tr>
+<td><code>services.py</code></td>
+<td>إدارة خدمة DNS</td>
+</tr>
+<tr>
+<td><code>spacecmd_common.py</code></td>
+<td>أتمتة مشتركة لـ SUSE Multi-Linux Manager/Uyuni (مفاتيح التفعيل والمؤسسات وRBAC وCLM وAnsible وSCAP/CVE) يستخدمها <code>install_uyuni</code>/<code>install_smlm</code>/<code>install_client_registration</code></td>
+</tr>
+<tr>
+<td><code>primary.py</code></td>
+<td>التحقق من المدخلات وتحميل الإعدادات</td>
+</tr>
+<tr>
+<td><code>k8s.py</code></td>
+<td>واجهة توزيعة عنقود Kubernetes ‏(RKE2/K3s)</td>
+</tr>
+<tr>
+<td><code>addon_common.py</code></td>
+<td>بنية سطر الأوامر المشتركة التي تستخدمها كل إضافات <code>install_*</code> (توزيع <code>--help</code>/<code>--version</code>/<code>--schema</code> والتحقق من المخطط)</td>
+</tr>
+</tbody>
+</table>
+<p>لا يزال <code>extensions.sh</code> (فارغ وغير مستخدم) يُثبَّت إلى جانبها. أما أدوات bash المساعدة الثلاث الأخرى (<code>lab_creation.bash</code> و<code>k8s_functions.bash</code> و<code>primary_functions.bash</code>) فقد أُزيلت؛ وتبقى نسخ bash الأصلية في <code>legacy_bash/</code>.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
 <h2 id="testing">الاختبار</h2>
-<p>يعمل كل فحص في حاويته <code>podman</code> المستقلة والقابلة للتجاهل الخاصة به:</p>
+<p>يعمل كل فحص في <strong>حاوية <code>podman</code> مستقلة خاصة به تُستخدم مرة واحدة</strong>: فلا يمكن لانهيار أو تعليق أو حالة متبقية في أحدها أن تؤثر في غيره:</p>
 <pre><code class="language-shell">tests/run_tests.sh
 </code></pre>
-<p align="left"><a href="#top">↑ للأعلى</a></p>
+<p>يغطي صياغة bash وPython في الشجرة كلها، واتساق المخططات مع واجهة الويب، واختبارات وحدات بـ SSH محاكى لكل مكتبة أساسية وسكربت تنسيق، واختبارات انحدار للأخطاء التي اكتُشفت أثناء الاختبار الفعلي. لإضافة فحص جديد ضع سكربتًا قابلًا للتنفيذ في <code>tests/checks/</code>: يُكتشف تلقائيًا دون أي ربط.</p>
+<p>مربوط بخطاف pre-commit (يُفعَّل مرة واحدة لكل نسخة مستنسخة، راجع <a href="#contributing--developer-setup">المساهمة</a>): يعمل تلقائيًا مع كل إيداع، وإن لم يكن <code>podman</code> مثبتًا يتخطاه مع تحذير بدلًا من منع الإيداع.</p>
+<aside class="callout callout-note"><p>لكل من <a href="#examples">الأمثلة</a> أعلاه اختبار نشر وتحقق مطابق على أجهزة حقيقية في <code>tests/examples/</code>؛ وهي تحتاج إلى مضيف KVM وآلة أتمتة افتراضية عاملين، لذا <strong>ليست</strong> جزءًا من التشغيل التلقائي لـ <code>tests/run_tests.sh</code>، لكنها موجودة ويمكن تشغيلها يدويًا (<code>tests/examples/run_example.sh &lt;name&gt;</code>) قبل دفع تغيير قد يمس أحد هذه المسارات الموثقة. راجع <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">tests/examples/README.md</a>.</p></aside>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
-<h2 id="contributing--developer-setup">المساهمة / إعداد المطور</h2>
-<p>انظر <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> على GitHub للدليل الكامل.</p>
+<h2 id="contributing--developer-setup">المساهمة / بيئة التطوير</h2>
+<p>راجع <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> للدليل الكامل (بيئة التطوير، وأعراف كتابة الشيفرة، وكيفية إضافة إضافة، وإجراءات طلبات الدمج). يتبع هذا المشروع <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CODE_OF_CONDUCT.md">ميثاق السلوك Contributor Covenant</a>؛ وللإبلاغ عن ثغرة راجع <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a>. يمر كل دفع وكل طلب دمج عبر <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml">CI</a>: فحوص صياغة Python 3.11 واستيراده، ومخطط كل إضافة، و<code>shellcheck</code>، ومجموعة الاختبارات الكاملة داخل الحاويات الموضحة أدناه.</p>
+<h3 id="one-time-git-setup">إعداد git لمرة واحدة</h3>
+<p>بعد استنساخ المستودع، شغّل:</p>
+<pre><code class="language-shell">git config core.hooksPath .githooks
+</code></pre>
+<p>يفعّل هذا الخطافات في <code>.githooks/</code>، والتي:
+- تشغّل <a href="#testing">مجموعة الاختبارات</a> الكاملة قبل كل إيداع
+- تدير ختم الإصدار لكل سكربت (راجع أدناه)</p>
+<h3 id="how-versioning-works">كيف يعمل ترقيم الإصدارات</h3>
+<aside class="callout callout-note"><p>تتولى خطافات git أعلاه هذا بالكامل، فلا تعدّل <code>__LABVERSION__</code> يدويًا أبدًا.</p></aside>
+<p>يحتوي كل سكربت على العنصر النائب:</p>
+<pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
+</code></pre>
+<p>توسّع خطافات <code>.githooks/</code> هذا العنصر النائب وتستعيده تلقائيًا:</p>
+<table>
+<thead>
+<tr>
+<th>الخطاف</th>
+<th>المُشغِّل</th>
+<th>الإجراء</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>post-checkout</code></td>
+<td><code>git checkout</code> / <code>git switch</code></td>
+<td>يستبدل <code>__LABVERSION__</code> في كل سكربت بتجزئة آخر إيداع عدّل ذلك الملف</td>
+</tr>
+<tr>
+<td><code>post-merge</code></td>
+<td><code>git pull</code> / <code>git merge</code></td>
+<td>كما في السابق</td>
+</tr>
+<tr>
+<td><code>post-rewrite</code></td>
+<td><code>git rebase</code> / <code>git commit --amend</code></td>
+<td>كما في السابق</td>
+</tr>
+<tr>
+<td><code>pre-commit</code></td>
+<td><code>git commit</code></td>
+<td>يستعيد <code>__LABVERSION__</code> في السكربتات المرحّلة قبل كتابة الإيداع، فلا تُخزَّن التجزئات في المستودع أبدًا</td>
+</tr>
+</tbody>
+</table>
+<p>النتيجة: يعرض كل سكربت في شجرة العمل إصداره الخاص عبر <code>--version</code>، ويخزّن المستودع دائمًا العنصر النائب النظيف. وعند تثبيت السكربتات عبر <code>install_automation_node_scripts.sh</code> يُطبَّق الاستبدال نفسه لكل ملف وقت التثبيت باستخدام <code>git log -1 --format=%h</code>.</p>
+<h3 id="installing-scripts-onto-the-automation-vm">تثبيت السكربتات على آلة الأتمتة الافتراضية</h3>
+<p>من جذر المستودع على آلة الأتمتة الافتراضية (أو أي جهاز استُنسخ عليه المستودع):</p>
+<pre><code class="language-shell">./install_automation_node_scripts.sh
+</code></pre>
+<p>يأخذ هذا نسخة احتياطية من التثبيت الحالي (في أرشيف tarball خاص به يحمل طابعًا زمنيًا، وبشكل منفصل فيما تحفظه عملية النسخ الاحتياطي الخاصة بك)، وينسخ كل سكربت ومكتبة وقالب إلى مساره في النظام، ويختم كل ملف مثبّت بتجزئة إصداره.</p>
+<h3 id="dependencies">الاعتماديات</h3>
+<p>وقت التشغيل (على آلة الأتمتة الافتراضية):
+<code>python3.11</code> و<code>jq</code> و<code>ssh</code> و<code>rsync</code> و<code>nc</code> و<code>helm</code> و<code>kubectl</code> و<code>named</code> ‏(BIND)</p>
+<p>يتطلب إعداد المضيف أيضًا:
+<code>virt-install</code> و<code>virsh</code> و<code>qemu-img</code> و<code>zypper</code>، وصور QCOW2 المصدرية في <code>/var/lib/libvirt/images/sources/</code></p>
+<p>يتطلب تشغيل <a href="#testing">مجموعة الاختبارات</a> أيضًا:
+<code>podman</code></p>
+<p>يتطلب استخدام <a href="#lab-definition-format">تعريف مختبر</a> بصيغة YAML (بدلًا من JSON) أيضًا:
+<code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
 <hr />
 <h2 id="author">المؤلف</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>
-</html>
+
 </main>
 </div>
 <footer class="site"><span>lab in·a box</span><span>Generated from docs/src/ by docs/build_docs.py</span></footer>

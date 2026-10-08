@@ -13,8 +13,8 @@ setup_kvm_node.py — prepare a hypervisor host to run lab-in-a-box.
 Usage:
     setup_kvm_node.py [options] [TARGET]       (see --help for every option)
 
-Without setup_demo_server/lab.cfg, it is written first: each value is asked for, with this host's
-own network settings as defaults, or taken from options / detected values with --non-interactive.
+Without setup_demo_server/lab.cfg, it is written first from the options and this host's own network
+settings; with --interactive each value is asked for, with those as defaults.
 An existing lab.cfg is used as is; options that map to its keys update them in place.
 
 Then it installs the hypervisor packages, turns the default-route NIC into a bridge that keeps the
@@ -219,7 +219,14 @@ def download_automation_image(qcow_image):
     if dest.exists():
         return
     url = "https://download.opensuse.org/distribution/leap/{}/appliances/{}".format(vm_ver, qcow_basename)
-    urllib.request.urlretrieve(url, str(dest))
+    part = dest.with_name(dest.name + ".part")
+    try:
+        urllib.request.urlretrieve(url, str(part))
+    except BaseException:
+        if part.exists():
+            part.unlink()
+        raise
+    part.rename(dest)
 
 
 _POOL_XML = """\
@@ -413,7 +420,15 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
     if _automation_host_reachable(cfg.get("_myip", "")):
         configure_automation_dns(cfg)
 
-    download_automation_image(cfg.get("_QCOW_IMAGE", ""))
+    node_mode = cfg.get("_automation_node", "") or "vm"
+    fallback = False
+    if node_mode == "vm":
+        try:
+            download_automation_image(cfg.get("_QCOW_IMAGE", ""))
+        except OSError as e:
+            warn("could not download the automation VM image ({}); creating the automation node as a container "
+                 "instead".format(e))
+            node_mode, fallback = "container", True
 
     enable_libvirt()
     define_storage_pool()
@@ -425,14 +440,29 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
         log("Configure NAT'd libvirt network {} ({})".format(nat_name, nat_cidr))
         configure_nat_network(nat_name, nat_cidr)
 
-    log("Start setup_lab_automation.sh script to create the automation VM")
-    # cwd must be wherever lab.cfg actually lives (setup_lab_automation.sh
-    # sources ./lab.cfg relative to its cwd, not its own script path) — that
-    # may be _find()'s bash-tree sibling directory, not script_dir.
-    rc = subprocess.run(["bash", str(lab_automation_script)], cwd=str(lab_automation_script.parent),
-                        check=False).returncode
+    log("Start setup_lab_automation.sh script to create the automation node ({})".format(node_mode))
+    rc = run_lab_automation(lab_automation_script, node_mode)
+    if rc != 0 and node_mode == "vm" and rc != 130:
+        warn("the automation VM could not be built (exit {}); creating the automation node as a container "
+             "instead".format(rc))
+        node_mode, fallback = "container", True
+        rc = run_lab_automation(lab_automation_script, node_mode)
+    if rc == 0 and fallback:
+        cfg_path = _find("lab.cfg")
+        cfg_path.write_text(render_lab_cfg(cfg_path.read_text(), {"_automation_node": "container"}))
     if rc != 0:
         die("{} failed (exit {}); see its output above".format(lab_automation_script.name, rc))
+
+
+def run_lab_automation(script: Path, node_mode: str) -> int:
+    """
+    Run setup_lab_automation.sh for node_mode ("vm" or "container") and return its exit code. It runs in the
+    directory holding lab.cfg (it sources ./lab.cfg) with LAB_AUTOMATION_NODE, LAB_PYTHON (this interpreter) and
+    LAB_KUBECTL_INSTALL (the pinned kubectl install script) in its environment.
+    """
+    env = dict(os.environ, LAB_AUTOMATION_NODE=node_mode, LAB_PYTHON=sys.executable,
+               LAB_KUBECTL_INSTALL=kvm_host_profiles.kubectl_binary_script())
+    return subprocess.run(["bash", str(script)], cwd=str(script.parent), env=env, check=False).returncode
 
 
 # ── lab.cfg generation ────────────────────────────────────────────────────────
@@ -444,14 +474,22 @@ def reverse_zone(network: ipaddress.IPv4Network) -> str:
 
 
 def render_lab_cfg(text: str, values: Dict[str, str]) -> str:
-    """`text` (lab.cfg or its template) with each KEY=value line in `values` replaced; comments are kept."""
+    """
+    `text` (lab.cfg or its template) with each KEY=value line in `values` replaced; comments are kept. Keys
+    `text` lacks (a lab.cfg written before the key existed) are appended.
+    """
     if not values:
         return text
     keys = "|".join(re.escape(k) for k in values)
 
     def repl(m: "re.Match") -> str:
         return "{}={}{}".format(m.group(1), shlex.quote(str(values[m.group(1)])), m.group(3) or "")
-    return re.sub(r"^({})=('[^']*'|\"[^\"]*\"|\S*)(\s+#.*)?$".format(keys), repl, text, flags=re.M)
+    out = re.sub(r"^({})=('[^']*'|\"[^\"]*\"|\S*)(\s+#.*)?$".format(keys), repl, text, flags=re.M)
+    missing = [k for k in values if not re.search(r"^{}=".format(re.escape(k)), out, flags=re.M)]
+    if missing:
+        out = out.rstrip("\n") + "\n" + "".join(
+            "{}={}\n".format(k, shlex.quote(str(values[k]))) for k in missing)
+    return out
 
 
 def suggest_free_ip(network: ipaddress.IPv4Network, exclude: Set[str]) -> str:
@@ -523,7 +561,21 @@ def build_values(args: argparse.Namespace, ask: Asker, profile_name: str) -> Tup
     mode = ask("Lab network: bridge (VMs on this host's LAN) or nat (private libvirt network)",
                args.network_mode or "bridge", ("bridge", "nat"))
     domain = ask("Lab DNS domain", args.domain or "mydemo.lab")
-    values = {"_network_mode": mode, "_mydomain": domain}
+    values = {"_network_mode": mode, "_mydomain": domain,
+              "_automation_node": ask("Automation node: vm, container (a podman container on this host) or "
+                                      "kubernetes", args.automation_node or "vm", ("vm", "container", "kubernetes"))}
+    if values["_automation_node"] == "kubernetes":
+        values["_k8s_kubeconfig"] = ask("kubeconfig of the cluster (empty: kubectl's default)",
+                                        args.k8s_kubeconfig or "")
+        values["_k8s_network"] = ask("How the lab reaches the automation node: loadbalancer or macvlan",
+                                     args.k8s_network or "loadbalancer", ("loadbalancer", "macvlan"))
+        if values["_k8s_network"] == "macvlan":
+            values["_k8s_macvlan_master"] = ask("Cluster nodes' interface on the lab network",
+                                                args.k8s_macvlan_master or "")
+        values.update({k: v for k, v in (("_k8s_namespace", args.k8s_namespace),
+                                         ("_k8s_storage_class", args.k8s_storage_class),
+                                         ("_k8s_volume_size", args.k8s_volume_size),
+                                         ("_automation_image", args.automation_image)) if v})
     if mode == "bridge":
         on_bridge = host_network.is_bridge(net.nic)
         values["_bridge_name"] = net.nic if on_bridge else (args.bridge_name or "br0")
@@ -562,6 +614,10 @@ def _flag_values(args: argparse.Namespace) -> Dict[str, str]:
     pairs = {"_network_mode": args.network_mode, "_mydomain": args.domain, "_bridge_name": args.bridge_name,
              "_bridge_nic": args.bridge_nic, "_myip": args.automation_ip, "_mygw": args.gateway,
              "_mydns": args.dns, "_nat_network_cidr": args.nat_cidr, "_timezone": args.timezone,
+             "_automation_node": args.automation_node, "_k8s_kubeconfig": args.k8s_kubeconfig,
+             "_k8s_namespace": args.k8s_namespace, "_k8s_network": args.k8s_network,
+             "_k8s_macvlan_master": args.k8s_macvlan_master, "_k8s_storage_class": args.k8s_storage_class,
+             "_k8s_volume_size": args.k8s_volume_size, "_automation_image": args.automation_image,
              "SUSE_regcode": args.suse_regcode, "SUSE_email": args.suse_email, "SUSE_url": args.suse_url}
     return {k: v for k, v in pairs.items() if v is not None}
 
@@ -572,13 +628,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="setup_kvm_node.py",
         description="Prepare this host (or TARGET over SSH) as a lab-in-a-box KVM hypervisor: install its "
-                    "packages, bridge its NIC, write lab.cfg and create the automation VM. Without lab.cfg, "
-                    "every value is asked for, with the host's own settings as defaults.")
+                    "packages, bridge its NIC, write lab.cfg and create the automation VM. Without lab.cfg, it is "
+                    "written from the options and the host's own settings; --interactive asks for each value.")
     p.add_argument("target", nargs="?", help="set up this remote host over SSH instead of the local one")
-    p.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation before changing the host")
-    p.add_argument("--non-interactive", action="store_true",
-                   help="never prompt: values come from options, an existing lab.cfg or the host's own "
-                        "settings; a root password is generated and printed when none is given (implies --yes)")
+    p.add_argument("--interactive", action="store_true",
+                   help="ask for each lab.cfg value (the host's own settings are the defaults) and for confirmation "
+                        "before changing the host. Without it nothing is asked: values come from options, an "
+                        "existing lab.cfg or the host's own settings, and a root password is generated and printed "
+                        "when none is given")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="with --interactive, do not ask for confirmation before changing the host")
+    p.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--reconfigure", action="store_true", help="write a new lab.cfg even if one exists")
     p.add_argument("--network-mode", choices=("bridge", "nat"),
                    help="bridge: lab VMs on this host's LAN (default); nat: a private libvirt NAT network")
@@ -586,6 +646,22 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                                          "carrying the default route)")
     p.add_argument("--bridge-nic", help="NIC to turn into the bridge's port (default: the default-route NIC)")
     p.add_argument("--nat-cidr", help="NAT network for --network-mode nat (default 192.168.150.0/24)")
+    p.add_argument("--automation-node", choices=("vm", "container", "kubernetes"),
+                   help="run the automation node as a VM (default), as a podman container on this host, or in a "
+                        "Kubernetes cluster (see the --k8s-* options); the container is also used when the VM "
+                        "cannot be built")
+    p.add_argument("--k8s-kubeconfig", help="kubeconfig of the cluster for --automation-node kubernetes "
+                                            "(default: kubectl's own default)")
+    p.add_argument("--k8s-namespace", help="namespace of the automation node (default lab-automation)")
+    p.add_argument("--k8s-network", choices=("loadbalancer", "macvlan"),
+                   help="how the lab reaches the automation node at its IP: a LoadBalancer Service (default, e.g. "
+                        "MetalLB) or a Multus macvlan interface on the lab network")
+    p.add_argument("--k8s-macvlan-master", help="cluster nodes' interface on the lab network, for --k8s-network macvlan")
+    p.add_argument("--k8s-storage-class", help="storage class of the automation node's persistent volume "
+                                               "(default: the cluster's default)")
+    p.add_argument("--k8s-volume-size", help="size of the automation node's persistent volume (default 20Gi)")
+    p.add_argument("--automation-image", help="automation node image for --automation-node kubernetes "
+                                              "(default ghcr.io/rmahique/lab-automation-node:latest)")
     p.add_argument("--automation-ip", help="automation VM address (default: a free address on the lab network)")
     p.add_argument("--domain", help="lab DNS domain (default mydemo.lab)")
     p.add_argument("--gateway", help="gateway for the lab VMs (default: this host's gateway)")
@@ -605,7 +681,9 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     args = p.parse_args(argv)
     if args.share_storage_from is not None and args.copy_storage_from is not None:
         p.error("--share-storage-from and --copy-storage-from are mutually exclusive")
-    if args.non_interactive:
+    if args.interactive and args.non_interactive:
+        p.error("--interactive and --non-interactive are mutually exclusive")
+    if not args.interactive:
         args.yes = True
     return args
 
@@ -640,7 +718,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     generated_password = ""
     if args.reconfigure or not cfg_path.is_file():
         log("Writing lab.cfg")
-        ask = Asker(interactive=not args.non_interactive)
+        ask = Asker(interactive=args.interactive)
         values, generated_password = build_values(args, ask, profile.name if profile else "")
         cfg_path.write_text(render_lab_cfg(_find("lab.cfg.template").read_text(), values))
     else:
@@ -657,8 +735,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         share_from = host if share_from == "" else share_from
         copy_from = host if copy_from == "" else copy_from
 
-    print("\nlab network {} ({} mode), automation VM {} at {}, gateway {}, DNS {}".format(
+    print("\nlab network {} ({} mode), automation node {} ({}) at {}, gateway {}, DNS {}".format(
         cfg.get("_mynet", ""), cfg.get("_network_mode", "bridge"), cfg.get("AUTOMATION_HOSTNAME", ""),
+        cfg.get("_automation_node", "") or "vm",
         cfg.get("_myip", ""), cfg.get("_mygw", ""), cfg.get("_mydns", "")))
     if cfg.get("_bridge_nic"):
         print("{} becomes a port of bridge {} (the host keeps its address)".format(

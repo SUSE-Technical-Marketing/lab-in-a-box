@@ -17,7 +17,7 @@
 # against the lab's own local models (ollama/deepseek/apertus/...) — everything speaks the same
 # OpenAI-compatible API either way, so a client (or open_webui) can point at any of them interchangeably.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "openai",

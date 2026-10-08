@@ -338,6 +338,9 @@ check("create_vm (kickstart): --boot carries the resolved boot_flag (matches VM_
       "--boot" in install_call and install_call[install_call.index("--boot") + 1] == "uefi")
 check("create_vm (kickstart): --extra-args still carries the real inst.ks= URL",
       "inst.ks=" in install_call[install_call.index("--extra-args") + 1])
+check("create_vm (kickstart): the kickstart is fetched over HTTPS, accepting the self-signed certificate by default",
+      "inst.ks=https://" in install_call[install_call.index("--extra-args") + 1]
+      and "inst.noverifyssl" in install_call[install_call.index("--extra-args") + 1].split())
 check("create_vm (kickstart): --extra-args carries inst.text "
       "(without it, Anaconda starts its default graphical/WebUI path in a --noautoconsole "
       "environment and hangs with zero further disk/network activity, and no error)",

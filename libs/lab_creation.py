@@ -32,6 +32,8 @@ import threading
 import time
 from pathlib import Path
 
+import provisioning
+
 
 # ── Output helpers ────────────────────────────────────────────────────────────
 
@@ -1937,7 +1939,7 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
     if nt == "wicked":
         # Find DHCP ifcfg files in Python (avoids shell quoting issues with regex)
         # and remove them one by one with a simple rm command per file
-        dhcp_pat = re.compile(r"BOOTPROTO\s*=\s*\S*(dhcp|auto)", re.IGNORECASE)
+        dhcp_pat = re.compile(r"BOOTPROTO\\s*=\\s*\\S*(dhcp|auto)", re.IGNORECASE)
         for _f in vls("/etc/sysconfig/network"):
             if not _f.startswith("ifcfg-") or _f == "ifcfg-lo":
                 continue
@@ -2041,8 +2043,8 @@ with tempfile.TemporaryDirectory(prefix="vc_") as tmp:
            r""" && printf 'PermitRootLogin yes\nPasswordAuthentication yes\n'"""
            r""" > /etc/ssh/sshd_config.d/99-lab.conf"""
            r""" ; sed -i -E"""
-           r""" -e 's/^#?\s*PermitRootLogin\s+.*/PermitRootLogin yes/'"""
-           r""" -e 's/^#?\s*PasswordAuthentication\s+.*/PasswordAuthentication yes/'"""
+           r""" -e 's/^#?\\s*PermitRootLogin\\s+.*/PermitRootLogin yes/'"""
+           r""" -e 's/^#?\\s*PasswordAuthentication\\s+.*/PasswordAuthentication yes/'"""
            r""" /etc/ssh/sshd_config 2>/dev/null; true"""]
     if nt != "cloud-init":
         # For non-cloud-init systems: disable cloud-init entirely so it doesn't interfere.
@@ -2189,14 +2191,20 @@ def setup_helm(hostname, clu_name, online=False, automation_host="automation"):
     Install Helm on a remote Kubernetes node, as the bash setup_helm does.
 
     online=True downloads directly from GitHub. online=False downloads from the automation VM. The default is False, which matches
-    the bash behaviour when the `online` field is absent.
+    the bash behaviour when the `online` field is absent. The automation VM URL and certificate check follow lab_creation.cfg's
+    PROVISIONING_BASE_URL and PROVISIONING_TLS_VERIFY (see libs/provisioning.py).
     """
     log("Setting up Helm on cluster '{}'".format(clu_name))
     if online:
         ssh_run(hostname,
                 "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
     else:
-        ssh_run(hostname, "curl http://{}/helm/install_helm.sh | bash -".format(automation_host))
+        from primary import load_config
+        config = load_config()
+        base = provisioning.base_url(automation_host, config.get("PROVISIONING_BASE_URL", ""))
+        tls = provisioning.curl_tls_option(base, provisioning.tls_verify(config.get("PROVISIONING_TLS_VERIFY", "")))
+        fetch = " ".join(filter(None, ["curl", tls, "{}/helm/install_helm.sh".format(shlex.quote(base))]))
+        ssh_run(hostname, "{} | LAB_PROVISIONING_URL={} LAB_CURL_TLS={} bash -".format(fetch, shlex.quote(base), tls))
 
 
 def helm_repo_add(hostname, repo_name, repo_url):

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>lab-in-a-box · Português (Brasil)</title>
-<meta name="description" content="lab-in-a-box cria laboratórios completos a partir de um único arquivo JSON ou YAML: as máquinas virtuais, DNS, clusters Kubernetes e complementos que você descr">
+<meta name="description" content="lab-in-a-box cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os complementos que você descrever. ">
 <meta name="theme-color" content="#12a99d">
 <link rel="icon" href="media/brand/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -219,27 +219,27 @@ footer.site {
 <div class="opening-text">
 <p class="eyebrow">IT labs, deployed automatically</p>
 <h1><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"> · Português (Brasil)</h1>
-<p class="lead"><strong>lab-in-a-box</strong> cria laboratórios completos a partir de um único arquivo JSON ou YAML: as máquinas virtuais, DNS, clusters Kubernetes e complementos que você descreve. As máquinas virtuais podem ser executadas em seus próprios hosts KVM, em Harvester ou em uma das oito nuvens públicas, e o mesmo arquivo funciona em todas elas.</p>
+<p class="lead"><strong>lab-in-a-box</strong> cria laboratórios completos a partir de um único arquivo JSON ou YAML: as VMs, o DNS, os clusters Kubernetes e os complementos que você descrever. As VMs podem rodar nos seus próprios hosts KVM, no Harvester ou em qualquer uma de oito nuvens públicas, e o mesmo arquivo funciona em todas elas.</p>
 <div class="cta"><a class="btn btn--primary" href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">View on GitHub</a></div>
 <p class="hint">Drag the cube to rotate it.</p>
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Por que lab-in-a-box?</a></li><li><a href="#architecture">Arquitetura</a></li><li><a href="#how-it-works">Como funciona</a></li><li><a href="#quick-start">Início rápido</a></li><li><a href="#web-ui-lab-builder">Interface web (lab-builder)</a></li><li><a href="#lab-definition-format">Formato de definição do laboratório</a></li><li><a href="#testing">Testes</a></li><li><a href="#contributing--developer-setup">Contribuindo / Configuração do desenvolvedor</a></li><li><a href="#author">Autor</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Por que lab-in-a-box?</a></li><li><a href="#architecture">Arquitetura</a></li><li><a href="#how-it-works">Como funciona</a></li><li><a href="#quick-start">Início rápido</a></li><li><a href="#web-ui-lab-builder">Interface web (lab-builder)</a></li><li><a href="#lab-definition-format">Formato de definição do laboratório</a></li><li><a href="#examples">Exemplos</a></li><li><a href="#step-by-step-walkthroughs">Guias passo a passo</a></li><li><a href="#available-commands">Comandos disponíveis</a></li><li><a href="#available-addons">Complementos disponíveis</a></li><li><a href="#configuration-reference">Referência de configuração</a></li><li><a href="#testing">Testes</a></li><li><a href="#contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</a></li><li><a href="#author">Autor</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">Por que lab-in-a-box?</h2>
 <ul>
-<li><strong>Um arquivo, um comando.</strong> Descreva máquinas virtuais, clusters Kubernetes (RKE2 ou K3s) e complementos de forma declarativa. <code>setup_lab.py</code> os cria em ordem de dependências, sem necessidade de executar <code>virt-install</code> ou Ansible manualmente.</li>
-<li><strong>Lab em casa ou na nuvem, mesma definição.</strong> As máquinas virtuais do laboratório são executadas em seus hosts KVM pessoais, no Harvester HCI ou em AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Os laboratórios podem se estender por múltiplos hosts KVM, e um único laboratório pode combinar nuvens e locais por meio de uma <a href="#cross-cloud-wireguard-overlay">sobreposição WireGuard entre nuvens</a>.</li>
-<li><strong>71 complementos pré-integrados.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud e muito mais, além de aplicações de demonstração intencionalmente vulneráveis para treinamento de segurança.</li>
-<li><strong>Uma interface web que segue o código.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renderiza cada formulário diretamente do esquema do complemento. Um novo campo em um script aparece na interface de usuário sem alterações no frontend.</li>
-<li><strong>Provisionamento intercambiável.</strong> Ignition e Combustion para SLE Micro, cloud-init para openSUSE e Ubuntu, <code>virt-customize</code> para imagens antigas, ou instalação orientada por script de um ISO de instalação real (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
-<li><strong>Credenciais fora do arquivo de laboratório.</strong> As credenciais de nuvem e serviço podem residir em arquivos criptografados por conta (derivação de chave com Argon2id seguida por AES-256-GCM e ChaCha20-Poly1305 em cascata).</li>
-<li><strong>Testes conteinerizados.</strong> Cada verificação é executada em seu próprio contêiner <code>podman</code> descartável independente, e um gancho de pré-commit executa as verificações relevantes.</li>
+<li><strong>Um arquivo, um comando.</strong> Descreva VMs, clusters Kubernetes (RKE2 ou K3s) e complementos de forma declarativa. O <code>setup_lab.py</code> os cria na ordem das dependências, sem que você precise executar <code>virt-install</code> ou Ansible manualmente.</li>
+<li><strong>Laboratório em casa ou na nuvem, a mesma definição.</strong> As VMs do laboratório rodam em hosts KVM próprios, no Harvester HCI ou na AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Um laboratório pode abranger vários hosts KVM e combinar nuvens e locais por meio de uma <a href="#cross-cloud-wireguard-overlay">rede sobreposta WireGuard entre nuvens</a>.</li>
+<li><strong>71 complementos prontos.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud e outros, além de aplicações de demonstração intencionalmente vulneráveis para treinamento em segurança.</li>
+<li><strong>Uma interface web que acompanha o código.</strong> O <a href="#web-ui-lab-builder">lab-builder</a> gera cada formulário a partir do esquema do próprio complemento, então um campo novo em um script aparece na interface sem mudanças no frontend.</li>
+<li><strong>Provisionamento intercambiável.</strong> Ignition e Combustion para SLE Micro, cloud-init para openSUSE e Ubuntu, <code>virt-customize</code> para imagens antigas, ou uma instalação automatizada a partir de uma ISO de instalação (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
+<li><strong>Credenciais fora do arquivo do laboratório.</strong> As credenciais de nuvens e serviços podem ficar em arquivos criptografados por conta (derivação de chave Argon2id, seguida de AES-256-GCM e ChaCha20-Poly1305 em cascata).</li>
+<li><strong>Testes em contêineres.</strong> Cada verificação roda em um contêiner podman descartável, e um hook de pre-commit executa as verificações relevantes.</li>
 </ul>
 <hr />
-<h2 id="table-of-contents">Índice</h2>
+<h2 id="table-of-contents">Sumário</h2>
 <ul>
 <li><a href="#architecture">Arquitetura</a></li>
 <li><a href="#how-it-works">Como funciona</a></li>
@@ -252,46 +252,46 @@ footer.site {
 <li><a href="#available-addons">Complementos disponíveis</a></li>
 <li><a href="#configuration-reference">Referência de configuração</a></li>
 <li><a href="#testing">Testes</a></li>
-<li><a href="#contributing--developer-setup">Contribuindo / Configuração do desenvolvedor</a></li>
+<li><a href="#contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</a></li>
 </ul>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="architecture">Arquitetura</h2>
 <p align="center" float="left">
 </p>
 
-<p>O sistema é baseado em uma <strong>arquitetura de dois níveis</strong>:</p>
+<p>O sistema é construído em torno de uma <strong>arquitetura de duas camadas</strong>:</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/architecture.svg" alt="Architecture: your client talks to the automation VM, which creates lab VMs on KVM hypervisors or other compute backends" loading="lazy"><img class="diagram--dark" src="media/diagrams/architecture-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure><figure class="diagram"><img class="diagram--light" src="media/diagrams/network.svg" alt="Network and services: laptop, router and a LAN with the automation VM (DNS, HTTP) and a three-node Kubernetes cluster" loading="lazy"><img class="diagram--dark" src="media/diagrams/network-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
-<h3 id="hypervisor-nodes">Nós hipervisor</h3>
-<p>Uma ou mais máquinas físicas (bare metal) com KVM/QEMU. Cada uma hospeda máquinas virtuais de laboratório e mantém imagens de origem QCOW2 em <code>/var/lib/libvirt/images/sources/</code>. Um NUC, estação de trabalho ou qualquer máquina x86_64 executando KVM é suficiente. Laboratórios que requerem mais capacidade do que uma única máquina pode oferecer podem se estender em <strong>múltiplos hosts KVM</strong> — veja <a href="#multi-host-labs">Laboratórios multi-host</a> abaixo.</p>
+<h3 id="hypervisor-nodes">Nó(s) hipervisor</h3>
+<p>Uma ou mais máquinas físicas executando KVM/QEMU. Cada uma hospeda VMs do laboratório e guarda as imagens QCOW2 de origem em <code>/var/lib/libvirt/images/sources/</code>. Serve um NUC, uma estação de trabalho ou qualquer máquina x86_64 capaz de executar KVM. Laboratórios que precisam de mais capacidade do que uma única máquina podem abranger <strong>vários hosts KVM</strong>; veja <a href="#multi-host-labs">laboratórios com vários hosts</a> abaixo.</p>
 <h3 id="automation-vm">VM de automação</h3>
-<p>Uma pequena máquina virtual no hipervisor atuando como plano de controle para todo o laboratório. Fornece:</p>
+<p>Uma VM pequena que roda no hipervisor e atua como plano de controle de todo o laboratório. Ela fornece:</p>
 <ul>
-<li><strong>DNS</strong> — BIND (<code>named</code>) atende o domínio do laboratório e encaminha consultas externas, de modo que todos os nomes de host do laboratório sejam resolvidos de qualquer cliente que o aponte</li>
-<li><strong>HTTP</strong> — fornece arquivos de provisionamento (Ignition, Combustion, cloud-init) em <code>/srv/www/htdocs/lab_creation/</code></li>
-<li><strong>Scripts</strong> — todos os comandos de gerenciamento de laboratório, instalados em <code>/usr/local/bin/</code></li>
-<li><strong>Interface web</strong> (opcional) — <a href="#web-ui-lab-builder">lab-builder</a>, um designer baseado em navegador para arquivos lab.json</li>
+<li><strong>DNS</strong>: o BIND (<code>named</code>) serve o domínio do laboratório e encaminha consultas externas, de modo que todos os nomes do laboratório são resolvidos a partir de qualquer cliente que o utilize</li>
+<li><strong>HTTP</strong>: serve os arquivos de provisionamento (Ignition, Combustion, cloud-init) em <code>/srv/www/htdocs/lab_creation/</code></li>
+<li><strong>Scripts</strong>: todos os comandos de gerenciamento do laboratório, instalados em <code>/usr/local/bin/</code></li>
+<li><strong>Interface web</strong> (opcional): o <a href="#web-ui-lab-builder">lab-builder</a>, um editor de lab.json no navegador</li>
 </ul>
-<p>Todos os comandos do usuário são executados <strong>na VM de automação</strong>. Conecta via SSH com o hipervisor ou hipervisores, e com as máquinas virtuais criadas. Após a configuração inicial, nenhum acesso direto ao hipervisor é necessário.</p>
-<h3 id="under-the-hood">Sob o capô</h3>
-<p>As ferramentas de linha de comando e cada complemento estão em Python 3.11, residindo em <code>libs/</code> e <code>scripts/</code>, e instalados em <code>/usr/local/lib/lab_creation/</code>. Estão organizados em torno de um pequeno conjunto de módulos de biblioteca compartilhada (<code>lab_creation.py</code>, <code>backends.py</code>, <code>services.py</code>, <code>spacecmd_common.py</code>, …) que não dependem uns dos outros. A criação de máquinas virtuais é realizada através de uma interface <code>VMBackend</code> intercambiável com dez implementações: libvirt, Harvester e oito nuvens públicas (veja <a href="#compute-backends">Backends de computação</a>). Complementos e código de orquestração não mudam entre eles. As implementações em Bash que foram substituídas estão arquivadas em <code>legacy_bash/</code> — incluindo o <code>install_ds389</code> original.</p>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p>Todos os comandos do usuário são executados <strong>na VM de automação</strong>. Ela se conecta por SSH aos hipervisores e às VMs criadas. Depois da configuração inicial, não é preciso acessar o hipervisor diretamente.</p>
+<h3 id="under-the-hood">Por dentro</h3>
+<p>As ferramentas de linha de comando e todos os complementos são escritos em Python 3.11, em <code>libs/</code> e <code>scripts/</code>, e instalados em <code>/usr/local/lib/lab_creation/</code>. Eles se organizam em torno de um pequeno conjunto de módulos de biblioteca compartilhados (<code>lab_creation.py</code>, <code>backends.py</code>, <code>services.py</code>, <code>spacecmd_common.py</code>, …), e não uns dos outros. A criação de VMs fica atrás de uma interface <code>VMBackend</code> intercambiável com dez implementações: libvirt, Harvester e oito nuvens públicas (veja <a href="#compute-backends">Backends de computação</a>), de modo que os complementos e a orquestração não mudam entre elas. As implementações em bash que elas substituíram estão arquivadas em <code>legacy_bash/</code>, incluindo o <code>install_ds389</code> original.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="how-it-works">Como funciona</h2>
-<h3 id="deploy-pipeline">Pipeline de implantação</h3>
-<p><code>setup_lab.py</code> executa uma sequência fixa de fases. As duas fases específicas de Kubernetes são completamente ignoradas para um laboratório sem a seção <code>kclusters</code>:</p>
+<h3 id="deploy-pipeline">Fluxo de implantação</h3>
+<p>O <code>setup_lab.py</code> executa uma sequência fixa de fases; as duas fases exclusivas do Kubernetes são totalmente ignoradas em um laboratório só de VMs (sem seção <code>kclusters</code>):</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/pipeline.svg" alt="Deploy pipeline: services, DNS, create VMs, reboot and wait, install Kubernetes, VM add-ons" loading="lazy"><img class="diagram--dark" src="media/diagrams/pipeline-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
-<h3 id="vm-provisioning">Provisionamento de máquinas virtuais</h3>
-<p>Cada máquina virtual é criada assim:
-1. Determinar qual host KVM a hospeda (o campo explícito <code>kvm_host</code> ou seleção automática por capacidade livre — veja <a href="#multi-host-labs">Laboratórios multi-host</a>)
-2. Copiar e expandir uma imagem de origem QCOW2 nesse host
-3. Gerar arquivos de provisionamento a partir de modelos de acordo com seu <code>config_method</code>
-4. Registrar uma entrada DNS em BIND
-5. Executar <code>virt-install</code> no hipervisor via SSH
-6. Aguardar SSH estar disponível</p>
-<p>O método de provisionamento é controlado por <code>config_method</code> no JSON do laboratório (por nó ou em <code>common</code>):</p>
+<h3 id="vm-provisioning">Provisionamento de VMs</h3>
+<p>Cada VM é criada assim:
+1. Define-se em qual host KVM ela fica (o campo explícito <code>kvm_host</code>, ou seleção automática pela capacidade livre; veja <a href="#multi-host-labs">laboratórios com vários hosts</a>)
+2. Copia-se e redimensiona-se uma imagem QCOW2 de origem nesse host
+3. Geram-se os arquivos de provisionamento a partir de modelos, conforme o <code>config_method</code>
+4. Registra-se uma entrada DNS no BIND
+5. Executa-se o <code>virt-install</code> no hipervisor via SSH
+6. Aguarda-se o SSH ficar disponível</p>
+<p>O método de provisionamento é definido por <code>config_method</code> no JSON do laboratório (por nó ou em <code>common</code>):</p>
 <table>
 <thead>
 <tr>
@@ -308,38 +308,38 @@ footer.site {
 </tr>
 <tr>
 <td><code>cloud-init</code></td>
-<td>ISO cloud-init</td>
+<td>ISO do cloud-init</td>
 <td>openSUSE Leap, Ubuntu</td>
 </tr>
 <tr>
 <td><code>virt_customize</code></td>
-<td>Modifica QCOW2 diretamente no hipervisor (<code>virt-customize</code>) — nenhum suporte Ignition/cloud-init necessário no sistema convidado</td>
-<td>CentOS 7, RHEL/Debian antigos ou qualquer imagem sem Ignition/cloud-init</td>
+<td>Modifica o QCOW2 diretamente no hipervisor (<code>virt-customize</code>); o convidado não precisa suportar Ignition nem cloud-init</td>
+<td>CentOS 7, Debian/RHEL antigos ou qualquer imagem sem Ignition/cloud-init</td>
 </tr>
 <tr>
 <td><code>install_iso</code></td>
-<td>Instalação orientada por script de um ISO de instalação real (AutoYaST, Kickstart, Preseed ou AutoInstall, selecionado via <code>install_type</code>)</td>
+<td>Instalação automatizada a partir de uma ISO de instalação real (AutoYaST, Kickstart, Preseed ou AutoInstall, escolhido por <code>install_type</code>)</td>
 <td>Distribuições sem outro caminho de provisionamento</td>
 </tr>
 </tbody>
 </table>
 <h3 id="compute-backends">Backends de computação</h3>
-<p>Uma interface <code>VMBackend</code> intercambiável determina onde a máquina virtual de um nó é criada. Ela é resolvida uma vez por nó a partir de seu campo <code>backend</code> (ou de <code>cloud_account</code>, que implica o backend). O padrão é <code>libvirt</code>. Cada complemento e script de orquestração fala com o backend resolvido da mesma forma, não importa qual seja:</p>
+<p>Onde a VM de um nó é criada é decidido por uma interface <code>VMBackend</code> intercambiável, resolvida uma vez por nó a partir do campo <code>backend</code> (ou de <code>cloud_account</code>, que implica o backend). O padrão é <code>libvirt</code>. Todos os complementos e scripts de orquestração falam com o backend resolvido da mesma forma, seja ele qual for:</p>
 <table>
 <thead>
 <tr>
 <th>Backend</th>
-<th>Onde a VM é executada</th>
+<th>Onde a VM roda</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>libvirt</code></td>
-<td>Um hipervisor KVM/QEMU que você opera (padrão)</td>
+<td>Um hipervisor KVM/QEMU que você gerencia (padrão)</td>
 </tr>
 <tr>
 <td><code>harvester</code></td>
-<td>Um cluster Harvester HCI, como KubeVirt VirtualMachines</td>
+<td>Um cluster Harvester HCI, como VirtualMachines do KubeVirt</td>
 </tr>
 <tr>
 <td><code>aws</code></td>
@@ -375,95 +375,1395 @@ footer.site {
 </tr>
 </tbody>
 </table>
-<h3 id="kubernetes-setup">Configuração de Kubernetes</h3>
-<p>Uma vez que as máquinas virtuais estão em execução, <code>setup_lab.py</code> instala Kubernetes em cada nó de acordo com a seção <code>kclusters</code> do JSON. RKE2 e K3s são ambos suportados. Uma vez que um cluster esteja pronto, seus complementos são executados sequencialmente. Os complementos em nível de VM (designados a um nó individual em vez de um cluster) são executados posteriormente uma vez que esse nó está provisionado.</p>
-<h3 id="library-loading-order">Ordem de carregamento de bibliotecas</h3>
-<p>Cada script lê a configuração nesta ordem:</p>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<h3 id="kubernetes-setup">Configuração do Kubernetes</h3>
+<p>Com as VMs no ar, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. RKE2 e K3s são suportados. Quando um cluster fica pronto, seus complementos rodam em sequência; os complementos de VM (ligados a um nó em vez de um cluster) rodam depois que esse nó é provisionado.</p>
+<h3 id="multi-host-labs">Laboratórios com vários hosts</h3>
+<p>Um laboratório não está limitado a um hipervisor. Defina <code>KVM_HOSTS</code> (separados por espaço) em <code>/etc/lab_creation.cfg</code> na VM de automação para disponibilizar mais de um hipervisor:</p>
+<pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
+</code></pre>
+<p>Depois, para cada nó do JSON do laboratório:
+- <strong>fixe-o explicitamente</strong> com <code>"kvm_host": "hv2.mydemo.lab"</code> na configuração do nó, ou
+- <strong>deixe a seleção automática</strong>: omita <code>kvm_host</code>; o nó vai para o host configurado que tiver no momento CPU/RAM/disco livres suficientes (verificado ao vivo via SSH).</p>
+<p>Nós sem <code>kvm_host</code> e instalações com um único host configurado se comportam exatamente como antes desse recurso existir: nada muda para um laboratório com um só hipervisor.</p>
+<h3 id="cross-cloud-wireguard-overlay">Rede sobreposta WireGuard entre nuvens</h3>
+<p>Em geral, um nó de laboratório na nuvem não consegue alcançar pela rede a rede privada de outra conta de nuvem nem o laboratório libvirt doméstico: cada um é sua própria VPC ou rede isolada. <code>common.overlay: true</code> no JSON do laboratório roteia entre si os SITES deste laboratório, de site para site, pelas sub-redes reais, por meio de uma rede sobreposta WireGuard em estrela (<code>libs/overlay.py</code>):</p>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/overlay.svg" alt="Cross-cloud WireGuard overlay: site gateways connect to a hub; nodes route through their own gateway" loading="lazy"><img class="diagram--dark" src="media/diagrams/overlay-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<p>Apenas o gateway de cada site entra na rede sobreposta, nunca um nó individual do laboratório. Um "site" é o laboratório libvirt doméstico ou uma conta de nuvem; o gateway é a própria VM de automação do site doméstico (<code>mysource</code> em <code>/etc/lab_creation.cfg</code>) ou, numa conta de nuvem, uma pequena VM dedicada criada ou reutilizada ali automaticamente (<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>, a mesma convenção de nomes da VM de DNS na nuvem). Todos os OUTROS nós apenas recebem uma rota local persistente para a sub-rede real de cada outro site, pelo gateway do próprio site: esse é todo o mecanismo, sem participação de cada nó no WireGuard.</p>
+<p><code>OVERLAY_HUB_ACCOUNT</code> (obrigatório, em <code>/etc/lab_creation.cfg</code>) indica a conta de nuvem cuja VM de gateway é o hub, o único site com IP público estável ao qual todos os outros se conectam. <code>OVERLAY_CIDR</code> (padrão <code>10.99.0.0/16</code>) é usado só para os endereços dos gateways no túnel, não para rotear o tráfego real; <code>OVERLAY_WG_PORT</code> (padrão <code>51820</code>) é a porta de escuta do hub. A entrada, a saída e a distribuição de rotas acontecem automaticamente no <code>setup_vm.py</code>; não há mais nada para executar manualmente.</p>
+<p><strong>Limitações conhecidas:</strong> o DNS não é alterado (um nó fica acessível pelo nome real quando esse nome resolve para uma sub-rede já roteada, não antes); os nós já provisionados de um site não são roteados de novo quando um novo site remoto entra depois, apenas atualizados no provisionamento de cada nó; a AWS exige desativar o "source/dest check" do gateway do site para encaminhar tráfego (feito automaticamente), e ainda não há equivalente para os outros 7 backends de nuvem.</p>
+<h3 id="library-loading-order">Ordem de carregamento das bibliotecas</h3>
+<p>Cada script carrega a configuração nesta ordem:</p>
 <ol>
-<li><code>/etc/lab_creation.defaults</code> — valores padrão do sistema, caminhos, listas de pacotes</li>
-<li><code>/usr/local/lib/lab_creation/primary.py</code> — validação de entrada, carregamento de configuração</li>
-<li><code>/etc/lab_creation.cfg</code> — configurações específicas do nó (<code>REMOTE_HOST</code>, <code>ROOT_SSH_KEY</code>, <code>VIRT_SRV</code>, <code>KVM_HOSTS</code>, etc.)</li>
-<li><code>/usr/local/lib/lab_creation/lab_creation.py</code> — funções de VM, DNS e orquestração</li>
-<li><code>/usr/local/lib/lab_creation/k8s.py</code> — funções de cluster Kubernetes</li>
+<li><code>/etc/lab_creation.defaults</code>: padrões do sistema, caminhos, listas de pacotes</li>
+<li><code>/usr/local/lib/lab_creation/primary.py</code>: validação de entrada, carregamento da configuração</li>
+<li><code>/etc/lab_creation.cfg</code>: configurações específicas do nó (<code>REMOTE_HOST</code>, <code>ROOT_SSH_KEY</code>, <code>VIRT_SRV</code>, <code>KVM_HOSTS</code> etc.)</li>
+<li><code>/usr/local/lib/lab_creation/lab_creation.py</code>: funções de VM, DNS e orquestração</li>
+<li><code>/usr/local/lib/lab_creation/k8s.py</code>: funções de cluster Kubernetes</li>
 </ol>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="quick-start">Início rápido</h2>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/quickstart.svg" alt="Quick start in six steps" loading="lazy"><img class="diagram--dark" src="media/diagrams/quickstart-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="requirements">Requisitos</h3>
 <ul>
-<li>Uma máquina capaz de executar KVM (Intel VT-x ou AMD-V ativado)</li>
-<li>Acesso à Internet (ou espelho local) para baixar pacotes e imagens</li>
-<li>Uma imagem QCOW2 para o SO escolhido em <code>/var/lib/libvirt/images/sources/</code> no hipervisor</li>
+<li>Uma máquina capaz de executar KVM (com Intel VT-x ou AMD-V ativado)</li>
+<li>Acesso à Internet (ou um espelho local) para baixar pacotes e imagens</li>
+<li>Uma imagem QCOW2 do sistema escolhido em <code>/var/lib/libvirt/images/sources/</code> no hipervisor</li>
 </ul>
-<aside class="callout callout-important"><p>O hipervisor não precisa de Python instalado antes: o comando de instalação instala <code>python311</code> no openSUSE Leap / SLES 15 e o <code>python3</code> da própria distribuição (3.9 ou mais recente) nas demais.</p></aside>
+<aside class="callout callout-important"><p>O hipervisor não precisa ter Python instalado antes: o comando de configuração instala <code>python311</code> no openSUSE Leap / SLES 15 e o <code>python3</code> da própria distribuição (3.9 ou mais recente) em todas as outras.</p></aside>
 <p>Imagens testadas:
-- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a> — recomendada, usada com Ignition+Combustion
-- openSUSE Leap Micro — suportada, usada com cloud-init</p>
-<h3 id="step-1--prepare-the-hypervisor-os">Etapa 1 — Instalar o SO do hipervisor</h3>
-<p>Instale um destes sistemas no seu hardware: openSUSE Leap / SLES 15 SP6+ & 16, Debian 12 & 13, Ubuntu 22.04 & 24.04, RHEL / Rocky Linux / AlmaLinux / CentOS Stream 9 & 10, Fedora. Uma instalação mínima ou de servidor basta; não é preciso criar uma bridge nem instalar pacotes antes.</p>
+- <a href="https://www.suse.com/download/sle-micro/">SLE Micro</a>: recomendada, usada com Ignition+Combustion
+- openSUSE Leap Micro: suportada, usada com cloud-init</p>
+<h3 id="step-1--prepare-the-hypervisor-os">Etapa 1: instalar o sistema do hipervisor</h3>
+<p>Instale um destes sistemas no seu hardware; basta uma instalação mínima ou de servidor, sem bridge nem pacotes extras antes:</p>
+<table>
+<thead>
+<tr>
+<th>Família</th>
+<th>Versões</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>openSUSE Leap, SLES</td>
+<td>15 (SP6+), 16</td>
+</tr>
+<tr>
+<td>Debian, Ubuntu</td>
+<td>Debian 12, 13; Ubuntu 22.04, 24.04</td>
+</tr>
+<tr>
+<td>RHEL, Rocky Linux, AlmaLinux, CentOS Stream, Fedora</td>
+<td>9, 10; Fedora atual</td>
+</tr>
+</tbody>
+</table>
+<p>Outras versões dessas famílias recebem a lista de pacotes correspondente mais recente, com um aviso de que ela não foi verificada para elas. O SLES precisa de um código de registro (pedido durante a configuração), a menos que o host já esteja registrado.</p>
 <p>Em hipervisores da família RHEL e Fedora a configuração do host é concluída, mas a VM de automação ainda não pode ser criada neles: o libguestfs desses sistemas não consegue ler o sistema de arquivos btrfs da imagem openSUSE Leap. Por enquanto, crie o nó de automação em um host de outra família.</p>
-<h3 id="step-2--bootstrap-the-setup-scripts">Etapa 2 — Executar o comando de instalação</h3>
+<details>
+<summary>Gravar um pendrive inicializável no Linux</summary>
+
+
+<pre><code class="language-shell"># Before inserting USB:
+cat /proc/partitions &gt; /tmp/partb4
+
+# Insert USB, then:
+cat /proc/partitions &gt; /tmp/parta
+
+# Find the new device:
+diff /tmp/part*
+</code></pre>
+
+
+<aside class="callout callout-warning"><p>O próximo comando <strong>apaga todos os dados</strong> do dispositivo de destino. Confira <code>sdX</code> com a saída do <code>diff</code> acima antes de executá-lo.</p></aside>
+
+
+<pre><code class="language-shell"># Write the ISO (replace sdX with your device):
+dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
+</code></pre>
+
+
+</details>
+
+<h3 id="step-2--bootstrap-the-setup-scripts">Etapa 2: executar o comando de configuração</h3>
 <p>No hipervisor, como root:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>Ele instala git e Python, baixa o lab-in-a-box em <code>/var/tmp/setup_demo_server/</code> e pergunta as configurações do laboratório, com os valores deste host como padrão: rede em bridge ou NAT, domínio DNS do laboratório, endereço IP e senha de root da VM de automação (e o código de registro no SLES). Depois instala os pacotes do hipervisor, transforma a NIC da rota padrão em porta da bridge <code>br0</code> mantendo o endereço do host (se o gateway parar de responder, a configuração de rede anterior é restaurada automaticamente) e cria a VM de automação.</p>
-<p>Cada resposta também pode ser passada como opção, para execuções sem supervisão (por exemplo via cloud-init):</p>
+<p>Ele instala o git e o Python, baixa o lab-in-a-box em <code>/var/tmp/setup_demo_server/</code> e executa <code>setup_demo_server/setup_kvm_node.py</code>, que obtém as configurações do laboratório das suas opções e dos valores deste host; com <code>--interactive</code> ele as pede uma a uma, com esses valores como padrão:</p>
+<ul>
+<li><strong>Rede do laboratório</strong>: <code>bridge</code> coloca as VMs do laboratório na LAN do host; <code>nat</code> usa uma rede privada do libvirt (para um notebook ou um host com uma só placa de rede)</li>
+<li><strong>Domínio DNS do laboratório</strong> (padrão <code>mydemo.lab</code>), o <strong>endereço IP da VM de automação</strong> (é sugerido um endereço livre na rede do laboratório) e a <strong>senha de root</strong></li>
+<li>No SLES, o <strong>código de registro</strong></li>
+</ul>
+<p>A rede, o gateway, o servidor DNS, o fuso horário e a chave SSH (<code>~/.ssh/id_ed25519.pub</code>, criada se não existir) vêm do host. As respostas são gravadas em <code>setup_demo_server/lab.cfg</code>; depois de um resumo (e, com <code>--interactive</code>, de uma confirmação), a configuração:</p>
+<ol>
+<li>instala os pacotes do hipervisor para a distribuição detectada (EPEL e CRB são ativados em hosts da família RHEL);</li>
+<li>no modo bridge, transforma a placa de rede da rota padrão em uma porta de <code>br0</code>, mantendo o endereço do host. NetworkManager, netplan, wicked, systemd-networkd e ifupdown são suportados. Um temporizador restaura a configuração de rede anterior se o gateway não responder pelo bridge, de modo que uma mudança malsucedida não deixa o host inacessível;</li>
+<li>configura o libvirt e cria a VM de automação.</li>
+</ol>
+<p>Cada configuração pode ser passada como opção, por exemplo em uma execução sem intervenção a partir do cloud-init:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
-  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+  | sudo bash -s -- --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<h3 id="step-3--configure-and-run-the-kvm-node-setup">Etapa 3 — Executar de novo ou alterar a configuração</h3>
-<p>Uma nova execução usa o <code>setup_demo_server/lab.cfg</code> existente; <code>--reconfigure</code> pergunta tudo de novo. Para editar o <code>lab.cfg</code> antes de qualquer mudança, baixe apenas o código:</p>
+<p>Sem <code>--root-password</code> (ou <code>LAB_ROOT_PASSWORD</code>), uma senha é gerada e mostrada no final, a menos que <code>--interactive</code> a peça. Execute <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> para ver todas as opções.</p>
+<h3 id="step-3--configure-and-run-the-kvm-node-setup">Etapa 3: executar de novo ou alterar a configuração</h3>
+<p>Executar o comando novamente usa o <code>lab.cfg</code> existente como está; as opções que correspondem às suas configurações (por exemplo <code>--network-mode nat</code>) as atualizam antes, e <code>--reconfigure</code> pergunta tudo de novo. Para revisar ou editar o <code>lab.cfg</code> antes de qualquer mudança, baixe apenas o código:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
 </code></pre>
-<p><code>setup_kvm_node.py &lt;IP&gt;</code> configura outra máquina via SSH; <code>setup_kvm_node.py --help</code> mostra todas as opções.</p>
-<h3 id="step-4--configure-the-automation-vm">Etapa 4 — Configurar a VM de automação</h3>
-<p>Conecte via SSH à VM de automação e instale os scripts do laboratório:</p>
+<p>Para configurar outra máquina a partir desta, informe o endereço dela; o código é copiado por SSH e as mesmas opções se aplicam:</p>
+<pre><code class="language-shell">python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py &lt;IP&gt;
+</code></pre>
+<p>Principais configurações do <code>lab.cfg</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Configuração</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_network_mode</code>, <code>_bridge_name</code>, <code>_bridge_nic</code></td>
+<td>Rede em bridge ou NAT; o bridge ao qual as VMs do laboratório se conectam e a placa de rede que vira sua porta</td>
+</tr>
+<tr>
+<td><code>_mynet</code>, <code>_mygw</code>, <code>_mydns</code>, <code>_myip</code></td>
+<td>Rede do laboratório, gateway, DNS de origem e endereço da VM de automação</td>
+</tr>
+<tr>
+<td><code>ROOT_PWD_HASH</code>, <code>ROOT_SSH_PUB_KEY</code></td>
+<td>Hash da senha de root da VM de automação e a chave SSH autorizada a entrar</td>
+</tr>
+<tr>
+<td><code>AUTOMATION_HOSTNAME</code></td>
+<td>Nome de host da VM de automação (por exemplo <code>automation.mydemo.lab</code>)</td>
+</tr>
+<tr>
+<td><code>_QCOW_IMAGE</code></td>
+<td>Nome do arquivo da imagem QCOW2 de origem</td>
+</tr>
+</tbody>
+</table>
+<h3 id="step-4--configure-the-automation-vm">Etapa 4: configurar a VM de automação</h3>
+<p>Acesse a VM de automação por SSH e instale os scripts do laboratório:</p>
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
 cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
-<h3 id="step-5--point-your-client-dns-at-the-automation-vm">Etapa 5 — Apontar o DNS do cliente para a VM de automação</h3>
-<p>Para que os nomes de host sejam resolvidos a partir de sua área de trabalho:</p>
+<p>Principais configurações do <code>lab_creation.cfg</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Configuração</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>Nome de host ou IP do hipervisor KVM (principal)</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(opcional)</em> lista separada por espaços de hipervisores adicionais para um <a href="#multi-host-labs">laboratório com vários hosts</a></td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>Conteúdo da chave pública SSH injetada nas VMs</td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>URI de conexão do libvirt (por exemplo <code>qemu+ssh://root@hypervisor/system</code>)</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>Rede libvirt padrão das VMs (por exemplo <code>bridge=br0</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>HTTP e HTTPS.</strong> A VM de automação serve seus arquivos na porta 80 (HTTP) e na porta 443 (HTTPS, certificado autoassinado em <code>/etc/lab_creation/tls/</code>). Os instaladores (AutoYaST, kickstart, preseed) e o Helm os baixam por HTTPS e aceitam o certificado autoassinado. Defina <code>PROVISIONING_TLS_VERIFY=1</code> para verificá-lo, ou <code>PROVISIONING_BASE_URL</code> (por exemplo <code>http://192.168.88.250</code>) para usar outro endereço ou voltar ao HTTP. O boot iPXE do Harvester sempre usa HTTP: o iPXE não aceita certificados autoassinados.</p>
+<h3 id="step-5--point-your-client-dns-at-the-automation-vm">Etapa 5: apontar o DNS do cliente para a VM de automação</h3>
+<p>Para que os nomes de host sejam resolvidos a partir do seu computador:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
 nmcli con mod &lt;connection&gt; ipv4.dns &lt;AUTOMATION_IP&gt;
 
-# Ou adicione a /etc/resolv.conf:
+# Or add to /etc/resolv.conf:
 nameserver &lt;AUTOMATION_IP&gt;
 </code></pre>
-<h3 id="step-6--build-your-first-lab">Etapa 6 — Construir seu primeiro laboratório</h3>
+<h3 id="step-6--build-your-first-lab">Etapa 6: criar seu primeiro laboratório</h3>
 <pre><code class="language-shell">setup_lab.py examples/cluster.json.template
 </code></pre>
-<p>Você encontrará mais pontos de partida abaixo em <a href="#examples">Exemplos</a>. Alternativamente, você pode abrir a <a href="#web-ui-lab-builder">interface web</a> em vez de escrever JSON manualmente.</p>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p>Veja os <a href="#examples">Exemplos</a> abaixo para outros pontos de partida, ou abra a <a href="#web-ui-lab-builder">interface web</a> em vez de escrever o JSON à mão.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="web-ui-lab-builder">Interface web (lab-builder)</h2>
-<p>Um designer de arquivos <code>lab.json</code> baseado em navegador que <strong>avalia as próprias bibliotecas Python do projeto em tempo de execução</strong>. Não possui conhecimento integrado de nenhum complemento. Selecione um componente e um formulário será renderizado diretamente de seu esquema. Adicione um campo a um script e a interface de usuário o exibirá sem alterações no frontend.</p>
-<pre><code class="language-shell"># A maneira mais rápida de tentar — zero dependências além de Python:
+<p>Um editor de arquivos <code>lab.json</code> no navegador que <strong>inspeciona em tempo de execução as próprias bibliotecas Python do projeto</strong>: ele não tem conhecimento fixo de nenhum complemento. Escolha um componente e ele exibe um formulário gerado diretamente do esquema desse componente; adicione um campo a um script e a interface o mostra sem nenhuma mudança no frontend.</p>
+<pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
-<p>Para produção (Apache ou serviço systemd/init autônomo, mais HTTPS sobre certificado autoassinado criado de forma idempotente) veja <strong><a href="webui.html">README.webui.md</a></strong>. Lá estão descritos os três modos de operação, a API HTTP e solução de problemas.</p>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p>Para implantação em produção (Apache, ou um serviço independente de systemd/init, com HTTPS por meio de um certificado autoassinado gerado de forma idempotente), veja <strong><a href="webui.html">README.webui.md</a></strong>: ele cobre os três modos de implantação, a API HTTP e a solução de problemas.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="lab-definition-format">Formato de definição do laboratório</h2>
-<p>Os laboratórios são definidos como arquivos JSON ou YAML (autodetecção, veja a nota abaixo). O formato atual suporta múltiplos clusters Kubernetes por laboratório (<code>kclusters</code>). O formato para um único cluster (<code>cluster</code>) é encontrado em <code>examples/cluster.json.template</code>.</p>
-<p>Muitas mais seções (procedimentos detalhados, referências e exemplos) estão na documentação completa no <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box">GitHub</a>.</p>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p>Os laboratórios são definidos em arquivos JSON ou YAML (detectado automaticamente; veja a nota abaixo). O formato atual suporta vários clusters Kubernetes por laboratório (<code>kclusters</code>); veja <code>examples/cluster.json.template</code> para o formato antigo de um único cluster (<code>cluster</code>).</p>
+<figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<aside class="callout callout-note"><p>Um arquivo <code>.yaml</code>/<code>.yml</code> também funciona: o formato é detectado pela extensão (ou, se o arquivo não for um JSON válido, tenta-se YAML), da mesma forma na verificação prévia do <code>setup_lab.py</code>, em <code>install_&lt;addon&gt; --validate</code> e no carregamento de cada complemento. A entrada YAML exige <code>pyyaml</code> (<code>pip install pyyaml</code>) na VM de automação; sem ele você recebe um erro claro pedindo para instalá-lo, e não uma falha silenciosa que só aceita JSON.</p></aside>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;node101.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.101&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
+      &quot;kcluster&quot;: &quot;cluster1&quot;           // which kclusters entry this node belongs to
+    },
+    &quot;node102.mydemo.lab&quot;: {
+      &quot;myip&quot;:  &quot;192.168.88.102&quot;,
+      &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
+      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;kcluster&quot;: &quot;cluster1&quot;
+    }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;:     &quot;24576&quot;,
+    &quot;VM_DSK&quot;:     &quot;80&quot;,
+    &quot;VM_CPU&quot;:     &quot;6&quot;,
+    &quot;VM_BOOT&quot;:    &quot;uefi&quot;,             // uefi (default), firmware=bios, bios, uefi=off
+    &quot;mymask&quot;:     &quot;24&quot;,
+    &quot;mygw&quot;:       &quot;192.168.88.1&quot;,
+    &quot;mydns&quot;:      &quot;192.168.88.73&quot;,
+    &quot;mynet_reverse&quot;: &quot;88.168.192&quot;
+  },
+  &quot;kclusters&quot;: {
+    &quot;cluster1&quot;: {
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_rel&quot;:   &quot;stable&quot;,
+      &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
+      &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
+    }
+  },
+  &quot;rancher&quot;: {
+    &quot;rancher_shorthn&quot;:   &quot;rancher&quot;,
+    &quot;rancher_rel&quot;:       &quot;rancher-prime&quot;,
+    &quot;rancher_repo_url&quot;:  &quot;https://charts.rancher.com/server-charts/prime&quot;,
+    &quot;rancher_helm_rel&quot;:  &quot;rancher&quot;,
+    &quot;rancher_helm_chart&quot;: &quot;rancher-prime/rancher&quot;,
+    &quot;rancher_Version&quot;:   &quot;--version 2.13.3&quot;,
+    &quot;cert_manager_ver&quot;:  &quot;--version v1.14.4&quot;
+  }
+}
+</code></pre>
+<details>
+<summary>O mesmo laboratório, em YAML</summary>
+
+
+<pre><code class="language-yaml">nodes:
+  node101.mydemo.lab:
+    myip: &quot;192.168.88.101&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c1&quot;
+    INSTALL_RKE2_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
+    kcluster: cluster1          # which kclusters entry this node belongs to
+  node102.mydemo.lab:
+    myip: &quot;192.168.88.102&quot;
+    mymac: &quot;34:8a:b1:4b:1a:c2&quot;
+    INSTALL_RKE2_TYPE: agent
+    kcluster: cluster1
+
+common:
+  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  VM_MEM: &quot;24576&quot;
+  VM_DSK: &quot;80&quot;
+  VM_CPU: &quot;6&quot;
+  VM_BOOT: uefi                # uefi (default), firmware=bios, bios, uefi=off
+  mymask: &quot;24&quot;
+  mygw: &quot;192.168.88.1&quot;
+  mydns: &quot;192.168.88.73&quot;
+  mynet_reverse: &quot;88.168.192&quot;
+
+kclusters:
+  cluster1:
+    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_rel: stable
+    mydomain: mydemo.lab
+    addons: [rancher, longhorn]
+
+rancher:
+  rancher_shorthn: rancher
+  rancher_rel: rancher-prime
+  rancher_repo_url: https://charts.rancher.com/server-charts/prime
+  rancher_helm_rel: rancher
+  rancher_helm_chart: rancher-prime/rancher
+  rancher_Version: &quot;--version 2.13.3&quot;
+  cert_manager_ver: &quot;--version v1.14.4&quot;
+</code></pre>
+
+
+</details>
+
+<p>Campos opcionais no nível do nó:</p>
+<table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>addons</code></td>
+<td>Lista de complementos executados apenas para esta VM; veja abaixo as substituições de configuração por nó</td>
+</tr>
+<tr>
+<td><code>config_method</code></td>
+<td>Substitui o método de provisionamento (<code>cloud-init</code>, <code>virt_customize</code>, <code>install_iso</code>)</td>
+</tr>
+<tr>
+<td><code>kvm_host</code></td>
+<td>Fixa esta VM em um hipervisor específico em um <a href="#multi-host-labs">laboratório com vários hosts</a></td>
+</tr>
+<tr>
+<td><code>extra_dsk</code></td>
+<td>Discos adicionais a anexar: <code>"/dev/sdb"</code>, ou <code>"/dev/sdb,bus=scsi"</code> para mudar o barramento padrão de um disco</td>
+</tr>
+<tr>
+<td><code>salt_states</code></td>
+<td>Estados do Salt a aplicar (somente no método cloud-init)</td>
+</tr>
+<tr>
+<td><code>VM_MACHINE</code></td>
+<td>Tipo de máquina do virt-install: <code>""</code> (padrão, a escolha do virt-install, atualmente <code>q35</code>) ou <code>"pc"</code> (i440fx antigo), para um convidado antigo cujo kernel ou GRUB não encontra o disco raiz com q35; veja <a href="#deploying-a-legacy-image-centos-7">Implantar uma imagem antiga (CentOS 7)</a></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Substituições de configuração de complemento por nó:</strong> cada complemento tem uma seção de configuração compartilhada de nível superior
+(por exemplo <code>client_registration</code> no exemplo de SMLM anterior), usada por todos os nós que o listam
+em <code>addons</code>. Quando nós diferentes realmente precisam de valores diferentes para o mesmo complemento (o caso
+que motivou isso: um laboratório que registra muitos sistemas operacionais diferentes em um servidor Uyuni/SMLM compartilhado,
+em que cada nó precisa da <em>sua própria</em> <code>client_registration_activation_key</code>), dê à entrada
+<code>addons[]</code> desse nó uma substituição aninhada em vez de uma string simples:</p>
+<pre><code class="language-jsonc">&quot;nodes&quot;: {
+  &quot;mercury.mydemo.lab&quot;: {
+    &quot;addons&quot;: [
+      { &quot;client_registration&quot;: { &quot;client_registration_activation_key&quot;: &quot;1-sles15sp7&quot; } }
+    ]
+  },
+  &quot;callisto.mydemo.lab&quot;: {
+    &quot;addons&quot;: [
+      &quot;mariadb&quot;,
+      { &quot;client_registration&quot;: { &quot;client_registration_activation_key&quot;: &quot;1-debian13&quot; } }
+    ]
+  }
+}
+</code></pre>
+<p>Uma entrada simples <code>"mariadb"</code> se comporta exatamente como antes (só a seção compartilhada <code>mariadb</code> se aplica).
+A forma <code>{"client_registration": {...}}</code> substitui <em>apenas esses campos</em>, <em>apenas para esse nó</em>;
+tudo o que a substituição não menciona (servidor, usuário administrador, …) continua vindo da seção compartilhada
+<code>client_registration</code>. Isso funciona da mesma forma para qualquer complemento, não só para
+<code>client_registration</code>; cada <code>install_&lt;addon&gt;.py</code> adota o recurso lendo sua configuração com
+<code>k8s.addon_node_config(definition, "&lt;addon&gt;", vm_name)</code> em vez de <code>definition.get("&lt;addon&gt;", {})</code>
+diretamente; veja <code>addon_entry_name()</code>/<code>addon_entry_overrides()</code> em <code>libs/apps.py</code>, a análise
+compartilhada pela qual passa todo consumidor de uma lista <code>addons[]</code>.</p>
+<p>Campos opcionais de kcluster:</p>
+<table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgm_node</code></td>
+<td>Nome de host do nó que executa os instaladores de complementos do cluster; por padrão, o primeiro nó servidor</td>
+</tr>
+</tbody>
+</table>
+<p>Todo script de complemento também aceita <code>--schema</code> (alias de <code>--input-definition</code>), que mostra suas próprias chaves de configuração em JSON ou YAML legível por máquina: o mesmo esquema que a <a href="#web-ui-lab-builder">interface web</a> lê para montar seus formulários:</p>
+<pre><code class="language-shell">install_longhorn --schema
+setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
+</code></pre>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
+<hr />
+<h2 id="examples">Exemplos</h2>
+<h3 id="minimal-single-vm-lab">Laboratório mínimo com uma VM</h3>
+<p>O menor laboratório possível: uma VM, sem Kubernetes:</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
+  },
+  &quot;common&quot;: {
+    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
+    &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
+  }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py standalone.json
+</code></pre>
+<h3 id="rke2--rancher--longhorn-the-hello-world-cluster">RKE2 + Rancher + Longhorn (o cluster "hello world")</h3>
+<p>Um cluster de 2 nós com uma plataforma de gerenciamento e armazenamento distribuído; veja o exemplo completo em <a href="#lab-definition-format">Formato de definição do laboratório</a> acima.</p>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+# Re-run later, skipping any VM that's already up and reachable:
+setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<h3 id="spreading-a-cluster-across-two-hosts">Distribuir um cluster entre dois hosts</h3>
+<p>Fixe o servidor em um hipervisor e deixe os agentes irem automaticamente para o <a href="#multi-host-labs">host configurado</a> que tiver espaço:</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;srv1.mydemo.lab&quot;:   { &quot;myip&quot;: &quot;192.168.88.10&quot;, &quot;kvm_host&quot;: &quot;hv1.mydemo.lab&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
+    &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
+}
+</code></pre>
+<h3 id="suse-multi-linux-manager-uyuni-server--a-registered-client">Servidor SUSE Multi-Linux Manager (Uyuni) + um cliente registrado</h3>
+<p>Suba um servidor Uyuni com uma chave de ativação e registre uma segunda VM nele como cliente Salt; veja <a href="#available-addons">Complementos disponíveis</a> para o conjunto completo de recursos (<code>orgs</code>, RBAC, Content Lifecycle Management, integração com Ansible e mais):</p>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
+    &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
+  },
+  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;uyuni&quot;: {
+    &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
+    &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
+  },
+  &quot;client_registration&quot;: {
+    &quot;client_registration_server_type&quot;: &quot;uyuni&quot;,
+    &quot;client_registration_server&quot;: &quot;uyuni.mydemo.lab&quot;,
+    &quot;client_registration_activation_key&quot;: &quot;1-lab-clients&quot;
+  }
+}
+</code></pre>
+<h3 id="deploying-a-legacy-image-centos-7">Implantar uma imagem antiga (CentOS 7)</h3>
+<p>O CentOS 7 (e outras imagens <code>.qcow2</code> tão antigas) não traz Ignition/Combustion nem
+cloud-init, então <code>config_method</code> precisa ser <code>virt_customize</code> (veja
+<a href="#vm-provisioning">Provisionamento de VMs</a>): ele edita diretamente o sistema de arquivos do qcow2 em vez de depender
+de um agente dentro do convidado. Para uma imagem tão antiga, mais duas substituições importam:</p>
+<ul>
+<li><code>VM_BOOT: "bios"</code>: o GRUB do CentOS 7 espera BIOS legado, não o UEFI padrão deste projeto.</li>
+<li><code>VM_MACHINE: "pc"</code>: funciona com uma imagem GenericCloud do CentOS 7 de 2015 (kernel
+  <code>3.10.0-229</code>). Iniciada com o tipo de máquina padrão do virt-install (atualmente <code>q35</code>), ela fica
+  presa para sempre em um shell de emergência do dracut (<code>Not all disks have been found</code>): o disco raiz virtio-blk
+  nunca aparece a tempo com a topologia PCIe do Q35. O mesmo disco inicia normalmente
+  com o chipset legado i440fx (<code>"pc"</code>). É uma incompatibilidade entre chipset e kernel antigo, nada
+  específico deste projeto: a mesma substituição vale para qualquer convidado antigo o suficiente.</li>
+</ul>
+<pre><code class="language-jsonc">{
+  &quot;nodes&quot;: {
+    &quot;legacy1.mydemo.lab&quot;: {
+      &quot;myip&quot;: &quot;192.168.88.120&quot;,
+      &quot;config_method&quot;: &quot;virt_customize&quot;,
+      &quot;ISO_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
+      &quot;VM_BOOT&quot;: &quot;bios&quot;,
+      &quot;VM_MACHINE&quot;: &quot;pc&quot;
+    }
+  },
+  &quot;common&quot;: { &quot;VM_MEM&quot;: &quot;2048&quot;, &quot;VM_DSK&quot;: &quot;30&quot;, &quot;VM_CPU&quot;: &quot;1&quot;, &quot;VM_ROOT_PASS&quot;: &quot;12345678&quot; }
+}
+</code></pre>
+<pre><code class="language-shell">setup_lab.py legacy.json
+</code></pre>
+<p><code>VM_ROOT_PASS</code> (em <code>common</code> ou por nó) define a senha de root que o <code>virt_customize</code> grava
+diretamente na imagem; omita-a para reutilizar <code>ROOT_PWD_HASH</code> do <code>lab_creation.cfg</code>, a mesma
+alternativa usada pelo cloud-init e pelo Ignition.</p>
+<p>Mais distribuições (AlmaLinux, Debian, Rocky Linux, Alibaba Cloud Linux e uma tentativa documentada,
+ainda sem sucesso, com Raspberry Pi OS) estão em <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/EXAMPLES.md">EXAMPLES.md</a></strong>, separadas
+para que esta seção não cresça sem limite.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
+<hr />
+<h2 id="step-by-step-walkthroughs">Guias passo a passo</h2>
+<p>Os <a href="#examples">Exemplos</a> acima são pontos de partida para copiar e colar. Estes três guias percorrem cenários reais completos de ponta a ponta: o que executar, o que acontece em cada etapa e como verificar que funcionou. Todos os campos JSON e formatos de comando abaixo correspondem ao conjunto de testes do próprio projeto (<code>tests/run_tests.sh</code>) e ao código.</p>
+<h3 id="walkthrough-1--your-first-cluster-rke2--rancher--longhorn">Guia 1: seu primeiro cluster, RKE2 + Rancher + Longhorn</h3>
+<p>Objetivo: duas VMs SLE Micro, um cluster RKE2, Rancher para gerenciamento e Longhorn para armazenamento, acessíveis pelo navegador no final.</p>
+<ol>
+<li><strong>Escreva o arquivo do laboratório.</strong> Salve como <code>rancher-cluster.json</code> (ajuste IPs e rede ao seu domínio de laboratório):</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "node101.mydemo.lab": {
+      "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
+      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+    },
+    "node102.mydemo.lab": {
+      "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
+      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+    }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
+  },
+  "kclusters": {
+    "cluster1": {
+      "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab",
+      "addons": ["rancher", "longhorn"]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher", "rancher_rel": "rancher-prime",
+    "rancher_repo_url": "https://charts.rancher.com/server-charts/prime",
+    "rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
+    "rancher_Version": "--version 2.13.3", "cert_manager_ver": "--version v1.14.4"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>Crie-o:</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py rancher-cluster.json
+</code></pre>
+<p>O <code>setup_lab.py</code> verifica o arquivo automaticamente antes de fazer qualquer outra coisa: IPs errados, uma referência a um <code>kcluster</code> inexistente, um <code>ISO_IMAGE</code> ausente e erros semelhantes são detectados e mostrados (<code>✗ Preflight FAILED — N error(s)</code>) sem criar nada, em vez de falhar no meio do caminho. Um arquivo correto mostra <code>✓ Preflight passed</code> e segue direto para a criação.</p>
+<p>Na ordem: registra os dois nós no DNS → cria as duas VMs (copia a imagem QCOW2, gera os arquivos do Combustion, inicia as VMs e espera o SSH) → instala o RKE2 em <code>node101</code> como servidor e depois em <code>node102</code> como agente → instala <code>rancher</code> e <code>longhorn</code> no nó de gerenciamento do cluster (<code>mgm_node</code>, por padrão o primeiro nó servidor, aqui <code>node101</code>). Um cluster de 2 nós com Rancher costuma levar de 15 a 25 minutos; a maior parte é a inicialização do RKE2 e a instalação do Rancher via Helm.</p>
+<ol start="3">
+<li><strong>Verifique se o DNS resolve</strong> (do seu computador, depois de <a href="#step-5--point-your-client-dns-at-the-automation-vm">apontá-lo para o DNS da VM de automação</a>):</li>
+</ol>
+<pre><code class="language-shell">dig +short node101.mydemo.lab rancher.mydemo.lab
+</code></pre>
+<p>Ambos devem retornar <code>192.168.88.101</code> (o nome de host do ingress do Rancher é o valor de <code>rancher_shorthn</code>, <code>rancher</code>, sob o <code>mydomain</code> do cluster).</p>
+<ol start="4">
+<li>
+<p><strong>Faça login.</strong> Acesse <code>https://rancher.mydemo.lab</code> (certificado autoassinado: o navegador avisará uma vez) e entre com <code>rancher_initial_pwd</code> de <code>/etc/lab_creation.cfg</code> na VM de automação.</p>
+</li>
+<li>
+<p><strong>Itere sem reconstruir tudo.</strong> Mudou a configuração de um nó ou uma VM travou? Execute de novo com <code>--keep</code>: toda VM que já existe, corresponde ao IP/MAC definido e responde por SSH fica como está; só o que realmente falta ou está quebrado é (re)criado:</p>
+</li>
+</ol>
+<pre><code class="language-shell">setup_lab.py --keep rancher-cluster.json
+</code></pre>
+<ol start="6">
+<li><strong>Remova-o</strong> quando terminar:</li>
+</ol>
+<pre><code class="language-shell">destroy_lab.py rancher-cluster.json
+</code></pre>
+<h3 id="walkthrough-2--suse-multi-linux-manager-uyuni-server-with-a-registered-client">Guia 2: servidor SUSE Multi-Linux Manager (Uyuni) com um cliente registrado</h3>
+<p>Objetivo: um servidor Uyuni com uma chave de ativação real e uma segunda VM que se registra nele como cliente gerenciado pelo Salt. <strong>Testado ao vivo</strong> de ponta a ponta com um servidor Uyuni real.</p>
+<ol>
+<li><strong>Escreva o arquivo do laboratório</strong>: um nó para o servidor Uyuni e outro para o cliente:</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "uyuni.mydemo.lab":   { "myip": "192.168.88.30", "addons": ["uyuni"] },
+    "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
+  },
+  "common": {
+    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
+    "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
+  },
+  "uyuni": {
+    "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
+    "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"
+  },
+  "client_registration": {
+    "client_registration_server_type": "uyuni",
+    "client_registration_server": "uyuni.mydemo.lab",
+    "client_registration_activation_key": "1-lab-clients"
+  }
+}
+</code></pre>
+<ol start="2">
+<li><strong>Crie-o:</strong></li>
+</ol>
+<pre><code class="language-shell">setup_lab.py uyuni-lab.json
+</code></pre>
+<p>Os complementos de VM (<code>uyuni</code> e <code>client_registration</code> estão ligados a nós e não a um cluster, já que não há seção <code>kclusters</code> aqui) rodam quando o respectivo nó está no ar. O <code>install_uyuni</code> sobe o servidor, espera que fique acessível e cria a chave de ativação. Depois, o <code>install_client_registration</code> registra o <code>client1</code> nele: instala o script de bootstrap, executa-o e aguarda até a chave Salt do novo minion aparecer como pendente, e então a aceita.</p>
+<ol start="3">
+<li><strong>Verifique se o cliente realmente se registrou.</strong> Acesse o servidor Uyuni por SSH e pergunte diretamente:</li>
+</ol>
+<pre><code class="language-shell">ssh uyuni.mydemo.lab
+mgrctl exec 'spacecmd -- system_list'
+</code></pre>
+<p><code>client1.mydemo.lab</code> deve estar na lista.</p>
+<ol start="4">
+<li><strong>Entre na interface web</strong> em <code>https://uyuni.mydemo.lab</code> com <code>uyuni_admin</code>/<code>uyuni_password</code> para ver o mesmo visualmente, consultar a chave de ativação ou executar um highstate.</li>
+</ol>
+<p>Problema conhecido do projeto original (não é um bug deste projeto; documentado caso você o encontre): o scriptlet de atualização do pacote <code>salt-transactional-update</code> pode deixar uma chave YAML duplicada em <code>/etc/salt/minion.d/transactional_update.conf</code> no cliente, fazendo o <code>salt-minion</code> reiniciar em loop até que a duplicata seja removida manualmente. Nada neste repositório mexe nesse arquivo.</p>
+<h3 id="walkthrough-3--automation-vm-under-nat-single-nic-laptop-as-the-hypervisor">Guia 3: VM de automação atrás de NAT (notebook com uma placa de rede como hipervisor)</h3>
+<p>Objetivo: criar a VM de automação em um host sem placa de rede livre para o bridge, usando uma rede privada gerenciada pelo libvirt e portas específicas redirecionadas (DNAT) a partir do IP real do host. <strong>Testado ao vivo</strong> de ponta a ponta em uma VM aninhada descartável.</p>
+<p>Se você não ativar, nada muda no fluxo do <a href="#quick-start">Início rápido padrão</a>: <code>_network_mode</code> vale <code>"bridge"</code> por padrão, exatamente como em qualquer instalação existente.</p>
+<ol>
+<li><strong>No <code>lab.cfg</code></strong> (<a href="#step-3--configure-and-run-the-kvm-node-setup">etapa 3</a> do Início rápido), defina:</li>
+</ol>
+<pre><code class="language-ini">_network_mode="nat"
+_nat_network_name="labnat"          # default shown — a new libvirt virtual network, not your host's real LAN
+_nat_network_cidr="192.168.150.0/24" # default shown
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"  # default shown — "&lt;port on the HYPERVISOR's real IP&gt;:&lt;port on the AUTOMATION VM&gt;/&lt;protocol&gt;"
+</code></pre>
+<p>Isso redireciona as portas 22/80/443 do <strong>IP real do hipervisor, acessível de fora</strong> (<code>&lt;external&gt;</code>) para as mesmas portas do <strong>endereço NAT privado da VM de automação</strong> (<code>&lt;internal&gt;</code>); neste momento a VM de automação é a única coisa escutando nessa rede privada, então "interno" aqui sempre significa "na VM de automação". (A etapa 5 abaixo reutiliza exatamente a mesma sintaxe <code>&lt;external&gt;:&lt;internal&gt;/&lt;protocol&gt;</code> para redirecionar para uma VM <em>do laboratório</em> quando ela existir; ali, "interno" passa a ser o endereço NAT privado dessa VM, não o da VM de automação.)</p>
+<ol start="2">
+<li><strong>Execute a configuração normalmente:</strong></li>
+</ol>
+<pre><code class="language-shell">./setup_kvm_node.py
+</code></pre>
+<p>Isso define a rede libvirt <code>labnat</code> (com NAT; DHCP e gateway ficam a cargo do próprio libvirt, o mesmo mecanismo da rede <code>default</code> embutida no libvirt, só que com o nome e o CIDR deste projeto) em vez de um bridge, cria nela a VM de automação com um IP estático dentro dessa faixa privada e redireciona por DNAT as três portas acima a partir do IP real do host.</p>
+<ol start="3">
+<li><strong>Verifique se a rede e as regras de redirecionamento existem</strong>, no hipervisor:</li>
+</ol>
+<pre><code class="language-shell">virsh net-list                              # labnat: active
+iptables -t nat -L LAB_PORTFWD -n -v         # DNAT rules to the automation VM's private IP
+iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rules
+</code></pre>
+<ol start="4">
+<li><strong>Acesse a VM de automação de fora do hipervisor</strong>, usando o IP real do hipervisor, e não o endereço privado <code>192.168.150.x</code> da VM de automação, que não é roteável a partir de nenhum outro lugar:</li>
+</ol>
+<pre><code class="language-shell">ssh root@&lt;hypervisor-real-ip&gt;          # DNAT'd to the automation VM's SSH, port 22
+</code></pre>
+<p>As portas 80 e 443 também são redirecionadas por padrão (o servidor HTTP dos arquivos de provisionamento e, quando você configurar a <a href="#web-ui-lab-builder">interface web</a>, o seu HTTPS) e são acessadas da mesma forma, pelo IP real do hipervisor.</p>
+<ol start="5">
+<li><strong>Adicione redirecionamento para uma VM do laboratório</strong>, não só para a VM de automação: dê a esse nó um campo <code>forwarded_ports</code> e ative uma vez o serviço <code>portforward</code> em <code>common.services</code>:</li>
+</ol>
+<pre><code class="language-jsonc">{
+  "nodes": {
+    "app1.mydemo.lab": {
+      "myip": "192.168.150.20",
+      "forwarded_ports": ["8080:80/TCP", "8443:443/TCP"]
+    }
+  },
+  "common": { "services": ["portforward"], "...": "…rest of common as usual" }
+}
+</code></pre>
+<p>O <code>setup_lab.py</code>/<code>setup_vm.py</code> redireciona por DNAT essas duas portas a partir do IP real do hipervisor da mesma forma, na primeira vez que algum nó do laboratório declara <code>forwarded_ports</code>.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
+<hr />
+<h2 id="available-commands">Comandos disponíveis</h2>
+<p>Todos os comandos rodam na <strong>VM de automação</strong> e recebem como primeiro argumento um arquivo JSON de definição do laboratório.</p>
+<table>
+<thead>
+<tr>
+<th>Comando</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_lab.py [--keep] &lt;lab.json&gt;</code></td>
+<td>Cria todas as VMs, configura os clusters Kubernetes e instala em ordem todos os complementos de cluster e de VM. <code>--keep</code> ignora toda VM que já existe, corresponde ao IP/MAC definido e responde por SSH; sem essa opção, cada VM é destruída e recriada.</td>
+</tr>
+<tr>
+<td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>Cria ou recria uma única VM</td>
+</tr>
+<tr>
+<td><code>destroy_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
+<td>Destrói uma única VM</td>
+</tr>
+<tr>
+<td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
+<td>Destrói todas as VMs de um laboratório</td>
+</tr>
+</tbody>
+</table>
+<p>Todos os comandos e todos os scripts <code>install_&lt;addon&gt;</code> aceitam:</p>
+<pre><code class="language-shell">setup_lab.py --version              # print the installed version
+install_longhorn --schema           # print this addon's configuration schema (JSON)
+install_longhorn --schema yaml      # ...or YAML
+</code></pre>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
+<hr />
+<h2 id="available-addons">Complementos disponíveis</h2>
+<p>Os complementos são referenciados pelo nome na lista <code>addons</code> de um kcluster ou de um nó. O script <code>install_&lt;name&gt;</code> correspondente precisa estar no <code>PATH</code>.</p>
+<p><sub>Ir para: <a href="#addons-k8s">Kubernetes e GitOps</a> · <a href="#addons-security">Segurança e conformidade</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Armazenamento e bancos de dados</a> · <a href="#addons-collaboration">Colaboração e compartilhamento de arquivos</a> · <a href="#addons-cicd">CI/CD e ferramentas</a> · <a href="#addons-ai">IA / ML</a> · <a href="#addons-virt">Virtualização</a> · <a href="#addons-demos">Aplicações de demonstração</a> · <a href="#addons-games">Jogos</a></sub></p>
+<p><a id="addons-k8s"></a></p>
+<details open>
+<summary><strong>Plataforma Kubernetes e GitOps</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
+<td>Plataforma de gerenciamento de Kubernetes SUSE Rancher Prime</td>
+</tr>
+<tr>
+<td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
+<td>Armazenamento em bloco distribuído SUSE Longhorn</td>
+</tr>
+<tr>
+<td><a href="https://goharbor.io/"><code>harbor</code></a></td>
+<td>Registro de contêineres</td>
+</tr>
+<tr>
+<td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
+<td>Controlador GitOps Argo CD</td>
+</tr>
+<tr>
+<td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
+<td>Mecanismo de políticas do Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://istio.io/"><code>istio</code></a></td>
+<td>Malha de serviços</td>
+</tr>
+<tr>
+<td><a href="https://linkerd.io/"><code>linkerd</code></a></td>
+<td>Malha de serviços</td>
+</tr>
+<tr>
+<td><a href="https://traefik.io/"><code>traefik</code></a></td>
+<td>Controlador de ingress</td>
+</tr>
+<tr>
+<td><a href="https://nginx.org/"><code>nginx</code></a></td>
+<td>Controlador de ingress / proxy reverso</td>
+</tr>
+<tr>
+<td><a href="https://coredns.io/"><code>coredns</code></a></td>
+<td>DNS do cluster</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
+<td>Rotação de certificados do cluster Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
+<td>Orquestração e cache de dados para cargas cloud-native</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/suse-observability/"><code>suse_observability</code></a></td>
+<td>SUSE Observability (métricas, traces e topologia baseados no StackState)</td>
+</tr>
+<tr>
+<td><a href="https://agones.dev/"><code>agones</code></a></td>
+<td>Hospedagem e escalonamento de servidores de jogos dedicados (agones.dev)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-security"></a></p>
+<details open>
+<summary><strong>Segurança e conformidade</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>neuvector</code></a></td>
+<td>Plataforma de segurança de contêineres SUSE NeuVector</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/testing/testing"><code>nv_testing</code></a></td>
+<td>Cargas de teste de segurança do NeuVector (pods nginx/node/redis)</td>
+</tr>
+<tr>
+<td><a href="https://open-docs.neuvector.com/"><code>nv-demo-helm</code></a></td>
+<td>Cargas de demonstração do NeuVector baseadas em Helm</td>
+</tr>
+<tr>
+<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
+<td>Operador OpenSCAP/ComplianceAsCode</td>
+</tr>
+<tr>
+<td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
+<td>Gerenciamento de identidade e acesso</td>
+</tr>
+<tr>
+<td><a href="https://kagent.dev/"><code>kagent</code></a></td>
+<td>Assistente de segurança do Kubernetes com IA agêntica</td>
+</tr>
+<tr>
+<td><code>insecure_app</code></td>
+<td>Aplicação web intencionalmente vulnerável (demonstração/treinamento)</td>
+</tr>
+<tr>
+<td><a href="https://struts.apache.org/"><code>struts_demo</code></a></td>
+<td>Aplicação de demonstração vulnerável do Apache Struts2 (CVE-2017-5638)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-smlm"></a></p>
+<details open>
+<summary><strong>SUSE Multi-Linux Manager / Uyuni</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.uyuni-project.org/"><code>uyuni</code></a></td>
+<td>Servidor Uyuni (projeto original): chaves de ativação, organizações, RBAC, Content Lifecycle Management, integração com Ansible, auditoria SCAP/CVE, topologia de ambientes dev/QA/prod; veja <code>install_uyuni --schema</code> para a lista completa de campos</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
+<td>Servidor SUSE Multi-Linux Manager: os mesmos recursos do <code>uyuni</code>, implantado com Helm no Kubernetes ou, com <code>smlm_deployment: "podman"</code>, pelo <code>mgradm</code> diretamente em um host ou VM</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
+<td>Proxy do SMLM</td>
+</tr>
+<tr>
+<td><code>client_registration</code></td>
+<td>Registra qualquer VM como cliente Salt de um servidor <code>uyuni</code>/<code>smlm</code> existente (bootstrap com chave de ativação + aceitação do salt-key)</td>
+</tr>
+<tr>
+<td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
+<td>Provisiona um nó de controle Ansible real: instala o <code>ansible-core</code>, envia playbooks de exemplo e um script de inventário dinâmico que consulta a lista de sistemas do <code>uyuni</code>/<code>smlm</code> e configura o acesso SSH ao resto do laboratório. Combina com o campo <code>*_ansible_control_nodes</code> do <code>uyuni</code>/<code>smlm</code>, que ativa no servidor o direito "Ansible Control Node"</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-storage"></a></p>
+<details open>
+<summary><strong>Armazenamento e bancos de dados</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://mariadb.org/"><code>mariadb</code></a></td>
+<td>Banco de dados MariaDB: no Kubernetes (manifesto sem Helm) ou instalado nativamente no sistema operacional; o caminho nativo (<code>libs/db_common.py</code>) também é reutilizado diretamente por outros complementos (<code>nextcloud</code>, <code>seafile</code>) que precisam de um banco de dados no mesmo host</td>
+</tr>
+<tr>
+<td><a href="https://www.postgresql.org/"><code>postgresql</code></a></td>
+<td>Banco de dados PostgreSQL: no Kubernetes (Helm) ou instalado nativamente no sistema operacional; o caminho nativo (<code>libs/db_common.py</code>) também é reutilizado diretamente por outros complementos (por exemplo <code>nextcloud</code>) que precisam de um banco de dados no mesmo host</td>
+</tr>
+<tr>
+<td><a href="https://www.openldap.org/"><code>openldap</code></a></td>
+<td>Serviço de diretório OpenLDAP</td>
+</tr>
+<tr>
+<td><a href="https://www.port389.org/"><code>ds389</code></a></td>
+<td>389 Directory Server (LDAP)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-collaboration"></a></p>
+<details open>
+<summary><strong>Colaboração e compartilhamento de arquivos</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://nextcloud.com/"><code>nextcloud</code></a></td>
+<td>Nextcloud: contêineres podman independentes (sem Kubernetes, o único modo que permite instalar apps offline) por padrão, ou o chart Helm oficial da comunidade em um cluster Kubernetes; apps opcionais Talk/Groupware/Flow/Assistant e integração de edição de documentos com ONLYOFFICE/Euro-Office/Collabora</td>
+</tr>
+<tr>
+<td><a href="https://www.seafile.com/"><code>seafile</code></a></td>
+<td>Seafile: contêineres podman independentes (sem Kubernetes) por padrão, ou o chart Helm oficial em um cluster Kubernetes</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-cicd"></a></p>
+<details open>
+<summary><strong>CI/CD e ferramentas de desenvolvimento</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.jenkins.io/"><code>jenkins</code></a></td>
+<td>Jenkins CI</td>
+</tr>
+<tr>
+<td><a href="https://about.gitlab.com/"><code>gitlab</code></a></td>
+<td>GitLab: um contêiner podman Omnibus independente (sem Kubernetes) por padrão, ou o chart Helm oficial em um cluster Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
+<td>SUSE Application Collection</td>
+</tr>
+<tr>
+<td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
+<td>Integração de monitoramento com o StackState</td>
+</tr>
+<tr>
+<td><a href="https://www.trento-project.io/"><code>trento</code></a></td>
+<td>Monitoramento de infraestrutura SAP</td>
+</tr>
+<tr>
+<td><a href="https://prometheus.io/"><code>prometheus</code></a></td>
+<td>Servidor Prometheus independente (contêiner podman, sem Kubernetes): coleta os exportadores incluídos em um servidor <code>smlm</code>/<code>uyuni</code> (<code>smlm_monitoring_enabled</code>) ou quaisquer alvos de <code>prometheus_scrape_configs</code></td>
+</tr>
+<tr>
+<td><a href="https://grafana.com/"><code>grafana</code></a></td>
+<td>Servidor Grafana independente (contêiner podman, sem Kubernetes): provisiona automaticamente uma fonte de dados Prometheus e, opcionalmente, o painel oficial da comunidade Grafana Labs para os exportadores de um servidor <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-ai"></a></p>
+<details open>
+<summary><strong>IA / ML</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://ollama.com/"><code>ollama</code></a></td>
+<td>Ambiente local de execução de LLM</td>
+</tr>
+<tr>
+<td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
+<td>Modelo DeepSeek, servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://www.swiss-ai.org/apertus"><code>apertus</code></a></td>
+<td>Modelo Apertus (Swiss AI Initiative), servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemini-api"><code>gemini</code></a></td>
+<td>Proxy da API do Google Gemini (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.anthropic.com/"><code>anthropic</code></a></td>
+<td>Proxy da API do Anthropic Claude (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openai.com/"><code>openai</code></a></td>
+<td>Proxy da API da OpenAI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.moonshot.ai/"><code>kimi</code></a></td>
+<td>Proxy da API Kimi da Moonshot AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openwebui.com/"><code>open_webui</code></a></td>
+<td>Interface de chat para Ollama e endpoints compatíveis com OpenAI</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
+<td>Hermes Agent: o agente de IA pessoal e autoaperfeiçoável da Nous Research (bot de Telegram/Discord/Slack + painel web)</td>
+</tr>
+<tr>
+<td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
+<td>A pilha de IA da SUSE com Ollama + Open WebUI + Milvus</td>
+</tr>
+<tr>
+<td><a href="https://milvus.io/"><code>milvus</code></a></td>
+<td>Banco de dados vetorial Milvus (RAG/busca por embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://qdrant.tech/"><code>qdrant</code></a></td>
+<td>Banco de dados vetorial Qdrant (RAG/busca por embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://weaviate.io/"><code>weaviate</code></a></td>
+<td>Banco de dados vetorial Weaviate (RAG/busca por embeddings)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/gpu-operator"><code>gpu_operator</code></a></td>
+<td>NVIDIA GPU Operator (agendamento de GPU para cargas de IA)</td>
+</tr>
+<tr>
+<td><a href="https://qwenlm.github.io/"><code>qwen</code></a></td>
+<td>Modelo Qwen2.5, servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://mistral.ai/"><code>mistral</code></a></td>
+<td>Modelo Mistral, servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/meta-llama/codellama"><code>codellama</code></a></td>
+<td>Modelo Code Llama, servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
+<td>Modelo StarCoder2, servido pelo Ollama</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
+<td>(veja <code>install_phoebe --schema</code>)</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+<p><a id="addons-virt"></a></p>
+<details open>
+<summary><strong>Virtualização</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
+<td>Provisionamento de nós do SUSE Virtualization (Harvester/KubeVirt)</td>
+</tr>
+<tr>
+<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
+<td>Construtor de appliances KIWI</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-demos"></a></p>
+<details open>
+<summary><strong>Aplicações de demonstração</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://wordpress.org/"><code>wordpress</code></a></td>
+<td>Aplicação de demonstração WordPress + MySQL</td>
+</tr>
+<tr>
+<td><a href="https://www.fluentd.org/"><code>fluentd</code></a></td>
+<td>Agregação de logs</td>
+</tr>
+<tr>
+<td><a href="https://www.list.org/"><code>mailman</code></a></td>
+<td>Gerenciamento de listas de e-mail GNU Mailman 3 + interface web</td>
+</tr>
+<tr>
+<td><a href="https://www.mediagoblin.org/"><code>mediagoblin</code></a></td>
+<td>Plataforma federada de publicação de mídia GNU MediaGoblin</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.com/NalaGinrut/colt"><code>colt</code></a></td>
+<td>Colt, um mecanismo de blog baseado em git sobre o GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://codeberg.org/jjba23/wikimusic"><code>wikimusic</code></a></td>
+<td>WikiMusic, um CMS de conhecimento musical sobre o GNU Artanis</td>
+</tr>
+<tr>
+<td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
+<td>Plataforma de automação residencial Home Assistant</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p><a id="addons-games"></a></p>
+<details open>
+<summary><strong>Jogos</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nome do complemento</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/Alzter/SuperTux-Classic"><code>supertux_classic</code></a></td>
+<td>SuperTux Classic, um jogo de plataforma de código aberto em Godot, hospedado por você</td>
+</tr>
+<tr>
+<td><a href="https://github.com/edisgreat/skynet-simulator"><code>skynet_simulator</code></a></td>
+<td>Skynet Simulator, um jogo de navegador de quebra-cabeça/idle de código aberto, hospedado por você</td>
+</tr>
+<tr>
+<td><a href="https://github.com/leandrodreamer/BeepSaber"><code>open_saber</code></a></td>
+<td>Open Saber, um jogo de ritmo de cortar blocos de código aberto, hospedado por você</td>
+</tr>
+</tbody>
+</table>
+
+</details>
+
+<p>Para adicionar um complemento: crie um executável <code>scripts/install_&lt;name&gt;</code> em qualquer linguagem, com ou sem extensão de arquivo (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, um binário compilado), adicione modelos em <code>templates/addons/&lt;name&gt;/</code> se necessário e faça referência a <code>"&lt;name&gt;"</code> na lista <code>addons</code> do seu JSON. O <code>install_automation_node_scripts.sh</code> o instala como <code>/usr/local/bin/install_&lt;name&gt;</code>, e o <code>setup_lab.py</code> e a interface web o usam apenas pela sua interface de linha de comando:</p>
+<ul>
+<li><code>install_&lt;name&gt; --schema json</code> mostra seu esquema em JSON, incluindo um objeto <code>capabilities</code> (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>); <code>--schema yaml</code> mostra o mesmo em YAML</li>
+<li><code>install_&lt;name&gt; --capabilities</code> mostra as mesmas capacidades em JSON</li>
+<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> termina com código diferente de zero, mostrando linhas <code>[ERROR]</code>, quando sua configuração é inválida</li>
+<li><code>install_&lt;name&gt; --version</code> e <code>--help</code></li>
+<li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> o instala na VM indicada em <code>$_vm_name</code> (e no cluster de <code>$clu_name</code> para um complemento de cluster)</li>
+</ul>
+<p>Um complemento em Python obtém tudo isso de <code>addon_common.handle_common_args()</code> e de um dicionário <code>PLUGIN</code> no nível do módulo; siga o modelo de um existente (carregue a seção JSON correspondente com <code>load_definition()</code> e faça o trabalho via SSH).</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
+<hr />
+<h2 id="configuration-reference">Referência de configuração</h2>
+<h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
+<p>Padrões de todo o sistema carregados por todos os scripts. Define caminhos, temporizadores de espera padrão e listas de pacotes. <strong>Não edite</strong> a menos que saiba o que está fazendo.</p>
+<h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
+<p>Configuração específica do nó para a VM de automação. Copiada de <code>/etc/lab_creation.cfg.example</code> durante a configuração. Variáveis principais:</p>
+<table>
+<thead>
+<tr>
+<th>Variável</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>REMOTE_HOST</code></td>
+<td>Nome de host ou IP do hipervisor KVM</td>
+</tr>
+<tr>
+<td><code>KVM_HOSTS</code></td>
+<td><em>(opcional)</em> lista separada por espaços de hipervisores para um <a href="#multi-host-labs">laboratório com vários hosts</a>; por padrão, apenas <code>REMOTE_HOST</code></td>
+</tr>
+<tr>
+<td><code>VIRT_SRV</code></td>
+<td>URI do libvirt para o hipervisor remoto</td>
+</tr>
+<tr>
+<td><code>ROOT_SSH_KEY</code></td>
+<td>Conteúdo da chave pública SSH injetada nas VMs provisionadas</td>
+</tr>
+<tr>
+<td><code>NETWORK</code></td>
+<td>String de rede libvirt padrão</td>
+</tr>
+<tr>
+<td><code>REMOTE_DNS_SERVERS</code></td>
+<td>Lista separada por espaços de servidores DNS adicionais a atualizar</td>
+</tr>
+<tr>
+<td><code>delay_min</code></td>
+<td>Minutos de espera entre as etapas de provisionamento (aumente em hardware lento)</td>
+</tr>
+<tr>
+<td><code>PROVISIONING_BASE_URL</code></td>
+<td><em>(opcional)</em> substitui <code>https://&lt;automation VM&gt;</code> nas URLs de onde os instaladores e o Helm baixam arquivos, por exemplo <code>http://192.168.88.250</code></td>
+</tr>
+<tr>
+<td><code>PROVISIONING_TLS_VERIFY</code></td>
+<td><code>0</code> (padrão) aceita o certificado autoassinado da VM de automação; <code>1</code> o verifica</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compute-backends_1">Backends de computação</h3>
+<p>As VMs de um laboratório usam <code>libvirt</code> por padrão (os hipervisores KVM acima). Defina <code>common.backend</code> (ou um <code>backend</code> por nó, que tem prioridade) para usar outro; veja o <code>enum</code> do campo <code>backend</code> para a lista completa atual. Cada backend não padrão precisa das próprias credenciais em <code>/etc/lab_creation.cfg</code>:</p>
+<p><strong>Gráficos de console no <code>libvirt</code>:</strong> as VMs do laboratório recebem uma tela SPICE (<code>--graphics spice,listen=0.0.0.0</code>), a menos que o QEMU do hipervisor não suporte SPICE (o SLES 16 é um caso); nesse caso recebem VNC. O lab-in-a-box lê isso em <code>virsh domcapabilities</code> uma vez por execução; se a consulta falhar, usa SPICE.</p>
+<p><strong>Várias contas de nuvem, do mesmo jeito que <code>KVM_HOSTS</code> oferece vários hipervisores:</strong> coloque cada conta de nuvem em um arquivo próprio em <code>/etc/lab_creation/credentials/</code> (caminho configurável com <code>CREDENTIALS_PATH</code> no <code>lab_creation.cfg</code>), como <code>&lt;name&gt;.yaml</code> (ou <code>.json</code>/<code>.cfg</code>: a extensão escolhe o analisador; só <code>.yaml</code>/<code>.json</code> suportam a forma criptografada descrita abaixo, porque o formato plano <code>KEY=value</code> de um <code>.cfg</code> não comporta isso). Cada arquivo declara <code>cloudtype</code> (<code>aws</code>/<code>gcp</code>/<code>hetzner</code>/…) e as chaves de conexão usuais desse provedor, exatamente as mesmas que o backend já lê do <code>lab_creation.cfg</code> (<code>AWS_REGION</code>, <code>AWS_PROFILE</code>, <code>AWS_SUBNET_ID</code>, …). Um nó (ou <code>common</code>) escolhe uma com <code>"cloud_account": "&lt;name&gt;"</code>, exatamente como <code>"kvm_host": "&lt;host&gt;"</code>:</p>
+<pre><code class="language-jsonc">// /etc/lab_creation/credentials/aws-sandbox.yaml  (built with setup_credentials.py, below)
+&quot;nodes&quot;: {
+  &quot;jupiter.mydemo.lab&quot;: { &quot;cloud_account&quot;: &quot;aws-sandbox&quot; },
+  &quot;saturn.mydemo.lab&quot;:  { &quot;cloud_account&quot;: &quot;aws-prod&quot; }
+}
+</code></pre>
+<p>Quando <code>cloud_account</code> está definido, seu <code>cloudtype</code> <strong>é</strong> o backend (então o campo <code>backend</code> passa a ser opcional; se você definir os dois e eles divergirem, a verificação prévia acusa erro), e as chaves do arquivo da conta se sobrepõem ao <code>lab_creation.cfg</code> apenas para aquele nó. Omita <code>cloud_account</code> em todo lugar para manter o comportamento atual de uma única conta, sem mudanças. Cada conta é uma rede isolada, então a <a href="#compute-backends">VM de DNS na nuvem</a> descrita abaixo passa a ser por conta (<code>lab-dns-aws-sandbox</code>, <code>lab-dns-aws-prod</code>, …); a conta padrão sem nome mantém o nome simples <code>lab-dns-&lt;backend&gt;</code>.</p>
+<p><strong>Os arquivos de credenciais são criptografados em repouso por padrão.</strong> Crie um com:</p>
+<pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
+setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
+</code></pre>
+<p>Criptografia (veja <code>libs/crypto_store.py</code>): a senha passa pelo <strong>Argon2id</strong> (uma KDF propositalmente lenta e pesada em memória; é ela, e não a cifra, a verdadeira barreira de segurança de um arquivo criptografado por senha) para derivar um segredo mestre de 512 bits; o <strong>HKDF-SHA512</strong> então deriva duas subchaves independentes de 256 bits (separadas por rótulo, e não simplesmente divididas ao meio); os dados são criptografados com <strong>AES-256-GCM e depois ChaCha20-Poly1305 em cascata</strong>, duas cifras AEAD estruturalmente diferentes e com chaves independentes, de modo que quebrar totalmente um único algoritmo não basta. Toda ferramenta que precisa de uma credencial (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) pede a senha uma vez por execução (guardada só na memória do processo, nunca gravada em lugar nenhum) por meio de <code>try_load_cloud_account()</code> de <code>libs/primary.py</code>, a única função pela qual tudo passa.</p>
+<p>Um arquivo pode dispensar a criptografia com <code>unencrypted: true</code> no nível superior (não é o padrão: o <code>setup_credentials.py</code> pergunta antes de gravar um assim). <code>--encrypt-existing</code> criptografa no lugar apenas os campos que parecem sensíveis (nomes com cara de segredo, senha ou token), deixa legíveis por exemplo <code>AWS_REGION</code>/<code>AWS_PROFILE</code> e nunca sobrescreve a entrada: grava <code>&lt;name&gt;.encrypted.yaml</code> ao lado para você revisar e colocar no lugar. Exige o pacote Python <code>cryptography</code> (<code>python311-cryptography</code>, ou <code>pip install cryptography</code>, ≥41 para o Argon2id) na VM de automação; ele só é importado quando um arquivo realmente criptografado é usado, então um laboratório que nunca define <code>cloud_account</code> não precisa de nenhuma dependência nova.</p>
+<p><strong>Credenciais de serviços externos (SCC, SUSE Application Collection, Hermes, …).</strong> O mesmo armazenamento <code>/etc/lab_creation/credentials/</code>, a mesma criptografia e a mesma ferramenta <code>setup_credentials.py</code> também cobrem credenciais de serviços externos que não são de nuvem. Um arquivo é marcado com <code>credential_kind</code> (por exemplo <code>scc</code>, <code>appcollection</code>, <code>hermes</code>) em vez de <code>cloudtype</code>, de modo que os dois conceitos compartilham diretório e formato sem nunca colidir. Cada complemento que precisa de uma credencial de serviço externo documenta seu próprio campo opcional <code>&lt;field&gt;_account</code> (por exemplo <code>smlm_scc_account</code>, <code>suse_ai_registry_account</code>, <code>hermes_account</code>) para indicá-la explicitamente; se não for definido, um único arquivo com o <code>credential_kind</code> correspondente é detectado automaticamente, como acontece com <code>cloud_account</code>. <strong>Credenciais em texto puro no JSON do laboratório continuam totalmente válidas</strong>: este armazenamento é uma alternativa opcional, nunca uma exigência; os campos em texto puro de cada complemento (<code>smlm_scc_user</code>, <code>suse_ai_registry_user</code>, <code>hermes_llm_api_key</code>, …) continuam funcionando sem mudanças se você nunca usar o armazenamento de credenciais.</p>
+<pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first
+</code></pre>
+<p>Um arquivo de credenciais por tipo serve para todos os complementos que precisam desse tipo (por exemplo, um único arquivo <code>scc</code> cobre as credenciais SCC de qualquer complemento), independentemente do prefixo dos campos JSON de cada um; veja <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> em <code>libs/addon_common.py</code> e as funções <code>*_service_credential*</code> de <code>libs/primary.py</code> para o mecanismo por trás.</p>
+<p><strong>Backends de nuvem (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) e <code>myip</code>:</strong> deixe vazio o <code>myip</code> de um nó de nuvem no JSON do laboratório: o IP real só é conhecido quando o provedor o atribui na criação, não é algo que se decide de antemão como um IP estático de libvirt/Harvester. O <code>setup_vm.py</code> pega o IP real do valor retornado por <code>create_vm()</code> e o registra no DNS <em>depois</em> que o nó existe de fato, não antes (um bug real encontrado nos testes ao vivo do AWSBackend, 2026-09-06; veja TODO). <code>mymac</code> também não faz sentido em um backend de nuvem: deixe-o sem definir; ele é ignorado em vez de gerado ou verificado.</p>
+<p><strong>VM de DNS na nuvem:</strong> na primeira vez que um nó do laboratório usa determinado backend de nuvem, o <code>setup_vm.py</code> também provisiona (ou reutiliza, se já existir) uma VM pequena e barata que serve DNS dentro dessa mesma rede de nuvem, <code>lab-dns-&lt;backend&gt;</code>, por exemplo <code>lab-dns-aws</code>, rodando BIND. Ela existe porque os nós de nuvem em geral não conseguem alcançar o servidor BIND do <code>automation.mydemo.lab</code> (ele fica atrás do NAT/roteador do laboratório doméstico, inacessível pela Internet); um cluster real de vários nós na nuvem precisa do próprio servidor DNS dentro dessa rede para que seus nós se resolvam entre si. A entrada DNS de cada nó de nuvem é registrada <em>tanto</em> nessa VM de DNS quanto na zona central do <code>automation.mydemo.lab</code>. <strong>Limitações conhecidas:</strong> (1) um nó de nuvem recém-criado ainda não passa a usar automaticamente essa VM de DNS para a própria resolução, então um segundo nó de nuvem do mesmo laboratório ainda não consegue resolver o primeiro pelo nome sem mais configuração; (2) consultar a zona dessa VM de DNS pelo IP elástico/público da AWS a partir de um cliente externo (inclusive o próprio automation.mydemo.lab) hoje retorna um NXDOMAIN falso da zona raiz em vez da resposta real; a consulta pelo IP privado ou pelo loopback funciona, e a causa do caminho pelo IP público ainda não foi encontrada. Veja a docstring de <code>ensure_cloud_dns_vm()</code> em <code>libs/backends.py</code> e o TODO.</p>
+<p><strong>Dimensionamento de instâncias na nuvem:</strong> cada backend de nuvem converte <code>VM_CPU</code>/<code>VM_MEM</code> no menor tipo de instância, tipo de servidor, plano ou flavor suficiente do provedor, a partir de uma pequena tabela embutida (a coluna "Notas" de cada um indica qual); essa tabela nunca foi pensada como limite. Há duas formas de substituí-la, em ordem de prioridade:
+1. <strong><code>cloud_instance_type</code></strong> (em common ou por nó; o do nó prevalece): o nome exato de um tipo de instância, tipo de servidor, plano ou flavor, usado como está, sem escolha automática. Funciona igual em todos os backends de nuvem, inclusive no OVHcloud (que pula sua chamada ao vivo à API de flavors) e no GCP (que não cria um tipo personalizado <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>; informe um tipo predefinido real como <code>n2-standard-4</code>).
+2. <strong>Uma chave de configuração <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (veja a linha de cada provedor abaixo): substitui por completo a tabela embutida, de modo que a escolha automática por <code>VM_CPU</code>/<code>VM_MEM</code> continua funcionando, mas com a sua lista. Formato: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, por exemplo <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. Isso substitui a tabela inteira, sem mesclar: repita as entradas embutidas que ainda quiser. GCP e OVHcloud não têm essa chave: o GCP cria um tipo de máquina personalizado real diretamente a partir de <code>VM_CPU</code>/<code>VM_MEM</code> (não há catálogo a substituir) e o OVHcloud já consulta ao vivo sua lista real de flavors na criação (veja a linha dele).</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Chaves obrigatórias de <code>/etc/lab_creation.cfg</code></th>
+<th>Notas</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>harvester</code></td>
+<td><code>HARVESTER_KUBECONFIG</code> (obrigatória), <code>HARVESTER_NAMESPACE</code> (opcional, padrão <code>default</code>), <code>HARVESTER_NETWORK</code> (opcional, um NetworkAttachmentDefinition do Multus já existente)</td>
+<td>Somente <code>config_method: cloud-init</code>; ISO_IMAGE já precisa ser uma VirtualMachineImage importada no Harvester</td>
+</tr>
+<tr>
+<td><code>hetzner</code></td>
+<td><code>HETZNER_TOKEN</code> (obrigatória, um token da API do Hetzner Cloud restrito a um projeto), <code>HETZNER_LOCATION</code> (opcional, por exemplo <code>nbg1</code>/<code>fsn1</code>/<code>hel1</code>/<code>ash</code>/<code>hil</code>), <code>HETZNER_SERVER_TYPES</code> (opcional, substitui a tabela embutida de server_type; veja acima)</td>
+<td>Somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um nome real de imagem da Hetzner (por exemplo <code>ubuntu-24.04</code>) ou o ID de um snapshot seu, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor server_type da Hetzner que atenda a ambos, e vm_dsk_gb não pode passar do disco incluído nesse server_type. Tipos de servidor atuais: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (a Hetzner não tem uma página de listagem única independente da API; o console ou a página de preços é a fonte prática). Veja a docstring da classe <code>HetznerBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td><code>AWS_REGION</code> (obrigatória), mais <code>AWS_PROFILE</code> ou <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code> (obrigatórias); <code>AWS_SESSION_TOKEN</code> (obrigatória na prática para uma chave temporária emitida pelo STS, que começa com <code>ASIA</code> em vez de <code>AKIA</code>, por exemplo de SSO/IAM Identity Center ou de uma função assumida; <code>resolve()</code> encerra com uma mensagem clara se ela faltar para esse tipo de chave); <code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code> (todas opcionais; sem elas usam-se a VPC e o grupo de segurança padrão da conta, que muitas contas reais não têm; veja os resultados dos testes ao vivo no TODO); <code>AWS_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
+<td>Exige a CLI <code>aws</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ID de AMI real, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor tipo de instância EC2 suficiente, mas vm_dsk_gb É aplicado diretamente (ao contrário da Hetzner) pelo volume EBS raiz real da AMI. Tipos de instância atuais: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>; <code>aws_nested_virtualization: "true"</code> por nó ou em common (opcional, desativado por padrão) inicia a instância com a virtualização KVM aninhada real da AWS (<code>--cpu-options "NestedVirtualization=enabled"</code>, documentação: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>), o que permite que o fluxo kickstart/combustion deste projeto, inclusive uma instalação real a partir da ISO do Harvester HCI, rode em um nó "hipervisor" provisionado na nuvem do mesmo jeito que em hardware físico; exige um <code>cloud_instance_type</code> explícito de uma família compatível real (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i e suas variantes <code>-flex</code>; encerra com uma mensagem clara citando a lista exata se o tipo de instância resolvido não estiver entre eles, já que a tabela T3 padrão nunca o suporta). Veja a docstring da classe <code>AWSBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+</tr>
+<tr>
+<td><code>gcp</code></td>
+<td><code>GCP_PROJECT</code>/<code>GCP_ZONE</code> (ambas obrigatórias), <code>GCP_SERVICE_ACCOUNT_KEY</code> (caminho para um arquivo de chave JSON de conta de serviço); <code>GCP_IMAGE_PROJECT</code>/<code>GCP_NETWORK</code>/<code>GCP_SUBNET</code> (todas opcionais)</td>
+<td>Exige a CLI <code>gcloud</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um nome real de imagem GCE, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM criam um tipo de máquina personalizado real (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>, o único backend aqui que não escolhe de uma tabela fixa de SKUs, por isso não há chave de substituição no estilo <code>*_INSTANCE_TYPES</code>; use <code>cloud_instance_type</code> para forçar um tipo predefinido real). Tipos de máquina predefinidos: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>. Veja a docstring da classe <code>GCPBackend</code> em <code>libs/backends.py</code> para as regras de arredondamento de formatos personalizados e a lista completa de limitações</td>
+</tr>
+<tr>
+<td><code>alibaba</code></td>
+<td><code>ALIBABA_ACCESS_KEY_ID</code>/<code>ALIBABA_ACCESS_KEY_SECRET</code>/<code>ALIBABA_REGION</code> (todas obrigatórias), <code>ALIBABA_SECURITY_GROUP_ID</code>/<code>ALIBABA_VSWITCH_ID</code> (ambas obrigatórias: ao contrário de AWS/GCP, não há VPC padrão de reserva), <code>ALIBABA_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
+<td>Exige a CLI <code>aliyun</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ImageId real da Alibaba Cloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor InstanceType do ECS suficiente, e vm_dsk_gb é aplicado diretamente via <code>--SystemDisk.Size</code>. Famílias de instâncias atuais: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>. Veja a docstring da classe <code>AlibabaBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td><code>SCALEWAY_SECRET_KEY</code>/<code>SCALEWAY_PROJECT_ID</code>/<code>SCALEWAY_ZONE</code> (todas obrigatórias), <code>SCALEWAY_SERVER_TYPES</code> (opcional, substitui a tabela embutida de commercial_type; veja acima)</td>
+<td>REST direto contra <code>api.scaleway.com</code> (sem CLI); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ID real de imagem da Scaleway, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>commercial_type</code> suficiente (DEV1-S/M/L, GP1-S). Tipos comerciais atuais: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>; o cloud-init é entregue por uma chamada separada <code>PATCH .../user_data/cloud-init</code> depois da criação do servidor. <strong>Esse mecanismo específico NÃO foi verificado de novo ao vivo de forma independente nesta sessão</strong>, e a docstring da classe <code>ScalewayBackend</code> em <code>libs/backends.py</code> o marca como a parte menos verificada deste backend</td>
+</tr>
+<tr>
+<td><code>upcloud</code></td>
+<td><code>UPCLOUD_USERNAME</code>/<code>UPCLOUD_PASSWORD</code>/<code>UPCLOUD_ZONE</code> (todas obrigatórias: uma subconta da UpCloud com acesso à API ativado no painel de controle), <code>UPCLOUD_PLANS</code> (opcional, substitui a tabela embutida de planos; veja acima)</td>
+<td>REST direto contra <code>api.upcloud.com</code> com autenticação HTTP Basic (sem CLI e sem autenticação por token); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um UUID real de armazenamento/modelo da UpCloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>plan</code> suficiente (com a nomenclatura "NxCPU-MGB" da UpCloud). Planos atuais: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>; vm_dsk_gb é aplicado diretamente pelo campo <code>size</code> do dispositivo de armazenamento; a busca de servidor por nome é um filtro no cliente sobre a lista completa de servidores (não há filtro por nome no servidor confirmado). Veja a docstring da classe <code>UpCloudBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações, inclusive o campo <code>user_data</code> não confirmado</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td><code>OVH_APPLICATION_KEY</code>/<code>OVH_APPLICATION_SECRET</code>/<code>OVH_CONSUMER_KEY</code>/<code>OVH_SERVICE_NAME</code>/<code>OVH_REGION</code> (todas obrigatórias), <code>OVH_ENDPOINT</code> (opcional, padrão <code>https://eu.api.ovh.com/1.0</code>; mude para uma conta OVH registrada em <code>ca</code>/<code>us</code>)</td>
+<td>REST direto contra a API do OVHcloud com o esquema de assinatura de requisições da própria OVH (nem token bearer simples nem Basic Auth; é o backend menos verificado deste arquivo, nada dele foi testado com uma conta real do OVHcloud); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um imageId real do OVHcloud Public Cloud da região (UUID); o dimensionamento do flavor NÃO é uma tabela estática como nos outros backends (por isso também não há chave no estilo <code>*_INSTANCE_TYPES</code> aqui): os IDs de flavor da OVH são UUIDs por região, então <code>_pick_flavor()</code> faz uma chamada real à API na criação; use <code>cloud_instance_type</code> para pular essa chamada e informar diretamente um flavorId real. Flavors e preços atuais: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (os UUIDs reais de flavor por região só aparecem pela API ou pelo console, não nessa página de preços). Veja a docstring da classe <code>OVHcloudBackend</code> em <code>libs/backends.py</code> para a lista completa, explicitamente sinalizada, do que ainda não foi confirmado</td>
+</tr>
+<tr>
+<td><code>exoscale</code></td>
+<td><code>EXOSCALE_API_KEY</code>/<code>EXOSCALE_API_SECRET</code>/<code>EXOSCALE_ZONE</code> (todas obrigatórias), <code>EXOSCALE_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
+<td>Exige a CLI <code>exo</code> real na VM de automação; somente <code>config_method: cloud-init</code> (passado direto para a opção <code>--cloud-init &lt;file&gt;</code> do <code>exo</code>, a entrega de cloud-init mais simples entre os backends de nuvem); ISO_IMAGE precisa ser um ID ou nome real de modelo da Exoscale, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>instance-type</code> suficiente (a família "standard.<size>" da Exoscale). Tipos de instância atuais: execute <code>exo compute instance-type list</code> (a fonte oficial segundo <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>; os números exatos de vCPU/RAM da tabela embutida NÃO foram reconfirmados com esse comando nesta sessão); vm_dsk_gb é aplicado diretamente via <code>--disk-size</code>. Veja a docstring da classe <code>ExoscaleBackend</code> em <code>libs/backends.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="usrlocalliblab_creation"><code>/usr/local/lib/lab_creation/</code></h3>
+<p>Módulos de biblioteca Python instalados. Atualizados executando <code>install_automation_node_scripts.sh</code> a partir do repositório na VM de automação.</p>
+<table>
+<thead>
+<tr>
+<th>Arquivo</th>
+<th>Conteúdo</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lab_creation.py</code></td>
+<td>Ciclo de vida de VMs, DNS, resolução de vários hosts e utilitários de orquestração</td>
+</tr>
+<tr>
+<td><code>backends.py</code></td>
+<td>Interface <code>VMBackend</code> + <code>LibvirtBackend</code> (criar/excluir/reiniciar uma VM, envio dos arquivos de provisionamento)</td>
+</tr>
+<tr>
+<td><code>services.py</code></td>
+<td>Gerenciamento do serviço DNS</td>
+</tr>
+<tr>
+<td><code>spacecmd_common.py</code></td>
+<td>Automação compartilhada do SUSE Multi-Linux Manager/Uyuni (chaves de ativação, organizações, RBAC, CLM, Ansible, SCAP/CVE) usada por <code>install_uyuni</code>/<code>install_smlm</code>/<code>install_client_registration</code></td>
+</tr>
+<tr>
+<td><code>primary.py</code></td>
+<td>Validação de entrada e carregamento da configuração</td>
+</tr>
+<tr>
+<td><code>k8s.py</code></td>
+<td>Interface de distribuição de cluster Kubernetes (RKE2/K3s)</td>
+</tr>
+<tr>
+<td><code>addon_common.py</code></td>
+<td>Infraestrutura de CLI compartilhada usada por todos os complementos <code>install_*</code> (tratamento de <code>--help</code>/<code>--version</code>/<code>--schema</code>, validação de esquema)</td>
+</tr>
+</tbody>
+</table>
+<p><code>extensions.sh</code> (vazio, sem uso) também continua sendo instalado junto com estes. Os outros três utilitários em bash (<code>lab_creation.bash</code>, <code>k8s_functions.bash</code>, <code>primary_functions.bash</code>) foram removidos; os originais em bash continuam em <code>legacy_bash/</code>.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
 <h2 id="testing">Testes</h2>
-<p>Cada verificação é executada em seu próprio contêiner <code>podman</code> descartável independente:</p>
+<p>Cada verificação roda no seu <strong>próprio contêiner <code>podman</code> independente e descartável</strong>: uma falha, um travamento ou um estado residual em uma não afeta nenhuma outra:</p>
 <pre><code class="language-shell">tests/run_tests.sh
 </code></pre>
-<p align="right"><a href="#top">↑ voltar para o topo</a></p>
+<p>Cobre a sintaxe de bash e Python de toda a árvore, a consistência entre esquemas e a interface web, testes unitários com SSH simulado para cada biblioteca principal e script de orquestração, e testes de regressão para bugs encontrados em testes ao vivo. Para adicionar uma verificação, coloque um script executável em <code>tests/checks/</code>: ele é detectado automaticamente, sem nenhuma configuração.</p>
+<p>Está ligado a um hook de pre-commit (ative uma vez por clone, veja <a href="#contributing--developer-setup">Contribuir</a>): roda automaticamente a cada commit e, se o <code>podman</code> não estiver instalado, é ignorado com um aviso em vez de bloquear o commit.</p>
+<aside class="callout callout-note"><p>Cada um dos <a href="#examples">Exemplos</a> acima tem um teste de implantação e verificação em hardware real em <code>tests/examples/</code>; eles precisam de um hipervisor KVM e de uma VM de automação funcionando, por isso <strong>não</strong> fazem parte da execução automática de <code>tests/run_tests.sh</code>, mas estão lá e podem ser executados manualmente (<code>tests/examples/run_example.sh &lt;name&gt;</code>) antes de enviar uma mudança que possa afetar algum desses fluxos documentados. Veja <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">tests/examples/README.md</a>.</p></aside>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
 <hr />
-<h2 id="contributing--developer-setup">Contribuindo / Configuração do desenvolvedor</h2>
-<p>Veja <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> no GitHub para o guia completo.</p>
+<h2 id="contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</h2>
+<p>Veja <strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></strong> para o guia completo (ambiente de desenvolvimento, convenções de código, como adicionar um complemento, processo de PR). Este projeto segue o <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/CODE_OF_CONDUCT.md">Código de Conduta Contributor Covenant</a>; veja <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> para relatar uma vulnerabilidade. Todo push e pull request passa pela <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/actions/workflows/ci.yml">CI</a>: verificações de sintaxe e importação do Python 3.11, o esquema de cada complemento, <code>shellcheck</code> e o conjunto completo de testes em contêineres descrito abaixo.</p>
+<h3 id="one-time-git-setup">Configuração inicial do git</h3>
+<p>Depois de clonar o repositório, execute:</p>
+<pre><code class="language-shell">git config core.hooksPath .githooks
+</code></pre>
+<p>Isso ativa os hooks de <code>.githooks/</code>, que:
+- executam o <a href="#testing">conjunto de testes</a> completo antes de cada commit
+- cuidam da marcação de versão de cada script (veja abaixo)</p>
+<h3 id="how-versioning-works">Como funciona o versionamento</h3>
+<aside class="callout callout-note"><p>Isso fica inteiramente a cargo dos hooks do git acima: você nunca edita <code>__LABVERSION__</code> à mão.</p></aside>
+<p>Todo script contém o marcador:</p>
+<pre><code class="language-python">__LABVERSION__ = &quot;__LABVERSION__&quot;
+</code></pre>
+<p>Os hooks de <code>.githooks/</code> expandem e restauram esse marcador automaticamente:</p>
+<table>
+<thead>
+<tr>
+<th>Hook</th>
+<th>Gatilho</th>
+<th>Ação</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>post-checkout</code></td>
+<td><code>git checkout</code> / <code>git switch</code></td>
+<td>Substitui <code>__LABVERSION__</code> em cada script pelo hash do último commit que alterou esse arquivo</td>
+</tr>
+<tr>
+<td><code>post-merge</code></td>
+<td><code>git pull</code> / <code>git merge</code></td>
+<td>Igual ao anterior</td>
+</tr>
+<tr>
+<td><code>post-rewrite</code></td>
+<td><code>git rebase</code> / <code>git commit --amend</code></td>
+<td>Igual ao anterior</td>
+</tr>
+<tr>
+<td><code>pre-commit</code></td>
+<td><code>git commit</code></td>
+<td>Restaura <code>__LABVERSION__</code> nos scripts preparados antes de o commit ser gravado, de modo que os hashes nunca ficam armazenados no repositório</td>
+</tr>
+</tbody>
+</table>
+<p>O resultado: cada script da sua árvore de trabalho mostra a própria versão com <code>--version</code>, e o repositório sempre guarda o marcador limpo. Quando os scripts são instalados pelo <code>install_automation_node_scripts.sh</code>, a mesma substituição de hash por arquivo é aplicada na instalação com <code>git log -1 --format=%h</code>.</p>
+<h3 id="installing-scripts-onto-the-automation-vm">Instalar os scripts na VM de automação</h3>
+<p>A partir da raiz do repositório na VM de automação (ou em qualquer máquina com o repositório clonado):</p>
+<pre><code class="language-shell">./install_automation_node_scripts.sh
+</code></pre>
+<p>Isso faz backup da instalação existente (no próprio tarball com data e hora e, separadamente, no que o seu próprio processo de backup guardar), copia cada script, biblioteca e modelo para o caminho do sistema e marca cada arquivo instalado com o hash da sua versão.</p>
+<h3 id="dependencies">Dependências</h3>
+<p>Em tempo de execução (na VM de automação):
+<code>python3.11</code>, <code>jq</code>, <code>ssh</code>, <code>rsync</code>, <code>nc</code>, <code>helm</code>, <code>kubectl</code>, <code>named</code> (BIND)</p>
+<p>A configuração do hipervisor exige ainda:
+<code>virt-install</code>, <code>virsh</code>, <code>qemu-img</code>, <code>zypper</code>, imagens QCOW2 de origem em <code>/var/lib/libvirt/images/sources/</code></p>
+<p>Executar o <a href="#testing">conjunto de testes</a> exige ainda:
+<code>podman</code></p>
+<p>Usar uma <a href="#lab-definition-format">definição de laboratório</a> em YAML (em vez de JSON) exige ainda:
+<code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
 <hr />
 <h2 id="author">Autor</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

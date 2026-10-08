@@ -16,7 +16,7 @@
 # Same shape as the "gemini" addon: deploys LiteLLM as an OpenAI-compatible proxy, this time in front
 # of Anthropic's own API. Any OpenAI SDK/client can reach Claude models through the resulting endpoint.
 
-__version__ = "3d35d1a"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "anthropic",

@@ -33,6 +33,7 @@ import urllib.request
 from pathlib import Path
 
 import primary
+import provisioning
 from lab_creation import (
     _RED, _YELLOW, _RESET,
     _empty,
@@ -700,6 +701,8 @@ class LibvirtBackend(VMBackend):
                            # listed explicitly or setup_vm.py's unconditional call breaks it.
         nested_virtualization="",  # unused here — an AWS-only override, accepted and ignored
                                    # like cloud_instance_type above.
+        provisioning_base_url="",  # lab_creation.cfg's PROVISIONING_BASE_URL, see libs/provisioning.py
+        provisioning_tls_verify="",  # lab_creation.cfg's PROVISIONING_TLS_VERIFY, see libs/provisioning.py
     ):
         """
         Create a VM on a KVM hypervisor with virt-install. Each config_method has its own branch:
@@ -881,17 +884,10 @@ class LibvirtBackend(VMBackend):
             # from the hypervisor instead, which works the same way regardless
             # of where virt-install itself runs.
             location_arg = ensure_iso_install_tree(remote_host, iso_loc, iso_image)
-            extra_args_by_type = {
-                "autoyast": "autoyast=http://{}/lab_creation/install_iso/{}.xml".format(mydns, vm_name),
-                # inst.text is a kernel command-line argument, separate from the kickstart's own 'text'
-                # directive, which only selects the UI style. Without it RHEL 10's Anaconda starts its
-                # graphical/WebUI path, which never completes under --noautoconsole with no display.
-                # RHEL 8 and later need the argument because the kickstart 'text' line alone is not enough.
-                "kickstart": "inst.ks=http://{}/lab_creation/install_iso/{}.ks inst.sshd inst.text".format(
-                    mydns, vm_name),
-                "preseed": "auto=true priority=critical url=http://{}/lab_creation/install_iso/{}.preseed".format(mydns, vm_name),
-            }
-            extra_args = extra_args_by_type[itype]
+            answer_file = "{}/lab_creation/install_iso/{}.{}".format(
+                provisioning.base_url(mydns, provisioning_base_url), vm_name,
+                {"autoyast": "xml", "kickstart": "ks", "preseed": "preseed"}[itype])
+            extra_args = provisioning.installer_args(itype, answer_file, provisioning.tls_verify(provisioning_tls_verify))
 
             log("- Installing via {} (this will block until the installer finishes)…".format(itype))
             r = self._virt_install(
@@ -902,10 +898,7 @@ class LibvirtBackend(VMBackend):
                 # firmware must agree with VM_BOOT (uefi by default).
                 "--boot", boot_flag,
                 "--location", location_arg,
-                # Anaconda's text UI queries the terminal's capabilities at startup and blocks until the
-                # reply arrives. With --noautoconsole nothing answers that query, so TERM=vt100 is set
-                # to skip it.
-                "--extra-args", "{} console=ttyS0,115200n8 TERM=vt100".format(extra_args),
+                "--extra-args", "{} console=ttyS0,115200n8".format(extra_args),
                 "--disk", "size={},path={}/{}.qcow2,sparse=no,bus={},boot.order=1".format(
                     vm_dsk_gb, vm_img_loc, vm_name, vm_dsk_bus or "virtio"),
                 *(extra_disk_args + [

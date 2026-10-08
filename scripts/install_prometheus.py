@@ -23,7 +23,7 @@
 # Target node(s): any node listing "prometheus" in addons[], as for the podman deployment of install_smlm.py.
 # The node must have prometheus_port open. This addon does not manage firewalls or security groups. For AWS nodes, add the port to aws_open_ports.
 
-__version__ = "94a91ec"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "prometheus",

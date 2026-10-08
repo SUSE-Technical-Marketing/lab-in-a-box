@@ -43,7 +43,7 @@ Documentation: https://rmahique.github.io/lab-in-a-box/
 - [Contributing / Developer setup](https://rmahique.github.io/lab-in-a-box/#contributing--developer-setup)
 - [Author](#author)
 
-Translations: [Español](https://rmahique.github.io/lab-in-a-box/es.html) · [Deutsch](https://rmahique.github.io/lab-in-a-box/de.html) · [Français](https://rmahique.github.io/lab-in-a-box/fr.html) · [Português (Brasil)](https://rmahique.github.io/lab-in-a-box/pt-BR.html) · [日本語](https://rmahique.github.io/lab-in-a-box/ja.html) · [简体中文](https://rmahique.github.io/lab-in-a-box/zh-CN.html)
+Translations: [Español](https://rmahique.github.io/lab-in-a-box/es.html) · [Deutsch](https://rmahique.github.io/lab-in-a-box/de.html) · [Français](https://rmahique.github.io/lab-in-a-box/fr.html) · [Português (Brasil)](https://rmahique.github.io/lab-in-a-box/pt-BR.html) · [日本語](https://rmahique.github.io/lab-in-a-box/ja.html) · [简体中文](https://rmahique.github.io/lab-in-a-box/zh-CN.html) · [العربية](https://rmahique.github.io/lab-in-a-box/ar.html)
 
 ## Repository layout
 

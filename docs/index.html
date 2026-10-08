@@ -471,23 +471,23 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <p>On the hypervisor, as root:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>It installs git and Python, fetches lab-in-a-box into <code>/var/tmp/setup_demo_server/</code> and runs <code>setup_demo_server/setup_kvm_node.py</code>, which asks for the lab settings, each with this host's own values as the default:</p>
+<p>It installs git and Python, fetches lab-in-a-box into <code>/var/tmp/setup_demo_server/</code> and runs <code>setup_demo_server/setup_kvm_node.py</code>. It takes the lab settings from its options and this host's own values; with <code>--interactive</code> it asks for each one instead, with those values as defaults:</p>
 <ul>
 <li><strong>Lab network</strong>: <code>bridge</code> puts the lab VMs on the host's LAN; <code>nat</code> uses a private libvirt network instead (for a laptop or single-NIC host)</li>
 <li><strong>Lab DNS domain</strong> (default <code>mydemo.lab</code>), the <strong>automation VM's IP address</strong> (a free address on the lab network is suggested) and its <strong>root password</strong></li>
 <li>On SLES, the <strong>registration code</strong></li>
 </ul>
-<p>The network, gateway, DNS server, timezone and SSH key (<code>~/.ssh/id_ed25519.pub</code>, created if missing) are taken from the host. The answers are written to <code>setup_demo_server/lab.cfg</code>; after a summary and a confirmation, the setup:</p>
+<p>The network, gateway, DNS server, timezone and SSH key (<code>~/.ssh/id_ed25519.pub</code>, created if missing) are taken from the host. The answers are written to <code>setup_demo_server/lab.cfg</code>; after a summary (and, with <code>--interactive</code>, a confirmation), the setup:</p>
 <ol>
 <li>installs the hypervisor packages for the detected distribution (EPEL and CRB are enabled on RHEL-family hosts);</li>
 <li>in bridge mode, turns the NIC carrying the default route into a port of <code>br0</code>, keeping the host's address. NetworkManager, netplan, wicked, systemd-networkd and ifupdown are supported. A timer restores the previous network configuration unless the gateway still answers through the bridge, so a failed change cannot leave the host unreachable;</li>
 <li>configures libvirt and creates the automation VM.</li>
 </ol>
-<p>Every answer can also be given as an option, so the same command runs unattended, for example from cloud-init:</p>
+<p>Every setting can be given as an option, for example in an unattended run from cloud-init:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
-  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+  | sudo bash -s -- --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
-<p>Without <code>--root-password</code> (or <code>LAB_ROOT_PASSWORD</code>), a non-interactive run generates a password and prints it at the end. Run <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> for every option.</p>
+<p>Without <code>--root-password</code> (or <code>LAB_ROOT_PASSWORD</code>), a password is generated and printed at the end, unless <code>--interactive</code> asks for one. Run <code>python3 /var/tmp/setup_demo_server/setup_demo_server/setup_kvm_node.py --help</code> for every option.</p>
 <h3 id="step-3--configure-and-run-the-kvm-node-setup">Step 3 — Re-running or changing the setup</h3>
 <p>Running the command again uses the existing <code>lab.cfg</code> as is; options that map to its settings (for example <code>--network-mode nat</code>) update them first, and <code>--reconfigure</code> asks for everything again. To review or edit <code>lab.cfg</code> before anything is changed, fetch the code only:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash -s -- --fetch-only
@@ -565,6 +565,7 @@ vim /etc/lab_creation.cfg
 </tr>
 </tbody>
 </table>
+<p><strong>HTTP and HTTPS.</strong> The automation VM serves its files on port 80 (HTTP) and port 443 (HTTPS, self-signed certificate in <code>/etc/lab_creation/tls/</code>). Installers (AutoYaST, kickstart, preseed) and Helm fetch them over HTTPS and accept the self-signed certificate. Set <code>PROVISIONING_TLS_VERIFY=1</code> to verify it instead, or <code>PROVISIONING_BASE_URL</code> (e.g. <code>http://192.168.88.250</code>) to use another address or go back to HTTP. Harvester's iPXE netboot always uses HTTP: iPXE cannot accept a self-signed certificate.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Step 5 — Point your client DNS at the automation VM</h3>
 <p>For hostnames to resolve from your desktop:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -1503,7 +1504,15 @@ install_longhorn --schema yaml      # ...or YAML
 
 </details>
 
-<p>To add a new addon: create <code>scripts/install_&lt;name&gt;.py</code> following the pattern of an existing one (source <code>addon_common</code>, load the relevant JSON section via <code>load_definition()</code>, do the work over SSH), add templates under <code>templates/addons/&lt;name&gt;/</code> if needed, and reference <code>"&lt;name&gt;"</code> in the <code>addons</code> array of your JSON — <code>install_automation_node_scripts.sh</code>'s deploy loop and the web UI both discover it automatically.</p>
+<p>To add a new addon: create an executable <code>scripts/install_&lt;name&gt;</code> in any language, with or without a file extension (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, a compiled binary), add templates under <code>templates/addons/&lt;name&gt;/</code> if needed, and reference <code>"&lt;name&gt;"</code> in the <code>addons</code> array of your JSON. <code>install_automation_node_scripts.sh</code> deploys it as <code>/usr/local/bin/install_&lt;name&gt;</code>, and <code>setup_lab.py</code> and the web UI use it only through its command-line contract:</p>
+<ul>
+<li><code>install_&lt;name&gt; --schema json</code> prints its schema as JSON, including a <code>capabilities</code> object (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>); <code>--schema yaml</code> prints the same as YAML</li>
+<li><code>install_&lt;name&gt; --capabilities</code> prints the same capabilities as JSON</li>
+<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> exits non-zero, printing <code>[ERROR]</code> lines, when its configuration is invalid</li>
+<li><code>install_&lt;name&gt; --version</code> and <code>--help</code></li>
+<li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> installs it on the VM named in <code>$_vm_name</code> (and the cluster in <code>$clu_name</code> for a cluster add-on)</li>
+</ul>
+<p>A Python add-on gets all of these from <code>addon_common.handle_common_args()</code> and a module-level <code>PLUGIN</code> dict; follow the pattern of an existing one (load the relevant JSON section via <code>load_definition()</code>, do the work over SSH).</p>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
 <hr />
@@ -1547,6 +1556,14 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><code>delay_min</code></td>
 <td>Minutes to wait between provisioning stages (increase on slow hardware)</td>
+</tr>
+<tr>
+<td><code>PROVISIONING_BASE_URL</code></td>
+<td><em>(optional)</em> replaces <code>https://&lt;automation VM&gt;</code> in the URLs installers and Helm fetch files from, e.g. <code>http://192.168.88.250</code></td>
+</tr>
+<tr>
+<td><code>PROVISIONING_TLS_VERIFY</code></td>
+<td><code>0</code> (default) accepts the automation VM's self-signed certificate; <code>1</code> verifies it</td>
 </tr>
 </tbody>
 </table>

@@ -24,7 +24,7 @@
 # than git-backed like Colt — the shared manifest's data_path is pointed at where that database
 # file needs to persist.
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "wikimusic",

@@ -23,7 +23,7 @@
 # Needs Helm >= 3.13.1 on the target cluster (this project's setup_helm() always installs a current
 # Helm 3, so this should already be satisfied).
 
-__version__ = "5fc5f69"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "suse_observability",

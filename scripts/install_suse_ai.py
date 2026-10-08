@@ -35,7 +35,7 @@
 # This addon deploys SUSE's rebuild of the Ollama, Open WebUI and Milvus components. The ollama, open_webui and milvus addons install
 # the community builds, so do not run both against the same cluster and namespace.
 
-__version__ = "0259515"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "suse_ai",

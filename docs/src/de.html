@@ -261,10 +261,10 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <p>Auf dem Hypervisor, als root:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh | sudo bash
 </code></pre>
-<p>Der Befehl installiert git und Python, lädt lab-in-a-box nach <code>/var/tmp/setup_demo_server/</code> und fragt die Lab-Einstellungen ab, jeweils mit den Werten dieses Hosts als Vorgabe: Bridge- oder NAT-Netzwerk, DNS-Domain des Labs, IP-Adresse und root-Passwort der Automation-VM (unter SLES zusätzlich der Registrierungscode). Danach installiert er die Hypervisor-Pakete, macht die NIC mit der Default-Route zum Port der Bridge <code>br0</code>, wobei der Host seine Adresse behält (antwortet das Gateway nicht mehr, wird die vorherige Netzwerkkonfiguration automatisch wiederhergestellt), und erstellt die Automation-VM.</p>
-<p>Jede Antwort lässt sich auch als Option angeben, für unbeaufsichtigte Läufe (z. B. aus cloud-init):</p>
+<p>Der Befehl installiert git und Python, lädt lab-in-a-box nach <code>/var/tmp/setup_demo_server/</code> und übernimmt die Lab-Einstellungen aus den Optionen und den Werten dieses Hosts; mit <code>--interactive</code> fragt er jede einzeln ab, mit diesen Werten als Vorgabe: Bridge- oder NAT-Netzwerk, DNS-Domain des Labs, IP-Adresse und root-Passwort der Automation-VM (unter SLES zusätzlich der Registrierungscode). Danach installiert er die Hypervisor-Pakete, macht die NIC mit der Default-Route zum Port der Bridge <code>br0</code>, wobei der Host seine Adresse behält (antwortet das Gateway nicht mehr, wird die vorherige Netzwerkkonfiguration automatisch wiederhergestellt), und erstellt die Automation-VM.</p>
+<p>Jede Einstellung lässt sich als Option angeben, etwa für unbeaufsichtigte Läufe aus cloud-init:</p>
 <pre><code class="language-shell">curl -fsSL https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh \
-  | sudo bash -s -- --non-interactive --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
+  | sudo bash -s -- --domain mydemo.lab --automation-ip 192.168.8.71 --root-password 'secret'
 </code></pre>
 <h3 id="step-3--configure-and-run-the-kvm-node-setup">Schritt 3 — Setup erneut ausführen oder ändern</h3>
 <p>Ein erneuter Lauf verwendet die vorhandene <code>setup_demo_server/lab.cfg</code>; <code>--reconfigure</code> fragt alles neu ab. Um <code>lab.cfg</code> vor jeder Änderung selbst zu bearbeiten, laden Sie nur den Code:</p>
@@ -310,6 +310,7 @@ vim /etc/lab_creation.cfg
 </tr>
 </tbody>
 </table>
+<p><strong>HTTP und HTTPS.</strong> Die Automatisierungs-VM stellt ihre Dateien auf Port 80 (HTTP) und Port 443 (HTTPS, selbstsigniertes Zertifikat in <code>/etc/lab_creation/tls/</code>) bereit. Installer (AutoYaST, Kickstart, Preseed) und Helm laden sie über HTTPS und akzeptieren das selbstsignierte Zertifikat. Mit <code>PROVISIONING_TLS_VERIFY=1</code> wird es stattdessen geprüft; <code>PROVISIONING_BASE_URL</code> (z. B. <code>http://192.168.88.250</code>) legt eine andere Adresse fest oder wechselt zurück zu HTTP. Der iPXE-Netzwerkstart von Harvester verwendet immer HTTP, da iPXE keine selbstsignierten Zertifikate akzeptiert.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Schritt 5 — Client-DNS auf die Automatisierungs-VM zeigen lassen</h3>
 <p>Damit Hostnamen von Ihrem Desktop aus aufgelöst werden:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -1232,7 +1233,15 @@ install_longhorn --schema yaml      # ...or YAML
 
 </details>
 
-<p>Um ein neues Add-on hinzuzufügen, erstellen Sie <code>scripts/install_&lt;name&gt;.py</code> nach dem Muster eines bestehenden Add-ons (binden Sie <code>addon_common</code> ein, laden Sie den passenden JSON-Abschnitt über <code>load_definition()</code> und erledigen Sie die Arbeit per SSH). Legen Sie bei Bedarf Vorlagen unter <code>templates/addons/&lt;name&gt;/</code> ab und referenzieren Sie <code>"&lt;name&gt;"</code> im Array <code>addons</code> Ihrer JSON-Datei. Die Verteilungsschleife von <code>install_automation_node_scripts.sh</code> und die Web-UI finden es beide automatisch.</p>
+<p>Um ein neues Add-on hinzuzufügen, erstellen Sie eine ausführbare Datei <code>scripts/install_&lt;name&gt;</code> in einer beliebigen Sprache, mit oder ohne Dateiendung (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, ein kompiliertes Programm). Legen Sie bei Bedarf Vorlagen unter <code>templates/addons/&lt;name&gt;/</code> ab und referenzieren Sie <code>"&lt;name&gt;"</code> im Array <code>addons</code> Ihrer JSON-Datei. <code>install_automation_node_scripts.sh</code> installiert es als <code>/usr/local/bin/install_&lt;name&gt;</code>; <code>setup_lab.py</code> und die Web-UI nutzen es ausschließlich über seine Befehlszeilenschnittstelle:</p>
+<ul>
+<li><code>install_&lt;name&gt; --schema json</code> gibt das Schema als JSON aus, einschließlich eines Objekts <code>capabilities</code> (<code>targets</code>, <code>layers</code>, <code>requires_kubernetes</code>, <code>aux_services</code>); <code>--schema yaml</code> gibt dasselbe als YAML aus</li>
+<li><code>install_&lt;name&gt; --capabilities</code> gibt dieselben Fähigkeiten als JSON aus</li>
+<li><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code> endet mit einem Fehlercode und <code>[ERROR]</code>-Zeilen, wenn seine Konfiguration ungültig ist</li>
+<li><code>install_&lt;name&gt; --version</code> und <code>--help</code></li>
+<li><code>install_&lt;name&gt; &lt;lab.json&gt;</code> installiert es auf der VM aus <code>$_vm_name</code> (bei einem Cluster-Add-on im Cluster aus <code>$clu_name</code>)</li>
+</ul>
+<p>Ein Python-Add-on erhält all das über <code>addon_common.handle_common_args()</code> und ein <code>PLUGIN</code>-Dictionary auf Modulebene; orientieren Sie sich an einem bestehenden Add-on (laden Sie den passenden JSON-Abschnitt über <code>load_definition()</code> und erledigen Sie die Arbeit per SSH).</p>
 <p align="right"><a href="#top">↑ nach oben</a></p>
 
 <hr />

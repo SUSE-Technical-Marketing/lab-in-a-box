@@ -45,6 +45,16 @@ then
 	exit 1
 fi
 
+# Prints the short hash of the last commit that changed path $1 (relative to the repository root): from git, else from
+# .lab-versions ("<hash> <path>" per line, written by setup_lab_automation.sh when it copies the tree without .git),
+# else "unknown".
+lab_version() {
+	local _v
+	_v=$(git log -1 --format='%h' -- "$1" 2>/dev/null)
+	[[ -z "${_v}" && -f .lab-versions ]] && _v=$(awk -v p="$1" '$2 == p {print $1; exit}' .lab-versions)
+	echo "${_v:-unknown}"
+}
+
 if [[ "$_templ_addons_loc" == "" ]]
 then
 	_templ_addons_loc=/usr/share/lab_creation/templates/addons/
@@ -84,23 +94,23 @@ done
 cp -r  templates/addons/* ${_templ_addons_loc}/
 
 
-# Addons: every install_<name>[.py] under scripts/ — including
-# install_smlm/install_uyuni (their shared spacecmd_common.py is fully
-# mocked-SSH tested — tests/checks/09_spacecmd_common_test.py — but still
-# has no live SMLM/Uyuni server validation; see MIGRATION_TODO.md "Open
-# Risk #1" before trusting this in production). install_ds389 is now a
-# real Python addon too (2026-09-21) — the bash original that used to live
-# here, with no .py suffix to strip, is archived under legacy_bash/.
-# .py suffix stripped when present so each lands under the exact name
-# setup_lab.py's addon dispatch and the webui's discovery already look up
-# (both are name/exec-based, not shebang- or extension-aware).
+# Add-ons: every install_<name> executable under scripts/, in any language,
+# with or without a file extension. The extension is stripped, so each lands
+# at /usr/local/bin/install_<name>, the name setup_lab.py's dispatch and the
+# webui's discovery look up. When install_<name> exists both with and without
+# an extension, the last in sorted order is deployed (libs/apps.addon_files()
+# picks the same one). The version placeholder is stamped into text files only.
 for i in scripts/install_*
 do
+        [[ -f "${i}" ]] || continue
         _name="${i##*/}"
-        _name="${_name%.py}"
+        _name="${_name%%.*}"
         _dst="/usr/local/bin/${_name}"
         cp "${i}" "${_dst}"
-        sed -i "s/__LABVERSION__/$(git log -1 --format='%h' -- ${i} 2>/dev/null || echo 'unknown')/" "${_dst}"
+        if grep -Iq "__LABVERSION__" "${_dst}"
+        then
+            sed -i "s/__LABVERSION__/$(lab_version "${i}")/" "${_dst}"
+        fi
         chmod 0755 "${_dst}"
 done
 
@@ -112,7 +122,7 @@ done
 for i in setup_lab.py setup_vm.py destroy_vm.py destroy_lab.py
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
-    sed -i "s/__LABVERSION__/$(git log -1 --format='%h' -- scripts/${i} 2>/dev/null || echo 'unknown')/" "/usr/local/bin/${i}"
+    sed -i "s/__LABVERSION__/$(lab_version "scripts/${i}")/" "/usr/local/bin/${i}"
     chmod 0755 "/usr/local/bin/${i}"
 done
 
@@ -120,7 +130,7 @@ done
 for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
-    sed -i "s/__LABVERSION__/$(git log -1 --format='%h' -- scripts/${i} 2>/dev/null || echo 'unknown')/" "/usr/local/bin/${i}"
+    sed -i "s/__LABVERSION__/$(lab_version "scripts/${i}")/" "/usr/local/bin/${i}"
     chmod 0755 "/usr/local/bin/${i}"
 done
 
@@ -132,7 +142,7 @@ then
              /usr/local/bin/refresh_hypervisor_status.py /usr/local/bin/setup_harvester_cluster.py \
              /usr/local/bin/build_lab_usb.py /usr/local/bin/setup_credentials.py /usr/local/bin/vm_power.py
     do
-        [[ -f "${i}" ]] && sed -i "1s|^#!/usr/bin/env python3.11\$|#!/usr/bin/env ${_python_bin}|" "${i}"
+        [[ -f "${i}" ]] && grep -Iq . "${i}" && sed -i "1s|^#!/usr/bin/env python3.11\$|#!/usr/bin/env ${_python_bin}|" "${i}"
     done
 fi
 
@@ -162,6 +172,66 @@ done
 
 
 
+# ── HTTPS for the provisioning web server ────────────────────────────────────
+# Apache serves /srv/www/htdocs (provisioning files, helm, lab-builder) on port
+# 80 and, through templates/apache/lab_creation-ssl.conf, on port 443 with a
+# self-signed certificate. The certificate is generated once at
+# /etc/lab_creation/tls/{cert,key}.pem and never regenerated while present; an
+# existing /etc/lab-builder/tls certificate is reused. Its names are the
+# hostname from /etc/hostname plus the addresses in _tls_ips (default: the
+# output of `hostname -I`). Lab VMs use HTTPS without verifying it by default,
+# see libs/provisioning.py.
+_tls_dir=/etc/lab_creation/tls
+_tls_cert="${_tls_dir}/cert.pem"
+_tls_key="${_tls_dir}/key.pem"
+mkdir -p "${_tls_dir}"
+if [[ ! -f "${_tls_cert}" || ! -f "${_tls_key}" ]]
+then
+    if [[ -f /etc/lab-builder/tls/cert.pem && -f /etc/lab-builder/tls/key.pem ]]
+    then
+        cp /etc/lab-builder/tls/cert.pem "${_tls_cert}"
+        cp /etc/lab-builder/tls/key.pem "${_tls_key}"
+    elif command -v openssl &>/dev/null
+    then
+        _tls_name="$(cat /etc/hostname 2>/dev/null)"
+        _tls_name="${_tls_name:-$(hostname -f 2>/dev/null || hostname)}"
+        _tls_san="DNS:${_tls_name},DNS:${_tls_name%%.*}"
+        for _ip in ${_tls_ips:-$(hostname -I 2>/dev/null)}
+        do
+            _tls_san="${_tls_san},IP:${_ip}"
+        done
+        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -subj "/CN=${_tls_name}" -addext "subjectAltName=${_tls_san}" \
+            -addext "basicConstraints=critical,CA:FALSE" -addext "extendedKeyUsage=serverAuth" \
+            -keyout "${_tls_key}" -out "${_tls_cert}" &>/dev/null
+    else
+        echo "ERROR: openssl is required to generate the HTTPS certificate in ${_tls_dir}" >&2
+        exit 1
+    fi
+fi
+chmod 0600 "${_tls_key}"
+chmod 0644 "${_tls_cert}"
+
+if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
+then
+    cp templates/apache/lab_creation-ssl.conf /etc/apache2/vhosts.d/lab_creation-ssl.conf
+    if ! grep -q '^APACHE_MODULES=".*\bssl\b' /etc/sysconfig/apache2 2>/dev/null
+    then
+        sed -i 's/^APACHE_MODULES="\(.*\)"/APACHE_MODULES="\1 ssl"/' /etc/sysconfig/apache2
+    fi
+    systemctl try-restart apache2 2>/dev/null || true
+elif [[ -d /etc/httpd/conf.d ]]            # RHEL family (needs the mod_ssl package)
+then
+    if [[ -f /etc/httpd/conf.d/ssl.conf ]]
+    then
+        sed '/^<IfDefine !SSL>$/,/^<\/IfDefine>$/d' templates/apache/lab_creation-ssl.conf > /etc/httpd/conf.d/lab_creation-ssl.conf
+    else
+        cp templates/apache/lab_creation-ssl.conf /etc/httpd/conf.d/lab_creation-ssl.conf
+    fi
+    systemctl try-restart httpd 2>/dev/null || true
+fi
+
+
 # ── lab-builder web UI ────────────────────────────────────────────────────────
 # Static single-page app + one CGI endpoint, normally served by Apache at
 # /lab-builder/. Auto-detects the scripts (/usr/local/bin) and libs
@@ -184,13 +254,10 @@ done
 #   off      — skip webui deployment entirely.
 # _webui_port — port for "service" mode only (default 8677).
 # _webui_tls  — HTTPS by default ("1", the default) or plain HTTP only ("0").
-#               When on, a self-signed cert/key is generated once (idempotent
-#               — never regenerated if already present) at
-#               /etc/lab-builder/tls/{cert,key}.pem and wired into whichever
-#               _webui_mode is active. Self-signed means browsers will warn
-#               on first visit — there is no good alternative for a lab
-#               automation VM (Let's Encrypt needs a real reachable domain;
-#               there's no internal CA in this project to reuse instead).
+#               When on, the lab-builder uses the certificate generated above
+#               (/etc/lab_creation/tls), and Apache mode redirects
+#               http://<automation-vm>/lab-builder/ to HTTPS. Self-signed means
+#               browsers warn on the first visit.
 if [[ "${_webui_mode:-apache}" != "off" && -d webui ]]
 then
     _lb_root=/srv/www/lab-builder
@@ -200,26 +267,8 @@ then
     _lb_tls_key=""
     if [[ "${_webui_tls:-1}" != "0" ]]
     then
-        mkdir -p /etc/lab-builder/tls
-        if [[ ! -f /etc/lab-builder/tls/cert.pem || ! -f /etc/lab-builder/tls/key.pem ]]
-        then
-            if command -v openssl &>/dev/null
-            then
-                openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-                    -subj "/CN=$(hostname -f 2>/dev/null || hostname)" \
-                    -keyout /etc/lab-builder/tls/key.pem \
-                    -out /etc/lab-builder/tls/cert.pem &>/dev/null
-                chmod 0600 /etc/lab-builder/tls/key.pem
-                chmod 0644 /etc/lab-builder/tls/cert.pem
-            else
-                echo "openssl not found — cannot generate a TLS cert; lab-builder will stay on plain HTTP (set _webui_tls=0 to silence this)"
-            fi
-        fi
-        if [[ -f /etc/lab-builder/tls/cert.pem && -f /etc/lab-builder/tls/key.pem ]]
-        then
-            _lb_tls_cert=/etc/lab-builder/tls/cert.pem
-            _lb_tls_key=/etc/lab-builder/tls/key.pem
-        fi
+        _lb_tls_cert="${_tls_cert}"
+        _lb_tls_key="${_tls_key}"
     fi
     _lb_scheme="http"
     [[ -n "${_lb_tls_cert}" ]] && _lb_scheme="https"
@@ -232,7 +281,7 @@ then
     chmod 0755 "${_lb_root}/cgi-bin/labbuilder.py" "${_lb_root}/run-local.py"
 
     # version-stamp the deployed files (same as the scripts above)
-    _lb_ver=$(git log -1 --format='%h' -- webui 2>/dev/null || echo 'unknown')
+    _lb_ver=$(lab_version webui)
     grep -rl '__LABVERSION__' "${_lb_root}" 2>/dev/null | while read -r _f
     do
         sed -i "s/__LABVERSION__/${_lb_ver}/g" "${_f}"
@@ -346,15 +395,14 @@ UNITEOF
         then
             cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
             # enable the modules this needs if they aren't already: cgid
-            # always, ssl+rewrite only when a cert was actually generated
-            # (a missing cert already logged its own warning above, and
-            # leaving the SSL vhost uninstalled in that case avoids Apache
-            # refusing to start over a cert file that doesn't exist).
+            # always, rewrite for the HTTPS redirect unless _webui_tls=0.
             _needed_modules="cgid"
             if [[ -n "${_lb_tls_cert}" ]]
             then
                 cp webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
-                _needed_modules="${_needed_modules} ssl rewrite"
+                _needed_modules="${_needed_modules} rewrite"
+            else
+                rm -f /etc/apache2/vhosts.d/lab-builder-ssl.conf
             fi
             for _mod in ${_needed_modules}
             do
@@ -377,7 +425,8 @@ UNITEOF
             if [[ -n "${_lb_tls_cert}" ]]
             then
                 cp webui/apache/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
-                echo "  NOTE: RHEL family needs the 'mod_ssl' package installed separately for the HTTPS vhost above to load (not automated by this script)"
+            else
+                rm -f /etc/httpd/conf.d/lab-builder-ssl.conf
             fi
             systemctl restart httpd 2>/dev/null || true
             echo "lab-builder web UI installed -> ${_lb_scheme}://<automation-vm>/lab-builder/"
@@ -515,7 +564,7 @@ then
                 mkdir -p /usr/local/lib/lab_creation
                 cp mcp/mcp_server.py /usr/local/lib/lab_creation/mcp_server.py
                 chmod 0755 /usr/local/lib/lab_creation/mcp_server.py
-                sed -i "s/__LABVERSION__/$(git log -1 --format='%h' -- mcp/mcp_server.py 2>/dev/null || echo 'unknown')/" \
+                sed -i "s/__LABVERSION__/$(lab_version mcp/mcp_server.py)/" \
                     /usr/local/lib/lab_creation/mcp_server.py
 
                 if [[ -d /run/systemd/system ]]

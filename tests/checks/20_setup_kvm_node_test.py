@@ -29,6 +29,7 @@ def check(desc, cond):
 def _download(qcow_image):
     with mock.patch.object(Path, "mkdir"), \
          mock.patch.object(Path, "exists", return_value=False), \
+         mock.patch.object(Path, "rename"), \
          mock.patch.object(urllib.request, "urlretrieve") as urlretrieve:
         skn.download_automation_image(qcow_image)
         return urlretrieve.call_args[0][0]  # the URL argument
@@ -154,7 +155,8 @@ class _FakeProfile:
         return []
 
 
-def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=None):
+def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=None, downloads=None,
+                   download_error=None):
     with mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=fake_profile), \
          mock.patch.object(skn, "install_yq"), \
          mock.patch.object(skn, "ensure_fusermount_compat",
@@ -165,7 +167,9 @@ def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=No
          mock.patch.object(Path, "write_text"), \
          mock.patch.object(Path, "symlink_to"), \
          mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
-         mock.patch.object(skn, "download_automation_image"), \
+         mock.patch.object(skn, "download_automation_image",
+                           side_effect=download_error or ((lambda image: downloads.append(image))
+                                                          if downloads is not None else None)), \
          mock.patch.object(skn, "configure_nat_network",
                             side_effect=(lambda name, cidr: nat_calls.append((name, cidr))) if nat_calls is not None
                             else None), \
@@ -350,7 +354,7 @@ def _values(argv, profile="opensuse-leap-15", bridged=False):
         return skn.build_values(args, skn.Asker(interactive=False), profile)
 
 
-v, generated = _values(["--non-interactive"])
+v, generated = _values([])
 check("bridge mode: the lab network, gateway and DNS come from the host",
       v["_mynet"] == "192.168.8.0/24" and v["_mygw"] == "192.168.8.1" and v["_mydns"] == "192.168.8.53"
       and v["_mynetrev"] == "8.168.192")
@@ -363,10 +367,10 @@ check("non-interactive with no password: one is generated, hashed and returned f
       generated and v["root_pwd"] == generated and v["ROOT_PWD_HASH"] == "HASH({})".format(generated))
 check("non-SLES hosts get no SUSE registration keys", "SUSE_regcode" not in v)
 
-v, _ = _values(["--non-interactive"], bridged=True)
+v, _ = _values([], bridged=True)
 check("a host already on a bridge keeps it and creates none", v["_bridge_name"] == "eth0" and v["_bridge_nic"] == "")
 
-v, generated = _values(["--non-interactive", "--network-mode", "nat", "--domain", "lab.example",
+v, generated = _values(["--network-mode", "nat", "--domain", "lab.example",
                         "--root-password", "s3cret"], profile="sles-16")
 check("nat mode: the lab network is the NAT range, with .1 as gateway/DNS and .10 for the automation VM",
       v["_mynet"] == "192.168.150.0/24" and v["_mygw"] == "192.168.150.1" and v["_mydns"] == "192.168.150.1"
@@ -375,7 +379,9 @@ check("a given password is used and not reported as generated",
       v["root_pwd"] == "s3cret" and generated == "" and v["AUTOMATION_HOSTNAME"] == "automation.lab.example")
 check("SLES hosts get the SUSE registration keys", v["SUSE_regcode"] == "")
 
-check("--non-interactive implies --yes", skn.parse_args(["--non-interactive"]).yes)
+check("without --interactive nothing is asked, confirmation included", skn.parse_args([]).yes and not skn.parse_args([]).interactive)
+check("--interactive asks for confirmation unless -y is given", not skn.parse_args(["--interactive"]).yes and skn.parse_args(["--interactive", "-y"]).yes)
+check("the old --non-interactive option is still accepted", skn.parse_args(["--non-interactive"]).yes)
 check("--share-storage-from without a value means 'use _virt_srv'", skn.parse_args(["--share-storage-from"]).share_storage_from == "")
 raised = False
 with mock.patch.object(sys, "stderr"):
@@ -399,6 +405,97 @@ check("main() keeps an existing lab.cfg and only updates the keys given as optio
 check("main() runs the setup with the updated lab.cfg", dia.call_args[0][0]["_network_mode"] == "nat")
 check("main() leaves lab.cfg readable by root only", (tmp / "lab.cfg").stat().st_mode & 0o777 == 0o600)
 
+
+# ── automation node: --automation-node, fallback to the container, environment ──
+check("--automation-node takes vm or container", skn.parse_args(["--automation-node", "container"]).automation_node
+      == "container" and skn.parse_args([]).automation_node is None)
+check("--automation-node is written to lab.cfg",
+      skn._flag_values(skn.parse_args(["--automation-node", "container"]))["_automation_node"] == "container")
+check("the template defaults _automation_node to vm", '_automation_node="vm"' in template)
+k8s_args = skn.parse_args(["--automation-node", "kubernetes", "--k8s-kubeconfig", "/k.conf", "--k8s-network", "macvlan",
+                           "--k8s-macvlan-master", "eth1", "--k8s-namespace", "labs", "--k8s-storage-class", "longhorn",
+                           "--k8s-volume-size", "50Gi", "--automation-image", "reg/img:1"])
+check("the --k8s-* options and --automation-image are written to lab.cfg",
+      {k: v for k, v in skn._flag_values(k8s_args).items() if k.startswith(("_k8s", "_automation"))}
+      == {"_automation_node": "kubernetes", "_k8s_kubeconfig": "/k.conf", "_k8s_network": "macvlan",
+          "_k8s_macvlan_master": "eth1", "_k8s_namespace": "labs", "_k8s_storage_class": "longhorn",
+          "_k8s_volume_size": "50Gi", "_automation_image": "reg/img:1"})
+check("the template has every _k8s_* key",
+      all("\n{}=".format(k) in template for k in ("_k8s_kubeconfig", "_k8s_namespace", "_k8s_network",
+                                                 "_k8s_macvlan_master", "_k8s_storage_class", "_k8s_volume_size",
+                                                 "_automation_image")))
+modes, written, died = None, None, None
+check("render_lab_cfg appends a key the file lacks",
+      skn.render_lab_cfg("_myip=1.2.3.4\n", {"_automation_node": "container"}) == "_myip=1.2.3.4\n_automation_node=container\n")
+
+with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+    skn.run_lab_automation(Path("/x/setup_lab_automation.sh"), "container")
+env = run.call_args[1]["env"]
+check("run_lab_automation runs the script in lab.cfg's directory",
+      run.call_args[0][0] == ["bash", "/x/setup_lab_automation.sh"] and run.call_args[1]["cwd"] == "/x")
+check("run_lab_automation passes LAB_AUTOMATION_NODE, LAB_PYTHON and LAB_KUBECTL_INSTALL",
+      env["LAB_AUTOMATION_NODE"] == "container" and env["LAB_PYTHON"] == sys.executable
+      and "dl.k8s.io" in env["LAB_KUBECTL_INSTALL"])
+
+
+def _interrupted_download(url, dest):
+    Path(dest).write_text("partial")
+    raise OSError("connection reset")
+
+
+tmpd = Path(tempfile.mkdtemp())
+with mock.patch.object(skn, "Path", side_effect=lambda p: tmpd if str(p).startswith("/var/lib") else Path(p)), \
+     mock.patch.object(urllib.request, "urlretrieve", side_effect=_interrupted_download):
+    try:
+        skn.download_automation_image("openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2")
+        raised = False
+    except OSError:
+        raised = True
+check("a failed image download raises and leaves no file behind", raised and not list(tmpd.iterdir()))
+with mock.patch.object(skn, "Path", side_effect=lambda p: tmpd if str(p).startswith("/var/lib") else Path(p)), \
+     mock.patch.object(urllib.request, "urlretrieve", side_effect=lambda url, dest: Path(dest).write_text("image")):
+    skn.download_automation_image("openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2")
+check("a complete image download is stored under its own name",
+      [f.name for f in tmpd.iterdir()] == ["openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2"])
+
+
+def _run_with_results(cfg, results, download_error=None):
+    modes, written = [], []
+
+    def fake_run(script, mode):
+        modes.append(mode)
+        return results[len(modes) - 1]
+    with mock.patch.object(skn, "run_lab_automation", side_effect=fake_run), \
+         mock.patch.object(Path, "read_text", return_value=""), \
+         mock.patch.object(skn, "render_lab_cfg", side_effect=lambda text, values: written.append(values) or ""):
+        try:
+            _run_do_it_all(cfg, _FakeProfile(), download_error=download_error)
+            died = False
+        except SystemExit:
+            died = True
+    return modes, written, died
+
+
+modes, written, died = _run_with_results({}, [1, 0])
+check("a failed VM build is retried as a container", modes == ["vm", "container"] and not died)
+check("after the fallback lab.cfg records _automation_node=container",
+      written == [{"_automation_node": "container"}])
+modes, written, died = _run_with_results({}, [0], download_error=OSError("record layer failure"))
+check("a failed image download goes straight to the container and records it",
+      modes == ["container"] and not died and written == [{"_automation_node": "container"}])
+modes, written, died = _run_with_results({}, [130])
+check("Ctrl-C during the VM build is not retried", modes == ["vm"] and died)
+modes, written, died = _run_with_results({"_automation_node": "container"}, [1])
+check("a failed container build is not retried", modes == ["container"] and died)
+modes, written, died = _run_with_results({"_automation_node": "kubernetes"}, [1])
+check("a failed kubernetes deployment is not retried", modes == ["kubernetes"] and died)
+modes, written, died = _run_with_results({"_automation_node": "container"}, [1])
+check("a failed container build is not retried", modes == ["container"] and died)
+downloads = []
+with mock.patch.object(skn, "run_lab_automation", return_value=0):
+    _run_do_it_all({"_automation_node": "container"}, _FakeProfile(), downloads=downloads)
+    _run_do_it_all({"_QCOW_IMAGE": "leap.qcow2"}, _FakeProfile(), downloads=downloads)
+check("only VM mode downloads the VM image", downloads == ["leap.qcow2"])
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
