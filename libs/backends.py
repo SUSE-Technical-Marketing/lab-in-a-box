@@ -3823,9 +3823,8 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
     start and restart `named` directly. Do not add a bind9.service alias in /etc/systemd/system, because that alias
     shadows the packaged unit.
 
-    The zone is queried successfully through the DNS VM's private IP and its loopback address. Querying the same zone
-    through the instance's public IP can return a root-zone NXDOMAIN, so records on this VM are not reliably
-    resolvable from outside the cloud network. The cause is not yet identified. See TODO.
+    Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
+    the path.
     """
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
@@ -3910,9 +3909,8 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     config key is added. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
     copy_vm_image() validation is a no-op.
 
-    Known limitation: querying this DNS VM's zone through its public IP from an external client, including
-    automation.mydemo.lab, can return a root-zone NXDOMAIN, even though recursive queries through the same public IP
-    work. Use the private IP or loopback address. The cause is not yet identified. See TODO.
+    Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
+    the path.
     """
     acct = getattr(backend, "account", "") or ""
     if acct in ("", "default"):
