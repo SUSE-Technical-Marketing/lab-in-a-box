@@ -10,7 +10,7 @@ const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
 const sandbox = {
   document: { querySelectorAll: () => [], addEventListener: () => {} },
   window: { addEventListener: () => {} },
-  console,
+  console, URL, URLSearchParams, TextDecoder, atob,
 };
 vm.createContext(sandbox);
 vm.runInContext(src, sandbox, { filename: "app.js" });
@@ -316,6 +316,54 @@ check("parseLab: a list is not a lab definition", threw);
 threw = "";
 try { sandbox.parseLab("{ broken"); } catch (e) { threw = e.name; }
 check("parseLab: broken JSON reports the JSON error, not a YAML one", threw === "SyntaxError");
+
+// -- embedding (Rodeo Builder hand-off) --------------------------------
+check("embed: origin accepted inside a frame",
+  sandbox.embedOrigin("?embed=1&origin=http%3A%2F%2Flocalhost%3A8000", true) === "http://localhost:8000");
+check("embed: not embedded outside a frame", sandbox.embedOrigin("?embed=1&origin=https%3A%2F%2Fa.example", false) === "");
+check("embed: an origin with a path is refused", sandbox.embedOrigin("?embed=1&origin=https%3A%2F%2Fa.example%2Fx", true) === "");
+check("embed: a non-http origin is refused", sandbox.embedOrigin("?embed=1&origin=javascript%3Aalert(1)", true) === "");
+check("embed: no embed=1, no embedding", sandbox.embedOrigin("?origin=https%3A%2F%2Fa.example", true) === "");
+const pw = sandbox.passwordFields([
+  { sections: { kclusters: { fields: [{ name: "harvester_token", type: "password" }, { name: "clu_type", type: "string" }] } } },
+  { section: "rancher", fields: [{ name: "rancher_password", type: "password" }] },
+]);
+check("embed: password fields found in every schema", pw.has("harvester_token") && pw.has("rancher_password") && !pw.has("clu_type"));
+const redacted = sandbox.withSecretPlaceholders({
+  kclusters: { h: { clu_type: "harvester", harvester_token: "s3cret" } },
+  rancher: { rancher_password: "p", rancher_shorthn: "r" },
+  other: { rancher_password: "" },
+  kept: { rancher_password: "??mine" },
+}, pw);
+check("embed: password values become ??<field> placeholders",
+  redacted.kclusters.h.harvester_token === "??harvester_token" && redacted.rancher.rancher_password === "??rancher_password");
+check("embed: other values, empty values and existing placeholders are kept",
+  redacted.kclusters.h.clu_type === "harvester" && redacted.rancher.rancher_shorthn === "r"
+  && redacted.other.rancher_password === "" && redacted.kept.rancher_password === "??mine");
+check("embed: no secret left in the sent lab", !JSON.stringify(redacted).includes("s3cret"));
+const b64 = Buffer.from('{"common": {"VM_MEM": 2}}').toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM === 2);
+{
+  // setupEmbed: wires the send button and accepts labinabox:load only from the parent at that origin.
+  const fake = () => ({ hidden: false, after() {}, addEventListener() {} });
+  const savedDoc = sandbox.document, savedWin = sandbox.window, savedLoad = sandbox.loadLab, savedToast = sandbox.toast;
+  const handlers = [];
+  const parent = {};
+  const loaded = [];
+  sandbox.document = { querySelector: fake, querySelectorAll: () => [], createElement: fake, addEventListener: () => {} };
+  sandbox.window = { parent, addEventListener: (t, h) => { if (t === "message") handlers.push(h); } };
+  sandbox.loadLab = (lab) => loaded.push(lab);
+  sandbox.toast = () => {};
+  sandbox.setupEmbed("https://rodeo.example");
+  const send = (ev) => handlers.forEach((h) => h(ev));
+  send({ origin: "https://evil.example", source: parent, data: { type: "labinabox:load", lab: { nodes: {} } } });
+  send({ origin: "https://rodeo.example", source: {}, data: { type: "labinabox:load", lab: { nodes: {} } } });
+  send({ origin: "https://rodeo.example", source: parent, data: { type: "other", lab: { nodes: {} } } });
+  check("embed: load from another origin, source or type is ignored", loaded.length === 0);
+  send({ origin: "https://rodeo.example", source: parent, data: { type: "labinabox:load", lab: { nodes: { a: {} } } } });
+  check("embed: load from the parent at the origin opens the lab", loaded.length === 1 && "a" in loaded[0].nodes);
+  Object.assign(sandbox, { document: savedDoc, window: savedWin, loadLab: savedLoad, toast: savedToast });
+}
 
 if (failures) {
   console.error(failures + " check(s) failed");

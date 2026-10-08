@@ -99,8 +99,8 @@ function serverLock() {
 // ---- catalogue (palette) ----------------------------------------------------
 async function loadComponents() {
   const data = await apiGet("components");
-  state.components = data.components;
-  $("#countNum").textContent = data.count;
+  state.components = data.components.filter((c) => (c.kind || "addon") === "addon");
+  $("#countNum").textContent = state.components.length;
   $("#srcNote").textContent = `read from ${data.scripts_dir}`;
   renderPalette($("#filter").value || "");
 }
@@ -1410,7 +1410,7 @@ function renderIssues() {
   r.warnings.forEach((t) => box.appendChild(el("li", "issue warn", t)));
   box.hidden = !errors.length && !r.warnings.length;
   const lock = serverLock();
-  [["#downloadBtn", ""], ["#saveBtn", lock], ["#createBtn", lock]].forEach(([b, why]) => {
+  [["#downloadBtn", ""], ["#sendBtn", ""], ["#saveBtn", lock], ["#createBtn", lock]].forEach(([b, why]) => {
     const btn = $(b);
     if (!btn) return;
     btn.disabled = errors.length > 0 || !!why;
@@ -1514,6 +1514,118 @@ async function saveLab() {
     // findable (reported live 2026-09-01: the toast never said where).
     toast("Saved: " + (r.path || r.saved));
   } catch (e) { toast("Save error: " + e.message); }
+}
+
+// ---- URL prefill and embedding (Rodeo Builder hand-off) --------------------
+// ?addons=a,b      puts those add-ons on the canvas (install_ prefix optional)
+// ?lab=<base64url> opens that lab definition (JSON)
+// ?embed=1&origin=<origin>  inside an iframe: "Send this lab to <origin>" posts
+//   {type: "labinabox:lab", lab} to the parent, with every password field as a
+//   "??<field name>" placeholder; {type: "labinabox:load", lab} from that origin
+//   opens a lab; login actions are hidden.
+const SENT_ORIGINS_KEY = "labbuilder.sendOrigins";
+
+// The parent origin to hand labs to, or "" when not embedded or `origin` is not a plain http(s) origin.
+function embedOrigin(search, framed) {
+  const q = new URLSearchParams(search);
+  if (q.get("embed") !== "1" || !framed) return "";
+  try {
+    const u = new URL(q.get("origin") || "");
+    return (u.protocol === "https:" || u.protocol === "http:") && u.origin === q.get("origin") ? u.origin : "";
+  } catch (e) { return ""; }
+}
+
+// The lab definition in base64url `text` (JSON).
+function decodeLabParam(text) {
+  const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  return parseLab(new TextDecoder().decode(bytes));
+}
+
+// Names of every field of type "password" in schema objects `schemas`.
+function passwordFields(schemas) {
+  const names = new Set();
+  const visit = (o) => {
+    if (Array.isArray(o)) { o.forEach(visit); return; }
+    if (!o || typeof o !== "object") return;
+    if (o.type === "password" && typeof o.name === "string") names.add(o.name);
+    Object.values(o).forEach(visit);
+  };
+  schemas.forEach(visit);
+  return names;
+}
+
+// A copy of `lab` with every non-empty value of a key in `names` replaced by "??<key>".
+function withSecretPlaceholders(lab, names) {
+  const copy = (o) => {
+    if (Array.isArray(o)) return o.map(copy);
+    if (!o || typeof o !== "object") return o;
+    const out = {};
+    Object.entries(o).forEach(([k, v]) => {
+      out[k] = names.has(k) && v !== "" && v != null && typeof v !== "object" && !String(v).startsWith("??")
+        ? "??" + k : copy(v);
+    });
+    return out;
+  };
+  return copy(lab);
+}
+
+// Puts add-ons `names` on the canvas; returns the names no add-on matches.
+async function prefillAddons(names) {
+  const unknown = [];
+  for (const raw of names) {
+    const comp = state.components.find((c) => c.name === raw || c.name === "install_" + raw);
+    if (!comp) { unknown.push(raw); continue; }
+    if (state.model.items.some((i) => i.type === "addon" && i.comp === comp.name)) continue;
+    const item = await createItem({ type: "addon", comp: comp.name });
+    item.parent = null;
+    state.model.items.push(item);
+  }
+  renderCanvas();
+  refreshLab();
+  return unknown;
+}
+
+async function applyUrlParams() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("lab")) {
+    try { loadLab(decodeLabParam(q.get("lab"))); toast("Opened the lab from the link"); }
+    catch (e) { toast("Cannot open the lab from the link: " + e.message); }
+  }
+  const names = (q.get("addons") || "").split(",").map((n) => n.trim()).filter(Boolean);
+  if (names.length) {
+    const unknown = await prefillAddons(names);
+    if (unknown.length) toast("Unknown add-ons, not added: " + unknown.join(", "));
+  }
+}
+
+async function sendLab(origin) {
+  if ($("#sendBtn").disabled) return;
+  let sent = [];
+  try { sent = JSON.parse(localStorage.getItem(SENT_ORIGINS_KEY) || "[]"); } catch (e) { sent = []; }
+  if (!sent.includes(origin)) {
+    if (!window.confirm(`Send this lab to ${origin}? Passwords are sent as ??placeholders.`)) return;
+    try { localStorage.setItem(SENT_ORIGINS_KEY, JSON.stringify(sent.concat(origin))); } catch (e) { /* ignore */ }
+  }
+  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp).map((i) => i.comp));
+  await Promise.all([loadBase(), ...[...comps].map((c) => state.schemaCache[c] || loadAddonSchema(c))]);
+  const names = passwordFields([state.base, ...Object.values(state.schemaCache)]);
+  window.parent.postMessage({ type: "labinabox:lab", lab: withSecretPlaceholders(state.lab, names) }, origin);
+  toast("Sent to " + origin);
+}
+
+function setupEmbed(origin) {
+  ["#saveBtn", "#savedBtn", "#createBtn", "#credBtn"].forEach((b) => { const btn = $(b); if (btn) btn.hidden = true; });
+  const btn = el("button", "btn primary", "Send this lab to " + new URL(origin).host);
+  btn.id = "sendBtn"; btn.type = "button"; btn.title = "Sends this lab to " + origin;
+  btn.addEventListener("click", () => sendLab(origin).catch((e) => toast("Send error: " + e.message)));
+  $("#downloadBtn").after(btn);
+  window.addEventListener("message", (ev) => {
+    if (ev.origin !== origin || ev.source !== window.parent || !ev.data || ev.data.type !== "labinabox:load") return;
+    if (!ev.data.lab || typeof ev.data.lab !== "object") { toast("The lab sent by " + origin + " is not a lab definition"); return; }
+    loadLab(ev.data.lab);
+    toast("Opened the lab from " + origin);
+  });
 }
 
 // ---- saved labs (login) ---------------------------------------------------------
@@ -1772,10 +1884,13 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   if (window.LAB_STATIC) { $("#credBtn").disabled = true; $("#credBtn").title = serverLock(); }
+  const embed = embedOrigin(location.search, window.parent !== window);
+  if (embed) setupEmbed(embed);
   renderCanvas();
   refreshLab();
   if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
-  loadComponents().catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
+  loadComponents().then(applyUrlParams)
+    .catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
   loadBase().then(() => { renderCanvas(); renderIssues(); }).catch(() => { /* shown on first edit */ });
   loadStatus();
 });

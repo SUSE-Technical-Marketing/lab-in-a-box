@@ -140,7 +140,7 @@ HTTPS to use this UI", no login answers 401.
 
 | method | path | purpose |
 |--------|------|---------|
-| GET  | `api?action=components`     | list components + live count |
+| GET  | `api?action=components`     | everything a lab can use: each item's `name`, `kind` (`addon`, `infrastructure` or `kcluster`), `targets`, title, description; `count` is the number of items |
 | GET  | `api?action=schema&name=install_longhorn` | one component's schema |
 | GET  | `api?action=base`           | base topology schema (common/nodes/kclusters) |
 | GET  | `api?action=status`         | cached hypervisor status snapshot (see below) |
@@ -156,6 +156,31 @@ HTTPS to use this UI", no login answers 401.
 | POST | `admin?action=create`       | `{filename, keep}`: run `setup_lab.py [--keep]` on a saved lab as a job |
 | GET  | `admin?action=job&id=J`     | a job's state (`running`/`done`/`failed`), exit code and log tail |
 | GET  | `admin?action=jobs`         | every job, newest first |
+
+## Links and embedding
+
+Another page (for example rodeo-cli's Rodeo Builder) can open the lab-builder
+with a lab already started:
+
+- `?addons=rancher,longhorn` puts those add-ons on the canvas (the `install_`
+  prefix is optional). Names no add-on matches are reported and skipped.
+- `?lab=<base64url>` opens that lab definition (JSON, base64url-encoded).
+
+`?embed=1&origin=<origin>` is for a page that shows the lab-builder in an iframe;
+`<origin>` is that page's origin (scheme, host and port, e.g.
+`http://localhost:8000`). The lab-builder then:
+
+- shows **Send this lab to <host>**. The first time for each origin it asks for
+  confirmation; then it posts `{type: "labinabox:lab", lab}` to the parent page,
+  to that origin only. Every password field of the lab is sent as the placeholder
+  `"??<field name>"` (e.g. `"harvester_token": "??harvester_token"`), never its
+  value; **Download** still gives the full lab.
+- opens a lab the parent page posts as `{type: "labinabox:load", lab}`, from that
+  origin only.
+- hides Save to server, Saved labs, Credentials and Create lab.
+
+Without a frame, or with an origin that is not a plain `http(s)://host[:port]`,
+`embed` is ignored.
 
 ## Login, credentials and Create lab
 
