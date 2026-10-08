@@ -37,6 +37,7 @@ from lab_creation import (  # noqa: E402
 )
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
+import harvester  # noqa: E402
 import overlay  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
@@ -93,6 +94,20 @@ def provision_vm(definition, config, defaults, vm_name):
     )
     env["mymac"] = mymac
 
+    # A Harvester node boots its AMI with the Harvester configuration as user-data (see libs/harvester.py); the cluster
+    # VIP is the create node's, picked from the subnet when harvester_vip is empty.
+    harv_clu = harvester.cluster_of(definition, vm_name)
+    harv_vip = ""
+    if harv_clu:
+        env["config_method"] = "cloud-init"
+        harv_first = harvester.create_node(definition, harv_clu)
+        harv_vip = harvester.cluster_cfg(definition, harv_clu).get("harvester_vip") or ""
+        if vm_name == harv_first:
+            harv_vip = harv_vip or backend.free_private_ip()
+        else:
+            harv_vip = harv_vip or next(iter(backend.secondary_ips(harv_first)), "") or die(
+                "Harvester node '{}': create node '{}' has no VIP yet; create it first".format(vm_name, harv_first))
+
     config_method = env.get("config_method", "") or ""
 
     backend.copy_vm_image(env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), vm_name,
@@ -107,6 +122,12 @@ def provision_vm(definition, config, defaults, vm_name):
             env.get("mydns", ""), env.get("myip", ""), env.get("mymask", ""), env.get("mygw", ""),
             env.get("SUSE_email", ""), env.get("SUSE_regcode", ""), env.get("SUSE_url", ""),
         )
+    elif harv_clu:
+        user_data = Path(lab_setup_path) / "cloud-init" / "{}_user-data".format(vm_name)
+        user_data.parent.mkdir(parents=True, exist_ok=True)
+        user_data.write_text(harvester.user_data(harvester.node_config(
+            definition, harv_clu, vm_name, harv_vip, [Path("/root/.ssh/id_rsa.pub").read_text().strip()],
+            env.get("ROOT_PWD_HASH", ""))))
     elif config_method == "cloud-init":
         prepare_cloud_init(vm_name, lab_setup_path, env)
     elif config_method == "virt_customize":
@@ -136,7 +157,8 @@ def provision_vm(definition, config, defaults, vm_name):
     # return value is used for it. libvirt and Harvester return None, and the static myip from the lab JSON is used.
     # open_ports from any backend, and the older aws_open_ports, are merged.
     open_ports = []
-    for entry in list(env.get("open_ports") or []) + list(env.get("aws_open_ports") or []):
+    for entry in (list(env.get("open_ports") or []) + list(env.get("aws_open_ports") or [])
+                  + (harvester.OPEN_PORTS if harv_clu else [])):
         if str(entry) not in open_ports:
             open_ports.append(str(entry))
     created_ip = backend.create_vm(
@@ -175,13 +197,17 @@ def provision_vm(definition, config, defaults, vm_name):
     if open_ports:
         # Every backend's own firewall/security-group mechanism (VMBackend.open_vm_ports).
         backend.open_vm_ports(vm_name, open_ports)
+    if harv_clu:
+        backend.allow_internal_traffic()
+        if vm_name == harvester.create_node(definition, harv_clu):
+            backend.assign_secondary_ip(vm_name, harv_vip)
 
     # Honours a per-node/common "cloud_account" (its cloudtype), same as get_backend() above —
     # so a multi-account cloud lab still routes through the cloud-DNS-VM path below.
     backend_name = backends.effective_backend_name(definition, config, vm_name)
 
     remote_dns_servers = env.get("REMOTE_DNS_SERVERS", "").split()
-    if backend_name in backends.CLOUD_BACKEND_NAMES:
+    if backend_name in backends.CLOUD_BACKEND_NAMES and not harv_clu:
         # A cloud node generally can't reach automation.mydemo.lab's own BIND (behind the home
         # lab's NAT) — a real multi-node cloud cluster needs a DNS server living inside that same
         # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring for
@@ -207,6 +233,11 @@ def provision_vm(definition, config, defaults, vm_name):
     # "VM failed to come online" messages there are effectively unreachable;
     # any real timeout aborts from inside check_ssh_conn itself.
     check_ssh_conn(vm_name)
+    if harv_clu:
+        # The Harvester appliance installs itself at first boot; it is not rebooted, and the cluster is waited for in
+        # setup_lab.py's Kubernetes phase (k8s.HarvesterDistro).
+        log("\t\tVM \"{}\" created (Harvester cluster \"{}\", VIP {})".format(vm_name, harv_clu, harv_vip))
+        return
     backend.reboot_vm(vm_name)
     check_ssh_conn(vm_name)
 

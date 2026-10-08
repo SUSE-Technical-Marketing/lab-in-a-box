@@ -851,7 +851,11 @@ function applyEditor() {
       const r = readInstance(form.querySelector(".instance"));
       if (!r.key) { toast("A name is required."); return; }
       if (m.items.some((o) => o !== item && o.type === item.type && o.name === r.key)) { toast("“" + r.key + "” is already used."); return; }
-      item.name = r.key; item.cfg = r.obj;
+      // Keys the form does not show (hidden fields, keys set in lab.json) are kept.
+      const shown = new Set([...form.querySelectorAll("[data-field]")].map((i) => i.dataset.field));
+      const kept = {};
+      Object.keys(item.cfg || {}).forEach((k) => { if (!shown.has(k)) kept[k] = item.cfg[k]; });
+      item.name = r.key; item.cfg = Object.assign(kept, r.obj);
     } else {
       m.addonCfg[item.section] = serializeForm();
     }

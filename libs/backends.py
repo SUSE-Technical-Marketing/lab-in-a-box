@@ -2063,6 +2063,76 @@ class AWSBackend(VMBackend):
         log("- Disabled source/dest check on '{}' ({}) — required for it to forward traffic "
             "for other nodes in its site".format(vm_name, instance_id))
 
+    def secondary_ips(self, vm_name):
+        """The secondary private IPs on VM `vm_name`'s primary network interface ([] when the VM does not exist)."""
+        instance = self._find_instance(vm_name) or {}
+        enis = sorted(instance.get("NetworkInterfaces") or [],
+                      key=lambda e: (e.get("Attachment") or {}).get("DeviceIndex", 0))
+        if not enis:
+            return []
+        return [a["PrivateIpAddress"] for a in enis[0].get("PrivateIpAddresses", [])
+                if not a.get("Primary") and a.get("PrivateIpAddress")]
+
+    def free_private_ip(self):
+        """
+        An address of self.subnet_id that no network interface uses, counting down from the top of the subnet (AWS
+        reserves the first four and the last). Dies without a configured subnet.
+        """
+        import ipaddress
+        cidr = self.get_subnet_cidr() or die("backend 'aws': picking a free address needs AWS_SUBNET_ID")
+        result = self._aws("ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values={}".format(
+            self.subnet_id))
+        used = {a.get("PrivateIpAddress") for eni in (result or {}).get("NetworkInterfaces", [])
+                for a in eni.get("PrivateIpAddresses", [])}
+        hosts = list(ipaddress.ip_network(cidr).hosts())
+        for addr in reversed(hosts[3:]):
+            if str(addr) not in used:
+                return str(addr)
+        die("backend 'aws': subnet {} has no free address".format(cidr))
+
+    def assign_secondary_ip(self, vm_name, ip=""):
+        """
+        Register a secondary private IP on VM `vm_name`'s primary network interface and return it: `ip` when given, else
+        one AWS picks from the subnet. Idempotent: an IP already registered there is returned unchanged. The VPC routes
+        a secondary IP only to that interface, so it serves as a fixed address (e.g. a cluster VIP) that does not move to
+        another instance.
+        """
+        current = self.secondary_ips(vm_name)
+        if ip and ip in current:
+            return ip
+        if not ip and current:
+            return current[0]
+        instance = self._find_instance(vm_name) or die("VM '{}' not found on AWS".format(vm_name))
+        enis = sorted(instance.get("NetworkInterfaces") or [],
+                      key=lambda e: (e.get("Attachment") or {}).get("DeviceIndex", 0))
+        if not enis:
+            die("VM '{}' has no network interface".format(vm_name))
+        args = ["ec2", "assign-private-ip-addresses", "--network-interface-id", enis[0]["NetworkInterfaceId"]]
+        args += ["--private-ip-addresses", ip] if ip else ["--secondary-private-ip-address-count", "1"]
+        result = self._aws(*args)
+        assigned = [a.get("PrivateIpAddress") for a in (result or {}).get("AssignedPrivateIpAddresses", [])]
+        ip = ip or next((a for a in assigned if a), "")
+        if not ip:
+            die("AWS assigned no secondary IP to '{}'".format(vm_name))
+        log("- Registered {} on '{}'".format(ip, vm_name))
+        return ip
+
+    def allow_internal_traffic(self):
+        """
+        Allow all traffic between the instances in self.security_group_id (an ingress rule whose source is the group
+        itself). No-op without a configured security group; AWS's default security group already has this rule.
+        """
+        if not self.security_group_id:
+            return
+        sg_result = self._aws("ec2", "describe-security-groups", "--group-ids", self.security_group_id)
+        for perm in ((sg_result or {}).get("SecurityGroups") or [{}])[0].get("IpPermissions", []):
+            if perm.get("IpProtocol") == "-1" and any(
+                    g.get("GroupId") == self.security_group_id for g in perm.get("UserIdGroupPairs", [])):
+                return
+        log("- Allowing all traffic between the instances of security group {}".format(self.security_group_id))
+        self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
+                  "--protocol", "-1", "--source-group", self.security_group_id)
+
     def _ensure_internet_gateway(self):
         """
         Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and

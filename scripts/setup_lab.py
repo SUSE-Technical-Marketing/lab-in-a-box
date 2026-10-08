@@ -19,7 +19,7 @@ Usage:
     setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
 """
 
-__version__ = "fdfe335"
+__version__ = "__LABVERSION__"
 _SCHEMA_VERSION = "1.0"
 
 import concurrent.futures
@@ -42,6 +42,7 @@ import targets  # noqa: E402
 import apps  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
+import harvester  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
 from source_utils import get_source_type, is_url  # noqa: E402
@@ -461,6 +462,13 @@ def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
         for vm_name, node_cfg in nodes:
             _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
     else:
+        # A Harvester cluster's create node goes first: its VIP is in the other nodes' user-data.
+        creators = {harvester.create_node(definition, c) for c, cfg in (definition.get("kclusters") or {}).items()
+                    if (cfg or {}).get("clu_type") == harvester.CLU_TYPE}
+        for vm_name, node_cfg in nodes:
+            if vm_name in creators:
+                _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+        nodes = [(n, cfg) for n, cfg in nodes if n not in creators]
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = [
                 pool.submit(_create_one_vm, definition, config, defaults, json_file, keep,
@@ -486,8 +494,8 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if not node_cfg.get("kcluster"):
             continue
-        if targets.is_existing_node(node_cfg):
-            # Not a VM this tool owns — nothing to reboot via libvirt.
+        if targets.is_existing_node(node_cfg) or harvester.cluster_of(definition, vm_name):
+            # Not a VM this tool owns, or a Harvester appliance — nothing to reboot via libvirt.
             continue
         lc.log("Restart node {}{}{} (cluster {}{}{})".format(
             lc._RED, vm_name, lc._RESET, lc._RED, node_cfg["kcluster"], lc._RESET))
@@ -510,18 +518,7 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
     lc.log("Installing \"{}{}{}\" cluster \"{}{}{}\"".format(
         lc._RED, clu_type, lc._RESET, lc._RED, clu_name, lc._RESET))
     lc._level += 1
-    distro = k8s.get_distro(clu_type)
-    token = None
-    rancher1_ip = None
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("kcluster") != clu_name:
-            continue
-        # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
-        node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
-        if node_type == "agent":
-            token, rancher1_ip = distro.install_agent(vm_name, clu_name, clu_cfg, token, rancher1_ip)
-        else:
-            token, rancher1_ip = distro.install_server(vm_name, clu_name, clu_cfg, token=token, rancher1_ip=rancher1_ip)
+    k8s.get_distro(clu_type).install_cluster(definition, clu_name, clu_cfg)
     lc._level -= 1
 
 

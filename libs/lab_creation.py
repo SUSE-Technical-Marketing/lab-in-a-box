@@ -275,14 +275,18 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # common.ISO_IMAGE is only required when some node doesn't supply its own
     # override (nodes.<name>.ISO_IMAGE) — a lab where every node pins its own
     # image is valid and never needs a common default at all.
-    iso = _jq_or(common.get("ISO_IMAGE"))
+    # SOURCE_IMAGE, or its older name ISO_IMAGE.
+    def _image(cfg):
+        return _jq_or(cfg.get("SOURCE_IMAGE")) if not _empty(_jq_or(cfg.get("SOURCE_IMAGE"))) else _jq_or(cfg.get("ISO_IMAGE"))
+
+    iso = _image(common)
     if _empty(iso):
         nodes_missing_iso = [
             n for n, cfg in (definition.get("nodes") or {}).items()
-            if _empty(_jq_or((cfg or {}).get("ISO_IMAGE")))
+            if _empty(_image(cfg or {}))
         ]
         if nodes_missing_iso:
-            err("common.ISO_IMAGE is required (or set ISO_IMAGE per-node) — missing for: {}".format(
+            err("common.SOURCE_IMAGE is required (or set SOURCE_IMAGE per-node) — missing for: {}".format(
                 ", ".join(sorted(nodes_missing_iso))))
 
     for req in ("VM_MEM", "VM_DSK", "VM_CPU"):
@@ -415,7 +419,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 "\"\" (Ignition+Combustion), cloud-init, virt_customize, install_iso".format(
                     node, eff_config_method))
 
-        node_iso = _jq_or(node_cfg.get("ISO_IMAGE"))
+        node_iso = _image(node_cfg)
         eff_iso = node_iso if not _empty(node_iso) else iso
 
         # An ISO_IMAGE that ends in .iso is an installer medium, not a bootable disk. Every config_method except install_iso copies
@@ -494,7 +498,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         cdomain = _jq_or(clu_cfg.get("mydomain"))
 
         if _empty(ctype):
-            err("kclusters.{}: 'clu_type' is required (rke2 or k3s)".format(clu))
+            err("kclusters.{}: 'clu_type' is required (rke2, k3s or harvester)".format(clu))
         if _empty(crel):
             err("kclusters.{}: 'clu_rel' is required (e.g. stable)".format(clu))
         if _empty(cdomain):
@@ -511,6 +515,12 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype)
             if issue:
                 err("kclusters.{}: addon '{}' {}".format(clu, addon, issue))
+
+    # Harvester clusters: AWS nodes from an AMI, with nested virtualization; see libs/harvester.py.
+    import harvester
+    from backends import effective_backend_name
+    for problem in harvester.problems(definition, lambda vm: effective_backend_name(definition, config, vm)):
+        err(problem)
 
     # Per-VM addon scripts must also be present
     for node in nodes_to_check:
@@ -562,7 +572,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     for node in nodes_to_check:
         node_cfg = nodes.get(node) or {}
         if _jq_or(node_cfg.get("ISO_URL")):
-            node_img = _jq_or(node_cfg.get("ISO_IMAGE")) or iso
+            node_img = _image(node_cfg) or iso
             for issue in image_source_issues("nodes.{}".format(node), node_img, _jq_or(node_cfg.get("ISO_URL")),
                                              _jq_or(node_cfg.get("ISO_SHA256")),
                                              _jq_or(node_cfg.get("ISO_SHA256_URL"))):
@@ -637,7 +647,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 check_image_on_hv(iso, "common.ISO_IMAGE", host)
         for node in libvirt_nodes_to_check:
             node_host, _ = resolved_host_for(node)
-            node_iso = _jq_or((nodes.get(node) or {}).get("ISO_IMAGE"))
+            node_iso = _image(nodes.get(node) or {})
             if not _empty(node_iso):
                 check_image_on_hv(node_iso, "nodes.{}.ISO_IMAGE".format(node), node_host)
 
@@ -651,7 +661,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # lab file is untouched) and record a warning so the summary shows it.
     def check_min_disk_for_node(node):
         node_cfg = nodes.get(node) or {}
-        img = _jq_or(node_cfg.get("ISO_IMAGE")) or iso
+        img = _image(node_cfg) or iso
         host, _ = resolved_host_for(node)
         if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
             return
@@ -692,6 +702,8 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     needs_install_iso = False
     for node_cfg in nodes.values():
         cm = _jq_or((node_cfg or {}).get("config_method"))
+        if _empty(cm):
+            cm = _jq_or(common.get("config_method"))
         if cm == "cloud-init":
             needs_cloud_init = True
         elif cm == "install_iso":

@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
-<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported. Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned.</p>
+<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
 <p>A lab isn't limited to one hypervisor. Set <code>KVM_HOSTS</code> (space-separated) in <code>/etc/lab_creation.cfg</code> on the automation VM to make more than one hypervisor available:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -645,6 +645,44 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</h3>
+<p>A <code>kclusters</code> entry with <code>clu_type: "harvester"</code> builds a Harvester cluster from EC2 instances.
+Each node boots a Harvester AMI that you supply (SUSE publishes none; <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a>
+builds one from the Harvester ISO) and installs itself at first boot from the Harvester configuration lab-in-a-box passes as its
+user-data. The first node of the cluster in the file creates the cluster; the others join it through the cluster VIP.</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>Nodes</strong> must use the <code>aws</code> backend, <code>aws_nested_virtualization: "true"</code> with a supported
+  <code>cloud_instance_type</code> (M7i/M8i/C7i/R7i/I7i families; see <a href="#compute-backends_1">Compute backends</a>), and the
+  Harvester AMI ID as <code>SOURCE_IMAGE</code>. 250 GiB is the AMI's minimum disk.</li>
+<li><strong>Cluster fields</strong>: <code>harvester_token</code> (required, shared by every node); <code>harvester_vip</code>
+  (default: a free address of <code>AWS_SUBNET_ID</code>, registered as a secondary private IP on the create node);
+  <code>harvester_mtu</code> (default 1500, the same on every node); <code>harvester_replica_count</code> (set 1 below 3 nodes);
+  <code>harvester_device</code> (default <code>/dev/nvme0n1p6</code>, the community AMI's layout); <code>harvester_ntp_servers</code>
+  (default the AWS time service, 169.254.169.123); <code>harvester_config</code> (merged last into every node's Harvester
+  configuration); <code>harvester_settings</code> (Harvester Settings applied once the cluster is up). Per node:
+  <code>harvester_role</code> (default, management, worker, witness).</li>
+<li><strong>Access</strong>: the nodes accept the automation node's SSH key for the <code>rancher</code> user (Harvester blocks
+  root SSH), and the lab's <code>ROOT_PWD_HASH</code> as the password. The security group gets 80, 443, 6443 and 9345 and all
+  traffic between its own instances. When the cluster is up, <code>setup_lab.py</code> prints the UI address
+  (<code>https://&lt;create node&gt;/</code>) and keeps the kubeconfig in <code>/etc/lab_creation/harvester-&lt;cluster&gt;.kubeconfig</code>.</li>
+<li><strong>Limits</strong>: the VIP stays on the create node (AWS does not move a secondary IP, so it does not fail over); EC2
+  drops frames from foreign MAC addresses, so Harvester VMs cannot use bridged VLAN networks; add-ons are not installed on a
+  Harvester cluster yet; each node costs roughly what its instance type costs per hour plus 250 GiB of EBS.</li>
+</ul>
 <h3 id="deploying-a-legacy-image-centos-7">Deploying a legacy image (CentOS 7)</h3>
 <p>CentOS 7 (and other pre-built <code>.qcow2</code> images that old) has neither Ignition/Combustion nor
 cloud-init built in, so <code>config_method</code> must be <code>virt_customize</code> (see

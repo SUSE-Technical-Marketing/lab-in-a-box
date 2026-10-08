@@ -266,7 +266,7 @@ def _capture_keygen(args, **kwargs):
     return _real_subprocess_run(args, **kwargs)
 
 
-shc.subprocess.run = _capture_keygen
+shc.harvester.subprocess.run = _capture_keygen
 vm_cluster_cfg = dict(_CLUSTER_CFG, vm_cpu=12, vm_mem=36864, vm_dsk=260)
 shc._create_netboot_vm(_CREATE_NODE, vm_cluster_cfg, {"REMOTE_HOST": "hv1.mydemo.lab", "VM_IMG_LOC": "/var/lib/libvirt/images"})
 
@@ -339,7 +339,7 @@ def _fake_ssh_run(hostname, cmd, user="root", capture=False, **kwargs):
         stdout="apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:6443\n")
 
 
-shc.ssh_run = _fake_ssh_run
+shc.harvester.ssh_run = _fake_ssh_run
 with tempfile.TemporaryDirectory() as tmp:
     kubeconfig_cfg = dict(_CLUSTER_CFG, kubeconfig_path=str(Path(tmp) / "kc.yaml"))
     dest = shc._fetch_harvester_kubeconfig(kubeconfig_cfg, _CREATE_NODE)
@@ -376,7 +376,7 @@ def _fake_subprocess_run(args, input=None, **kwargs):  # noqa: A002 -- matches s
     return lc.subprocess.CompletedProcess(args=args, returncode=0)
 
 
-shc.subprocess.run = _fake_subprocess_run
+shc.harvester.subprocess.run = _fake_subprocess_run
 shc._apply_post_install_settings(
     {"post_install_settings": {"backup-target": "s3://bucket@region/", "auto-disk-provision-paths": True}},
     Path("/tmp/fake.kubeconfig"))
@@ -396,7 +396,7 @@ shc._apply_post_install_settings({}, Path("/tmp/fake.kubeconfig"))
 check("_apply_post_install_settings is a no-op when post_install_settings is omitted", apply_calls == [])
 
 apply_calls.clear()
-shc.subprocess.run = lambda *a, **kw: lc.subprocess.CompletedProcess(args=[], returncode=1)
+shc.harvester.subprocess.run = lambda *a, **kw: lc.subprocess.CompletedProcess(args=[], returncode=1)
 try:
     shc._apply_post_install_settings({"post_install_settings": {"x": "y"}}, Path("/tmp/fake.kubeconfig"))
     check("a failed kubectl apply raises SystemExit via die()", False)
