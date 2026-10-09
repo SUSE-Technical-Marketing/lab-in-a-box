@@ -509,6 +509,16 @@ rancher:
 <pre><code class="language-shell">install_longhorn --schema
 setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
 </code></pre>
+<h3 id="schema-versions">Schemaversionen und Migration</h3>
+<p>Jedes Schema hat eine Version, <code>MAJOR.MINOR</code>: die Labordefinition, der Abschnitt jedes Add-ons und jede Konfigurationsdatei (<code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>, das harvester-cluster-JSON und die Zugangsdatendateien). Ein neues <code>MAJOR</code> bedeutet, dass eine für die vorherige Version geschriebene Datei möglicherweise nicht funktioniert oder etwas anderes bewirkt. <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/schemas/compatibility.json"><code>schemas/compatibility.json</code></a> listet jede Version und was sich geändert hat.</p>
+<p>Eine Labordefinition hält die Versionen, für die sie geschrieben wurde, in ihrem Objekt <code>schema_versions</code> auf oberster Ebene fest; die Web-UI schreibt es. Eine Definition ohne Angabe gilt als Version 1.0 jedes Schemas.</p>
+<pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
+</code></pre>
+<p><code>setup_lab.py</code> und <code>setup_vm.py</code> brechen ab, wenn eine Labordefinition noch eine Migration braucht, und listen die Änderungen auf. <code>migrate_config.py</code> führt sie durch:</p>
+<pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
+migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
+</code></pre>
+<p>Die Originaldatei wird nie verändert. <code>migrate_config.py</code> migriert auch <code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>, harvester-cluster-JSON-Dateien und Zugangsdatendateien; diese halten ihre Version in einer Zeile <code># Schema version:</code> oder einem Schlüssel <code>schema_version</code> fest.</p>
 <p align="right"><a href="#top">↑ nach oben</a></p>
 
 <hr />
@@ -772,6 +782,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Zerstört alle VMs eines Labs</td>
+</tr>
+<tr>
+<td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
+<td>Bringt eine Labordefinition oder Konfigurationsdatei auf die aktuellen Schemaversionen (<a href="#schema-versions">Schemaversionen und Migration</a>)</td>
 </tr>
 </tbody>
 </table>

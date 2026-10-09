@@ -586,6 +586,16 @@ rancher:
 <pre><code class="language-shell">install_longhorn --schema
 setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
 </code></pre>
+<h3 id="schema-versions">模式版本与迁移</h3>
+<p>每个模式都有一个 <code>MAJOR.MINOR</code> 形式的版本：实验室定义、每个附加组件的部分以及每个配置文件（<code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>、harvester-cluster JSON 和凭据文件）。新的 <code>MAJOR</code> 表示为上一版本编写的文件可能无法工作，或会产生不同的行为。<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/schemas/compatibility.json"><code>schemas/compatibility.json</code></a> 列出了每个版本及其变更。</p>
+<p>实验室定义在其顶层 <code>schema_versions</code> 对象中记录编写时所针对的版本；Web UI 会写入该对象。未记录任何版本的定义视为每个模式的 1.0 版本。</p>
+<pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
+</code></pre>
+<p>当实验室定义仍需迁移时，<code>setup_lab.py</code> 和 <code>setup_vm.py</code> 会停止并列出所需的变更。<code>migrate_config.py</code> 会执行这些变更：</p>
+<pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
+migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
+</code></pre>
+<p>原始文件永远不会被修改。<code>migrate_config.py</code> 还会迁移 <code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>、harvester-cluster JSON 文件和凭据文件；这些文件在 <code># Schema version:</code> 行或 <code>schema_version</code> 键中记录其版本。</p>
 <p align="right"><a href="#top">↑ 返回顶部</a></p>
 
 <hr />
@@ -859,6 +869,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>销毁实验室中的所有虚拟机</td>
+</tr>
+<tr>
+<td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
+<td>将实验室定义或配置文件更新到当前的模式版本 (<a href="#schema-versions">模式版本与迁移</a>)</td>
 </tr>
 </tbody>
 </table>
