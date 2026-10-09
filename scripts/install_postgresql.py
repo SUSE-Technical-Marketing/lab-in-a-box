@@ -23,7 +23,7 @@
 #   postgresql_repo_url   : [OPTIONAL] Helm repo URL            (default: https://charts.bitnami.com/bitnami)
 #
 # OS MODE  — the target node must list "postgresql" in its nodes[x].addons[] array
-#   postgresql_pg_version : [OPTIONAL] PostgreSQL major version (default: 16, e.g. "14", "15", "16")
+#   postgresql_pg_version : [OPTIONAL] PostgreSQL major version, e.g. "14", "15", "16" (default: 16)
 #                           Setting a lower version than the distro default achieves a downgrade.
 #   postgresql_port       : [OPTIONAL] listening port           (default: 5432)
 #   postgresql_listen     : [OPTIONAL] listen_addresses value   (default: *)
@@ -40,7 +40,7 @@
 # Ubuntu / Debian note:
 #   The official PGDG APT repository (apt.postgresql.org) is added automatically.
 
-__version__ = "a45abd4"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "postgresql",

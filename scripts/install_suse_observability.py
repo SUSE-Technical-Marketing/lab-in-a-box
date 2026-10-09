@@ -14,8 +14,8 @@
 #                                (default: https://charts.rancher.com/server-charts/prime/suse-observability)
 #   suse_observability_shorthn : [OPTIONAL] hostname prefix (default: observability)
 #   suse_observability_profile : [OPTIONAL] sizing.profile — one of trial | 10-nonha | 20-nonha |
-#                                50-nonha | 100-nonha | 150-ha | 250-ha | 500-ha | 4000-ha
-#                                (default: trial — the lab-sized, non-HA profile)
+#                                50-nonha | 100-nonha | 150-ha | 250-ha | 500-ha | 4000-ha;
+#                                trial is the lab-sized, non-HA profile (default: trial)
 #
 # SUSE Observability (StackState-based: metrics/traces/topology in one stack, not just a Grafana
 # dashboard) is a real, distinct SUSE product from the "smlm" addon. Documentation is at

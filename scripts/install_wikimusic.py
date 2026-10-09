@@ -16,8 +16,8 @@
 #                       own "harbor" addon is one option).
 #   wikimusic_ns      : [OPTIONAL] namespace (default: wikimusic)
 #   wikimusic_shorthn : [OPTIONAL] hostname prefix for ingress (default: wikimusic)
-#   wikimusic_port    : [OPTIONAL] container port WikiMusic listens on (default: 3000, Artanis' own
-#                       default)
+#   wikimusic_port    : [OPTIONAL] container port WikiMusic listens on, Artanis' own default
+#                       (default: 3000)
 #
 # Uses the shared Artanis-app manifest shape (libs/artanis_common.py, also used by install_colt.py).
 # WikiMusic is database-backed (SQLite, per its own resources/migrations/sqlite directory) rather

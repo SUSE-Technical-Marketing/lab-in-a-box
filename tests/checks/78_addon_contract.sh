@@ -15,12 +15,13 @@ python3.11 scripts/check_addon.py --quiet "${_addons[@]}" || fail "check_addon.p
 python3.11 scripts/check_addon.py --quiet examples/addons/install_example_chart.py examples/addons/install_example_motd.sh \
     || fail "check_addon.py fails on an example add-on"
 
-# A broken add-on: unknown target, version matrix for a missing field, stray --validate output.
+# A broken add-on: unknown target, prose default, version matrix for a missing field, stray --validate output.
 _bad=$(mktemp -d)/install_broken.sh
 cat > "${_bad}" <<'ADDON'
 #!/bin/bash
 case "${1:-}" in
-    --schema) echo '{"section": "broken", "description": "", "fields": [{"name": "x", "type": "colour", "required": "yes"}],
+    --schema) echo '{"section": "broken", "description": "", "fields": [{"name": "x", "type": "colour", "required": "yes"},
+                                                                {"name": "n", "type": "integer", "required": false, "default": "1 — chart default"}],
                     "capabilities": {"targets": ["phone"], "layers": [], "requires_kubernetes": ["openshift"], "aux_services": [],
                                      "versions": {"y_version": [{"kubernetes": {"rke2": {"min": "latest"}}}]}}}' ;;
     --capabilities) echo '{}' ;;
@@ -32,7 +33,8 @@ chmod 0755 "${_bad}"
 _out=$(python3.11 scripts/check_addon.py "${_bad}")
 [[ $? -ne 0 ]] || fail "check_addon.py passes a broken add-on"
 for _expect in "type 'colour'" "required must be" "targets ['phone']" "requires_kubernetes ['openshift']" \
-               "y_version is not a field" "every entry needs a version" "--capabilities matches" \
+               "y_version is not a field" \
+               "default '1 — chart default' is not a valid integer" "every entry needs a version" "--capabilities matches" \
                "prints only [ERROR]/[WARNING] lines" "exits non-zero only with an [ERROR] line"; do
     grep -qF -- "${_expect}" <<<"${_out}" || fail "check_addon.py does not report: ${_expect}"
 done

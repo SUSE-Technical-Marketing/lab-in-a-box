@@ -154,7 +154,8 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
 
     helm_rel = cfg.get("rancher_helm_rel") or "rancher"
     helm_chart = cfg.get("rancher_helm_chart") or ""
-    hostname_fqdn = "{}.{}.{}".format(cfg.get("rancher_shorthn", ""), clu_name, mydomain)
+    shorthn = cfg.get("rancher_shorthn") or "rancher"
+    hostname_fqdn = "{}.{}.{}".format(shorthn, clu_name, mydomain)
     rancher_version = versions.helm_version_flag(cfg.get("rancher_version"))
     initial_pwd = cfg.get("rancher_initial_pwd") or ""
     replicas = cfg.get("rancher_replicas") or "2"
@@ -169,7 +170,7 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
         sys.exit(1)
 
     print("## Add Rancher DNS")
-    dns_entry = "{}.{}".format(cfg.get("rancher_shorthn") or "ERROR_ranchershort", clu_name)
+    dns_entry = "{}.{}".format(shorthn, clu_name)
     add_service_dns(definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=remote_dns_servers)
 
     install_key = "INSTALL_{}_TYPE".format(clu_type.upper())

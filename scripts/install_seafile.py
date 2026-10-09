@@ -49,9 +49,9 @@
 #   seafile_version           : image tag                      (default: "13.0-latest")
 #   seafile_hostname           : the real SEAFILE_SERVER_HOSTNAME clients will reach this at
 #                             (default: the target host's own hostname)
-#   seafile_http_port          : host port -> container port 80  (default: 8081 — distinct
-#                             from install_nextcloud.py's own 8080 default, so both can run on
-#                             the same lab node without a collision)
+#   seafile_http_port          : host port -> container port 80, distinct from
+#                             install_nextcloud.py's 8080 so both can run on the same lab node
+#                             (default: 8081)
 #   seafile_admin_email        : initial admin email             (default:
 #                             "admin@<seafile_hostname>") — the real INIT_SEAFILE_ADMIN_EMAIL
 #                             env var, only used on FIRST boot
@@ -93,8 +93,8 @@
 #                             install_grafana.py's own single-container addons)
 #   seafile_cache_version       : companion Redis/Memcached image tag                (default:
 #                             "latest")
-#   seafile_cache_port          : companion Redis/Memcached's published port          (default:
-#                             6379 for redis, 11211 for memcached)
+#   seafile_cache_port          : companion Redis/Memcached's published port: 6379 for redis,
+#                             11211 for memcached when unset
 #
 # ── "kubernetes" fields ───────────────────────────────────────────────────────
 #   seafile_edition            : "ce" (default, Community Edition) or "pro" (Professional —

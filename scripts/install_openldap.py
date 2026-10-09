@@ -9,7 +9,7 @@
 #   openldap_name    : [OPTIONAL] Deployment and service name          (default: openldap)
 #   openldap_version : [OPTIONAL] Helm chart version                   (empty = latest)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "openldap",
@@ -68,9 +68,7 @@ def main():
     definition = primary.load_definition(json_file)
     defaults = primary.load_defaults()
 
-    # bash uses the literal first node unconditionally here too (like
-    # install_mariadb) — no server-role filter, and always `exit 1` at the
-    # end (harmless — setup_lab.sh never checks an addon's exit code).
+    # The first node of the lab, as in install_mariadb; no server-role filter.
     nodes = list(definition.get("nodes", {}))
     if not nodes:
         sys.exit(1)
@@ -82,7 +80,6 @@ def main():
     print("# Using node: {}".format(vm_name))
     setup_openldap(vm_name, templ_addons_loc, openldap_cfg)
     time.sleep(60)
-    sys.exit(1)
 
 
 if __name__ == "__main__":
