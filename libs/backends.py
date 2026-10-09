@@ -3954,6 +3954,17 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
     ).format(key=root_ssh_key.strip(), runcmd_block=runcmd_block)
 
 
+def cloud_dns_image(definition, config, vm_name):
+    """
+    The image for the cloud DNS VM of `vm_name`'s backend: CLOUD_DNS_IMAGE from its cloud account (or
+    lab_creation.cfg), "" when unset. The DNS VM's cloud-init (_cloud_dns_vm_user_data()) expects an Ubuntu or Debian
+    image, so a lab whose own image is something else (e.g. a SLES BYOS AMI) sets this to an Ubuntu image. When it is
+    unset, the caller falls back to the lab's own ISO_IMAGE.
+    """
+    _account, eff_config, _cloudtype = resolve_cloud_account(definition, config, vm_name)
+    return str(eff_config.get("CLOUD_DNS_IMAGE") or "")
+
+
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path):
     """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
@@ -3975,8 +3986,8 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
     If the VM does not exist, it is created with the same backend's create_vm(), at the smallest instance or plan size
-    (1 vCPU and 512 MiB, enough for BIND) and with the ISO_IMAGE the calling lab already configured. No new required
-    config key is added. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
+    (1 vCPU and 512 MiB, enough for BIND) and with `iso_image`: the account's CLOUD_DNS_IMAGE when set (see
+    cloud_dns_image()), else the ISO_IMAGE the calling lab already configured. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
     copy_vm_image() validation is a no-op.
 
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on

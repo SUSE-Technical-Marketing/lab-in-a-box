@@ -214,9 +214,11 @@ def provision_vm(definition, config, defaults, vm_name):
         # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring for
         # exactly what this does and does not yet cover (nodes don't yet point their own
         # resolution at it — a known, separately tracked follow-up, not silently glossed over).
+        dns_image = (backends.cloud_dns_image(definition, config, vm_name)
+                     or env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""))
         dns_vm_ip = backends.ensure_cloud_dns_vm(
             backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
-            env.get("mydomain", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path,
+            env.get("mydomain", ""), dns_image, lab_setup_path,
         )
         remote_dns_servers.append(dns_vm_ip)
 
