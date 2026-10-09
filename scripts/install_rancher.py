@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 2.0
+#
 # JSON section: "rancher" — SUSE Rancher Prime Kubernetes management platform
 #
 #   rancher_shorthn        : [OPTIONAL] Short hostname for UI ingress         (default: rancher)
@@ -11,7 +13,7 @@
 #   rancher_helm_rel       : [OPTIONAL] Helm release name                     (default: rancher)
 #   rancher_helm_chart     : [OPTIONAL] Helm chart reference                  (default: rancher-prime/rancher)
 #   rancher_version        : [OPTIONAL] Helm chart version                    (empty = latest, e.g. 2.13.3)
-#   rancher_initial_pwd    : [OPTIONAL] Bootstrap admin password              (default: auto-generated)
+#   rancher_initial_pwd    : [OPTIONAL] Bootstrap admin password; when unset, Rancher generates one and it is printed
 #   rancher_replicas       : [OPTIONAL] Number of Rancher replicas            (default: 2)
 #   rancher_cert_repo_name : [OPTIONAL] cert-manager Helm repo alias          (default: jetstack)
 #   rancher_cert_repo_url  : [OPTIONAL] cert-manager Helm repo URL            (default: https://charts.jetstack.io)
@@ -69,21 +71,9 @@ def _validate(v):
 
 
 def setup_rancher_repo(hostname, cfg):
-    """
-    Add the Rancher and cert-manager Helm repos. Mirrors setup_rancher_repo (bash).
-
-    NOTE: bash's own defaults here ("rancher-stable/rancher" repo alias,
-    "https://releases.rancher.com/server-charts/stable" URL) do not match
-    this section's own doc comment (which claims "rancher-prime" /
-    ".../prime") — a real drift between documentation and the executed code.
-    Preserved the CODE's actual defaults for identical behavior; the doc
-    comment above is what bash ships, kept verbatim rather than "corrected"
-    since fixing the comment doesn't change behavior and fixing the CODE to
-    match the comment would (a real behavior change out of scope for a
-    faithful port).
-    """
-    helm_repo_add(hostname, cfg.get("rancher_rel") or "rancher-stable/rancher",
-                  cfg.get("rancher_repo_url") or "https://releases.rancher.com/server-charts/stable")
+    """Add the Rancher and cert-manager Helm repos (Rancher Prime unless rancher_rel/rancher_repo_url are set)."""
+    helm_repo_add(hostname, cfg.get("rancher_rel") or "rancher-prime",
+                  cfg.get("rancher_repo_url") or "https://charts.rancher.com/server-charts/prime")
     helm_repo_add(hostname, cfg.get("rancher_cert_repo_name") or "jetstack",
                   cfg.get("rancher_cert_repo_url") or "https://charts.jetstack.io")
 
@@ -146,25 +136,26 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
     and explicitly for every matching server node), and retrieve the
     bootstrap password. Mirrors setup_rancher (bash).
 
-    rancher_helm_chart has no fallback: it is used as given (empty if unset).
-    rancher_version and cert_manager_ver take a bare chart version or
-    "--version X" (versions.helm_version_flag()).
+    rancher_helm_chart defaults to rancher-prime/rancher. An unset rancher_initial_pwd lets Rancher generate the
+    bootstrap password, which is read back and printed. rancher_version and cert_manager_ver take a bare chart
+    version or "--version X" (versions.helm_version_flag()).
     """
     print("# Setup Rancher {} in cluster \"{}\"".format(cfg.get("rancher_helm_rel") or "rancher", clu_name))
 
     helm_rel = cfg.get("rancher_helm_rel") or "rancher"
-    helm_chart = cfg.get("rancher_helm_chart") or ""
+    helm_chart = cfg.get("rancher_helm_chart") or "rancher-prime/rancher"
     shorthn = cfg.get("rancher_shorthn") or "rancher"
     hostname_fqdn = "{}.{}.{}".format(shorthn, clu_name, mydomain)
     rancher_version = versions.helm_version_flag(cfg.get("rancher_version"))
     initial_pwd = cfg.get("rancher_initial_pwd") or ""
+    pwd_arg = "--set bootstrapPassword={}".format(shlex.quote(initial_pwd)) if initial_pwd else ""
     replicas = cfg.get("rancher_replicas") or "2"
 
     result = ssh_run(hostname,
                       "helm upgrade -i {} {} --create-namespace --namespace cattle-system "
-                      "--set hostname={} {} --set bootstrapPassword={} --set replicas={} ".format(
+                      "--set hostname={} {} {} --set replicas={} ".format(
                           shlex.quote(helm_rel), shlex.quote(helm_chart), shlex.quote(hostname_fqdn),
-                          rancher_version, shlex.quote(initial_pwd), shlex.quote(replicas)),
+                          rancher_version, pwd_arg, shlex.quote(replicas)),
                       check=False)
     if result.returncode != 0:
         sys.exit(1)

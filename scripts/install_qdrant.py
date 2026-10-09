@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "qdrant" — configurable keys:
 #   qdrant_version    : [OPTIONAL] Helm chart version (empty = latest)
 #   qdrant_ns         : [OPTIONAL] namespace (default: qdrant)
@@ -53,7 +55,7 @@ def setup_qdrant(hostname, qdrant_rel=None, qdrant_ns=None, qdrant_version=None,
     rel = qdrant_rel or "qdrant"
     ns = qdrant_ns or "qdrant"
     ver_arg = "--version {}".format(shlex.quote(qdrant_version)) if qdrant_version else ""
-    replicas_arg = "--set replicaCount={}".format(int(qdrant_replicas)) if qdrant_replicas else ""
+    replicas_arg = "--set replicaCount={}".format(int(qdrant_replicas or 1))
 
     ssh_run(hostname,
             "helm upgrade -i qdrant {}/qdrant --namespace {} --create-namespace "

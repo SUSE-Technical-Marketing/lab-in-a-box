@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "kiwi" — configurable keys:
 #   kiwi_version        : [OPTIONAL] operator version tag (empty = latest, e.g. "v1.3.0")
 #   kiwi_ns             : [OPTIONAL] namespace (default: kiwi-system)
@@ -12,7 +14,7 @@
 # KIWI-NG Operator runs KIWI image builds as Kubernetes Jobs.
 # See: https://github.com/OSInside/kiwi-operator
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "kiwi",

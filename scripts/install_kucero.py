@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "kucero" — configurable keys:
 #   kucero_version      : Helm chart version (empty = latest, e.g. "1.5.0")
 #   kucero_ns           : namespace (default: kube-system)
 #   kucero_rel          : Helm repo alias (default: reactive-tech)
 #   kucero_repo_url     : Helm repo URL (default: https://charts.reactive-tech.io)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "kucero",

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "openldap" — OpenLDAP directory service on Kubernetes
 #
 #   openldap_ns      : [OPTIONAL] Kubernetes namespace                 (default: db)

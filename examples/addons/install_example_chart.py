@@ -3,6 +3,8 @@
 # See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name>.py to start a new add-on.
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "example_chart" — podinfo web application installed with Helm
 #
 #   example_chart_ns       : [OPTIONAL] Namespace                           (default: podinfo)

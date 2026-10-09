@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "suse_ai_components": {
+   "default": "ollama open-webui",
+   "required": false,
+   "type": "string"
+  },
+  "suse_ai_milvus_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "suse_ai_ns": {
+   "default": "suse-private-ai",
+   "required": false,
+   "type": "namespace"
+  },
+  "suse_ai_ollama_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "suse_ai_open_webui_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "suse_ai_registry": {
+   "default": "dp.apps.rancher.io",
+   "required": false,
+   "type": "string"
+  },
+  "suse_ai_registry_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "suse_ai_registry_password": {
+   "default": "",
+   "required": true,
+   "type": "password"
+  },
+  "suse_ai_registry_user": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "suse_ai_shorthn": {
+   "default": "ai",
+   "required": false,
+   "type": "string"
+  },
+  "suse_ai_tls_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:suse_ai",
+ "version": "1.1"
+}

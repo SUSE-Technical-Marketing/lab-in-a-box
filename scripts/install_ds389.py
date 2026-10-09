@@ -14,22 +14,24 @@
 # (389) and LDAPS (636). No Ingress is used, because LDAP is not HTTP. The OpenShift-specific parts of the guide, the SCC grant and the
 # dedicated ServiceAccount, are omitted, because Security Context Constraints do not exist on plain Kubernetes.
 #
+# Schema version: 1.1
+#
 # JSON section: "ds389"
-#   ds389_ns              : Kubernetes namespace (default ds389)
-#   ds389_name            : StatefulSet and Service base name (default dirsrv)
-#   ds389_image           : container image (default quay.io/389ds/dirsrv:latest). The c9s tag is the CentOS Stream 9 based alternative.
-#   ds389_basedn          : LDAP suffix, set as DS_SUFFIX_NAME (default derived from the cluster's mydomain, for example mydemo.lab becomes
-#                           dc=mydemo,dc=lab; falls back to dc=lab,dc=local). The image creates no suffix by default. This value is recorded
+#   ds389_ns              : Kubernetes namespace (default: ds389)
+#   ds389_name            : StatefulSet and Service base name (default: dirsrv)
+#   ds389_image           : container image (default: quay.io/389ds/dirsrv:latest). The c9s tag is the CentOS Stream 9 based alternative.
+#   ds389_basedn          : LDAP suffix, set as DS_SUFFIX_NAME When unset, derived from the cluster's mydomain, for example mydemo.lab becomes
+#                           dc=mydemo,dc=lab; without one, dc=lab,dc=local. The image creates no suffix by default. This value is recorded
 #                           in the instance's dsrc file for dsconf and dsctl, and the suffix's entries are not created.
-#   ds389_dm_password     : password of cn=Directory Manager, set as DS_DM_PASSWORD (default: generated and printed). The image's own default is
+#   ds389_dm_password     : password of cn=Directory Manager, set as DS_DM_PASSWORD; when unset, generated and printed. The image's own default is
 #                           a random password visible only in the pod's log, so the addon generates one instead.
 #   ds389_account         : name of an encrypted credential file of kind "ds389" under /etc/lab_creation/credentials/ to read ds389_dm_password
 #                           from. It is auto-discovered when exactly one such file exists and this is unset.
-#   ds389_storage_size    : per-pod PersistentVolumeClaim size (default 5Gi)
-#   ds389_storage_class   : StorageClass (default: the cluster's own default). A bare RKE2 cluster has none, so install one first, for example
+#   ds389_storage_size    : per-pod PersistentVolumeClaim size (default: 5Gi)
+#   ds389_storage_class   : StorageClass; when unset, the cluster's own default. A bare RKE2 cluster has none, so install one first, for example
 #                           with the longhorn addon.
-#   ds389_ldap_nodeport   : NodePort for plaintext LDAP (default 30389, the upstream example value)
-#   ds389_ldaps_nodeport  : NodePort for LDAPS (default 30636, the upstream example value)
+#   ds389_ldap_nodeport   : NodePort for plaintext LDAP, the upstream example value (default: 30389)
+#   ds389_ldaps_nodeport  : NodePort for LDAPS, the upstream example value (default: 30636)
 
 __version__ = "__LABVERSION__"
 

@@ -3,8 +3,10 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "starcoder2" — configurable keys:
-#   starcoder2_model   : [OPTIONAL] StarCoder2 model tag (default: starcoder2 — the 3B build)
+#   starcoder2_model   : [OPTIONAL] StarCoder2 model tag, the 3B build by default (default: starcoder2)
 #                        Examples: starcoder2:7b, starcoder2:15b
 #   starcoder2_ns      : [OPTIONAL] Ollama namespace to pull into (default: ollama)
 #   starcoder2_shorthn : [OPTIONAL] hostname prefix if Ollama is not yet installed (default: ollama)

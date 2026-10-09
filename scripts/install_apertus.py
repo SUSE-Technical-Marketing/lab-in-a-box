@@ -3,9 +3,11 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "apertus" — configurable keys:
-#   apertus_tag         : [OPTIONAL] Ollama model tag (default: 8b-instruct-2509-q4_k_m — a ~5.1GB
-#                         quantized build, the practical default for lab hardware)
+#   apertus_tag         : [OPTIONAL] Ollama model tag; the default is a ~5.1GB quantized build, practical
+#                         for lab hardware (default: 8b-instruct-2509-q4_k_m)
 #                         Other options: 8b-instruct-2509-bf16 (~16GB, full precision), 70b-instruct-
 #                         2509-q4_k_m (~44GB), 70b-instruct-2509-bf16 (~141GB, needs serious hardware)
 #   apertus_ns          : [OPTIONAL] Ollama namespace to pull into (default: ollama)

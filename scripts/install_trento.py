@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "trento" — configurable keys:
 #   trento_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.4.0")
 #   trento_ns           : [OPTIONAL] namespace (default: trento)
@@ -11,9 +13,9 @@
 #   trento_repo_url     : [OPTIONAL] Helm repo URL (default: https://trento-project.io/helm)
 #   trento_admin        : [OPTIONAL] admin email (default: admin@lab.local)
 #   trento_password     : [OPTIONAL] admin password (default: Trento12345)
-#   trento_secret_key   : [OPTIONAL] secret key base for sessions (default: auto-generated)
+#   trento_secret_key   : [OPTIONAL] secret key base for sessions; when unset, generated
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "trento",

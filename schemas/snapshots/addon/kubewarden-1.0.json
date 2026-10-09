@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "kubewarden_ns": {
+   "default": "kubewarden",
+   "required": false,
+   "type": "namespace"
+  },
+  "kubewarden_rel": {
+   "default": "kubewarden",
+   "required": false,
+   "type": "string"
+  },
+  "kubewarden_repo_url": {
+   "default": "https://charts.kubewarden.io",
+   "required": false,
+   "type": "url"
+  },
+  "kubewarden_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kubewarden",
+ "version": "1.0"
+}

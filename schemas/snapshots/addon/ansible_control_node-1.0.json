@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "ansible_control_node_examples": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_control_node_inventory_dir": {
+   "default": "/srv/ansible/inventory",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_control_node_managed_nodes": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_control_node_playbook_dir": {
+   "default": "/srv/ansible/playbooks",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_control_node_ssh_key_path": {
+   "default": "/root/.ssh/id_ansible_ed25519",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:ansible_control_node",
+ "version": "1.0"
+}

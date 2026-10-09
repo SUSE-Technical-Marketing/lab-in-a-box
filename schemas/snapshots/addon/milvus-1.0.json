@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "milvus_cluster": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "milvus_ns": {
+   "default": "milvus",
+   "required": false,
+   "type": "namespace"
+  },
+  "milvus_rel": {
+   "default": "milvus",
+   "required": false,
+   "type": "string"
+  },
+  "milvus_repo_url": {
+   "default": "https://zilliztech.github.io/milvus-helm",
+   "required": false,
+   "type": "url"
+  },
+  "milvus_shorthn": {
+   "default": "milvus",
+   "required": false,
+   "type": "string"
+  },
+  "milvus_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:milvus",
+ "version": "1.0"
+}

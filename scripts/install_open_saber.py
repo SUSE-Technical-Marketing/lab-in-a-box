@@ -6,6 +6,8 @@
 # Project: https://github.com/leandrodreamer/BeepSaber, also listed at
 # https://leandrodreamer.itch.io/open-saber
 #
+# Schema version: 1.0
+#
 # JSON section: "open_saber" — configurable keys:
 #   open_saber_ns      : [OPTIONAL] namespace (default: open-saber)
 #   open_saber_shorthn : [OPTIONAL] hostname prefix for ingress (default: open-saber)

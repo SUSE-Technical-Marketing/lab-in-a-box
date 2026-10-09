@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "ollama_model": {
+   "default": "llama3.2",
+   "required": false,
+   "type": "string"
+  },
+  "ollama_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "ollama_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "ollama_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "ollama_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "ollama_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:ollama",
+ "version": "1.0"
+}

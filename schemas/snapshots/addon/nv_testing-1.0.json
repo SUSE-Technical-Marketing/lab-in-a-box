@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "nv_testing_attacker": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nv_testing_name": {
+   "default": "nv-testing",
+   "required": false,
+   "type": "string"
+  },
+  "nv_testing_ns": {
+   "default": "demo",
+   "required": false,
+   "type": "namespace"
+  }
+ },
+ "schema": "addon:nv_testing",
+ "version": "1.0"
+}

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "argocd" — configurable keys:
 #   argocd_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "7.6.8")
 #   argocd_ns           : [OPTIONAL] namespace (default: argocd)
@@ -10,7 +12,7 @@
 #   argocd_rel          : [OPTIONAL] Helm repo alias (default: argo)
 #   argocd_repo_url     : [OPTIONAL] Helm repo URL (default: https://argoproj.github.io/argo-helm)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "argocd",

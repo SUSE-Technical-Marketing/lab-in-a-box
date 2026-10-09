@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "nginx" — configurable keys:
 #   nginx_version       : Helm chart version (empty = latest, e.g. "4.10.1")
 #   nginx_ns            : namespace (default: ingress-nginx)
 #   nginx_rel           : Helm repo alias (default: ingress-nginx)
 #   nginx_repo_url      : Helm repo URL (default: https://kubernetes.github.io/ingress-nginx)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "nginx",

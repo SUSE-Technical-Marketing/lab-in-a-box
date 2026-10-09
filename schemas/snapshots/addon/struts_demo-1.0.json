@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "struts_demo_attacker": {
+   "default": "not deployed",
+   "required": false,
+   "type": "string"
+  },
+  "struts_demo_name": {
+   "default": "struts",
+   "required": false,
+   "type": "string"
+  },
+  "struts_demo_ns": {
+   "default": "struts",
+   "required": false,
+   "type": "namespace"
+  }
+ },
+ "schema": "addon:struts_demo",
+ "version": "1.0"
+}

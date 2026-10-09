@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "openldap_name": {
+   "default": "openldap",
+   "required": false,
+   "type": "string"
+  },
+  "openldap_ns": {
+   "default": "db",
+   "required": false,
+   "type": "namespace"
+  },
+  "openldap_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:openldap",
+ "version": "1.0"
+}

@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "fluentd_ns": {
+   "default": "fluentd",
+   "required": false,
+   "type": "namespace"
+  },
+  "fluentd_rel": {
+   "default": "fluent",
+   "required": false,
+   "type": "string"
+  },
+  "fluentd_repo_url": {
+   "default": "https://fluent.github.io/helm-charts",
+   "required": false,
+   "type": "url"
+  },
+  "fluentd_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:fluentd",
+ "version": "1.0"
+}

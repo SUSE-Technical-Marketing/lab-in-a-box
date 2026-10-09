@@ -3,15 +3,17 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "struts_demo" — Apache Struts2 vulnerable demo application (CVE-2017-5638)
 #
 #   struts_demo_ns       : [OPTIONAL] Kubernetes namespace                  (default: struts)
 #   struts_demo_name     : [OPTIONAL] Deployment, service and ingress name  (default: struts)
 #   struts_demo_attacker : [OPTIONAL] "1" to also deploy an attacker container/pod
-#                                      demonstrating exploitation of this app's CVE
-#                                      (default: not deployed)
+#                                      demonstrating exploitation of this app's CVE;
+#                                      when unset, none is deployed
 
-__version__ = "a45abd4"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "struts_demo",

@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "agones_ns": {
+   "default": "agones-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "agones_rel": {
+   "default": "agones",
+   "required": false,
+   "type": "string"
+  },
+  "agones_repo_url": {
+   "default": "https://agones.dev/chart/stable",
+   "required": false,
+   "type": "url"
+  },
+  "agones_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:agones",
+ "version": "1.0"
+}

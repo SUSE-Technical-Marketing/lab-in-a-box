@@ -14,21 +14,20 @@
 #            using the datasource name it provisions and the job name from install_prometheus.py's
 #            scrape config.)
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "grafana" ─────────────────────────────────────────────────
 #
 # OPTIONAL
 #   grafana_version            : container image tag                (default: "latest")
-#   grafana_image              : full image reference                (default:
-#                                 "docker.io/grafana/grafana" — the standard upstream image;
-#                                 there is no SUSE-branded Grafana image, same reasoning as
-#                                 install_prometheus.py's own grafana_image-equivalent field)
+#   grafana_image              : full image reference, the standard upstream image; there is no
+#                                 SUSE-branded Grafana image (default: docker.io/grafana/grafana)
 #   grafana_port               : port Grafana listens on directly (host networking, same
 #                                 reasoning as install_prometheus.py's own --network host fix —
 #                                 see setup_grafana()'s own comment)    (default: "3000")
 #   grafana_admin_user         : initial admin username                (default: "admin")
-#   grafana_admin_password     : initial admin password                (default: "admin" — CHANGE
-#                                 THIS; Grafana forces a change on first login only if this is
-#                                 left at the literal default "admin")
+#   grafana_admin_password     : initial admin password. Change it: Grafana forces a change on
+#                                 first login only while it is "admin" (default: admin)
 #   grafana_prometheus_url     : URL of the Prometheus this Grafana should query — e.g.
 #                                 "http://sol.mydemo.lab:9090" (the "prometheus" addon's own
 #                                 default port). REQUIRED if grafana_import_smlm_dashboard or

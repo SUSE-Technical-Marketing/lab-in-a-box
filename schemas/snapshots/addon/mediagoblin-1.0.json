@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "mediagoblin_admin_email": {
+   "default": "admin@lab.local",
+   "required": false,
+   "type": "string"
+  },
+  "mediagoblin_admin_password": {
+   "default": "changeme123",
+   "required": false,
+   "type": "password"
+  },
+  "mediagoblin_admin_user": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "mediagoblin_ns": {
+   "default": "mediagoblin",
+   "required": false,
+   "type": "namespace"
+  },
+  "mediagoblin_shorthn": {
+   "default": "mediagoblin",
+   "required": false,
+   "type": "string"
+  },
+  "mediagoblin_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mediagoblin",
+ "version": "1.0"
+}

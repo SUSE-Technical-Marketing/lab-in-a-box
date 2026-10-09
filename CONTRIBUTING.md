@@ -70,10 +70,72 @@ flowchart LR
    > [!WARNING]
    > A schema change that isn't reflected in the UI is treated as incomplete.
 
-5. Run the full test suite before opening a PR:
+5. If your change touches a schema, record its new version — see
+   [Schema versions](#schema-versions). This is mandatory.
+6. Run the full test suite before opening a PR:
    ```shell
    tests/run_tests.sh
    ```
+
+## Schema versions
+
+Every schema lab-in-a-box reads has a version, `MAJOR.MINOR`: the lab
+definition, every add-on's section, and every configuration file
+(`lab_creation.cfg`, `lab_creation.defaults`, `lab.cfg`, the
+harvester-cluster JSON and the credentials files). Where each one declares
+it:
+
+| Schema | Name | Declared in |
+|---|---|---|
+| Lab definition | `lab` | `LAB_SCHEMA_VERSION` in `scripts/lab_schema` |
+| Add-on section | `addon:<name>` | the add-on's `schema_version`; for a Python add-on, the `# Schema version: M.m` line above its `# JSON section:` block |
+| `lab_creation.cfg` | `config:lab_creation.cfg` | `# Schema version:` line of `templates/lab_creation.cfg.example` |
+| `lab_creation.defaults` | `config:lab_creation.defaults` | `# Schema version:` line of `lab_creation.defaults` |
+| `lab.cfg` | `config:lab.cfg` | `# Schema version:` line of `setup_demo_server/lab.cfg.template` |
+| harvester-cluster JSON | `config:harvester-cluster.json` | `schema_version` key of `templates/harvester-cluster.json.example` |
+| Credentials files | `config:credentials` | `CREDENTIALS_SCHEMA_VERSION` in `scripts/setup_credentials.py` |
+
+`schemas/compatibility.json` lists every version of every schema and says
+whether it breaks compatibility with the version before it.
+`schemas/snapshots/` holds the fields of each version.
+
+The rules:
+
+1. **Any change to a schema raises its version.** That covers a field
+   added, removed or renamed, a changed type, default, option list, pattern,
+   range or required flag, and a changed meaning of a field or of leaving it
+   unset.
+2. **A change is breaking when a file written for the previous version may
+   not work, or may do something else, under the new one.** For example: a
+   field removed or renamed, a type changed, a field that became required,
+   an option no longer accepted, a default or the behaviour of an unset
+   field changed. A breaking change raises `MAJOR` and resets `MINOR` (1.4
+   to 2.0). Any other change raises `MINOR` by one (1.4 to 1.5).
+3. **Every breaking change comes with its migration, in the same change.**
+   Add a step to `libs/migrations.py` that rewrites a file from the old form
+   to the new one (changing only what is still in the old form, so running
+   it twice changes nothing), register it in `MIGRATIONS`, and name it in
+   the version's entry. `migrate_config.py` applies it to users' files.
+4. **Record the version.** After raising the declared version, run:
+   ```shell
+   scripts/schema_versions.py diff addon:rancher     # what changed since the last recorded version
+   scripts/schema_versions.py record addon:rancher "What changed, in one sentence." [--migration rancher_2_0]
+   ```
+   `record` stores the snapshot and adds the entry to
+   `schemas/compatibility.json`.
+
+Check 80 (`tests/checks/80_schema_versions.sh`) fails when a schema changed
+without a new recorded version, when a compatible version contains a
+breaking change (a field removed, retyped or made required, an option
+dropped), or when a breaking version has no migration step. Changes it
+cannot detect itself, such as a new default or a changed meaning, are
+yours to classify by rule 2.
+
+A lab definition records the versions it was written for in its top-level
+`schema_versions` object (the web UI writes it); a configuration file in
+its `# Schema version:` line or `schema_version` key. A file that records
+none counts as version 1.0. `setup_lab.py` and `setup_vm.py` stop when a
+lab definition still needs a migration, and say how to run it.
 
 ## Testing
 
@@ -120,8 +182,11 @@ See [Available addons](README.md#available-addons) and
 the JSON shape add-ons plug into. In short:
 
 1. Create `scripts/install_<name>.py` following the pattern of an existing
-   add-on (self-contained, `# JSON section:` doc comment, `addon_common`
-   dispatch for `--help`/`--version`/`--schema`).
+   add-on (self-contained, `# Schema version: 1.0` line and `# JSON section:`
+   doc comment, `addon_common` dispatch for `--help`/`--version`/`--schema`).
+   Record its first version with
+   `scripts/schema_versions.py record addon:<name> "First recorded version."`
+   (see [Schema versions](#schema-versions)).
 2. Add templates under `templates/addons/<name>/` if the add-on needs any.
 3. Add `"<name>"` to the `addons` array of a test lab JSON to exercise it.
 4. Add a test under `tests/checks/`.

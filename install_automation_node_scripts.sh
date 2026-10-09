@@ -93,6 +93,10 @@ done
 
 cp -r  templates/addons/* ${_templ_addons_loc}/
 
+# Schema versions of every configuration file and add-on, read by migrate_config.py and setup_lab.py (libs/migrations.py).
+mkdir -p /usr/share/lab_creation/schemas
+cp schemas/compatibility.json /usr/share/lab_creation/schemas/compatibility.json
+
 
 # Add-ons: every install_<name> executable under scripts/, in any language,
 # with or without a file extension. The extension is stripped, so each lands
@@ -127,7 +131,7 @@ do
 done
 
 # Non-addon, non-orchestration tooling.
-for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py check_addon.py
+for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py check_addon.py migrate_config.py
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
     sed -i "s/__LABVERSION__/$(lab_version "scripts/${i}")/" "/usr/local/bin/${i}"

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "insecure_app" — intentionally vulnerable web application (demo/training)
 #
 #   insecure_app_ns         : [OPTIONAL] Kubernetes namespace          (default: insecure-apps)
@@ -17,7 +19,7 @@
 #   insecure_app_DBNAME     : [OPTIONAL] Database name                (default: photos)
 #   insecure_app_SECRET_KEY : [OPTIONAL] App secret key               (default: abcde1234)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "insecure_app",

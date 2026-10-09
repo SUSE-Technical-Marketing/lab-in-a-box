@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "stackpack_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "stackpack_cluster_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "stackpack_ns": {
+   "default": "stackstate",
+   "required": false,
+   "type": "namespace"
+  },
+  "stackpack_rel": {
+   "default": "stackstate",
+   "required": false,
+   "type": "string"
+  },
+  "stackpack_repo_url": {
+   "default": "https://helm.stackstate.io",
+   "required": false,
+   "type": "url"
+  },
+  "stackpack_url": {
+   "default": "",
+   "required": true,
+   "type": "url"
+  },
+  "stackpack_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:stackpack",
+ "version": "1.1"
+}

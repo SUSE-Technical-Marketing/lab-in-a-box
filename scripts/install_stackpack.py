@@ -3,17 +3,19 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "stackpack" — configurable keys:
 #   stackpack_api_key         : [MANDATORY] StackState API key for this cluster
 #   stackpack_url             : [MANDATORY] StackState receiver URL
 #                               (e.g. https://stackstate.mydemo.lab:8080/receiver/sinks/topology)
-#   stackpack_cluster_name    : [OPTIONAL] name reported to StackState (default: clu_name from cluster)
+#   stackpack_cluster_name    : [OPTIONAL] name reported to StackState; when unset, the kcluster's name
 #   stackpack_version         : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.0.8")
 #   stackpack_ns              : [OPTIONAL] namespace (default: stackstate)
 #   stackpack_rel             : [OPTIONAL] Helm repo alias (default: stackstate)
 #   stackpack_repo_url        : [OPTIONAL] Helm repo URL (default: https://helm.stackstate.io)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "stackpack",

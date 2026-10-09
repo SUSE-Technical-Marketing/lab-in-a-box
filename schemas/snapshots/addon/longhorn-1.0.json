@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "lh_rel": {
+   "default": "longhorn",
+   "required": false,
+   "type": "string"
+  },
+  "lh_repo_url": {
+   "default": "https://charts.longhorn.io",
+   "required": false,
+   "type": "url"
+  },
+  "lh_shorthn": {
+   "default": "longhorn",
+   "required": false,
+   "type": "string"
+  },
+  "lh_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:longhorn",
+ "version": "1.0"
+}

@@ -359,8 +359,22 @@ function compileLab(model) {
     const frag = model.addonCfg[a.section] || {};
     if (a.flat === false) Object.assign(lab, frag); else lab[a.section] = frag;
   });
+  const versions = schemaVersions(model);
+  if (Object.keys(versions).length) lab.schema_versions = versions;
   Object.keys(model.extra || {}).forEach((k) => { if (!(k in lab)) lab[k] = model.extra[k]; });
   return lab;
+}
+
+// schema_versions of model `model`'s lab: the schema version of the lab definition and of each add-on section it uses
+// (libs/migrations.py). The versions a loaded lab recorded win, so setup_lab.py still asks for its migration.
+function schemaVersions(model) {
+  const versions = {};
+  if (state.base && state.base.schema_version) versions.lab = state.base.schema_version;
+  model.items.forEach((a) => {
+    const sc = a.type === "addon" && a.section && a.comp && state.schemaCache[a.comp];
+    if (sc && sc.schema_version) versions["addon:" + a.section] = sc.schema_version;
+  });
+  return Object.assign(versions, model.recordedVersions || {});
 }
 
 // The add-on component that owns top-level lab section `section`, or undefined.
@@ -402,8 +416,9 @@ function decompileLab(lab) {
     m.items.push(n);
     addons.forEach((a) => addonItem(a, n.id));
   });
+  m.recordedVersions = recordedVersions(lab, m);
   Object.keys(lab).forEach((k) => {
-    if (k === "common" || k === "nodes" || k === "kclusters") return;
+    if (k === "common" || k === "nodes" || k === "kclusters" || k === "schema_versions") return;
     const v = lab[k];
     const comp = componentFor(k);
     if (!comp || !v || typeof v !== "object" || Array.isArray(v)) { m.extra[k] = v; return; }
@@ -413,6 +428,19 @@ function decompileLab(lab) {
     }
   });
   return m;
+}
+
+// The schema versions loaded lab `lab` records. A lab with content that records none was written for version 1.0 of
+// the lab definition and of each add-on section in model `m`.
+function recordedVersions(lab, m) {
+  if (lab.schema_versions && typeof lab.schema_versions === "object") return Object.assign({}, lab.schema_versions);
+  if (!Object.keys(lab).length) return {};
+  const versions = { lab: "1.0" };
+  m.items.forEach((i) => { if (i.type === "addon" && i.section) versions["addon:" + i.section] = "1.0"; });
+  Object.keys(lab).forEach((k) => {
+    if (componentFor(k) && lab[k] && typeof lab[k] === "object" && !Array.isArray(lab[k])) versions["addon:" + k] = "1.0";
+  });
+  return versions;
 }
 
 // The lab definition in `text`, JSON or YAML. Throws when it is neither, or not a mapping.

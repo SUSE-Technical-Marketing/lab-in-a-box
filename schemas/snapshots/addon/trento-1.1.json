@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "trento_admin": {
+   "default": "admin@lab.local",
+   "required": false,
+   "type": "string"
+  },
+  "trento_ns": {
+   "default": "trento",
+   "required": false,
+   "type": "namespace"
+  },
+  "trento_password": {
+   "default": "Trento12345",
+   "required": false,
+   "type": "password"
+  },
+  "trento_rel": {
+   "default": "trento",
+   "required": false,
+   "type": "string"
+  },
+  "trento_repo_url": {
+   "default": "https://trento-project.io/helm",
+   "required": false,
+   "type": "url"
+  },
+  "trento_secret_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "trento_shorthn": {
+   "default": "trento",
+   "required": false,
+   "type": "string"
+  },
+  "trento_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:trento",
+ "version": "1.1"
+}

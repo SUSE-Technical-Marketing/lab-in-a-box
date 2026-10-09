@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "suse_observability_license": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "suse_observability_ns": {
+   "default": "suse-observability",
+   "required": false,
+   "type": "namespace"
+  },
+  "suse_observability_profile": {
+   "default": "trial",
+   "required": false,
+   "type": "string"
+  },
+  "suse_observability_rel": {
+   "default": "suse-observability",
+   "required": false,
+   "type": "string"
+  },
+  "suse_observability_repo_url": {
+   "default": "https://charts.rancher.com/server-charts/prime/suse-observability",
+   "required": false,
+   "type": "url"
+  },
+  "suse_observability_shorthn": {
+   "default": "observability",
+   "required": false,
+   "type": "string"
+  },
+  "suse_observability_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:suse_observability",
+ "version": "1.0"
+}

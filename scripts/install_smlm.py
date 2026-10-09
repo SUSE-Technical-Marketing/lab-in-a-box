@@ -6,12 +6,15 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/server-kubernetes-deployment.html
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "smlm" ───────────────────────────────────────────────────────
 #
 # Deployment mode
-#   smlm_deployment        : "kubernetes" (default) installs the Helm chart on the first server node of a
+#   smlm_deployment        : "kubernetes" installs the Helm chart on the first server node of a
 #                            Kubernetes cluster. "podman" installs with mgradm and podman directly on a
 #                            dedicated host or VM, with no Kubernetes. Target nodes list "smlm" in addons[].
+#                            (default: kubernetes)
 #
 # Required for "kubernetes"
 #   smlm_fqdn              : fully-qualified domain name of the server (e.g. "smlm.cluster1.mydemo.lab")
@@ -24,7 +27,7 @@
 #
 # Optional for "podman"
 #   smlm_coco_replicas     : replicas of the confidential-computing attestation container. Unset omits the flag.
-#   smlm_coco_image        : image of that container (default "suse/multi-linux-manager/5.2/x86_64/server-attestation")
+#   smlm_coco_image        : image of that container (default: "suse/multi-linux-manager/5.2/x86_64/server-attestation")
 #   smlm_coco_tag          : tag override for that image
 #   smlm_scc_account       : name of an encrypted credential file (credential_kind "scc") under
 #                            /etc/lab_creation/credentials/ to read smlm_scc_user, smlm_scc_password and
@@ -50,9 +53,9 @@
 #                            (the mgradm product default, as in install_uyuni.py)
 #
 # "podman" install options
-#   smlm_email             : admin e-mail, passed to "mgradm install --email"       (default admin@lab.local)
-#   smlm_org               : organization created at install                        (default lab)
-#   smlm_ssl_password      : password of the generated self-signed CA                (default smlm_admin_pass)
+#   smlm_email             : admin e-mail, passed to "mgradm install --email"       (default: admin@lab.local)
+#   smlm_org               : organization created at install                        (default: lab)
+#   smlm_ssl_password      : password of the generated self-signed CA; when unset, smlm_admin_pass
 #   smlm_ssl_country       : CA subject country code (2 letters)
 #   smlm_ssl_state         : CA subject state/province
 #   smlm_ssl_city          : CA subject city
@@ -64,63 +67,63 @@
 # SUSE's server image ("podman")
 #   smlm_byos              : "true" when the node boots SUSE's SMLM server BYOS image (qcow2 for KVM, or a cloud
 #                            marketplace image). The image is registered with smlm_scc_regcode only. It needs no
-#                            containers module, no SMLM extension and no tooling install. (default false)
+#                            containers module, no SMLM extension and no tooling install. (default: false)
 #
 # Pre-built server images ("podman")
 #   smlm_preinstalled      : "true" when the image already contains an installed, channel-synced server. When the
 #                            uyuni-server container exists, SCC registration and the tooling install are skipped,
 #                            smlm_scc_regcode is not required, and channels already on the server are not re-added.
-#                            (default false)
+#                            (default: false)
 #   smlm_image_admin_pass  : admin password the image was built with. When set and smlm_admin_pass does not log in,
 #                            the admin password is changed to smlm_admin_pass before any other step.
 #
 # Server conveniences ("podman")
 #   smlm_salt_auto_accept  : "true" to accept every new salt minion key. It writes
 #                            /etc/salt/master.d/zz-lab-auto-accept.conf in the server container and restarts
-#                            salt-master. For throw-away labs only. (default false)
+#                            salt-master. For throw-away labs only. (default: false)
 #   smlm_bootstrap_scripts : [{"name": "generic_bootstrap.sh", "url": "https://..."}]. The files are downloaded on the
 #                            server host and published under /pub/bootstrap/<name> (mode 0755). name is a plain file name.
 #
 # Helm and release ("kubernetes")
 #   smlm_version           : chart version (empty = latest, e.g. "5.2.0")
-#   smlm_ns                : namespace (default uyuni-server)
-#   smlm_rel               : Helm release name (default smlm-server)
-#   smlm_registry          : OCI registry of the chart (default registry.suse.com)
-#   smlm_chart             : OCI chart path (default suse/multi-linux-manager/5.2/server-helm)
-#   smlm_img_repository    : image repository base (default derived from registry and chart, plus /x86_64)
-#   smlm_img_tag           : tag of all images (default: the chart default, "latest")
+#   smlm_ns                : namespace (default: uyuni-server)
+#   smlm_rel               : Helm release name (default: smlm-server)
+#   smlm_registry          : OCI registry of the chart (default: registry.suse.com)
+#   smlm_chart             : OCI chart path (default: suse/multi-linux-manager/5.2/server-helm)
+#   smlm_img_repository    : image repository base; when unset, derived from registry and chart, plus /x86_64
+#   smlm_img_tag           : tag of all images; when unset, the chart's default, latest
 #
 # Networking and security ("kubernetes")
-#   smlm_shorthn           : short hostname for the DNS entry (default smlm)
-#   smlm_ingress_class     : ingress class (default traefik). The SMLM chart does not support nginx.
-#   smlm_super_privileged  : "true" runs in super-privileged mode (default false, which uses AppArmor or SELinux)
+#   smlm_shorthn           : short hostname for the DNS entry (default: smlm)
+#   smlm_ingress_class     : ingress class (default: traefik). The SMLM chart does not support nginx.
+#   smlm_super_privileged  : "true" runs in super-privileged mode; "false" uses AppArmor or SELinux (default: false)
 #   smlm_storage_class     : StorageClass (empty = cluster default)
-#   smlm_lh_overprovision  : Longhorn over-provisioning percentage, when smlm_storage_class is "longhorn" (default 500)
+#   smlm_lh_overprovision  : Longhorn over-provisioning percentage, when smlm_storage_class is "longhorn" (default: 500)
 #
 # HA database ("kubernetes", experimental)
-#   smlm_db_ha             : "true" replaces the single-pod PostgreSQL with a CloudNativePG cluster (default false).
+#   smlm_db_ha             : "true" replaces the single-pod PostgreSQL with a CloudNativePG cluster (default: false).
 #                            The 'db' and 'reportdb' hostnames then point at the operator's primary Service, smlm-db-rw.
 #                            Host-level HA needs a cluster with at least as many nodes as replicas.
-#   smlm_db_ha_replicas    : PostgreSQL instances (default 3)
-#   smlm_db_ha_sync        : "true" (default) for synchronous replication. A primary failure loses no committed
+#   smlm_db_ha_replicas    : PostgreSQL instances (default: 3)
+#   smlm_db_ha_sync        : "true" for synchronous replication (default: true). A primary failure loses no committed
 #                            transaction, but writes stall while no standby is available. "false" is asynchronous.
-#   smlm_db_ha_size        : data volume per instance (default 50Gi)
-#   smlm_db_ha_pg_image    : PostgreSQL image (default ghcr.io/cloudnative-pg/postgresql:18, which must match SMLM 5.2's major version)
-#   smlm_db_ha_cnpg_version: CloudNativePG operator chart version (default latest)
+#   smlm_db_ha_size        : data volume per instance (default: 50Gi)
+#   smlm_db_ha_pg_image    : PostgreSQL image, which must match SMLM 5.2's major version (default: ghcr.io/cloudnative-pg/postgresql:18)
+#   smlm_db_ha_cnpg_version: CloudNativePG operator chart version (default: latest)
 #   Failover test, after deployment:  install_smlm.py <lab.json> --test-failover
 #   It writes a canary row, deletes the primary pod, measures promotion and write recovery, and checks that no
 #   committed row was lost and the web UI stayed up. For a harder test, power off the primary's node VM.
 #
 # Activation key (created after install; skipped entirely when smlm_activation_key is unset)
 #   smlm_activation_key                   : key name
-#   smlm_activation_key_desc              : description (default: the key name)
+#   smlm_activation_key_desc              : description; when unset, the key name
 #   smlm_activation_key_base_channel      : base channel label. Required when smlm_activation_key is set.
 #   smlm_activation_key_child_channels    : space-separated child channel labels
-#   smlm_activation_key_universal_default : "true" marks it as the organization's universal default (default false)
+#   smlm_activation_key_universal_default : "true" marks it as the organization's universal default (default: false)
 #   smlm_activation_key_entitlements      : comma-separated, e.g. "enterprise_entitled,virtualization_host"
 #   smlm_activation_key_contact_method    : contact method
 #   smlm_activation_key_config_channels   : space-separated config channel labels
-#   smlm_activation_key_enable_config_deployment : "true" enables config-file deployment on the key (default false)
+#   smlm_activation_key_enable_config_deployment : "true" enables config-file deployment on the key (default: false)
 #   smlm_activation_key_groups            : space-separated system group names
 #   smlm_activation_key_appstreams        : space-separated "module:stream" pairs, e.g. "nodejs:20 postgresql:16".
 #                                           Applied on every run. An already-enabled module is detected from the
@@ -205,7 +208,7 @@
 #
 # Server self-monitoring (Admin -> Manager Configuration -> Monitoring)
 #   smlm_monitoring_enabled: "true" enables the bundled exporters for node, tomcat, postgres, taskomatic and
-#                            self_monitoring (default unset, which does nothing). This is a switch for exporters the
+#                            self_monitoring; unset does nothing. This is a switch for exporters the
 #                            image already includes. It does not point at an external Prometheus. Uyuni is pull-based:
 #                            an external Prometheus (the "prometheus" addon) scrapes this server.
 #                            Restarts Tomcat and Taskomatic only on the change from disabled to enabled.
@@ -229,7 +232,7 @@
 #   smlm_image_build_hosts : [{"system": "registered-hostname"}]. Enables the "container_build_host" entitlement and
 #                            applies highstate. It runs before imports, so a build_host_id can be used.
 #                            The Containers module must still be in that system's channels.
-#   smlm_mcp_server        : {"version": "latest", "port": 8090, "user", "password" (default the smlm admin account),
+#   smlm_mcp_server        : {"version": "latest", "port": 8090, "user", "password" (the smlm admin account when unset),
 #                            "write_tools_enabled": false, "ssl_verify": false}
 #                            Deploys the Uyuni MCP server (github.com/uyuni-project/mcp-server-uyuni) as a standalone
 #                            podman container next to uyuni-server, so an MCP client can inspect and manage this server.
@@ -363,8 +366,8 @@
 #                            system_group and activation_key are references only. recurring_schedule needs the numeric group
 #                            id, which is looked up from the name unless group_id is given. Run it with
 #                            install_smlm.py <lab.json> --run-recurring-schedules.
-#   smlm_grafana_formulas  : [{"system", "admin_user" (default admin), "admin_pass" (default admin),
-#                            "prometheus": [{"key", "url" (default http://localhost:9090), "user", "password"}],
+#   smlm_grafana_formulas  : [{"system", "admin_user" (admin when unset), "admin_pass" (admin when unset),
+#                            "prometheus": [{"key", "url" (http://localhost:9090 when unset), "user", "password"}],
 #                            "reportdb": false, "is_hub": false,
 #                            "dashboards": {"uyuni": true, "uyuni_clients": true, "postgresql": true, "apache": true}}]
 #                            Applies SMLM's own grafana Salt formula to the target, which installs Grafana there. This is
@@ -383,7 +386,7 @@
 #       extra TCP ports 4505, 4506 (Salt) and 5432 (report DB) are exposed through a rke2-traefik HelmChartConfig. On K3s
 #       (kclusters clu_type "k3s") the bundled Traefik is used, and the same ports are exposed through its ServiceLB.
 
-__version__ = "39753e7"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "smlm",

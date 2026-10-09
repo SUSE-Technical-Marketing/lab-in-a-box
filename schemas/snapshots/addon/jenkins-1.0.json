@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "jenkins_rel": {
+   "default": "jenkins",
+   "required": false,
+   "type": "string"
+  },
+  "jenkins_repo_url": {
+   "default": "https://charts.jenkins.io",
+   "required": false,
+   "type": "url"
+  },
+  "jenkins_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:jenkins",
+ "version": "1.0"
+}

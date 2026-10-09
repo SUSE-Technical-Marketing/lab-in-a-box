@@ -32,7 +32,7 @@ ADDON
 chmod 0755 "${_bad}"
 _out=$(python3.11 scripts/check_addon.py "${_bad}")
 [[ $? -ne 0 ]] || fail "check_addon.py passes a broken add-on"
-for _expect in "type 'colour'" "required must be" "targets ['phone']" "requires_kubernetes ['openshift']" \
+for _expect in "schema has a schema_version" "type 'colour'" "required must be" "targets ['phone']" "requires_kubernetes ['openshift']" \
                "y_version is not a field" \
                "default '1 — chart default' is not a valid integer" "every entry needs a version" "--capabilities matches" \
                "prints only [ERROR]/[WARNING] lines" "exits non-zero only with an [ERROR] line"; do

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "harvester" — SUSE Virtualization (Harvester/KubeVirt) on Kubernetes
 #   NOTE: section keys use the "virt_" prefix, not "harvester_".
 #
@@ -13,7 +15,7 @@
 #   virt_version    : [OPTIONAL] Helm chart version                   (empty = latest)
 #   virt_replicas   : [OPTIONAL] Number of replicas                   (default: 1)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "harvester",

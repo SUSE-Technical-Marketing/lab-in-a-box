@@ -5,6 +5,8 @@
 #
 # Project: https://gitlab.com/NalaGinrut/colt (NalaGinrut/Roy Mu, GPLv3)
 #
+# Schema version: 1.0
+#
 # JSON section: "colt" — configurable keys:
 #   colt_image   : [MANDATORY] a pre-built image reference for Colt. Colt's own GitLab repo has a
 #                  Dockerfile at its root but publishes no image

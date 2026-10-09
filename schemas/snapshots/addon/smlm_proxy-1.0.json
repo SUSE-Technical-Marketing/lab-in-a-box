@@ -1,0 +1,116 @@
+{
+ "fields": {
+  "smlm_proxy_admin_pass": {
+   "default": "\"smlm\".smlm_admin_pass or admin123",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_proxy_admin_user": {
+   "default": "\"smlm\".smlm_admin_user or admin",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_chart": {
+   "default": "suse/multi-linux-manager/5.2/proxy-helm",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_email": {
+   "default": "root@<smlm_proxy_fqdn>",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_fqdn": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_img_repository": {
+   "default": "derived from smlm_proxy_registry/smlm_proxy_chart + '/x86_64'",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_img_tag": {
+   "default": "chart default, \"latest\"",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ingress_class": {
+   "default": "traefik",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_lh_overprovision": {
+   "default": "500",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_max_cache": {
+   "default": "2048; ~60% of the squid volume is a good value",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ns": {
+   "default": "uyuni-proxy",
+   "required": false,
+   "type": "namespace"
+  },
+  "smlm_proxy_registry": {
+   "default": "registry.suse.com",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_rel": {
+   "default": "uyuni-proxy",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_scc_password": {
+   "default": "\"smlm\".smlm_scc_password",
+   "required": true,
+   "type": "password"
+  },
+  "smlm_proxy_scc_user": {
+   "default": "\"smlm\".smlm_scc_user",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_server": {
+   "default": "\"smlm\".smlm_fqdn from the same JSON",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_server_node": {
+   "default": "same as smlm_proxy_server",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_server_ns": {
+   "default": "uyuni-server",
+   "required": false,
+   "type": "namespace"
+  },
+  "smlm_proxy_shorthn": {
+   "default": "proxy",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ssh_port": {
+   "default": "8022",
+   "required": false,
+   "type": "port"
+  },
+  "smlm_proxy_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:smlm_proxy",
+ "version": "1.0"
+}

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "suse_ai"
 #   suse_ai_registry_user      : [MANDATORY] SUSE Application Collection registry user (the SCC login e-mail). This is an Application
 #                                Collection entitlement token, separate from the SCC registration code.
@@ -10,16 +12,16 @@
 #   suse_ai_registry_account   : [OPTIONAL] name of an encrypted credential file of kind "appcollection" under
 #                                /etc/lab_creation/credentials/ for the registry user and password. It is auto-discovered when exactly
 #                                one such file exists and this is unset. The plaintext fields remain valid.
-#   suse_ai_registry           : OCI registry host (default dp.apps.rancher.io)
-#   suse_ai_ns                 : namespace (default suse-private-ai, SUSE's documented default)
-#   suse_ai_components         : space-separated components (default "ollama open-webui"). Add "milvus" for local RAG vector search.
+#   suse_ai_registry           : OCI registry host (default: dp.apps.rancher.io)
+#   suse_ai_ns                 : namespace, SUSE's documented default (default: suse-private-ai)
+#   suse_ai_components         : space-separated components (default: "ollama open-webui"). Add "milvus" for local RAG vector search.
 #                                OpenSearch is not wired up here.
 #   suse_ai_ollama_version     : chart version pin for ollama (empty = latest)
 #   suse_ai_open_webui_version : chart version pin for open-webui
 #   suse_ai_milvus_version     : chart version pin for milvus
 #   suse_ai_tls_source         : "suse-private-ai" (self-signed, default), "letsEncrypt" (needs public DNS and cert-manager HTTP-01), or
 #                                "secret" (a certificate you provide, without cert-manager)
-#   suse_ai_shorthn            : hostname prefix for the Open WebUI ingress (default ai)
+#   suse_ai_shorthn            : hostname prefix for the Open WebUI ingress (default: ai)
 #   suse_ai_extra_set_<component> : space-separated key=value pairs, added as --set flags to that component's helm install, for settings
 #                                the keys above do not cover.
 #

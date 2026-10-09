@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "nv_testing" — NeuVector security testing workloads (nginx/node/redis pods)
 #
 #   nv_testing_ns       : [OPTIONAL] Kubernetes namespace                  (default: demo)
@@ -13,7 +15,7 @@
 #                                     setup_nv_testing()'s own docstring for why this flag
 #                                     doesn't actually gate anything, a preserved bash oddity)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "nv_testing",

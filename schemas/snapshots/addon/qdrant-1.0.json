@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "qdrant_ns": {
+   "default": "qdrant",
+   "required": false,
+   "type": "namespace"
+  },
+  "qdrant_rel": {
+   "default": "qdrant",
+   "required": false,
+   "type": "string"
+  },
+  "qdrant_replicas": {
+   "default": "1",
+   "required": false,
+   "type": "integer"
+  },
+  "qdrant_repo_url": {
+   "default": "https://qdrant.github.io/qdrant-helm",
+   "required": false,
+   "type": "url"
+  },
+  "qdrant_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:qdrant",
+ "version": "1.0"
+}

@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "prometheus_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_port": {
+   "default": "",
+   "required": false,
+   "type": "port"
+  },
+  "prometheus_retention": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_scrape_configs": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_scrape_smlm": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:prometheus",
+ "version": "1.0"
+}

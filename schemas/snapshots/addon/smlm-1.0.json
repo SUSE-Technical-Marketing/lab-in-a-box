@@ -1,0 +1,526 @@
+{
+ "fields": {
+  "smlm_access_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_action_chains": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_appstreams": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_base_channel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_child_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_config_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_contact_method": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_desc": {
+   "default": "the key name",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_enable_config_deployment": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_entitlements": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_packages": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_key_universal_default": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_activation_keys": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_admin_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_admin_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ansible_control_nodes": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ansible_paths": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ansible_playbooks": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_beta_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_bootstrap_scripts": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_byos": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_chart": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_coco_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_coco_replicas": {
+   "default": "",
+   "required": false,
+   "type": "integer"
+  },
+  "smlm_coco_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_config_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_content_lifecycle_actions": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_content_projects": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_custom_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_custom_info_keys": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_admin_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_db_admin_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_ha": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_ha_cnpg_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "smlm_db_ha_pg_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_ha_replicas": {
+   "default": "",
+   "required": false,
+   "type": "integer"
+  },
+  "smlm_db_ha_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_ha_sync": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_db_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_db_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_deployment": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_distributions": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_email": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_environments": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_fqdn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_grafana_formulas": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_image_admin_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_image_build_hosts": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_image_builds": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_image_imports": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_image_profiles": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_image_stores": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_img_repository": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_img_tag": {
+   "default": "the chart default, \"latest\"",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ingress_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_kickstart_profiles": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_lh_overprovision": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_maintenance_calendars": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_maintenance_schedules": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_mcp_server": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_monitoring_enabled": {
+   "default": "",
+   "required": false,
+   "type": "boolean"
+  },
+  "smlm_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "smlm_org": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_org_system_transfers": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_orgs": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_patches": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_preinstalled": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_recurring_actions": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_registry": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_rel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_reportdb_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_reportdb_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_salt_auto_accept": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scap_policies": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scap_scans": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scc_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scc_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_scc_product": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scc_regcode": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_scc_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_shorthn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_snippets": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ssl_city": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ssl_country": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ssl_org": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ssl_ou": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_ssl_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_ssl_state": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_sso": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_super_privileged": {
+   "default": "",
+   "required": false,
+   "type": "boolean"
+  },
+  "smlm_sync_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_system_custom_values": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_system_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_system_profiles": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_system_tags": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_users": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "smlm_vhm_aws_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_virtual_guests": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_virtual_host_managers": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:smlm",
+ "version": "1.0"
+}

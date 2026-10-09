@@ -6,6 +6,8 @@
 # Project: https://github.com/Alzter/SuperTux-Classic (a from-scratch Godot remake of SuperTux
 # Milestone 1), also listed at https://alzter-s.itch.io/supertux-classic
 #
+# Schema version: 1.0
+#
 # JSON section: "supertux_classic" — configurable keys:
 #   supertux_classic_ns      : [OPTIONAL] namespace (default: supertux-classic)
 #   supertux_classic_shorthn : [OPTIONAL] hostname prefix for ingress (default: supertux-classic)

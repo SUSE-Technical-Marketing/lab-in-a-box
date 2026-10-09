@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "apertus_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "apertus_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "apertus_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "apertus_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "apertus_tag": {
+   "default": "8b-instruct-2509-q4_k_m",
+   "required": false,
+   "type": "string"
+  },
+  "apertus_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:apertus",
+ "version": "1.1"
+}

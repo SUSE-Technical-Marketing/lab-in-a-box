@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "insecure_app_DBNAME": {
+   "default": "photos",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_DB_HOST": {
+   "default": "mysql",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_DB_PWD": {
+   "default": "password_change_me",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_DB_TYPE": {
+   "default": "sqlite3",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_DB_USER": {
+   "default": "root",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_SECRET_KEY": {
+   "default": "abcde1234",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_admin_pwd": {
+   "default": "admin123",
+   "required": false,
+   "type": "password"
+  },
+  "insecure_app_long_name": {
+   "default": "My Buggy App",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_name": {
+   "default": "webphotobook",
+   "required": false,
+   "type": "string"
+  },
+  "insecure_app_ns": {
+   "default": "insecure-apps",
+   "required": false,
+   "type": "namespace"
+  },
+  "insecure_app_port": {
+   "default": "5000",
+   "required": false,
+   "type": "port"
+  }
+ },
+ "schema": "addon:insecure_app",
+ "version": "1.0"
+}

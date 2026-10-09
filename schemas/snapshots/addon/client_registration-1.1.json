@@ -1,0 +1,95 @@
+{
+ "fields": {
+  "client_registration_activation_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "client_registration_activation_key_base_channel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_activation_key_child_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_activation_key_desc": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_admin_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "client_registration_admin_user": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_background_retry_delay": {
+   "default": "60",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_profile_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_reactivation_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_retry_interval": {
+   "default": "10",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_retry_limit": {
+   "default": "30",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "client_registration_server_ip": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server_node": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "client_registration_server_type": {
+   "default": "uyuni",
+   "enum": [
+    "uyuni",
+    "smlm"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_sync_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:client_registration",
+ "version": "1.1"
+}

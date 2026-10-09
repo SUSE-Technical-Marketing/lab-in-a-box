@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "anthropic" — configurable keys:
 #   anthropic_api_key   : [MANDATORY] Anthropic API key (from https://console.anthropic.com)
 #   anthropic_model     : [OPTIONAL] default Claude model (default: anthropic/claude-sonnet-5)

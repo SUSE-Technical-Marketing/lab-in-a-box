@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "open_saber_ns": {
+   "default": "open-saber",
+   "required": false,
+   "type": "namespace"
+  },
+  "open_saber_shorthn": {
+   "default": "open-saber",
+   "required": false,
+   "type": "string"
+  },
+  "open_saber_version": {
+   "default": "v0.5.0",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:open_saber",
+ "version": "1.0"
+}

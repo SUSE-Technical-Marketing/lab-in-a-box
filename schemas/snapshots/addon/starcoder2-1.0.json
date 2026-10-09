@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "starcoder2_model": {
+   "default": "starcoder2 \u2014 the 3B build",
+   "required": false,
+   "type": "string"
+  },
+  "starcoder2_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "starcoder2_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "starcoder2_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "starcoder2_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "starcoder2_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:starcoder2",
+ "version": "1.0"
+}

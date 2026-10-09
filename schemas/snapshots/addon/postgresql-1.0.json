@@ -1,0 +1,66 @@
+{
+ "fields": {
+  "postgresql_db": {
+   "default": "postgres",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_listen": {
+   "default": "*",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_mode": {
+   "default": "auto",
+   "enum": [
+    "auto",
+    "kubernetes",
+    "os"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_ns": {
+   "default": "postgresql",
+   "required": false,
+   "type": "namespace"
+  },
+  "postgresql_password": {
+   "default": "postgres123",
+   "required": false,
+   "type": "password"
+  },
+  "postgresql_pg_version": {
+   "default": "16",
+   "required": false,
+   "type": "version"
+  },
+  "postgresql_port": {
+   "default": "5432",
+   "required": false,
+   "type": "port"
+  },
+  "postgresql_rel": {
+   "default": "bitnami",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_repo_url": {
+   "default": "https://charts.bitnami.com/bitnami",
+   "required": false,
+   "type": "url"
+  },
+  "postgresql_user": {
+   "default": "postgres",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:postgresql",
+ "version": "1.0"
+}

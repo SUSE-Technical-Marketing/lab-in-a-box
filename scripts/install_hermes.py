@@ -14,27 +14,29 @@
 # the conversation history, memory, skills and session database. The dashboard uses basic authentication by default, because the project
 # warns against an unauthenticated bind on a non-loopback address.
 #
+# Schema version: 1.1
+#
 # JSON section: "hermes"
 #   hermes_registry               : [MANDATORY] registry to push the built image to, for example registry.mydemo.lab or the registry of the
 #                                   harbor addon. The automation VM must reach it to push, and the cluster must reach it to pull.
-#   hermes_git_ref                : git ref of NousResearch/hermes-agent to build (default main). The project has no tagged releases, so
+#   hermes_git_ref                : git ref of NousResearch/hermes-agent to build (default: main). The project has no tagged releases, so
 #                                   pin a commit SHA for reproducible builds.
-#   hermes_image_tag              : tag of the built image (default: hermes_git_ref)
-#   hermes_ns                     : namespace (default hermes)
-#   hermes_shorthn                : dashboard ingress hostname prefix (default hermes)
-#   hermes_llm_provider           : "openrouter" (default), "openai" or "anthropic". The API key is set as OPENROUTER_API_KEY,
-#                                   OPENAI_API_KEY or ANTHROPIC_API_KEY to match.
+#   hermes_image_tag              : tag of the built image; when unset, hermes_git_ref
+#   hermes_ns                     : namespace (default: hermes)
+#   hermes_shorthn                : dashboard ingress hostname prefix (default: hermes)
+#   hermes_llm_provider           : "openrouter", "openai" or "anthropic". The API key is set as OPENROUTER_API_KEY,
+#                                   OPENAI_API_KEY or ANTHROPIC_API_KEY to match. (default: openrouter)
 #   hermes_llm_api_key            : API key for the provider. Required, unless the credential store provides it.
 #   hermes_telegram_token         : Telegram bot token from @BotFather, set as TELEGRAM_BOT_TOKEN. Unset, Hermes runs without a messaging platform.
 #   hermes_telegram_allowed_users : comma-separated Telegram user IDs, set as TELEGRAM_ALLOWED_USERS. Set it whenever a bot token is set.
 #   hermes_account                : name of an encrypted credential file of kind "hermes" under /etc/lab_creation/credentials/ for
 #                                   hermes_llm_api_key, hermes_telegram_token and hermes_dashboard_password. It is auto-discovered when exactly
 #                                   one such file exists and this is unset. The plaintext fields remain valid.
-#   hermes_dashboard_user         : dashboard basic-auth user (default admin)
+#   hermes_dashboard_user         : dashboard basic-auth user (default: admin)
 #   hermes_dashboard_password     : dashboard basic-auth password. When it is unset everywhere, a random one is generated and printed, so
 #                                   the dashboard is never deployed open.
-#   hermes_storage_size           : PersistentVolumeClaim size for /opt/data (default 5Gi)
-#   hermes_storage_class          : StorageClass (default: the cluster's own default). A bare RKE2 cluster has none, so install one first,
+#   hermes_storage_size           : PersistentVolumeClaim size for /opt/data (default: 5Gi)
+#   hermes_storage_class          : StorageClass; when unset, the cluster's own default. A bare RKE2 cluster has none, so install one first,
 #                                   for example with the longhorn addon.
 
 __version__ = "__LABVERSION__"

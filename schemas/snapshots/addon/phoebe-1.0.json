@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "phoebe_ns": {
+   "default": "phoebe-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "phoebe_repo_url": {
+   "default": "https://github.com/SUSE/phoebe/releases/latest/download",
+   "required": false,
+   "type": "url"
+  },
+  "phoebe_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:phoebe",
+ "version": "1.0"
+}

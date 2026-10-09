@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "colt_image": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "colt_ns": {
+   "default": "colt",
+   "required": false,
+   "type": "namespace"
+  },
+  "colt_port": {
+   "default": "3000",
+   "required": false,
+   "type": "port"
+  },
+  "colt_shorthn": {
+   "default": "colt",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:colt",
+ "version": "1.0"
+}

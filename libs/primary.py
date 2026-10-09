@@ -454,6 +454,7 @@ def try_load_cloud_account(name, config=None, passphrase_prompt=None):
         return None, "cloud account '{}' ({}) has no 'cloudtype' — set it to aws, gcp, hetzner, …".format(name, p)
 
     data.pop("unencrypted", None)  # informational only — see docstring
+    data.pop("schema_version", None)
 
     if data.get("encrypted") is True:
         plaintext, err = _decrypt_value(data, str(p), "cloud account '{}'".format(name), passphrase_prompt)
@@ -544,6 +545,7 @@ def try_load_service_credential(name, config=None, passphrase_prompt=None):
             name, p)
 
     data.pop("unencrypted", None)
+    data.pop("schema_version", None)
 
     if data.get("encrypted") is True:
         plaintext, err = _decrypt_value(data, str(p), "credential '{}'".format(name), passphrase_prompt)
