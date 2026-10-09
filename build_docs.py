@@ -2,7 +2,7 @@
 """Build the documentation site in docs/ from the HTML fragments in docs/src/.
 
 Run from the repository root: python3 docs/build_docs.py
-Output: docs/index.html (English), one page per translation, and docs/webui.html.
+Output: docs/index.html (English), one page per translation, docs/webui.html and docs/addons.html.
 
 Brand: lab-in-a-box identity (graphite, porcelain, teal, navy, coral, sand; Schibsted Grotesk + JetBrains Mono).
 Diagrams: the Mermaid blocks in docs/src/ are swapped for the brand SVGs in media/diagrams/
@@ -29,6 +29,7 @@ PAGES = [
     ("pt-BR.html", "pt-BR.html", "Português (Brasil)"),
     ("zh-CN.html", "zh-CN.html", "简体中文"),
     ("webui.html", "webui.html", "Web UI Guide"),
+    ("addons.html", "addons.html", "Add-on Guide"),
     (None, "lab-builder/", "🚀 Try Lab Builder"),
 ]
 

@@ -99,8 +99,8 @@ function serverLock() {
 // ---- catalogue (palette) ----------------------------------------------------
 async function loadComponents() {
   const data = await apiGet("components");
-  state.components = data.components;
-  $("#countNum").textContent = data.count;
+  state.components = data.components.filter((c) => (c.kind || "addon") === "addon");
+  $("#countNum").textContent = state.components.length;
   $("#srcNote").textContent = `read from ${data.scripts_dir}`;
   renderPalette($("#filter").value || "");
 }
@@ -452,6 +452,78 @@ const LOCAL_BACKENDS = new Set(["", "libvirt", "harvester"]);
 // What is wrong with the lab in `model`: { errors, warnings }, each a list of
 // sentences. Errors block Download, Save and Create; warnings do not. Checks
 // that need a schema (state.base, state.schemaCache) are skipped until it is loaded.
+// ---- add-on version matrix (same rules as libs/versions.py) -----------------
+function normalizeVersion(value) {
+  const v = String(value == null ? "" : value).trim().replace(/^--version[=\s]+/, "");
+  return /^[vV]\d/.test(v) ? v.slice(1) : v;
+}
+function versionNumbers(v) {
+  const m = normalizeVersion(v).match(/^\d+(\.\d+)*/);
+  return m ? m[0].split(".").map(Number) : [];
+}
+function compareVersions(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] || 0) - (b[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+function versionMatches(declared, value) {
+  const d = normalizeVersion(declared), v = normalizeVersion(value);
+  return !!d && (v === d || v.startsWith(d + "."));
+}
+// The declared versions of `field` in version matrix `versions`, newest first.
+function versionSuggestions(versions, field) {
+  return ((versions || {})[field] || []).map((e) => e.version).filter(Boolean).map(String);
+}
+// Why add-on config `cfg` falls outside version matrix `versions`, as sentences (see libs/versions.py issues()).
+function versionIssues(versions, cfg, cluType, cluRel, osVariants) {
+  const out = [];
+  const kube = /^v?\d+\.\d+/.test(String(cluRel || "").trim()) ? versionNumbers(cluRel).slice(0, 2) : [];
+  Object.keys(versions || {}).sort().forEach((field) => {
+    const value = (cfg || {})[field];
+    if (value === undefined || value === null || value === "") return;
+    const entry = (versions[field] || []).find((e) => versionMatches(String(e.version || ""), String(value)));
+    if (!entry) {
+      out.push(`${field} '${value}' is not in the version matrix (${versionSuggestions(versions, field).join(", ") || "none declared"})`);
+      return;
+    }
+    const supported = entry.kubernetes;
+    if (supported && cluType) {
+      if (!(cluType in supported)) {
+        out.push(`${field} ${entry.version} is not declared for clu_type '${cluType}' (declared: ${Object.keys(supported).sort().join(", ")})`);
+      } else if (kube.length) {
+        const rng = supported[cluType] || {};
+        const low = versionNumbers(rng.min || "").slice(0, 2), high = versionNumbers(rng.max || "").slice(0, 2);
+        if ((low.length && compareVersions(kube, low) < 0) || (high.length && compareVersions(kube, high) > 0)) {
+          out.push(`${field} ${entry.version} supports Kubernetes ${rng.min || "any"}–${rng.max || "any"} on ${cluType}, the kcluster's clu_rel is '${cluRel}'`);
+        }
+      }
+    }
+    if (entry.os && entry.os.length) {
+      [...new Set(osVariants || [])].sort().forEach((v) => {
+        if (!entry.os.includes(v)) out.push(`${field} ${entry.version} is not declared for VM_OSVARIANT '${v}' (declared: ${entry.os.join(", ")})`);
+      });
+    }
+  });
+  return out;
+}
+
+// Gives each version field of add-on schema `sc` on `form` a list of the versions its matrix declares.
+function attachVersionSuggestions(form, sc) {
+  const versions = (sc.capabilities && sc.capabilities.versions) || {};
+  form.querySelectorAll("input[data-outpath]").forEach((input) => {
+    const name = input._field && input._field.name;
+    const list = versionSuggestions(versions, name);
+    if (!list.length) return;
+    const dl = el("datalist");
+    dl.id = "versions-" + name;
+    list.forEach((v) => { const o = el("option"); o.value = v; dl.appendChild(o); });
+    form.appendChild(dl);
+    input.setAttribute("list", dl.id);
+  });
+}
+
 function lintLab(model) {
   const errors = [], warnings = [];
   const items = model.items;
@@ -514,6 +586,19 @@ function lintLab(model) {
     }
   });
   unknown.forEach((n) => errors.push("Add-on " + n + " is not installed on this lab-builder."));
+
+  addons.forEach((a) => {
+    const sc = a.comp && state.schemaCache[a.comp];
+    const versions = sc && sc.capabilities && sc.capabilities.versions;
+    if (!versions || !Object.keys(versions).length) return;
+    const t = a.parent && byId[a.parent];
+    const osOf = (n) => n.cfg.VM_OSVARIANT || model.common.VM_OSVARIANT || "";
+    const where = t ? " on " + (t.type === "node" ? "VM " : "Kubernetes cluster ") + t.name : "";
+    const hosts = !t ? [] : t.type === "node" ? [t] : nodes.filter((n) => n.parent === t.id);
+    const cluster = t && t.type === "cluster" ? t.cfg : {};
+    versionIssues(versions, model.addonCfg[label(a)] || {}, cluster.clu_type || "", cluster.clu_rel || "",
+      hosts.map(osOf).filter(Boolean)).forEach((w) => warnings.push("Add-on " + label(a) + where + ": " + w + "."));
+  });
 
   const sections = new Set(addons.map(label));
   sections.forEach((sec) => {
@@ -816,6 +901,7 @@ async function openEditor(id) {
       kind = "Add-on"; title = item.section; desc = sc.description || "";
       layers = (sc.capabilities && sc.capabilities.layers) || [];
       walk(sc, form, []);
+      attachVersionSuggestions(form, sc);
       const frag = m.addonCfg[item.section] || {};
       form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
     }
@@ -1410,7 +1496,7 @@ function renderIssues() {
   r.warnings.forEach((t) => box.appendChild(el("li", "issue warn", t)));
   box.hidden = !errors.length && !r.warnings.length;
   const lock = serverLock();
-  [["#downloadBtn", ""], ["#saveBtn", lock], ["#createBtn", lock]].forEach(([b, why]) => {
+  [["#downloadBtn", ""], ["#sendBtn", ""], ["#saveBtn", lock], ["#createBtn", lock]].forEach(([b, why]) => {
     const btn = $(b);
     if (!btn) return;
     btn.disabled = errors.length > 0 || !!why;
@@ -1514,6 +1600,118 @@ async function saveLab() {
     // findable (reported live 2026-09-01: the toast never said where).
     toast("Saved: " + (r.path || r.saved));
   } catch (e) { toast("Save error: " + e.message); }
+}
+
+// ---- URL prefill and embedding (Rodeo Builder hand-off) --------------------
+// ?addons=a,b      puts those add-ons on the canvas (install_ prefix optional)
+// ?lab=<base64url> opens that lab definition (JSON)
+// ?embed=1&origin=<origin>  inside an iframe: "Send this lab to <origin>" posts
+//   {type: "labinabox:lab", lab} to the parent, with every password field as a
+//   "??<field name>" placeholder; {type: "labinabox:load", lab} from that origin
+//   opens a lab; login actions are hidden.
+const SENT_ORIGINS_KEY = "labbuilder.sendOrigins";
+
+// The parent origin to hand labs to, or "" when not embedded or `origin` is not a plain http(s) origin.
+function embedOrigin(search, framed) {
+  const q = new URLSearchParams(search);
+  if (q.get("embed") !== "1" || !framed) return "";
+  try {
+    const u = new URL(q.get("origin") || "");
+    return (u.protocol === "https:" || u.protocol === "http:") && u.origin === q.get("origin") ? u.origin : "";
+  } catch (e) { return ""; }
+}
+
+// The lab definition in base64url `text` (JSON).
+function decodeLabParam(text) {
+  const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  return parseLab(new TextDecoder().decode(bytes));
+}
+
+// Names of every field of type "password" in schema objects `schemas`.
+function passwordFields(schemas) {
+  const names = new Set();
+  const visit = (o) => {
+    if (Array.isArray(o)) { o.forEach(visit); return; }
+    if (!o || typeof o !== "object") return;
+    if (o.type === "password" && typeof o.name === "string") names.add(o.name);
+    Object.values(o).forEach(visit);
+  };
+  schemas.forEach(visit);
+  return names;
+}
+
+// A copy of `lab` with every non-empty value of a key in `names` replaced by "??<key>".
+function withSecretPlaceholders(lab, names) {
+  const copy = (o) => {
+    if (Array.isArray(o)) return o.map(copy);
+    if (!o || typeof o !== "object") return o;
+    const out = {};
+    Object.entries(o).forEach(([k, v]) => {
+      out[k] = names.has(k) && v !== "" && v != null && typeof v !== "object" && !String(v).startsWith("??")
+        ? "??" + k : copy(v);
+    });
+    return out;
+  };
+  return copy(lab);
+}
+
+// Puts add-ons `names` on the canvas; returns the names no add-on matches.
+async function prefillAddons(names) {
+  const unknown = [];
+  for (const raw of names) {
+    const comp = state.components.find((c) => c.name === raw || c.name === "install_" + raw);
+    if (!comp) { unknown.push(raw); continue; }
+    if (state.model.items.some((i) => i.type === "addon" && i.comp === comp.name)) continue;
+    const item = await createItem({ type: "addon", comp: comp.name });
+    item.parent = null;
+    state.model.items.push(item);
+  }
+  renderCanvas();
+  refreshLab();
+  return unknown;
+}
+
+async function applyUrlParams() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("lab")) {
+    try { loadLab(decodeLabParam(q.get("lab"))); toast("Opened the lab from the link"); }
+    catch (e) { toast("Cannot open the lab from the link: " + e.message); }
+  }
+  const names = (q.get("addons") || "").split(",").map((n) => n.trim()).filter(Boolean);
+  if (names.length) {
+    const unknown = await prefillAddons(names);
+    if (unknown.length) toast("Unknown add-ons, not added: " + unknown.join(", "));
+  }
+}
+
+async function sendLab(origin) {
+  if ($("#sendBtn").disabled) return;
+  let sent = [];
+  try { sent = JSON.parse(localStorage.getItem(SENT_ORIGINS_KEY) || "[]"); } catch (e) { sent = []; }
+  if (!sent.includes(origin)) {
+    if (!window.confirm(`Send this lab to ${origin}? Passwords are sent as ??placeholders.`)) return;
+    try { localStorage.setItem(SENT_ORIGINS_KEY, JSON.stringify(sent.concat(origin))); } catch (e) { /* ignore */ }
+  }
+  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp).map((i) => i.comp));
+  await Promise.all([loadBase(), ...[...comps].map((c) => state.schemaCache[c] || loadAddonSchema(c))]);
+  const names = passwordFields([state.base, ...Object.values(state.schemaCache)]);
+  window.parent.postMessage({ type: "labinabox:lab", lab: withSecretPlaceholders(state.lab, names) }, origin);
+  toast("Sent to " + origin);
+}
+
+function setupEmbed(origin) {
+  ["#saveBtn", "#savedBtn", "#createBtn", "#credBtn"].forEach((b) => { const btn = $(b); if (btn) btn.hidden = true; });
+  const btn = el("button", "btn primary", "Send this lab to " + new URL(origin).host);
+  btn.id = "sendBtn"; btn.type = "button"; btn.title = "Sends this lab to " + origin;
+  btn.addEventListener("click", () => sendLab(origin).catch((e) => toast("Send error: " + e.message)));
+  $("#downloadBtn").after(btn);
+  window.addEventListener("message", (ev) => {
+    if (ev.origin !== origin || ev.source !== window.parent || !ev.data || ev.data.type !== "labinabox:load") return;
+    if (!ev.data.lab || typeof ev.data.lab !== "object") { toast("The lab sent by " + origin + " is not a lab definition"); return; }
+    loadLab(ev.data.lab);
+    toast("Opened the lab from " + origin);
+  });
 }
 
 // ---- saved labs (login) ---------------------------------------------------------
@@ -1772,10 +1970,13 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   if (window.LAB_STATIC) { $("#credBtn").disabled = true; $("#credBtn").title = serverLock(); }
+  const embed = embedOrigin(location.search, window.parent !== window);
+  if (embed) setupEmbed(embed);
   renderCanvas();
   refreshLab();
   if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
-  loadComponents().catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
+  loadComponents().then(applyUrlParams)
+    .catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
   loadBase().then(() => { renderCanvas(); renderIssues(); }).catch(() => { /* shown on first edit */ });
   loadStatus();
 });

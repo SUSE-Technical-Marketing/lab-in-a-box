@@ -1,0 +1,152 @@
+<p>An add-on installs one piece of software into a lab: on a <strong>Kubernetes cluster</strong> (a kcluster), on a <strong>VM</strong> or on an existing machine. It is <strong>one executable, in any language</strong>, and <code>setup_lab.py</code>, the preflight check and the web UI use it only through its command-line contract. This guide is that contract, and what to do to add one.</p>
+<p>Two complete examples live in <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/tree/main/examples/addons/"><code>examples/addons/</code></a>: <code>install_example_chart.py</code> (Python, a Helm chart on a kcluster) and <code>install_example_motd.sh</code> (bash, a file on a VM). Copy one to start.</p>
+<hr />
+<h2 id="contents">Contents</h2>
+<ul>
+<li><a href="#how-a-lab-uses-an-add-on">How a lab uses an add-on</a></li>
+<li><a href="#naming-and-deployment">Naming and deployment</a></li>
+<li><a href="#the-contract">The contract</a></li>
+<li><a href="#the-schema">The schema</a></li>
+<li><a href="#writing-it-in-python">Writing it in Python</a></li>
+<li><a href="#writing-it-in-another-language">Writing it in another language</a></li>
+<li><a href="#reading-its-configuration">Reading its configuration</a></li>
+<li><a href="#rules">Rules</a></li>
+<li><a href="#testing">Testing</a></li>
+<li><a href="#what-to-update-with-a-new-add-on">What to update with a new add-on</a></li>
+</ul>
+<hr />
+<h2 id="how-a-lab-uses-an-add-on">How a lab uses an add-on</h2>
+<p>A lab definition lists an add-on by its name in an <code>addons</code> array, and configures it in a top-level section of the same name:</p>
+<pre><code class="language-json">{
+  "kclusters": { "k1": { "clu_type": "rke2", "clu_rel": "stable", "mydomain": "lab", "addons": ["example_chart"] } },
+  "nodes": {
+    "vm1.lab": { "kcluster": "k1", "addons": ["example_motd"] },
+    "vm2.lab": { "addons": [{ "example_motd": { "example_motd_message": "vm2's own message" } }] }
+  },
+  "example_chart": { "example_chart_replicas": 2 },
+  "example_motd":  { "example_motd_message": "Welcome to the lab" }
+}
+</code></pre>
+<p>An add-on is called at these points:</p>
+<ol>
+<li><strong>Discovery.</strong> The web UI and the preflight run <code>install_&lt;name&gt; --schema json</code> to learn its fields and capabilities. The output is cached per file (in <code>$LAB_ADDON_CACHE</code>, else <code>~/.cache/lab_creation/addons.json</code>) and refreshed when the file changes. It must answer within 120 seconds.</li>
+<li><strong>Preflight.</strong> Before any VM is created, <code>setup_lab.py</code> checks where each add-on is placed against its capabilities, and runs <code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code>. A non-zero exit stops the lab, with the add-on's <code>[ERROR]</code> lines as the reasons.</li>
+<li><strong>Install.</strong> After the VMs and Kubernetes clusters are up, <code>setup_lab.py</code> runs <code>install_&lt;name&gt; &lt;lab.json&gt;</code>:
+   <ul>
+   <li>for a kcluster add-on, once per kcluster that lists it, with <code>$clu_name</code> set to the kcluster and <code>$_vm_name</code> to one of its nodes (its <code>mgm_node</code>, else its first node);</li>
+   <li>for a VM add-on, once per node that lists it, with <code>$_vm_name</code> set to that node.</li>
+   </ul>
+   The lab definition is the first argument. A non-zero exit is reported in the lab summary as <code>FAILED (exit N)</code>; the other add-ons still run.</li>
+</ol>
+<p>The add-on reaches its node over SSH as root (<code>ssh root@$_vm_name</code>); the automation VM's key is already authorised there.</p>
+<h2 id="naming-and-deployment">Naming and deployment</h2>
+<ul>
+<li>The file is <code>scripts/install_&lt;name&gt;</code>, with or without an extension (<code>install_&lt;name&gt;.py</code>, <code>install_&lt;name&gt;.sh</code>, a compiled binary), and executable. <code>&lt;name&gt;</code> is what labs write in <code>addons</code>; use the software's name, lower case, with <code>_</code> between words.</li>
+<li><code>install_automation_node_scripts.sh</code> deploys it as <code>/usr/local/bin/install_&lt;name&gt;</code>, without the extension, and replaces <code>__LABVERSION__</code> in a text file with the lab-in-a-box version.</li>
+<li>Files it needs at run time (manifests, configuration templates) go in <code>templates/addons/&lt;name&gt;/</code>; they are deployed to <code>/usr/share/lab_creation/templates/addons/&lt;name&gt;/</code> (<code>_templ_addons_loc</code> in <code>/etc/lab_creation.defaults</code>).</li>
+</ul>
+<h2 id="the-contract">The contract</h2>
+<table>
+<thead><tr><th>Command</th><th>Must</th></tr></thead>
+<tbody>
+<tr><td><code>install_&lt;name&gt; --schema json</code></td><td>exit 0 and print one JSON object: the schema (below). <code>--schema yaml</code> prints the same as YAML; JSON is valid YAML, so printing JSON is enough. <code>--input-definition</code> is an alias of <code>--schema</code>.</td></tr>
+<tr><td><code>install_&lt;name&gt; --capabilities</code></td><td>exit 0 and print the schema's <code>capabilities</code> object as JSON.</td></tr>
+<tr><td><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code></td><td>check its own section of the lab; print one <code>[ERROR] …</code> line per problem and exit with a non-zero code when there is one, else exit 0. <code>[WARNING] …</code> lines do not change the exit code. Print nothing else.</td></tr>
+<tr><td><code>install_&lt;name&gt; --version</code></td><td>exit 0 and print <code>install_&lt;name&gt; &lt;version&gt;</code>.</td></tr>
+<tr><td><code>install_&lt;name&gt; --help</code></td><td>exit 0 and print its usage and fields.</td></tr>
+<tr><td><code>install_&lt;name&gt; &lt;lab.json&gt;</code></td><td>install it (see <a href="#how-a-lab-uses-an-add-on">above</a>); exit 0 on success, non-zero on failure.</td></tr>
+</tbody>
+</table>
+<h2 id="the-schema">The schema</h2>
+<pre><code class="language-json">{
+  "schema_version": "1.0",
+  "addon": "example_chart",
+  "section": "example_chart",
+  "description": "podinfo web application installed with Helm",
+  "fields": [
+    {"name": "example_chart_ns", "type": "namespace", "required": false, "default": "podinfo",
+     "description": "Namespace"},
+    {"name": "example_chart_replicas", "type": "integer", "required": false, "default": "1", "min": 1, "max": 5,
+     "description": "Number of replicas"}
+  ],
+  "capabilities": {
+    "targets": ["container"], "layers": ["kubernetes"], "requires_kubernetes": ["rke2", "k3s"],
+    "aux_services": [], "versions": {}
+  }
+}
+</code></pre>
+<ul>
+<li><code>section</code>: the top-level key of its configuration in a lab. <code>description</code>: one line, shown in the web UI.</li>
+<li>Each field has <code>name</code>, <code>type</code>, <code>required</code> (true or false), and optionally <code>default</code>, <code>description</code>, <code>enum</code> (the allowed values; the web UI shows a list), <code>pattern</code> (a regular expression), <code>min</code> and <code>max</code> (numbers).</li>
+<li><code>type</code> is one of <code>string</code>, <code>integer</code>, <code>boolean</code>, <code>password</code>, <code>port</code>, <code>url</code>, <code>namespace</code>, <code>version</code>, <code>array</code>, <code>object</code>. The web UI shows a number box for <code>integer</code> and <code>port</code>, true/false for <code>boolean</code>, and masks <code>password</code>; a <code>password</code> value is never sent when the lab-builder hands a lab to another page.</li>
+<li><code>capabilities</code>:
+  <ul>
+  <li><code>targets</code>: where it may be placed: <code>container</code> (on a kcluster), <code>vm</code> (a VM this lab creates), <code>baremetal</code> (an existing machine, <code>existing</code> nodes). The preflight refuses any other placement.</li>
+  <li><code>layers</code>: how it installs: <code>kubernetes</code>, <code>standalone-container</code> (podman on a host), <code>os-native</code> (packages and files). The web UI groups add-ons by it.</li>
+  <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it supports (<code>rke2</code>, <code>k3s</code>), or <code>null</code>.</li>
+  <li><code>aux_services</code>: lab services it needs on the automation VM (e.g. <code>pxe</code>).</li>
+  <li><code>versions</code>: optional version matrix; see <a href="index.html#add-on-version-matrix">Add-on version matrix</a>.</li>
+  </ul></li>
+</ul>
+<h2 id="writing-it-in-python">Writing it in Python</h2>
+<p>A Python add-on gets the whole contract from <code>libs/addon_common.py</code>. It writes three things: a header comment block (the fields), a <code>PLUGIN</code> dict (the capabilities) and a <code>main()</code> that calls <code>handle_common_args()</code> first. See <code>examples/addons/install_example_chart.py</code>.</p>
+<pre><code class="language-python">#!/usr/bin/env python3.11
+# JSON section: "example_chart" — podinfo web application installed with Helm
+#
+#   example_chart_ns       : [OPTIONAL] Namespace            (default: podinfo)
+#   example_chart_version  : [OPTIONAL] Helm chart version   (empty = latest, e.g. 6.15.0)
+#   example_chart_replicas : [OPTIONAL] Number of replicas   (default: 1) (min: 1) (max: 5)
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "example_chart",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": ["rke2", "k3s"],
+    "aux_services": [],
+}
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ...
+</code></pre>
+<p>The header block starts at the <code>JSON section: "&lt;section&gt;" — &lt;description&gt;</code> line and ends at the first line that is not a comment. Each field is a line <code>#   &lt;name&gt; : &lt;description&gt;</code>; a following comment line continues it. Inside a field:</p>
+<ul>
+<li><code>[MANDATORY]</code> or <code>[OPTIONAL]</code>; a <code># MANDATORY</code> line makes every following field required, until a <code># OPTIONAL</code> line.</li>
+<li><code>(default: value)</code>, <code>(options: a, b, c)</code> (the <code>enum</code>), <code>(pattern: regex)</code>, <code>(min: N)</code>, <code>(max: N)</code>.</li>
+<li>The type comes from the name's suffix, for example: <code>_ns</code>/<code>_namespace</code> namespace, <code>_version</code>/<code>_ver</code> version, <code>_url</code> url, <code>_port</code> port, <code>_pass</code>/<code>_pwd</code>/<code>_password</code> password, <code>_enabled</code> boolean, <code>_replicas</code> integer; anything else is a string.</li>
+</ul>
+<p><code>validate_fn</code> receives an <code>addon_common.Validator</code>: <code>vreq(section, field)</code>, <code>vns(section)</code>, <code>vver(section)</code>, <code>vurl(section)</code>, <code>vbool(section, field)</code> add the matching <code>[ERROR]</code> lines, and you can append your own to <code>v.errors</code>. The version matrix's warnings are added for you.</p>
+<p>Use the helpers in <code>libs/lab_creation.py</code> to work on nodes: <code>ssh_run(host, cmd)</code>, <code>setup_helm(host, clu_name)</code>, <code>helm_repo_add(host, name, url)</code>, <code>die(msg)</code>; and <code>versions.helm_version_flag(value)</code> for a chart version field.</p>
+<h2 id="writing-it-in-another-language">Writing it in another language</h2>
+<p>Any executable works: it implements the commands of <a href="#the-contract">the contract</a> itself and prints the schema JSON. See <code>examples/addons/install_example_motd.sh</code>, which uses <code>jq</code> (a dependency of the automation VM) to read the lab definition.</p>
+<h2 id="reading-its-configuration">Reading its configuration</h2>
+<ul>
+<li>Its configuration is the lab's top-level <code>&lt;section&gt;</code> object. A missing field means its default.</li>
+<li>A node may override it: an <code>addons</code> entry can be <code>{"&lt;name&gt;": {...}}</code> instead of <code>"&lt;name&gt;"</code>, and those keys replace the section's for that node. In Python, <code>k8s.addon_node_config(definition, "&lt;name&gt;", vm_name)</code> returns the merged result; in jq: <code>(.&lt;section&gt; // {}) + ([.nodes[$vm].addons[]? | objects | .&lt;section&gt; // empty] | add // {})</code>.</li>
+<li>Kubernetes cluster settings: <code>k8s.load_kclu_vars(definition, clu_name)</code> (<code>clu_type</code>, <code>clu_rel</code>, <code>mydomain</code>, …). A service's host name is usually <code>&lt;short name&gt;.&lt;clu_name&gt;.&lt;mydomain&gt;</code>.</li>
+<li>Credentials for external services (SCC, registries) come from the credential store with <code>addon_common.resolve_credential()</code>; the lab's own fields are the fallback.</li>
+</ul>
+<h2 id="rules">Rules</h2>
+<ul>
+<li><strong>Idempotent.</strong> Running it twice gives the same result: <code>helm upgrade --install</code>, never <code>helm install</code>; <code>kubectl apply</code>; create only what is missing.</li>
+<li><strong>Wait on a condition, not a delay.</strong> <code>kubectl rollout status</code>, <code>kubectl wait</code>, or a polling loop with a timeout, not a fixed <code>sleep</code>.</li>
+<li><strong>Secrets</strong> are <code>password</code> fields or credential-store entries; never default values, never printed.</li>
+<li><strong>Placement</strong> is declared, not guessed: the preflight enforces <code>targets</code> and <code>requires_kubernetes</code>, so the install run can rely on them.</li>
+<li><strong>Quote</strong> every lab value that goes into a shell command (<code>shlex.quote</code> in Python).</li>
+<li>Comments and help text say what the add-on does and needs, not its history.</li>
+</ul>
+<h2 id="testing">Testing</h2>
+<ul>
+<li><code>check_addon.py &lt;install_&lt;name&gt;&gt;</code> (in <code>scripts/</code>, deployed to <code>/usr/local/bin</code>) checks the contract: the name, <code>--schema json</code> and its fields and capabilities (including the version matrix), <code>--capabilities</code>, <code>--version</code>, <code>--help</code> and <code>--validate</code>. It prints PASS or FAIL per check (<code>--quiet</code>: only failures) and exits 1 on any failure. The test suite runs it on every add-on in <code>scripts/</code>. In a repository checkout, put <code>scripts/</code> on <code>PATH</code> first (<code>PATH=$PWD/scripts:$PATH</code>), since a Python add-on reads <code>lab_schema</code> from beside it or from <code>PATH</code>.</li>
+<li>Add a check for what it installs in <code>tests/checks/NN_&lt;name&gt;.sh</code> (with SSH and the tools it calls mocked, like the existing ones) and run <code>bash tests/run_tests.sh</code>; every check runs in its own podman container.</li>
+<li>Try it on a lab: list it in a test lab and run <code>setup_lab.py &lt;lab.json&gt;</code>; <code>setup_lab.py --debug</code> shows its output live.</li>
+</ul>
+<h2 id="what-to-update-with-a-new-add-on">What to update with a new add-on</h2>
+<ul>
+<li>A row in the <a href="index.html#available-addons">Available addons</a> table, on the English page and every translation.</li>
+<li>Its fields in the header block or schema, with their descriptions: the web UI, <code>--help</code> and the docs are built from them, and the web UI needs no change of its own.</li>
+<li>A version matrix when it installs a versioned product.</li>
+<li>Its templates in <code>templates/addons/&lt;name&gt;/</code>, and a check in <code>tests/checks/</code>.</li>
+</ul>
