@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "nv_rel": {
+   "default": "neuvector",
+   "required": false,
+   "type": "string"
+  },
+  "nv_repo_url": {
+   "default": "https://neuvector.github.io/neuvector-helm",
+   "required": false,
+   "type": "url"
+  },
+  "nv_shorthn": {
+   "default": "neuvector",
+   "required": false,
+   "type": "string"
+  },
+  "nv_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:neuvector",
+ "version": "1.0"
+}

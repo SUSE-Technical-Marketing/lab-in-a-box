@@ -1,0 +1,51 @@
+{
+ "fields": {
+  "grafana_admin_password": {
+   "default": "admin\" \u2014 CHANGE THIS; Grafana forces a change on first login only if this is left at the literal default \"admin",
+   "required": false,
+   "type": "password"
+  },
+  "grafana_admin_user": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "grafana_dashboards": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "grafana_image": {
+   "default": "\"docker.io/grafana/grafana\" \u2014 the standard upstream image; there is no SUSE-branded Grafana image, same reasoning as install_prometheus.py's own grafana_image-equivalent field",
+   "required": false,
+   "type": "string"
+  },
+  "grafana_import_smlm_dashboard": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "grafana_port": {
+   "default": "3000",
+   "required": false,
+   "type": "port"
+  },
+  "grafana_prometheus_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "grafana_smlm_job_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "grafana_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:grafana",
+ "version": "1.0"
+}

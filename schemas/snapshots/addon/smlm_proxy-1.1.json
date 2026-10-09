@@ -1,0 +1,116 @@
+{
+ "fields": {
+  "smlm_proxy_admin_pass": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "smlm_proxy_admin_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_chart": {
+   "default": "suse/multi-linux-manager/5.2/proxy-helm",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_email": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_fqdn": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_img_repository": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_img_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ingress_class": {
+   "default": "traefik",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_lh_overprovision": {
+   "default": "500",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_max_cache": {
+   "default": "2048",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ns": {
+   "default": "uyuni-proxy",
+   "required": false,
+   "type": "namespace"
+  },
+  "smlm_proxy_registry": {
+   "default": "registry.suse.com",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_rel": {
+   "default": "uyuni-proxy",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_scc_password": {
+   "default": "",
+   "required": true,
+   "type": "password"
+  },
+  "smlm_proxy_scc_user": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_server": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "smlm_proxy_server_node": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_server_ns": {
+   "default": "uyuni-server",
+   "required": false,
+   "type": "namespace"
+  },
+  "smlm_proxy_shorthn": {
+   "default": "proxy",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_ssh_port": {
+   "default": "8022",
+   "required": false,
+   "type": "port"
+  },
+  "smlm_proxy_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "smlm_proxy_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:smlm_proxy",
+ "version": "1.1"
+}

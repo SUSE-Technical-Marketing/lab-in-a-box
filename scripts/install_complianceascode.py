@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "complianceascode" — configurable keys:
 #   complianceascode_version : [OPTIONAL] operator version tag (empty = latest, e.g. "0.1.69")
 #   complianceascode_ns      : [OPTIONAL] namespace (default: compliance-operator)
@@ -12,7 +14,7 @@
 #   complianceascode_repo_url: [OPTIONAL] Helm repo URL
 #                              (default: https://openshift.github.io/compliance-operator)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "complianceascode",

@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "nv_demo_helm_name": {
+   "default": "nvdemohelm",
+   "required": false,
+   "type": "string"
+  },
+  "nv_demo_helm_ns": {
+   "default": "demo",
+   "required": false,
+   "type": "namespace"
+  },
+  "nv_demo_helm_tag": {
+   "default": "0.4",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:nv-demo-helm",
+ "version": "1.0"
+}

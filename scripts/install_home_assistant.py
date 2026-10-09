@@ -3,15 +3,17 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "home_assistant"
 #   home_assistant_version : Helm chart version (empty = latest, which follows Home Assistant's releases through the chart's CI)
-#   home_assistant_ns      : namespace (default home-assistant)
-#   home_assistant_shorthn : hostname prefix (default home-assistant)
-#   home_assistant_rel     : Helm repo alias (default pajikos)
-#   home_assistant_repo_url: Helm repo URL (default http://pajikos.github.io/home-assistant-helm-chart/)
-#   home_assistant_storage_size  : PersistentVolumeClaim size (default 5Gi)
-#   home_assistant_storage_class : StorageClass name (default: cluster default)
-#   home_assistant_image_tag     : Home Assistant image tag (default 2026.7.0). The tag is pinned below stable, see setup_home_assistant().
+#   home_assistant_ns      : namespace (default: home-assistant)
+#   home_assistant_shorthn : hostname prefix (default: home-assistant)
+#   home_assistant_rel     : Helm repo alias (default: pajikos)
+#   home_assistant_repo_url: Helm repo URL (default: http://pajikos.github.io/home-assistant-helm-chart/)
+#   home_assistant_storage_size  : PersistentVolumeClaim size (default: 5Gi)
+#   home_assistant_storage_class : StorageClass name; when unset, the cluster's default
+#   home_assistant_image_tag     : Home Assistant image tag (default: 2026.7.0). The tag is pinned below stable, see setup_home_assistant().
 #
 # Home Assistant has no official Helm chart. This addon uses pajikos/home-assistant-helm-chart, a community chart that follows each
 # Home Assistant release, and it runs the official image (ghcr.io/home-assistant/home-assistant).

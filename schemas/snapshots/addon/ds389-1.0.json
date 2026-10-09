@@ -1,0 +1,56 @@
+{
+ "fields": {
+  "ds389_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_basedn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_dm_password": {
+   "default": "generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "ds389_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ldap_nodeport": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ldaps_nodeport": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "ds389_storage_class": {
+   "default": "the cluster's own default",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:ds389",
+ "version": "1.0"
+}

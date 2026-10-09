@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "deepseek_model": {
+   "default": "deepseek-r1:7b",
+   "required": false,
+   "type": "string"
+  },
+  "deepseek_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "deepseek_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "deepseek_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "deepseek_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "deepseek_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:deepseek",
+ "version": "1.0"
+}

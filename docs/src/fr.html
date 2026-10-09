@@ -589,6 +589,16 @@ commune par laquelle passe chaque utilisateur d'une liste <code>addons[]</code>.
 <pre><code class="language-shell">install_longhorn --schema
 setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
 </code></pre>
+<h3 id="schema-versions">Versions de schéma et migration</h3>
+<p>Chaque schéma a une version, <code>MAJOR.MINOR</code> : la définition du lab, la section de chaque add-on et chaque fichier de configuration (<code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>, le JSON harvester-cluster et les fichiers d'identifiants). Un nouveau <code>MAJOR</code> signifie qu'un fichier écrit pour la version précédente peut ne pas fonctionner, ou faire autre chose. <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/schemas/compatibility.json"><code>schemas/compatibility.json</code></a> liste chaque version et ce qui a changé.</p>
+<p>Une définition de lab enregistre les versions pour lesquelles elle a été écrite dans son objet <code>schema_versions</code> de premier niveau ; l'interface web l'écrit. Une définition qui n'en enregistre aucune compte comme version 1.0 de chaque schéma.</p>
+<pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
+</code></pre>
+<p><code>setup_lab.py</code> et <code>setup_vm.py</code> s'arrêtent quand une définition de lab a encore besoin d'une migration, et listent les changements. <code>migrate_config.py</code> les applique :</p>
+<pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
+migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
+</code></pre>
+<p>Le fichier original n'est jamais modifié. <code>migrate_config.py</code> migre aussi <code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>, les fichiers JSON harvester-cluster et les fichiers d'identifiants ; ceux-ci enregistrent leur version dans une ligne <code># Schema version:</code> ou une clé <code>schema_version</code>.</p>
 <p align="right"><a href="#top">↑ retour en haut</a></p>
 
 <hr />
@@ -864,6 +874,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Détruit toutes les VM d'un laboratoire</td>
+</tr>
+<tr>
+<td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
+<td>Met une définition de lab ou un fichier de configuration aux versions de schéma actuelles (<a href="#schema-versions">Versions de schéma et migration</a>)</td>
 </tr>
 </tbody>
 </table>

@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "complianceascode_ns": {
+   "default": "compliance-operator",
+   "required": false,
+   "type": "namespace"
+  },
+  "complianceascode_profile": {
+   "default": "cis",
+   "required": false,
+   "type": "string"
+  },
+  "complianceascode_rel": {
+   "default": "compliance-operator",
+   "required": false,
+   "type": "string"
+  },
+  "complianceascode_repo_url": {
+   "default": "https://openshift.github.io/compliance-operator",
+   "required": false,
+   "type": "url"
+  },
+  "complianceascode_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:complianceascode",
+ "version": "1.0"
+}

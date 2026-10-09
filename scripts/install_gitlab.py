@@ -9,30 +9,32 @@
 # root password is written to /etc/gitlab/initial_root_password inside the container. The script reads that file back, so the
 # password it prints is the one in use.
 #
+# Schema version: 1.1
+#
 # JSON section: "gitlab"
-#   gitlab_deployment    : "podman" (default) runs one Omnibus container on the target host. "kubernetes" deploys the official
-#                          Helm chart once, to the server node of the cluster.
+#   gitlab_deployment    : "podman" runs one Omnibus container on the target host. "kubernetes" deploys the official
+#                          Helm chart once, to the server node of the cluster. (default: podman)
 #
 # podman fields
-#   gitlab_image         : container image (default gitlab/gitlab-ce, the upstream Omnibus CE image)
-#   gitlab_version       : image tag (default latest)
-#   gitlab_hostname      : external_url hostname (default: the node's own hostname). GitLab uses it in every link and redirect. A later
+#   gitlab_image         : container image, the upstream Omnibus CE image (default: gitlab/gitlab-ce)
+#   gitlab_version       : image tag (default: latest)
+#   gitlab_hostname      : external_url hostname; when unset, the node's own hostname. GitLab uses it in every link and redirect. A later
 #                          change needs gitlab-ctl reconfigure.
-#   gitlab_https_port    : host port for container port 443 (default 443)
-#   gitlab_http_port     : host port for container port 80 (default 80)
-#   gitlab_ssh_port      : host port for container port 22 (default 2222). Port 22 is normally the host's own sshd.
+#   gitlab_https_port    : host port for container port 443 (default: 443)
+#   gitlab_http_port     : host port for container port 80 (default: 80)
+#   gitlab_ssh_port      : host port for container port 22 (default: 2222). Port 22 is normally the host's own sshd.
 #   gitlab_root_password : initial root password. GitLab applies it only on the first boot of the container. When it is unset, the
 #                          script reads the password GitLab generated in /etc/gitlab/initial_root_password. That file expires after 24 hours.
 #   gitlab_account       : name of an encrypted credential file of kind "gitlab" under /etc/lab_creation/credentials/ to read
 #                          gitlab_root_password from. It is auto-discovered when exactly one such file exists and this is unset.
 #
 # kubernetes fields
-#   gitlab_rel           : Helm repo alias (default gitlab)
-#   gitlab_repo_url      : Helm repo URL (default https://charts.gitlab.io/)
+#   gitlab_rel           : Helm repo alias (default: gitlab)
+#   gitlab_repo_url      : Helm repo URL (default: https://charts.gitlab.io/)
 #   gitlab_chart_version : Helm chart version (empty = latest)
-#   gitlab_namespace     : Kubernetes namespace (default gitlab)
-#   gitlab_edition       : "ce" (default, free and open source) or "ee". The chart default is ee.
-#   gitlab_https         : "true" or "false" (default false). The chart's default TLS uses a public Let's Encrypt certificate through
+#   gitlab_namespace     : Kubernetes namespace (default: gitlab)
+#   gitlab_edition       : "ce" (free and open source) or "ee". The chart's own default is ee. (default: ce)
+#   gitlab_https         : "true" or "false" (default: false). The chart's default TLS uses a public Let's Encrypt certificate through
 #                          cert-manager HTTP-01, which needs a publicly resolvable hostname. Set it to true only for a public domain.
 #   gitlab_cert_manager_email : contact e-mail for the Let's Encrypt issuer. Required when gitlab_https is true.
 #   gitlab_extra_values  : a dict of extra key=value pairs for helm upgrade --install, for settings this addon has no field for,

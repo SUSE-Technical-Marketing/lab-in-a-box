@@ -1,0 +1,56 @@
+{
+ "fields": {
+  "ds389_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_basedn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_dm_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "ds389_image": {
+   "default": "quay.io/389ds/dirsrv:latest",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ldap_nodeport": {
+   "default": "30389",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ldaps_nodeport": {
+   "default": "30636",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_name": {
+   "default": "dirsrv",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_ns": {
+   "default": "ds389",
+   "required": false,
+   "type": "namespace"
+  },
+  "ds389_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ds389_storage_size": {
+   "default": "5Gi",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:ds389",
+ "version": "1.1"
+}

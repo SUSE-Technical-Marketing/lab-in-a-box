@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "ollama" — configurable keys:
 #   ollama_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "0.51.0")
 #   ollama_ns           : [OPTIONAL] namespace (default: ollama)
@@ -12,7 +14,7 @@
 #   ollama_model        : [OPTIONAL] model to pre-pull on startup (default: llama3.2)
 #                         Examples: llama3.2, mistral, phi3, gemma2, qwen2.5
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "ollama",

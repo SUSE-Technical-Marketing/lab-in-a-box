@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "jenkins" — Jenkins CI on Kubernetes via Helm
 #
 #   jenkins_rel      : [OPTIONAL] Helm repo alias                      (default: jenkins)
 #   jenkins_repo_url : [OPTIONAL] Helm repo URL                        (default: https://charts.jenkins.io)
 #   jenkins_version  : [OPTIONAL] Helm chart version                   (empty = latest)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "jenkins",

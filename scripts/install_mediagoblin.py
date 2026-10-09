@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "mediagoblin" — configurable keys:
 #   mediagoblin_ns             : [OPTIONAL] namespace (default: mediagoblin)
 #   mediagoblin_shorthn        : [OPTIONAL] hostname prefix for ingress (default: mediagoblin)

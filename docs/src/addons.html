@@ -10,6 +10,7 @@
 <li><a href="#writing-it-in-python">Writing it in Python</a></li>
 <li><a href="#writing-it-in-another-language">Writing it in another language</a></li>
 <li><a href="#reading-its-configuration">Reading its configuration</a></li>
+<li><a href="#schema-versions">Schema versions</a></li>
 <li><a href="#rules">Rules</a></li>
 <li><a href="#testing">Testing</a></li>
 <li><a href="#what-to-update-with-a-new-add-on">What to update with a new add-on</a></li>
@@ -76,6 +77,7 @@
 }
 </code></pre>
 <ul>
+<li><code>schema_version</code>: the version of this schema, <code>MAJOR.MINOR</code> (see <a href="#schema-versions">Schema versions</a>).</li>
 <li><code>section</code>: the top-level key of its configuration in a lab. <code>description</code>: one line, shown in the web UI.</li>
 <li>Each field has <code>name</code>, <code>type</code>, <code>required</code> (true or false), and optionally <code>default</code>, <code>description</code>, <code>enum</code> (the allowed values; the web UI shows a list), <code>pattern</code> (a regular expression), <code>min</code> and <code>max</code> (numbers).</li>
 <li><code>type</code> is one of <code>string</code>, <code>integer</code>, <code>boolean</code>, <code>password</code>, <code>port</code>, <code>url</code>, <code>namespace</code>, <code>version</code>, <code>array</code>, <code>object</code>. The web UI shows a number box for <code>integer</code> and <code>port</code>, true/false for <code>boolean</code>, and masks <code>password</code>; a <code>password</code> value is never sent when the lab-builder hands a lab to another page.</li>
@@ -91,6 +93,8 @@
 <h2 id="writing-it-in-python">Writing it in Python</h2>
 <p>A Python add-on gets the whole contract from <code>libs/addon_common.py</code>. It writes three things: a header comment block (the fields), a <code>PLUGIN</code> dict (the capabilities) and a <code>main()</code> that calls <code>handle_common_args()</code> first. See <code>examples/addons/install_example_chart.py</code>.</p>
 <pre><code class="language-python">#!/usr/bin/env python3.11
+# Schema version: 1.0
+#
 # JSON section: "example_chart" — podinfo web application installed with Helm
 #
 #   example_chart_ns       : [OPTIONAL] Namespace            (default: podinfo)
@@ -111,11 +115,11 @@ def main():
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
     ...
 </code></pre>
-<p>The header block starts at the <code>JSON section: "&lt;section&gt;" — &lt;description&gt;</code> line and ends at the first line that is not a comment. Each field is a line <code>#   &lt;name&gt; : &lt;description&gt;</code>; a following comment line continues it. Inside a field:</p>
+<p>The <code># Schema version: MAJOR.MINOR</code> line, above the header block, is the schema's <code>schema_version</code>. The header block starts at the <code>JSON section: "&lt;section&gt;" — &lt;description&gt;</code> line and ends at the first line that is not a comment. Each field is a line <code>#   &lt;name&gt; : &lt;description&gt;</code>; a following comment line continues it. Inside a field:</p>
 <ul>
 <li><code>[MANDATORY]</code> or <code>[OPTIONAL]</code>; a <code># MANDATORY</code> line makes every following field required, until a <code># OPTIONAL</code> line.</li>
 <li><code>(default: value)</code>, <code>(options: a, b, c)</code> (the <code>enum</code>), <code>(pattern: regex)</code>, <code>(min: N)</code>, <code>(max: N)</code>.</li>
-<li>A default is the literal value the add-on uses when the field is unset; surrounding quotes are dropped. It must be valid for the field's type (<code>check_addon.py</code> checks integer, port, boolean, namespace, url and version). Explanations go in the description, outside the parentheses. A default the add-on computes, such as a generated password, is described in the text and has no <code>(default: …)</code>.</li>
+<li>A default is the literal value the add-on uses when the field is unset; surrounding quotes are dropped. It must be valid for the field's type (<code>check_addon.py</code> checks integer, port, boolean, namespace, url and version). Explanations go in the description, outside the parentheses. A default the add-on computes, such as a generated password or a value taken from another field, is described in the text ("when unset, …") and has no <code>(default: …)</code>. In a field that holds a JSON object or list, write a sub-key's default as "(X when unset)": a <code>(default: …)</code> there would become the whole field's default.</li>
 <li>The type comes from the name's suffix, for example: <code>_ns</code>/<code>_namespace</code> namespace, <code>_version</code>/<code>_ver</code> version, <code>_url</code> url, <code>_port</code> port, <code>_pass</code>/<code>_pwd</code>/<code>_password</code> password, <code>_enabled</code> boolean, <code>_replicas</code> integer; anything else is a string.</li>
 </ul>
 <p><code>validate_fn</code> receives an <code>addon_common.Validator</code>: <code>vreq(section, field)</code>, <code>vns(section)</code>, <code>vver(section)</code>, <code>vurl(section)</code>, <code>vbool(section, field)</code> add the matching <code>[ERROR]</code> lines, and you can append your own to <code>v.errors</code>. The version matrix's warnings are added for you.</p>
@@ -129,6 +133,17 @@ def main():
 <li>Kubernetes cluster settings: <code>k8s.load_kclu_vars(definition, clu_name)</code> (<code>clu_type</code>, <code>clu_rel</code>, <code>mydomain</code>, …). A service's host name is usually <code>&lt;short name&gt;.&lt;clu_name&gt;.&lt;mydomain&gt;</code>.</li>
 <li>Credentials for external services (SCC, registries) come from the credential store with <code>addon_common.resolve_credential()</code>; the lab's own fields are the fallback.</li>
 </ul>
+<h2 id="schema-versions">Schema versions</h2>
+<p>An add-on's schema has a version, <code>MAJOR.MINOR</code>, like every schema lab-in-a-box reads; <code>check_addon.py</code> fails an add-on without one. A new add-on starts at 1.0. Any change to its fields raises it:</p>
+<ul>
+<li><strong>Breaking</strong>, when a lab written for the previous version may not work, or may do something else: a field removed or renamed, a type changed, a field that became required, an option no longer accepted, a default or the behaviour of an unset field changed. It raises <code>MAJOR</code> and resets <code>MINOR</code> (1.4 to 2.0), and comes with its <strong>migration</strong> in the same change: a step in <code>libs/migrations.py</code> that rewrites a lab from the old form to the new one, changing only what is still in the old form. <code>migrate_config.py</code> applies it to users' labs, and <code>setup_lab.py</code> stops on a lab that still needs it.</li>
+<li><strong>Compatible</strong>, anything else, such as a new optional field or a new option. It raises <code>MINOR</code> by one (1.4 to 1.5).</li>
+</ul>
+<p>For an add-on in <code>scripts/</code>, record each version in <code>schemas/compatibility.json</code> after raising it:</p>
+<pre><code class="language-shell">scripts/schema_versions.py diff addon:&lt;name&gt;      # what changed since the last recorded version
+scripts/schema_versions.py record addon:&lt;name&gt; "What changed, in one sentence." [--migration &lt;step&gt;]
+</code></pre>
+<p>Check 80 fails when the schema changed without a new recorded version, when a compatible version removes, retypes or makes a field required, or when a breaking version has no migration. <code>CONTRIBUTING.md</code>, Schema versions, has the full rules.</p>
 <h2 id="rules">Rules</h2>
 <ul>
 <li><strong>Idempotent.</strong> Running it twice gives the same result: <code>helm upgrade --install</code>, never <code>helm install</code>; <code>kubectl apply</code>; create only what is missing.</li>
@@ -140,8 +155,8 @@ def main():
 </ul>
 <h2 id="testing">Testing</h2>
 <ul>
-<li><code>check_addon.py &lt;install_&lt;name&gt;&gt;</code> (in <code>scripts/</code>, deployed to <code>/usr/local/bin</code>) checks the contract: the name, <code>--schema json</code> and its fields and capabilities (including the version matrix), <code>--capabilities</code>, <code>--version</code>, <code>--help</code> and <code>--validate</code>. It prints PASS or FAIL per check (<code>--quiet</code>: only failures) and exits 1 on any failure. The test suite runs it on every add-on in <code>scripts/</code>. In a repository checkout, put <code>scripts/</code> on <code>PATH</code> first (<code>PATH=$PWD/scripts:$PATH</code>), since a Python add-on reads <code>lab_schema</code> from beside it or from <code>PATH</code>.</li>
-<li>Check 79 (<code>tests/checks/79_addon_install_test.py</code>) runs the install path of every Python add-on against a one-kcluster lab, with every command faked: it must finish with exit 0, send at least one command and never run <code>helm install</code>. Only required fields are set, so every optional field takes the add-on's own fallback. When an add-on needs more to run (a field its code requires, or a reply to a command it reads or polls), add it to <code>EXTRA_CONFIG</code> or <code>RESPONSES</code> there.</li>
+<li><code>check_addon.py &lt;install_&lt;name&gt;&gt;</code> (in <code>scripts/</code>, deployed to <code>/usr/local/bin</code>) checks the contract: the name, <code>--schema json</code> and its schema version, fields and capabilities (including the version matrix), <code>--capabilities</code>, <code>--version</code>, <code>--help</code> and <code>--validate</code>. It prints PASS or FAIL per check (<code>--quiet</code>: only failures) and exits 1 on any failure. The test suite runs it on every add-on in <code>scripts/</code>. In a repository checkout, put <code>scripts/</code> on <code>PATH</code> first (<code>PATH=$PWD/scripts:$PATH</code>), since a Python add-on reads <code>lab_schema</code> from beside it or from <code>PATH</code>.</li>
+<li>Check 79 (<code>tests/checks/79_addon_install_test.py</code>) runs the install path of every Python add-on against a one-kcluster lab, with every command faked: it must finish with exit 0, send at least one command and never run <code>helm install</code>. It runs each add-on twice: once with only the required fields set, so every other field takes the code's own fallback, and once with every schema default filled in. Both runs must send the same commands, so a published default must be the value the code really uses. When an add-on needs more to run (a field its code requires, or a reply to a command it reads or polls), add it to <code>EXTRA_CONFIG</code> or <code>RESPONSES</code> there.</li>
 <li>Add a check for what it installs in <code>tests/checks/NN_&lt;name&gt;.sh</code> (with SSH and the tools it calls mocked, like the existing ones) and run <code>bash tests/run_tests.sh</code>; every check runs in its own podman container.</li>
 <li>Try it on a lab: list it in a test lab and run <code>setup_lab.py &lt;lab.json&gt;</code>; <code>setup_lab.py --debug</code> shows its output live.</li>
 </ul>
@@ -149,6 +164,7 @@ def main():
 <ul>
 <li>A row in the <a href="index.html#available-addons">Available addons</a> table, on the English page and every translation.</li>
 <li>Its fields in the header block or schema, with their descriptions: the web UI, <code>--help</code> and the docs are built from them, and the web UI needs no change of its own.</li>
+<li>Its schema version, 1.0, recorded with <code>scripts/schema_versions.py record addon:&lt;name&gt; "First recorded version."</code>.</li>
 <li>A version matrix when it installs a versioned product.</li>
 <li>Its templates in <code>templates/addons/&lt;name&gt;/</code>, and a check in <code>tests/checks/</code>.</li>
 </ul>

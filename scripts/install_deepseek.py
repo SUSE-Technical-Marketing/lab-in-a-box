@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "deepseek" — configurable keys:
 #   deepseek_model      : [OPTIONAL] DeepSeek model tag (default: deepseek-r1:7b)
 #                         Examples: deepseek-r1:7b, deepseek-r1:14b, deepseek-coder-v2
@@ -14,7 +16,7 @@
 #
 # This script installs Ollama (if not present) and pulls the configured DeepSeek model.
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "deepseek",

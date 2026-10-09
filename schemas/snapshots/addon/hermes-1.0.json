@@ -1,0 +1,76 @@
+{
+ "fields": {
+  "hermes_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_dashboard_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "hermes_dashboard_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_git_ref": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_image_tag": {
+   "default": "hermes_git_ref",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_llm_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_llm_provider": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "hermes_registry": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "hermes_shorthn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_storage_class": {
+   "default": "the cluster's own default",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_telegram_allowed_users": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hermes_telegram_token": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:hermes",
+ "version": "1.0"
+}

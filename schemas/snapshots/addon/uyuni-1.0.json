@@ -1,0 +1,186 @@
+{
+ "fields": {
+  "uyuni_access_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_appstreams": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_base_channel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_child_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_config_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_contact_method": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_desc": {
+   "default": "the key name",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_enable_config_deployment": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_entitlements": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_packages": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_key_universal_default": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_activation_keys": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_admin": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_ansible_control_nodes": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_ansible_paths": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_ansible_playbooks": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_config_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_content_lifecycle_actions": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_content_projects": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_custom_info_keys": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_email": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_environments": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_extra_dsk": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_org": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_orgs": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "uyuni_scap_policies": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_scap_scans": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_ssl_password": {
+   "default": "uyuni_password",
+   "required": false,
+   "type": "password"
+  },
+  "uyuni_sync_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_system_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_system_tags": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "uyuni_users": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:uyuni",
+ "version": "1.0"
+}

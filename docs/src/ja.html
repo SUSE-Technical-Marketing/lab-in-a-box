@@ -587,6 +587,16 @@ rancher:
 <pre><code class="language-shell">install_longhorn --schema
 setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
 </code></pre>
+<h3 id="schema-versions">スキーマのバージョンと移行</h3>
+<p>すべてのスキーマには <code>MAJOR.MINOR</code> 形式のバージョンがあります。対象はラボ定義、各アドオンのセクション、各設定ファイル（<code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>、harvester-cluster JSON、認証情報ファイル）です。<code>MAJOR</code> が上がった場合、以前のバージョン用に書かれたファイルは動作しないか、別の動作をする可能性があります。<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/schemas/compatibility.json"><code>schemas/compatibility.json</code></a> にすべてのバージョンと変更内容が記載されています。</p>
+<p>ラボ定義は、作成時のバージョンをトップレベルの <code>schema_versions</code> オブジェクトに記録します（Web UI が書き込みます）。記録のない定義は、すべてのスキーマのバージョン 1.0 として扱われます。</p>
+<pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
+</code></pre>
+<p>ラボ定義にまだ移行が必要な場合、<code>setup_lab.py</code> と <code>setup_vm.py</code> は停止し、必要な変更を一覧表示します。<code>migrate_config.py</code> がその変更を行います:</p>
+<pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
+migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
+</code></pre>
+<p>元のファイルは変更されません。<code>migrate_config.py</code> は <code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>、harvester-cluster JSON ファイル、認証情報ファイルも移行します。これらはバージョンを <code># Schema version:</code> 行または <code>schema_version</code> キーに記録します。</p>
 <p align="right"><a href="#top">↑ トップへ戻る</a></p>
 
 <hr />
@@ -862,6 +872,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>ラボ内のすべての VM を削除</td>
+</tr>
+<tr>
+<td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
+<td>ラボ定義または設定ファイルを現在のスキーマバージョンに移行する (<a href="#schema-versions">スキーマのバージョンと移行</a>)</td>
 </tr>
 </tbody>
 </table>

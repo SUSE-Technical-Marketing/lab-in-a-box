@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "harbor" — configurable keys:
 #   harbor_version       : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.15.0")
 #   harbor_ns            : [OPTIONAL] namespace (default: harbor)
@@ -11,7 +13,7 @@
 #   harbor_repo_url      : [OPTIONAL] Helm repo URL (default: https://helm.goharbor.io)
 #   harbor_admin_password: [OPTIONAL] admin password (default: Harbor12345)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "harbor",

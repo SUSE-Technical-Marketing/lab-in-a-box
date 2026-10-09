@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "phoebe" — configurable keys:
 #   phoebe_version      : [OPTIONAL] release tag to deploy, e.g. "v0.1.0" (default: latest)
 #   phoebe_ns           : [OPTIONAL] namespace (default: phoebe-system)

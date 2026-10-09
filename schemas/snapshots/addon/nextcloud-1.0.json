@@ -1,0 +1,166 @@
+{
+ "fields": {
+  "nextcloud_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_admin_password": {
+   "default": "generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "nextcloud_admin_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_airgap": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_apps_archive_dir": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_assistant": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_assistant_llm_endpoint": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_chart_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "nextcloud_data_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_db": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_db_options": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_db_password": {
+   "default": "generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "nextcloud_db_port": {
+   "default": "",
+   "required": false,
+   "type": "port"
+  },
+  "nextcloud_db_root_password": {
+   "default": "generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "nextcloud_deployment": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_extra_apps": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_extra_values": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_flow": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_groupware": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_hostname": {
+   "default": "the host's own hostname",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_http_port": {
+   "default": "",
+   "required": false,
+   "type": "port"
+  },
+  "nextcloud_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_max_upload_size": {
+   "default": "the image's 512M",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_namespace": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "nextcloud_office": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_redis": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_redis_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "nextcloud_rel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_repo_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "nextcloud_talk": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_trusted_domains": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nextcloud_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:nextcloud",
+ "version": "1.0"
+}

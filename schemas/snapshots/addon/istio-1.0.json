@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "istio_gateway_ns": {
+   "default": "istio-ingress",
+   "required": false,
+   "type": "namespace"
+  },
+  "istio_install_gateway": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "istio_ns": {
+   "default": "istio-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "istio_rel": {
+   "default": "istio",
+   "required": false,
+   "type": "string"
+  },
+  "istio_repo_url": {
+   "default": "https://istio-release.storage.googleapis.com/charts",
+   "required": false,
+   "type": "url"
+  },
+  "istio_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:istio",
+ "version": "1.0"
+}

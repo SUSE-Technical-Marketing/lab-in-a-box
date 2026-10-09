@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "kagent" — configurable keys:
 #   kagent_version      : [OPTIONAL] Helm chart version (empty = latest)
 #   kagent_ns           : [OPTIONAL] namespace (default: kagent-system)
@@ -13,7 +15,7 @@
 # NOTE: kagent is a new CNCF project. The Helm chart URL may change as the project
 # matures. Check https://github.com/kagent-ai/kagent for the latest install instructions.
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "kagent",

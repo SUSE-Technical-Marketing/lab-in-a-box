@@ -15,51 +15,53 @@
 #   secret. Euro-Office (ibeacon-projekt/eurooffice-nextcloud, app id eurooffice) is a separate fork with the same integration shape.
 #   Nextcloud AIO is not used. The podman mode deploys the official nextcloud, mariadb and redis images directly.
 #
+# Schema version: 1.1
+#
 # JSON section: "nextcloud"
-#   nextcloud_deployment : "podman" (default) runs standalone containers on a host, and it is the only mode that supports nextcloud_airgap.
-#                          "kubernetes" installs the Helm chart.
+#   nextcloud_deployment : "podman" runs standalone containers on a host, and it is the only mode that supports nextcloud_airgap.
+#                          "kubernetes" installs the Helm chart. (default: podman)
 #
 # podman fields
-#   nextcloud_image           : container image (default nextcloud)
-#   nextcloud_version         : image tag (default latest)
-#   nextcloud_hostname        : the hostname that clients use. It is set as trusted_domains and OVERWRITECLI (default: the host's own hostname).
-#   nextcloud_http_port       : host port for container port 80 (default 8080, so that it does not clash with another service on the node)
-#   nextcloud_admin_user      : initial admin user, set as NEXTCLOUD_ADMIN_USER. The image creates it on first boot only (default admin)
-#   nextcloud_admin_password  : initial admin password, set as NEXTCLOUD_ADMIN_PASSWORD (default: generated and printed)
+#   nextcloud_image           : container image (default: nextcloud)
+#   nextcloud_version         : image tag (default: latest)
+#   nextcloud_hostname        : the hostname that clients use. It is set as trusted_domains and OVERWRITECLI; when unset, the host's own hostname.
+#   nextcloud_http_port       : host port for container port 80, chosen not to clash with another service on the node (default: 8080)
+#   nextcloud_admin_user      : initial admin user, set as NEXTCLOUD_ADMIN_USER. The image creates it on first boot only (default: admin)
+#   nextcloud_admin_password  : initial admin password, set as NEXTCLOUD_ADMIN_PASSWORD; when unset, generated and printed
 #   nextcloud_account         : name of an encrypted credential file of kind "nextcloud" under /etc/lab_creation/credentials/ to read
 #                               nextcloud_admin_password from. It is auto-discovered when exactly one such file exists and this is unset.
 #   nextcloud_data_size       : size of the data volume. It is informational only, because podman volumes are not size-capped.
-#   nextcloud_db              : "sqlite" (default), "mariadb" or "postgresql". The last two are installed natively on the same host, by the code
+#   nextcloud_db              : "sqlite", "mariadb" or "postgresql" (default: sqlite). The last two are installed natively on the same host, by the code
 #                               of install_mariadb.py and install_postgresql.py (libs/db_common.py). The container reaches the database at
 #                               127.0.0.1, through --network host. Any mariadb_* or postgresql_* option of those addons can be passed in
 #                               nextcloud_db_options, for example {"mariadb_bind_address": "0.0.0.0"}.
-#   nextcloud_db_port         : database port for mariadb or postgresql (default 3306 or 5432)
-#   nextcloud_db_password     : password of the Nextcloud database user, for mariadb or postgresql (default: generated and printed)
-#   nextcloud_db_root_password: root or superuser password, for mariadb or postgresql (default: generated and printed). PostgreSQL has no
+#   nextcloud_db_port         : database port for mariadb or postgresql; when unset, 3306 or 5432
+#   nextcloud_db_password     : password of the Nextcloud database user, for mariadb or postgresql; when unset, generated and printed
+#   nextcloud_db_root_password: root or superuser password, for mariadb or postgresql; when unset, generated and printed. PostgreSQL has no
 #                               separate application password, so this applies in practice to mariadb.
 #   nextcloud_db_options      : a dict of further mariadb_* or postgresql_* keys for the chosen database, for anything without a named field.
-#   nextcloud_redis           : "true" (default) or "false". Deploys a Redis container, which the image uses through REDIS_HOST for file
+#   nextcloud_redis           : "true" or "false" (default: true). Deploys a Redis container, which the image uses through REDIS_HOST for file
 #                               locking and caching.
-#   nextcloud_redis_version   : Redis image tag (default latest)
-#   nextcloud_max_upload_size : upload limit, set as NEXTCLOUD_UPLOAD_LIMIT, for example 10G (default: the image's 512M)
+#   nextcloud_redis_version   : Redis image tag (default: latest)
+#   nextcloud_max_upload_size : upload limit, set as NEXTCLOUD_UPLOAD_LIMIT, for example 10G; when unset, the image's 512M
 #   nextcloud_trusted_domains : extra hostnames or addresses for trusted_domains
 #
 # Apps, in both deployment modes
-#   nextcloud_talk            : "true" or "false" (default false). Installs and enables spreed (Talk).
-#   nextcloud_groupware       : "true" or "false" (default false). Installs and enables calendar, contacts and mail.
-#   nextcloud_flow            : "true" or "false" (default false). Enables workflowengine (Flow). It ships with the core, so nothing is installed.
-#   nextcloud_assistant       : "true" or "false" (default false). Installs and enables assistant.
+#   nextcloud_talk            : "true" or "false" (default: false). Installs and enables spreed (Talk).
+#   nextcloud_groupware       : "true" or "false" (default: false). Installs and enables calendar, contacts and mail.
+#   nextcloud_flow            : "true" or "false" (default: false). Enables workflowengine (Flow). It ships with the core, so nothing is installed.
+#   nextcloud_assistant       : "true" or "false" (default: false). Installs and enables assistant.
 #   nextcloud_assistant_llm_endpoint : an OpenAI-compatible base URL, for example the endpoint of a LiteLLM proxy addon. It is used by
 #                               integration_openai, which is installed and pointed at it. Without it, the Assistant has no backend.
 #   nextcloud_extra_apps      : a list of further app ids to install and enable, for example ["deck", "forms", "notes"]
 #   nextcloud_office          : {"provider": "onlyoffice", "eurooffice" or "collabora"; "document_server_url" (onlyoffice and eurooffice);
 #                               "wopi_url" (collabora only); "jwt_secret" (onlyoffice and eurooffice; required when the server is not deployed
-#                               here); "deploy_server": "true" or "false" (default false), which also deploys that provider's Document Server on
-#                               this host; "server_image"; "server_version" (default latest); "server_port" (default 8443)}. With deploy_server
+#                               here); "deploy_server": "true" or "false" (false when unset), which also deploys that provider's Document Server on
+#                               this host; "server_image"; "server_version" (latest when unset); "server_port" (8443 when unset)}. With deploy_server
 #                               true, the URLs default to http://<hostname>:<port>. The matching app is installed and enabled.
 #
 # Airgapped installs (podman only)
-#   nextcloud_airgap          : "true" or "false" (default false). Every app installs from a local archive, and the live App Store is not
+#   nextcloud_airgap          : "true" or "false" (default: false). Every app installs from a local archive, and the live App Store is not
 #                               contacted. config.php gets appstoreenabled=false and updatechecker.enabled=false. Every image must already be
 #                               reachable without internet access, through a private registry mirror or a pre-pulled image on the host.
 #   nextcloud_apps_archive_dir: [REQUIRED when nextcloud_airgap is true and any app is enabled] a local directory on the automation node that holds
@@ -67,10 +69,10 @@
 #                               copied to the host with scp and extracted, as Nextcloud's manual offline procedure describes.
 #
 # kubernetes fields
-#   nextcloud_rel             : Helm repo alias (default nextcloud)
-#   nextcloud_repo_url        : Helm repo URL (default https://nextcloud.github.io/helm/)
+#   nextcloud_rel             : Helm repo alias (default: nextcloud)
+#   nextcloud_repo_url        : Helm repo URL (default: https://nextcloud.github.io/helm/)
 #   nextcloud_chart_version   : Helm chart version (empty = latest)
-#   nextcloud_namespace       : Kubernetes namespace (default nextcloud)
+#   nextcloud_namespace       : Kubernetes namespace (default: nextcloud)
 #   nextcloud_extra_values    : a dict of extra key=value pairs for helm upgrade --install, for anything this addon has no field for.
 #
 

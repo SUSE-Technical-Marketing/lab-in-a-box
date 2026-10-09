@@ -768,6 +768,16 @@ rancher:
 <pre><code class="language-shell">install_longhorn --schema
 setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclusters)
 </code></pre>
+<h3 id="schema-versions">إصدارات المخططات والترحيل</h3>
+<p>لكل مخطط إصدار بالشكل <code>MAJOR.MINOR</code>: تعريف المختبر، وقسم كل إضافة، وكل ملف إعدادات (<code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>، وملف JSON الخاص بـ harvester-cluster، وملفات بيانات الاعتماد). يعني رفع <code>MAJOR</code> أن ملفًا كُتب للإصدار السابق قد لا يعمل، أو قد يفعل شيئًا آخر. يسرد <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/schemas/compatibility.json"><code>schemas/compatibility.json</code></a> كل إصدار وما تغيّر فيه.</p>
+<p>يسجّل تعريف المختبر الإصدارات التي كُتب لها في الكائن <code>schema_versions</code> في مستواه الأعلى، وتكتبه واجهة الويب. التعريف الذي لا يسجّل أي إصدار يُعدّ مكتوبًا للإصدار 1.0 من كل مخطط.</p>
+<pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
+</code></pre>
+<p>يتوقف <code>setup_lab.py</code> و<code>setup_vm.py</code> عندما يحتاج تعريف المختبر إلى ترحيل، ويسردان التغييرات. ويُجري <code>migrate_config.py</code> هذه التغييرات:</p>
+<pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
+migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
+</code></pre>
+<p>لا يُعدَّل الملف الأصلي أبدًا. يرحّل <code>migrate_config.py</code> أيضًا <code>lab_creation.cfg</code>, <code>lab_creation.defaults</code>, <code>lab.cfg</code>، وملفات JSON الخاصة بـ harvester-cluster، وملفات بيانات الاعتماد؛ وتسجّل هذه الملفات إصدارها في سطر <code># Schema version:</code> أو في المفتاح <code>schema_version</code>.</p>
 <p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
 <hr />
@@ -1043,6 +1053,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>حذف جميع الأجهزة الافتراضية في مختبر</td>
+</tr>
+<tr>
+<td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
+<td>يحدّث تعريف مختبر أو ملف إعدادات إلى إصدارات المخططات الحالية (<a href="#schema-versions">إصدارات المخططات والترحيل</a>)</td>
 </tr>
 </tbody>
 </table>

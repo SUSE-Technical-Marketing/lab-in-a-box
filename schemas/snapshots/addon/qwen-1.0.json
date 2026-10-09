@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "qwen_model": {
+   "default": "qwen2.5:7b",
+   "required": false,
+   "type": "string"
+  },
+  "qwen_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "qwen_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "qwen_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "qwen_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "qwen_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:qwen",
+ "version": "1.0"
+}

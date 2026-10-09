@@ -15,6 +15,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "ansible_control_node" — configurable keys:
 #   ansible_control_node_playbook_dir  : [OPTIONAL] where example/pushed playbooks land
 #                                         (default: /srv/ansible/playbooks)

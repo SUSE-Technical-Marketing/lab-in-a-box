@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "weaviate_ns": {
+   "default": "weaviate",
+   "required": false,
+   "type": "namespace"
+  },
+  "weaviate_rel": {
+   "default": "weaviate",
+   "required": false,
+   "type": "string"
+  },
+  "weaviate_replicas": {
+   "default": "1",
+   "required": false,
+   "type": "integer"
+  },
+  "weaviate_repo_url": {
+   "default": "https://weaviate.github.io/weaviate-helm",
+   "required": false,
+   "type": "url"
+  },
+  "weaviate_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:weaviate",
+ "version": "1.0"
+}

@@ -7,25 +7,27 @@
 # dedicated host VM with mgradm, as a podman container deployment. The target VM must run openSUSE Leap 15.6 or SLE Micro with
 # podman available.
 #
+# Schema version: 1.1
+#
 # JSON section: "uyuni"
-#   uyuni_admin         : admin username (default admin)
-#   uyuni_password      : admin password (default Uyuni12345)
-#   uyuni_email         : admin e-mail (default admin@lab.local)
-#   uyuni_org           : default organization (default lab)
-#   uyuni_ssl_password  : SSL certificate password (default: uyuni_password)
+#   uyuni_admin         : admin username (default: admin)
+#   uyuni_password      : admin password (default: Uyuni12345)
+#   uyuni_email         : admin e-mail (default: admin@lab.local)
+#   uyuni_org           : default organization (default: lab)
+#   uyuni_ssl_password  : SSL certificate password; when unset, uyuni_password
 #   uyuni_channels      : space-separated channels to sync after install
 #   uyuni_extra_dsk     : extra disk to mount for storage, e.g. /dev/vdb,/srv/mirror
 #
 # Activation key (created after install; skipped when uyuni_activation_key is unset)
 #   uyuni_activation_key                          : key name
-#   uyuni_activation_key_desc                     : description (default: the key name)
+#   uyuni_activation_key_desc                     : description; when unset, the key name
 #   uyuni_activation_key_base_channel             : base channel label, required when uyuni_activation_key is set
 #   uyuni_activation_key_child_channels           : space-separated child channel labels
-#   uyuni_activation_key_universal_default        : "true" marks the key as the organization's default (default false)
+#   uyuni_activation_key_universal_default        : "true" marks the key as the organization's default (default: false)
 #   uyuni_activation_key_entitlements             : comma-separated, e.g. "enterprise_entitled,virtualization_host"
 #   uyuni_activation_key_contact_method           : contact method
 #   uyuni_activation_key_config_channels          : space-separated config channel labels
-#   uyuni_activation_key_enable_config_deployment : "true" enables config-file deployment (default false)
+#   uyuni_activation_key_enable_config_deployment : "true" enables config-file deployment (default: false)
 #   uyuni_activation_key_groups                   : space-separated system group names
 #   uyuni_activation_key_appstreams               : space-separated "module:stream" pairs, e.g. "nodejs:20 postgresql:16".
 #                                                   Applied on every run. An already-enabled module is detected and skipped.
@@ -108,7 +110,7 @@
 # The target node must have "uyuni" in its addons[] list in the JSON definition:
 #   "nodes": { "uyuni.lab": { "myip": "...", "addons": ["uyuni"] } }
 
-__version__ = "ca2d2d5"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "uyuni",

@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "home_assistant_image_tag": {
+   "default": "2026.7.0",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_ns": {
+   "default": "home-assistant",
+   "required": false,
+   "type": "namespace"
+  },
+  "home_assistant_rel": {
+   "default": "pajikos",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_repo_url": {
+   "default": "http://pajikos.github.io/home-assistant-helm-chart/",
+   "required": false,
+   "type": "url"
+  },
+  "home_assistant_shorthn": {
+   "default": "home-assistant",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_storage_size": {
+   "default": "5Gi",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:home_assistant",
+ "version": "1.1"
+}

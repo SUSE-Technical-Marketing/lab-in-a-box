@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "linkerd" — configurable keys:
 #   linkerd_version     : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.14.10")
 #   linkerd_ns          : [OPTIONAL] control plane namespace (default: linkerd)
@@ -11,7 +13,7 @@
 #   linkerd_repo_url    : [OPTIONAL] Helm repo URL (default: https://helm.linkerd.io/stable)
 #   linkerd_install_viz : [OPTIONAL] install viz dashboard (default: true)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "linkerd",

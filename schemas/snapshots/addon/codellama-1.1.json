@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "codellama_model": {
+   "default": "codellama",
+   "required": false,
+   "type": "string"
+  },
+  "codellama_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "codellama_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "codellama_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "codellama_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "codellama_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:codellama",
+ "version": "1.1"
+}

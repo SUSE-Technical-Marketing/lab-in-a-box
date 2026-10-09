@@ -5,26 +5,28 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/proxy-kubernetes-deployment.html
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "smlm_proxy" ─────────────────────────────────────────────────
 #
 # MANDATORY
 #   smlm_proxy_fqdn         : Fully-qualified domain name for the proxy
 #                             (e.g. "proxy.cluster2.mydemo.lab")
-#   smlm_proxy_server       : FQDN of the parent SMLM server
-#                             (default: "smlm".smlm_fqdn from the same JSON)
-#   smlm_proxy_scc_user     : SCC username (default: "smlm".smlm_scc_user)
-#   smlm_proxy_scc_password : SCC password (default: "smlm".smlm_scc_password)
+#   smlm_proxy_server       : FQDN of the parent SMLM server; when unset,
+#                             "smlm".smlm_fqdn from the same JSON
+#   smlm_proxy_scc_user     : SCC username; when unset, "smlm".smlm_scc_user
+#   smlm_proxy_scc_password : SCC password; when unset, "smlm".smlm_scc_password
 #
 # OPTIONAL – parent server access (proxy config generation via spacecmd)
 #   smlm_proxy_server_node  : SSH host of the Kubernetes node running the SMLM
-#                             server (default: same as smlm_proxy_server)
+#                             server; when unset, smlm_proxy_server
 #   smlm_proxy_server_ns    : Namespace of the server deployment (default: uyuni-server)
-#   smlm_proxy_admin_user   : SMLM web UI admin user (default: "smlm".smlm_admin_user or admin)
-#   smlm_proxy_admin_pass   : SMLM web UI admin pass (default: "smlm".smlm_admin_pass or admin123)
-#   smlm_proxy_email        : Proxy administrator email (default: root@<smlm_proxy_fqdn>)
+#   smlm_proxy_admin_user   : SMLM web UI admin user; when unset, "smlm".smlm_admin_user or admin
+#   smlm_proxy_admin_pass   : SMLM web UI admin pass; when unset, "smlm".smlm_admin_pass or admin123
+#   smlm_proxy_email        : Proxy administrator email; when unset, root@<smlm_proxy_fqdn>
 #   smlm_proxy_ssh_port     : SSH port the proxy listens on (default: 8022)
-#   smlm_proxy_max_cache    : Maximum squid cache size in MB (default: 2048;
-#                             ~60% of the squid volume is a good value)
+#   smlm_proxy_max_cache    : Maximum squid cache size in MB; ~60% of the squid
+#                             volume is a good value (default: 2048)
 #
 # OPTIONAL – Helm / release
 #   smlm_proxy_version      : Helm chart version (empty = latest; while 5.2 has
@@ -33,9 +35,9 @@
 #   smlm_proxy_rel          : Helm release name     (default: uyuni-proxy)
 #   smlm_proxy_registry     : OCI registry          (default: registry.suse.com)
 #   smlm_proxy_chart        : OCI chart path        (default: suse/multi-linux-manager/5.2/proxy-helm)
-#   smlm_proxy_img_repository : Image repository base (default: derived from
-#                             smlm_proxy_registry/smlm_proxy_chart + '/x86_64')
-#   smlm_proxy_img_tag      : Image tag for all images (default: chart default, "latest")
+#   smlm_proxy_img_repository : Image repository base; when unset, derived from
+#                             smlm_proxy_registry/smlm_proxy_chart + '/x86_64'
+#   smlm_proxy_img_tag      : Image tag for all images; when unset, the chart's default, latest
 #
 # OPTIONAL – networking / ingress
 #   smlm_proxy_shorthn      : Short hostname for the DNS entry (default: proxy)
@@ -57,7 +59,7 @@
 #       server (their Traefik port sets differ). TLS uses self-signed lab
 #       certificates.
 
-__version__ = "39753e7"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "smlm_proxy",

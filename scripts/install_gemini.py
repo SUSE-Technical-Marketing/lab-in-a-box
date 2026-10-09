@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "gemini" — configurable keys:
 #   gemini_api_key      : [MANDATORY] Google Gemini API key (from https://aistudio.google.com)
 #   gemini_model        : [OPTIONAL] default Gemini model (default: gemini/gemini-1.5-flash)
@@ -16,7 +18,7 @@
 # This script deploys LiteLLM as an OpenAI-compatible proxy for Google Gemini.
 # The proxy exposes the same API as OpenAI so any OpenAI SDK can reach Gemini models.
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "gemini",

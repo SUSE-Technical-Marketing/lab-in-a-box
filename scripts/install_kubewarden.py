@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "kubewarden" — configurable keys:
 #   kubewarden_version  : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.0.0")
 #   kubewarden_ns       : [OPTIONAL] namespace (default: kubewarden)
 #   kubewarden_rel      : [OPTIONAL] Helm repo alias (default: kubewarden)
 #   kubewarden_repo_url : [OPTIONAL] Helm repo URL (default: https://charts.kubewarden.io)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "kubewarden",

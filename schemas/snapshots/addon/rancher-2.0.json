@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "cert_manager_ver": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "rancher_cert_repo_name": {
+   "default": "jetstack",
+   "required": false,
+   "type": "string"
+  },
+  "rancher_cert_repo_url": {
+   "default": "https://charts.jetstack.io",
+   "required": false,
+   "type": "url"
+  },
+  "rancher_helm_chart": {
+   "default": "rancher-prime/rancher",
+   "required": false,
+   "type": "string"
+  },
+  "rancher_helm_rel": {
+   "default": "rancher",
+   "required": false,
+   "type": "string"
+  },
+  "rancher_initial_pwd": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "rancher_rel": {
+   "default": "rancher-prime",
+   "required": false,
+   "type": "string"
+  },
+  "rancher_replicas": {
+   "default": "2",
+   "required": false,
+   "type": "integer"
+  },
+  "rancher_repo_url": {
+   "default": "https://charts.rancher.com/server-charts/prime",
+   "required": false,
+   "type": "url"
+  },
+  "rancher_shorthn": {
+   "default": "rancher",
+   "required": false,
+   "type": "string"
+  },
+  "rancher_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:rancher",
+ "version": "2.0"
+}

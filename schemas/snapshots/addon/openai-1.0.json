@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "openai_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "openai_model": {
+   "default": "openai/gpt-5",
+   "required": false,
+   "type": "string"
+  },
+  "openai_ns": {
+   "default": "openai",
+   "required": false,
+   "type": "namespace"
+  },
+  "openai_rel": {
+   "default": "litellm",
+   "required": false,
+   "type": "string"
+  },
+  "openai_repo_url": {
+   "default": "https://berriai.github.io/litellm",
+   "required": false,
+   "type": "url"
+  },
+  "openai_shorthn": {
+   "default": "openai",
+   "required": false,
+   "type": "string"
+  },
+  "openai_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:openai",
+ "version": "1.0"
+}

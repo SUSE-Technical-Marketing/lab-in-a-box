@@ -9,6 +9,8 @@
 #
 # Reads the structured comment block starting at "JSON section:" in the given
 # script and outputs a machine-readable schema of every configurable option.
+# The script's "# Schema version: MAJOR.MINOR" comment line, above that block,
+# is the schema's version (schema_version); see schemas/compatibility.json.
 # Requires python3; YAML output additionally requires pyyaml (pip install pyyaml).
 
 import json
@@ -16,7 +18,7 @@ import re
 import sys
 from pathlib import Path
 
-SCHEMA_VERSION = "1.0"
+LAB_SCHEMA_VERSION = "1.0"
 
 # Infer field type from its name suffix
 def _infer_type(name):
@@ -42,6 +44,9 @@ def parse_script(path):
     in_block = False
     in_mandatory = False
     current = None      # field currently accumulating continuation lines
+
+    vm = re.search(r'^# Schema version:\s*(\S+)', text, re.M)
+    version = vm.group(1) if vm else ""
 
     for line in lines:
         # ── Find section header ─────────────────────────────────────────────
@@ -156,7 +161,7 @@ def parse_script(path):
             f["max"] = max_val
 
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": version,
         "addon":          addon,
         "section":        section,
         "description":    description,
@@ -175,7 +180,7 @@ def base_lab_schema():
     object.
     """
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": LAB_SCHEMA_VERSION,
         "component": "lab-definition",
         "description": "lab-in-a-box lab definition file — passed as the first "
                        "argument to setup_lab.py and setup_vm.py",

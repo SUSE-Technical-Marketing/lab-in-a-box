@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "prometheus_image": {
+   "default": "docker.io/prom/prometheus",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_port": {
+   "default": "9090",
+   "required": false,
+   "type": "port"
+  },
+  "prometheus_retention": {
+   "default": "15d",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_scrape_configs": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_scrape_smlm": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "prometheus_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:prometheus",
+ "version": "1.1"
+}

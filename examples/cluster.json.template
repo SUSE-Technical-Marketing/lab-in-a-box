@@ -53,9 +53,10 @@
 
 "rancher":
   {"cert_manager_ver": "--version v1.14.4",
-   "rancher_repo": "rancher-stable/rancher",
-   "rancher_shorthn": "rancher",
-   "rancher_rel": "stable"
+   "rancher_rel": "rancher-stable",
+   "rancher_repo_url": "https://releases.rancher.com/server-charts/stable",
+   "rancher_helm_chart": "rancher-stable/rancher",
+   "rancher_shorthn": "rancher"
   }
 }
 

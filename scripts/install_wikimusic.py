@@ -5,6 +5,8 @@
 #
 # Project: https://codeberg.org/jjba23/wikimusic (jjba23, docs at jointhefreeworld.org)
 #
+# Schema version: 1.0
+#
 # JSON section: "wikimusic" — configurable keys:
 #   wikimusic_image   : [MANDATORY] a pre-built image reference for WikiMusic. Unlike Colt,
 #                       WikiMusic's own repo has NO Dockerfile at all —

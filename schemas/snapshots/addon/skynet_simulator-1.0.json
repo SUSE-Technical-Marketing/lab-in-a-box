@@ -1,0 +1,16 @@
+{
+ "fields": {
+  "skynet_simulator_ns": {
+   "default": "skynet-simulator",
+   "required": false,
+   "type": "namespace"
+  },
+  "skynet_simulator_shorthn": {
+   "default": "skynet-simulator",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:skynet_simulator",
+ "version": "1.0"
+}

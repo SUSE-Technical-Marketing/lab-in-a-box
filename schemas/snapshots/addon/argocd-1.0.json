@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "argocd_ns": {
+   "default": "argocd",
+   "required": false,
+   "type": "namespace"
+  },
+  "argocd_rel": {
+   "default": "argo",
+   "required": false,
+   "type": "string"
+  },
+  "argocd_repo_url": {
+   "default": "https://argoproj.github.io/argo-helm",
+   "required": false,
+   "type": "url"
+  },
+  "argocd_shorthn": {
+   "default": "argocd",
+   "required": false,
+   "type": "string"
+  },
+  "argocd_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:argocd",
+ "version": "1.0"
+}

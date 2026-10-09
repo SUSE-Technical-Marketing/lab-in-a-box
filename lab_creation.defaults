@@ -1,3 +1,4 @@
+# Schema version: 1.0
 # These defaults should not be changes unless you know what you are doing
 declare -A _BOOT_PACKAGES
 _BOOT_PACKAGES=(["sles-15.5"]="vim-small apparmor-parser iptables NetworkManager-cloud-setup wget git"

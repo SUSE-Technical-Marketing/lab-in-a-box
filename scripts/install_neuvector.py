@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "neuvector" — SUSE NeuVector container security platform
 #
 #   nv_shorthn   : [OPTIONAL] Short hostname for the manager UI ingress (default: neuvector)

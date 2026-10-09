@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "mariadb_bind_address": {
+   "default": "127.0.0.1",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_db": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_mode": {
+   "default": "auto",
+   "enum": [
+    "auto",
+    "kubernetes",
+    "os"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_name": {
+   "default": "mariadb",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_ns": {
+   "default": "db",
+   "required": false,
+   "type": "namespace"
+  },
+  "mariadb_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "mariadb_port": {
+   "default": "3306",
+   "required": false,
+   "type": "port"
+  },
+  "mariadb_root_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "mariadb_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mariadb",
+ "version": "1.1"
+}

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "coredns" — configurable keys:
 #   coredns_version     : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.29.0")
 #   coredns_ns          : [OPTIONAL] namespace (default: coredns)
@@ -13,7 +15,7 @@
 # additional standalone instance in its own namespace (useful for custom DNS zones,
 # split-horizon DNS, or forwarding experiments).
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "coredns",
