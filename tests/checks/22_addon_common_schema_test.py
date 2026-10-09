@@ -74,8 +74,7 @@ if _has_yaml:
     check("print_schema (yaml) output mentions the capabilities block",
           "capabilities" in out and "kubernetes" in out)
 else:
-    print("SKIP: yaml format checks (pyyaml not installed in this test image — "
-          "matches lab_schema's own optional-yaml-support behavior)")
+    print("no PyYAML for this interpreter — the yaml format checks run under python3.11")
 
 rc, out = _print_schema("json", None)
 check("print_schema with no plugin passed still succeeds, capabilities are empty/None, not an error",
