@@ -8,7 +8,7 @@
 #   weaviate_ns       : [OPTIONAL] namespace (default: weaviate)
 #   weaviate_rel      : [OPTIONAL] Helm repo alias (default: weaviate)
 #   weaviate_repo_url : [OPTIONAL] Helm repo URL (default: https://weaviate.github.io/weaviate-helm)
-#   weaviate_replicas : [OPTIONAL] StatefulSet replica count (default: 1 — chart default)
+#   weaviate_replicas : [OPTIONAL] StatefulSet replica count, as the chart's default (default: 1)
 #
 # Since chart v17.1.0 the chart sets no default CPU or memory request or limit. Set resources.requests
 # and resources.limits through a values override on a host without generous defaults, or the pod may

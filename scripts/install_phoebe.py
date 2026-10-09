@@ -4,7 +4,7 @@
 # License: GPLv3
 #
 # JSON section: "phoebe" — configurable keys:
-#   phoebe_version      : [OPTIONAL] release tag to deploy (default: latest, e.g. "v0.1.0")
+#   phoebe_version      : [OPTIONAL] release tag to deploy, e.g. "v0.1.0" (default: latest)
 #   phoebe_ns           : [OPTIONAL] namespace (default: phoebe-system)
 #   phoebe_repo_url     : [OPTIONAL] base URL for manifests
 #                         (default: https://github.com/SUSE/phoebe/releases/latest/download)
@@ -12,7 +12,7 @@
 # NOTE: Phoebe is a SUSE research project for AI-driven Kubernetes resource recommendations.
 # It may not have stable releases. Check https://github.com/SUSE/phoebe for current status.
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "phoebe",

@@ -14,7 +14,7 @@
 #                  (this project's own "harbor" addon is one option for <your-registry>)
 #   colt_ns      : [OPTIONAL] namespace (default: colt)
 #   colt_shorthn : [OPTIONAL] hostname prefix for ingress (default: colt)
-#   colt_port    : [OPTIONAL] container port Colt listens on (default: 3000, Artanis' own default)
+#   colt_port    : [OPTIONAL] container port Colt listens on, Artanis' own default (default: 3000)
 #
 # Uses the shared Artanis-app manifest shape (libs/artanis_common.py, also used by
 # install_wikimusic.py) — a single pod (git-backed content, no external database needed) with an

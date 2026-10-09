@@ -42,7 +42,7 @@
 # RHEL / CentOS note:
 #   Uses the distro's own mariadb-server package (no external repo needed, unlike Postgres).
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "mariadb",
@@ -129,7 +129,6 @@ def main():
         print("# Using node: {}".format(vm_name))
         setup_mariadb(vm_name, templ_addons_loc, mariadb_cfg)
         time.sleep(60)
-        sys.exit(1)
     else:
         virt_srv = config.get("VIRT_SRV", "")
         env_vm_name = os.environ.get("_vm_name") or None
