@@ -47,11 +47,20 @@ m = re.search(r'<script id="static-api-data" type="application/json">(.*?)</scri
 check("page embeds the static-api-data block", m is not None)
 if m:
     data = json.loads(m.group(1))
-    comps = {c["name"]: c for c in data["components"]["components"]}
+    items = data["components"]["components"]
+    comps = {c["name"]: c for c in items if c["kind"] == "addon"}
     expected = sorted({p.name.split(".", 1)[0] for p in scripts.glob("install_*")})
     check("every install_* add-on is listed (missing: {})".format(sorted(set(expected) - set(comps))),
           sorted(comps) == expected)
-    check("components count matches the list", data["components"]["count"] == len(comps))
+    check("components count matches the list", data["components"]["count"] == len(items))
+    check("every item has name, kind and targets",
+          all(isinstance(c.get("name"), str) and c.get("kind") in ("addon", "infrastructure", "kcluster")
+              and isinstance(c.get("targets"), list) for c in items))
+    check("pxe is listed as infrastructure",
+          [c["name"] for c in items if c["kind"] == "infrastructure"] == ["pxe"])
+    clu_enum = next(f["enum"] for f in data["base"]["sections"]["kclusters"]["fields"] if f["name"] == "clu_type")
+    check("every clu_type is listed as a kcluster",
+          [c["name"] for c in items if c["kind"] == "kcluster"] == clu_enum)
     empty = sorted(n for n, c in comps.items() if not c["field_count"])
     check("every add-on has options (none with 0: {})".format(empty), empty == [])
     for name, c in sorted(comps.items()):

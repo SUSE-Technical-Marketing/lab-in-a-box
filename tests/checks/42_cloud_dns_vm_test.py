@@ -81,7 +81,7 @@ try:
             print("  bash -n rejected:", cmd, "->", result.stderr.decode("utf-8", "replace"))
     check("every generated runcmd entry is syntactically valid shell (bash -n)", all_ok)
 except ImportError:
-    print("pyyaml not installed in this container — skipping YAML-parse-dependent checks")
+    print("no PyYAML for this interpreter — the YAML-parse checks run under python3.11")
 
 
 # ── ensure_cloud_dns_vm(): reuse path — vm_exists() + get_ip(), no create_vm() call ──

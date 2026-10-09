@@ -10,7 +10,7 @@ const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
 const sandbox = {
   document: { querySelectorAll: () => [], addEventListener: () => {} },
   window: { addEventListener: () => {} },
-  console,
+  console, URL, URLSearchParams, TextDecoder, atob,
 };
 vm.createContext(sandbox);
 vm.runInContext(src, sandbox, { filename: "app.js" });
@@ -316,6 +316,90 @@ check("parseLab: a list is not a lab definition", threw);
 threw = "";
 try { sandbox.parseLab("{ broken"); } catch (e) { threw = e.name; }
 check("parseLab: broken JSON reports the JSON error, not a YAML one", threw === "SyntaxError");
+
+// -- embedding (Rodeo Builder hand-off) --------------------------------
+check("embed: origin accepted inside a frame",
+  sandbox.embedOrigin("?embed=1&origin=http%3A%2F%2Flocalhost%3A8000", true) === "http://localhost:8000");
+check("embed: not embedded outside a frame", sandbox.embedOrigin("?embed=1&origin=https%3A%2F%2Fa.example", false) === "");
+check("embed: an origin with a path is refused", sandbox.embedOrigin("?embed=1&origin=https%3A%2F%2Fa.example%2Fx", true) === "");
+check("embed: a non-http origin is refused", sandbox.embedOrigin("?embed=1&origin=javascript%3Aalert(1)", true) === "");
+check("embed: no embed=1, no embedding", sandbox.embedOrigin("?origin=https%3A%2F%2Fa.example", true) === "");
+const pw = sandbox.passwordFields([
+  { sections: { kclusters: { fields: [{ name: "harvester_token", type: "password" }, { name: "clu_type", type: "string" }] } } },
+  { section: "rancher", fields: [{ name: "rancher_password", type: "password" }] },
+]);
+check("embed: password fields found in every schema", pw.has("harvester_token") && pw.has("rancher_password") && !pw.has("clu_type"));
+const redacted = sandbox.withSecretPlaceholders({
+  kclusters: { h: { clu_type: "harvester", harvester_token: "s3cret" } },
+  rancher: { rancher_password: "p", rancher_shorthn: "r" },
+  other: { rancher_password: "" },
+  kept: { rancher_password: "??mine" },
+}, pw);
+check("embed: password values become ??<field> placeholders",
+  redacted.kclusters.h.harvester_token === "??harvester_token" && redacted.rancher.rancher_password === "??rancher_password");
+check("embed: other values, empty values and existing placeholders are kept",
+  redacted.kclusters.h.clu_type === "harvester" && redacted.rancher.rancher_shorthn === "r"
+  && redacted.other.rancher_password === "" && redacted.kept.rancher_password === "??mine");
+check("embed: no secret left in the sent lab", !JSON.stringify(redacted).includes("s3cret"));
+const b64 = Buffer.from('{"common": {"VM_MEM": 2}}').toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM === 2);
+{
+  // setupEmbed: wires the send button and accepts labinabox:load only from the parent at that origin.
+  const fake = () => ({ hidden: false, after() {}, addEventListener() {} });
+  const savedDoc = sandbox.document, savedWin = sandbox.window, savedLoad = sandbox.loadLab, savedToast = sandbox.toast;
+  const handlers = [];
+  const parent = {};
+  const loaded = [];
+  sandbox.document = { querySelector: fake, querySelectorAll: () => [], createElement: fake, addEventListener: () => {} };
+  sandbox.window = { parent, addEventListener: (t, h) => { if (t === "message") handlers.push(h); } };
+  sandbox.loadLab = (lab) => loaded.push(lab);
+  sandbox.toast = () => {};
+  sandbox.setupEmbed("https://rodeo.example");
+  const send = (ev) => handlers.forEach((h) => h(ev));
+  send({ origin: "https://evil.example", source: parent, data: { type: "labinabox:load", lab: { nodes: {} } } });
+  send({ origin: "https://rodeo.example", source: {}, data: { type: "labinabox:load", lab: { nodes: {} } } });
+  send({ origin: "https://rodeo.example", source: parent, data: { type: "other", lab: { nodes: {} } } });
+  check("embed: load from another origin, source or type is ignored", loaded.length === 0);
+  send({ origin: "https://rodeo.example", source: parent, data: { type: "labinabox:load", lab: { nodes: { a: {} } } } });
+  check("embed: load from the parent at the origin opens the lab", loaded.length === 1 && "a" in loaded[0].nodes);
+  Object.assign(sandbox, { document: savedDoc, window: savedWin, loadLab: savedLoad, toast: savedToast });
+}
+
+// -- version matrix (mirrors 77_version_matrix_test.py) ----------------
+{
+  const M = { x_version: [
+    { version: "2.13", kubernetes: { rke2: { min: "1.32", max: "1.34" }, k3s: { min: "1.32" } }, os: ["sle15sp7", "sles16.0"] },
+    { version: "2.12" },
+  ] };
+  const vi = (...a) => sandbox.versionIssues(M, ...a);
+  check("versions: suggestions newest first", JSON.stringify(sandbox.versionSuggestions(M, "x_version")) === '["2.13","2.12"]');
+  check("versions: --version and v ignored", sandbox.versionMatches("v1.20", "--version v1.20.2"));
+  check("versions: prefix does not match a longer minor", !sandbox.versionMatches("2.1", "2.13.0"));
+  check("versions: empty value not checked", vi({ x_version: "" }).length === 0);
+  check("versions: unknown version warned", vi({ x_version: "2.11.0" }).length === 1);
+  check("versions: in range is clean", vi({ x_version: "2.13.1" }, "rke2", "v1.33.2+rke2r1", ["sle15sp7"]).length === 0);
+  check("versions: above max warned", vi({ x_version: "2.13.1" }, "rke2", "v1.35.0+rke2r1").length === 1);
+  check("versions: below min warned", vi({ x_version: "2.13.1" }, "rke2", "v1.31.0+rke2r1").length === 1);
+  check("versions: open max not checked", vi({ x_version: "2.13" }, "k3s", "v1.40.0+k3s1").length === 0);
+  check("versions: channel not range-checked", vi({ x_version: "2.13" }, "rke2", "stable").length === 0);
+  check("versions: undeclared clu_type warned", vi({ x_version: "2.13" }, "harvester", "stable").length === 1);
+  check("versions: undeclared OS warned once", vi({ x_version: "2.13" }, "", "", ["slem5.5", "sle15sp7", "slem5.5"]).length === 1);
+  check("versions: same sentence as the Python side",
+    vi({ x_version: "2.13.1" }, "rke2", "v1.35.0+rke2r1")[0] === "x_version 2.13 supports Kubernetes 1.32–1.34 on rke2, the kcluster's clu_rel is 'v1.35.0+rke2r1'");
+
+  // lintLab warns for an add-on on a Kubernetes cluster outside the matrix.
+  const saved = { cache: st.schemaCache, base: st.base };
+  st.schemaCache = { install_x: { fields: [], capabilities: { layers: ["kubernetes"], versions: M } } };
+  st.base = null;
+  const model = { common: {}, addonCfg: { x: { x_version: "2.13" } }, extra: {}, seq: 3, items: [
+    { id: "c1", type: "cluster", name: "k1", parent: null, cfg: { clu_type: "rke2", clu_rel: "v1.36.0+rke2r1" } },
+    { id: "n2", type: "node", name: "vm1", parent: "c1", cfg: {} },
+    { id: "a3", type: "addon", comp: "install_x", section: "x", parent: "c1" },
+  ] };
+  const w = sandbox.lintLab(model).warnings;
+  check("versions: lintLab warns with the placement", w.some((t) => t.startsWith("Add-on x on Kubernetes cluster k1: x_version 2.13 supports")));
+  st.schemaCache = saved.cache; st.base = saved.base;
+}
 
 if (failures) {
   console.error(failures + " check(s) failed");

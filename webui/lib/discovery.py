@@ -246,6 +246,32 @@ def discover():
     return sorted(items, key=lambda it: it["name"])
 
 
+# Base-schema sections every lab has; the others are optional infrastructure services.
+CORE_SECTIONS = ("common", "nodes", "kclusters")
+
+
+def catalogue():
+    """
+    Everything a lab can use, as items with name, kind, title, description, field_count, layers and targets. kind is
+    "addon" (the add-ons of discover()), "infrastructure" (the base schema's optional sections, e.g. pxe) or
+    "kcluster" (each Kubernetes cluster type, the kclusters clu_type values).
+    """
+    base = base_schema()["sections"]
+    items = discover()
+    for name, sec in sorted(base.items()):
+        if name not in CORE_SECTIONS:
+            items.append({"name": name, "kind": "infrastructure", "title": sec.get("title") or name,
+                          "description": sec.get("description", ""), "field_count": len(sec.get("fields", [])),
+                          "layers": [], "targets": []})
+    clu_types = [f.get("enum") for f in base["kclusters"].get("fields", []) if f.get("name") == "clu_type"]
+    if not clu_types or not clu_types[0]:
+        raise ValueError("lab_schema: kclusters has no clu_type enum")
+    for name in clu_types[0]:
+        items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
+                      "layers": [], "targets": []})
+    return items
+
+
 def validate_lab(definition):
     """Validate a full lab definition via libs/primary (captures its stderr)."""
     buf = io.StringIO()

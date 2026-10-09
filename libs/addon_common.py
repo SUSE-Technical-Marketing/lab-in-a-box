@@ -23,6 +23,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import primary
+import versions
 
 
 # ── Field validators ──────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ class Validator:
     def vver(self, section):
         """Mirrors _vver: <section>.<section>_version, if set, must look like X.Y…"""
         v = self._get(section, "{}_version".format(section))
-        if v and not re.match(r'^[0-9]+\.[0-9]', str(v)):
+        if v and not re.match(r'^[0-9]+\.[0-9]', versions.normalize(v)):
             self.errors.append(
                 "[ERROR] {0}.{0}_version='{1}': not a valid version (expected X.Y…)".format(section, v))
 
@@ -134,20 +135,29 @@ def require_k8s_name(cfg, field, default):
     return v
 
 
-def run_validate(json_path, check_fn):
+def run_validate(json_path, check_fn, plugin=None):
     """
     Load json_path (JSON or YAML, auto-detected — see primary.try_load_definition),
     run check_fn(Validator) to populate errors, print them, and return the
-    error count as an exit code — mirrors bash's `exit ${_ve}`.
+    error count as an exit code — mirrors bash's `exit ${_ve}`. check_fn may be
+    None (no field checks). With `plugin`, also prints [WARNING] lines for
+    versions outside its version matrix (libs/versions.py); warnings do not
+    count as errors.
     """
     definition, parse_error = primary.try_load_definition(json_path)
     if parse_error:
         print("[ERROR] {}".format(parse_error))
         return 1
     v = Validator(definition)
-    check_fn(v)
+    if check_fn is not None:
+        check_fn(v)
     for line in v.errors:
         print(line)
+    if plugin and plugin.get("versions"):
+        import versions
+        section = plugin.get("name") or ""
+        for w in versions.issues(plugin["versions"], definition.get(section) or {}):
+            print("[WARNING] {}: {}".format(section, w))
     return len(v.errors)
 
 
@@ -254,9 +264,9 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
         if len(argv) < 2:
             print("[ERROR] --validate requires a JSON file path")
             sys.exit(1)
-        if validate_fn is None:
+        if validate_fn is None and not (plugin or {}).get("versions"):
             sys.exit(0)
-        sys.exit(run_validate(argv[1], validate_fn))
+        sys.exit(run_validate(argv[1], validate_fn, plugin=plugin))
 
     if argv and argv[0] == "--help":
         print_help(script_path, usage=usage)

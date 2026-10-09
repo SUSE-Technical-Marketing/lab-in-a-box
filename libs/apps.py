@@ -24,6 +24,7 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "layers": ["kubernetes"],               # subset of libs/layers.py's LAYER_*: how it can be installed (descriptive only)
         "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
         "aux_services": [],                     # names from the services registry
+        "versions": {...},                      # optional version matrix per version field (libs/versions.py)
     }
 
 describe() runs `--schema json` and caches the output per file signature; load_plugin() returns the capabilities from it.
@@ -253,6 +254,7 @@ def attach_capabilities(schema_dict, plugin_dict):
         "layers": plugin_dict.get("layers") or [],
         "requires_kubernetes": plugin_dict.get("requires_kubernetes"),
         "aux_services": plugin_dict.get("aux_services") or [],
+        "versions": plugin_dict.get("versions") or {},
     }
     return schema_dict
 

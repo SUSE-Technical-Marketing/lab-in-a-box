@@ -10,7 +10,7 @@
 #   lh_repo_url  : [OPTIONAL] Helm repo URL                           (default: https://charts.longhorn.io)
 #   lh_version   : [OPTIONAL] Helm chart version                       (empty = latest)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "longhorn",
@@ -18,6 +18,17 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
+    # Version matrix (libs/versions.py): the releases in SUSE's Longhorn support matrix
+    # (https://www.suse.com/suse-longhorn/support-matrix/all-supported-versions/) and newer; minimum Kubernetes from
+    # each chart's kubeVersion (https://charts.longhorn.io/index.yaml).
+    "versions": {
+        "lh_version": [
+            {"version": "1.13", "kubernetes": {"rke2": {"min": "1.34"}, "k3s": {"min": "1.34"}}},
+            {"version": "1.12", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+            {"version": "1.11", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+            {"version": "1.10", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+        ],
+    },
 }
 
 import sys
@@ -31,6 +42,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
+import versions  # noqa: E402
 from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
 
 
@@ -49,13 +61,8 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
     """
     Install SUSE Longhorn. Mirrors setup_lh (bash).
 
-    NOTE: lh_version is accepted (and its format is checked by --validate) but,
-    matching the current bash exactly, is never actually passed to helm as a
-    --version flag — the field is documented but not wired up in bash either.
-    Fixed the repo alias bug (bash used the literal "longhorn/longhorn" repo
-    reference regardless of lh_rel, inconsistent with setup_lh_repo which
-    always added the repo under lh_rel — would fail if lh_rel were ever
-    customized) — uses lh_rel consistently here.
+    The chart comes from the repo added under lh_rel; lh_version pins its
+    version (empty = latest).
     """
     rel = lh_rel or "longhorn"
     fqdn = "{}.{}.{}".format(lh_shorthn or "longhorn", clu_name, mydomain)
@@ -64,9 +71,10 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
                        "systemctl enable --now iscsid.service ; modprobe iscsi_tcp")
     ssh_run(hostname, "kubectl create namespace longhorn-system")
     ssh_run(hostname,
-            "helm upgrade -i longhorn {}/longhorn --namespace longhorn-system "
+            "helm upgrade -i longhorn {}/longhorn {} --namespace longhorn-system "
             "--set ingress.enabled=true --set ingress.host={} "
-            "--set persistence.migratable=true --set longhornUI.replicas=1".format(rel, fqdn))
+            "--set persistence.migratable=true --set longhornUI.replicas=1".format(
+                rel, versions.helm_version_flag(lh_version), fqdn))
     print("Longhorn should be available in a few minutes in: {}".format(fqdn))
 
 

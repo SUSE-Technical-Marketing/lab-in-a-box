@@ -74,22 +74,23 @@ check("postgresql: the SQL statements are fed to psql, not the shell",
 import install_rancher  # noqa: E402
 rec = _Rec()
 install_rancher.ssh_run = rec
-# stub out everything setup_rancher does around the helm call so only that line matters
+# stub out everything setup_rancher does around the helm call, so it runs to the end
 install_rancher.add_service_dns = lambda *a, **kw: None
-install_rancher.check_ssh_conn = lambda *a, **kw: None
-for _n in ("time",):
-    if hasattr(install_rancher, _n):
-        setattr(getattr(install_rancher, _n), "sleep", lambda *a, **kw: None)
+install_rancher.add_dns_to_named_rr = lambda *a, **kw: None
+install_rancher.restart_named = lambda *a, **kw: None
+install_rancher.ssh_output = lambda *a, **kw: "bootstrap-pw"
+install_rancher.time.sleep = lambda *a, **kw: None
 try:
     install_rancher.setup_rancher(
         "vm1", {"nodes": {}, "common": {}}, "c1", "mydemo.lab", "rke2",
         {"rancher_helm_rel": "rancher", "rancher_helm_chart": "rancher-prime/rancher",
          "rancher_shorthn": "rancher", "rancher_initial_pwd": NASTY, "rancher_replicas": "2"},
     )
-except SystemExit:
-    pass  # setup_rancher may exit after the helm call depending on later stubs — the command is already recorded
-except Exception as e:  # later steps we didn't stub — fine, the helm line is what we assert on
-    print("note: setup_rancher raised after the helm call (expected, not stubbed fully): {}".format(e))
+    finished = True
+except (Exception, SystemExit) as e:
+    print("setup_rancher raised: {!r}".format(e))
+    finished = False
+check("rancher: setup_rancher runs to the end with ssh, DNS and sleep stubbed", finished)
 rc = rec.joined()
 check("rancher: bootstrapPassword is shlex-quoted in the helm command",
       "--set bootstrapPassword={}".format(shlex.quote(NASTY)) in rc)
