@@ -303,7 +303,7 @@ class VMBackend(object):
         """
         log("- open_ports: nothing to open on the '{}' backend".format(type(self).__name__))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         raise NotImplementedError
 
     def list_used_macs(self):
@@ -1221,7 +1221,7 @@ class HarvesterBackend(VMBackend):
         if result.returncode != 0:
             die("kubectl delete virtualmachine failed for '{}'".format(vm_name))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         image_name = self._image_name(iso_image)
         result = self._kubectl("get", "virtualmachineimage", image_name,
@@ -1595,7 +1595,7 @@ class HetznerBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         """No-op beyond validation — ISO_IMAGE is a Hetzner image NAME/ID here, not a file to
         copy anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
@@ -1947,7 +1947,7 @@ class AWSBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         """No-op beyond validation — ISO_IMAGE is a real AMI ID here, not a file to copy anywhere
         (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
@@ -2495,7 +2495,7 @@ class GCPBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         """No-op beyond validation — ISO_IMAGE is a real GCE image name here, not a file to copy
         anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
@@ -2773,7 +2773,7 @@ class AlibabaBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         """No-op beyond validation — ISO_IMAGE is a real Alibaba Cloud ImageId here, not a file to
         copy anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
@@ -3023,7 +3023,7 @@ class ScalewayBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
             die("ISO_IMAGE is required for VM '{}' on the 'scaleway' backend — set it to a real "
@@ -3285,7 +3285,7 @@ class UpCloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
             die("ISO_IMAGE is required for VM '{}' on the 'upcloud' backend — set it to a real "
@@ -3565,7 +3565,7 @@ class OVHcloudBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
             die("ISO_IMAGE is required for VM '{}' on the 'ovhcloud' backend — set it to a real "
@@ -3809,7 +3809,7 @@ class ExoscaleBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
-    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
+    def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
             die("ISO_IMAGE is required for VM '{}' on the 'exoscale' backend — set it to a real "
