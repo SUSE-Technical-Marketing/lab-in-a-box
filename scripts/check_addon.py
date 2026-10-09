@@ -9,7 +9,7 @@ For each add-on it runs --schema json, --capabilities, --version, --help and --v
 section) and checks:
   * the file name is install_<name> (extension optional) and the file is executable;
   * --schema json exits 0 and prints a JSON object with section, description and fields; every field has a name, a
-    known type and a boolean "required";
+    known type and a boolean "required", and its default (if any) is valid for its type;
   * capabilities: targets and layers are known values, requires_kubernetes is null or known clu_types, aux_services
     is a list, versions is a well-formed version matrix (libs/versions.py);
   * --capabilities prints the same targets, layers, requires_kubernetes and aux_services as the schema;
@@ -85,7 +85,28 @@ def field_problems(fields: list) -> List[str]:
             out.append("field {}: type {!r} is not one of {}".format(f["name"], f.get("type"), ", ".join(FIELD_TYPES)))
         if not isinstance(f.get("required"), bool):
             out.append("field {}: required must be true or false".format(f["name"]))
+        default = f.get("default")
+        if default not in (None, "") and not default_ok(f.get("type"), default):
+            out.append("field {}: default {!r} is not a valid {}".format(f["name"], default, f.get("type")))
     return out
+
+
+def default_ok(kind: str, value: object) -> bool:
+    """True when `value` is a valid default for a field of type `kind`; types without a format always pass."""
+    v = str(value).strip()
+    if kind == "integer":
+        return bool(re.match(r"^-?\d+$", v))
+    if kind == "port":
+        return v.isdigit() and 1 <= int(v) <= 65535
+    if kind == "boolean":
+        return v.lower() in ("true", "false")
+    if kind == "namespace":
+        return bool(re.match(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", v))
+    if kind == "url":
+        return bool(re.match(r"^https?://\S+$", v))
+    if kind == "version":
+        return bool(re.match(r"^\S+$", v))
+    return True
 
 
 def capability_problems(caps: dict, field_names: List[str], kinds: List[str]) -> List[str]:

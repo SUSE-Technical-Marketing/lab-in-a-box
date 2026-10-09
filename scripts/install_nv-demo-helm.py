@@ -9,7 +9,7 @@
 #   nv_demo_helm_name : [OPTIONAL] Helm release name                  (default: nvdemohelm)
 #   nv_demo_helm_tag  : [OPTIONAL] Demo container image tag           (default: 0.4)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "nv-demo-helm",
@@ -19,6 +19,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -35,25 +36,24 @@ from lab_creation import ssh_run  # noqa: E402
 
 def setup_nv_demo_helm(hostname, clu_name, mydomain, cfg):
     """
-    Clone and helm-install the nv-demo-helm demo workloads. Mirrors
-    setup_nv-demo-helm (bash).
-
-    NOTE: bash uses plain `helm install` (not `helm upgrade --install`, unlike
-    almost every other addon in this repo) — non-idempotent, will fail if the
-    release already exists. Preserved exactly; there is no lab-in-a-box rule
-    against `helm install` (that convention belongs to a different project).
+    Clone (or update) the nv-demo-helm repo on `hostname` and install or upgrade its demo workloads.
+    Idempotent: a second run updates the checkout and upgrades the existing release.
     """
     ns = cfg.get("nv_demo_helm_ns") or "demo"
     name = cfg.get("nv_demo_helm_name") or "nvdemohelm"
     tag = cfg.get("nv_demo_helm_tag") or "0.4"
+    repo_dir = "/var/tmp/nv-demo-helm"
 
-    ssh_run(hostname, "git clone https://github.com/horantj/nv-demo-helm.git /var/tmp/nv-demo-helm")
     ssh_run(hostname,
-            "helm install -n {} --create-namespace "
+            "if [ -d {0}/.git ]; then git -C {0} pull --ff-only; "
+            "else git clone https://github.com/horantj/nv-demo-helm.git {0}; fi".format(repo_dir))
+    ssh_run(hostname,
+            "helm upgrade --install demo-release {}/nv-demo -n {} --create-namespace "
             "--set exploit.image_tag={} "
             "--set struts.ingress.enabled=true "
-            "--set struts.ingress.host=struts-{}.{}.{} "
-            "demo-release /var/tmp/nv-demo-helm/nv-demo".format(ns, tag, name, clu_name, mydomain))
+            "--set struts.ingress.host={}".format(
+                repo_dir, shlex.quote(ns), shlex.quote(tag),
+                shlex.quote("struts-{}.{}.{}".format(name, clu_name, mydomain))))
     print("NV demo helm should be available in a few minutes, for instructions please visit: "
           "https://github.com/horantj/nv-demo-helm/tree/main")
 

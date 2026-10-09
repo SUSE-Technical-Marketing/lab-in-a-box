@@ -104,6 +104,8 @@ def parse_script(path):
         dm = re.search(r'\(default:\s*([^)]+)\)', rest)
         if dm:
             default = dm.group(1).strip()
+            if len(default) > 1 and default[0] == default[-1] and default[0] in "\"'":
+                default = default[1:-1]
             rest = re.sub(r'\s*\(default:[^)]+\)', '', rest)
 
         # Optional explicit "(options: a, b, c)" annotation — a fixed set of

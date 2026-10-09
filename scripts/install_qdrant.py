@@ -8,7 +8,7 @@
 #   qdrant_ns         : [OPTIONAL] namespace (default: qdrant)
 #   qdrant_rel        : [OPTIONAL] Helm repo alias (default: qdrant)
 #   qdrant_repo_url   : [OPTIONAL] Helm repo URL (default: https://qdrant.github.io/qdrant-helm)
-#   qdrant_replicas   : [OPTIONAL] StatefulSet replica count (default: 1 — chart default)
+#   qdrant_replicas   : [OPTIONAL] StatefulSet replica count, as the chart's default (default: 1)
 #
 # Chart repo and version follow qdrant/qdrant-helm's README. The chart's README notes that it needs
 # Kubernetes v1.24+ (gRPC readiness probe support) and a PersistentVolume provisioner. Both are already
