@@ -8,14 +8,16 @@
 #   OS mode         : script is called as a nodes addon     → clu_name env var is empty
 #   Override either mode by setting mariadb_mode = "kubernetes" or "os" in the JSON.
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "mariadb" ────────────────────────────────────────────────────
 #
 # SHARED (both modes)
 #   mariadb_mode          : [OPTIONAL] Where to run MariaDB (default: auto) (options: auto, kubernetes, os)
-#   mariadb_db            : [OPTIONAL] default database name    (default: none created)
-#   mariadb_user          : [OPTIONAL] default username         (default: none created)
-#   mariadb_password      : [OPTIONAL] password for mariadb_user / the Kubernetes root user
-#                           (default: auto-generated and printed)
+#   mariadb_db            : [OPTIONAL] default database name; when unset, none is created
+#   mariadb_user          : [OPTIONAL] default username; when unset, none is created
+#   mariadb_password      : [OPTIONAL] password for mariadb_user / the Kubernetes root user;
+#                           when unset, generated and printed
 #
 # KUBERNETES MODE
 #   mariadb_ns            : [OPTIONAL] Kubernetes namespace                  (default: db)
@@ -27,14 +29,10 @@
 # addon that needs a companion MariaDB on the same host (install_nextcloud.py,
 # install_seafile.py, ...) can call it directly instead of bootstrapping its own ad-hoc
 # database container.
-#   mariadb_root_password : [OPTIONAL] root user password                    (default:
-#                           auto-generated and printed)
+#   mariadb_root_password : [OPTIONAL] root user password; when unset, generated and printed
 #   mariadb_port          : [OPTIONAL] listening port                        (default: 3306)
-#   mariadb_bind_address  : [OPTIONAL] bind-address value                   (default: 127.0.0.1
-#                           — loopback-only; a caller relying on this from another container on
-#                           the SAME host is expected to reach it via --network host, same
-#                           convention as install_prometheus.py/install_grafana.py, not by
-#                           opening this up to the outside)
+#   mariadb_bind_address  : [OPTIONAL] bind-address value, loopback-only by default; a container on the
+#                           same host reaches it through --network host (default: 127.0.0.1)
 #
 # SLES / SLE Micro note:
 #   SLE Micro uses transactional-update and requires a reboot after package install.

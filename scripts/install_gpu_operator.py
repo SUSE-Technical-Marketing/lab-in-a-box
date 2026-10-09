@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "gpu_operator" — configurable keys:
 #   gpu_operator_version           : [OPTIONAL] Helm chart version (empty = latest, e.g. "v26.7.0")
 #   gpu_operator_ns                : [OPTIONAL] namespace (default: gpu-operator)

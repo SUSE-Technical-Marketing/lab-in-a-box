@@ -1,0 +1,91 @@
+{
+ "fields": {
+  "gitlab_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_cert_manager_email": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_chart_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "gitlab_deployment": {
+   "default": "podman",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_edition": {
+   "default": "ce",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_extra_values": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_hostname": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_http_port": {
+   "default": "80",
+   "required": false,
+   "type": "port"
+  },
+  "gitlab_https": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_https_port": {
+   "default": "443",
+   "required": false,
+   "type": "port"
+  },
+  "gitlab_image": {
+   "default": "gitlab/gitlab-ce",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_namespace": {
+   "default": "gitlab",
+   "required": false,
+   "type": "namespace"
+  },
+  "gitlab_rel": {
+   "default": "gitlab",
+   "required": false,
+   "type": "string"
+  },
+  "gitlab_repo_url": {
+   "default": "https://charts.gitlab.io/",
+   "required": false,
+   "type": "url"
+  },
+  "gitlab_root_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "gitlab_ssh_port": {
+   "default": "2222",
+   "required": false,
+   "type": "port"
+  },
+  "gitlab_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:gitlab",
+ "version": "1.1"
+}

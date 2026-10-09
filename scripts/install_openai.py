@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "openai" — configurable keys:
 #   openai_api_key   : [MANDATORY] OpenAI API key (from https://platform.openai.com)
 #   openai_model     : [OPTIONAL] default model (default: openai/gpt-5)

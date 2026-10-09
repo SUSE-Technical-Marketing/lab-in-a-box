@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "linkerd_install_viz": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "linkerd_ns": {
+   "default": "linkerd",
+   "required": false,
+   "type": "namespace"
+  },
+  "linkerd_rel": {
+   "default": "linkerd",
+   "required": false,
+   "type": "string"
+  },
+  "linkerd_repo_url": {
+   "default": "https://helm.linkerd.io/stable",
+   "required": false,
+   "type": "url"
+  },
+  "linkerd_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "linkerd_viz_ns": {
+   "default": "linkerd-viz",
+   "required": false,
+   "type": "namespace"
+  }
+ },
+ "schema": "addon:linkerd",
+ "version": "1.0"
+}

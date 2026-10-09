@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "appcollection_chart": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_ns": {
+   "default": "app-collection",
+   "required": false,
+   "type": "namespace"
+  },
+  "appcollection_rel": {
+   "default": "suse-application-collection",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_release": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_repo_url": {
+   "default": "https://charts.suse.com/application-collection",
+   "required": false,
+   "type": "url"
+  },
+  "appcollection_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:appcollection",
+ "version": "1.1"
+}

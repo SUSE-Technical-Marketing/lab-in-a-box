@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "kagent_ns": {
+   "default": "kagent-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "kagent_rel": {
+   "default": "kagent",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_repo_url": {
+   "default": "https://kagent-ai.github.io/helm-charts",
+   "required": false,
+   "type": "url"
+  },
+  "kagent_shorthn": {
+   "default": "kagent",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kagent",
+ "version": "1.0"
+}

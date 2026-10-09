@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "nginx_ns": {
+   "default": "ingress-nginx",
+   "required": false,
+   "type": "namespace"
+  },
+  "nginx_rel": {
+   "default": "ingress-nginx",
+   "required": false,
+   "type": "string"
+  },
+  "nginx_repo_url": {
+   "default": "https://kubernetes.github.io/ingress-nginx",
+   "required": false,
+   "type": "url"
+  },
+  "nginx_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:nginx",
+ "version": "1.0"
+}

@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "wikimusic_image": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "wikimusic_ns": {
+   "default": "wikimusic",
+   "required": false,
+   "type": "namespace"
+  },
+  "wikimusic_port": {
+   "default": "3000",
+   "required": false,
+   "type": "port"
+  },
+  "wikimusic_shorthn": {
+   "default": "wikimusic",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:wikimusic",
+ "version": "1.0"
+}

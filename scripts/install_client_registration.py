@@ -15,6 +15,8 @@
 # the lab (or outside it entirely — client_registration_server just needs to
 # be reachable by FQDN).
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "client_registration" ────────────────────────────────────
 #
 # MANDATORY
@@ -28,22 +30,20 @@
 # OPTIONAL – server access (for the "ensure the key/channels exist" preflight
 #            and salt-key acceptance; same two deployment shapes install_uyuni.py/
 #            install_smlm.py themselves use)
-#   client_registration_server_type      : "uyuni" (default, single-VM podman/mgradm)
+#   client_registration_server_type      : "uyuni" (single-VM podman/mgradm)
 #                                           or "smlm" (Kubernetes, kubectl exec)
-#                                           (options: uyuni, smlm)
+#                                           (options: uyuni, smlm) (default: uyuni)
 #   client_registration_server_node      : SSH host to run spacecmd/mgrctl/kubectl
-#                                           commands on (default: same as
-#                                           client_registration_server for "uyuni";
-#                                           REQUIRED for "smlm" — the k8s node
-#                                           running kubectl isn't necessarily the
-#                                           server's own ingress FQDN)
+#                                           commands on. When unset, client_registration_server
+#                                           for "uyuni"; REQUIRED for "smlm", since the
+#                                           k8s node running kubectl isn't necessarily the
+#                                           server's own ingress FQDN
 #   client_registration_server_ns        : Kubernetes namespace ("smlm" only,
 #                                           default: uyuni-server)
 #   client_registration_admin_user       : spacecmd admin user (default: admin)
-#   client_registration_admin_pass       : spacecmd admin password
-#                                           (default: Uyuni12345 for "uyuni",
-#                                           admin123 for "smlm" — each product's
-#                                           own install default)
+#   client_registration_admin_pass       : spacecmd admin password. When unset, each
+#                                           product's own install default: Uyuni12345
+#                                           for "uyuni", admin123 for "smlm"
 #
 # OPTIONAL – activation key auto-creation, if client_registration_activation_key
 #            doesn't already exist on the server (same fields
@@ -80,8 +80,8 @@
 #                                           after bootstrap (default: 30)
 #   client_registration_retry_interval   : seconds between polls (default: 10)
 #   client_registration_server_ip        : IP the client pins client_registration_server
-#                                           to in its /etc/hosts (default: the name as
-#                                           resolved on the automation node) — for labs
+#                                           to in its /etc/hosts; when unset, the name as
+#                                           resolved on the automation node. For labs
 #                                           where that name differs per network
 #   client_registration_profile_name     : the system's name in the server (its
 #                                           salt minion ID), passed to bootstrap as
@@ -90,7 +90,7 @@
 #                                           override), e.g. a workshop's
 #                                           "at-ct-pro" for VM zzsles15a
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "client_registration",

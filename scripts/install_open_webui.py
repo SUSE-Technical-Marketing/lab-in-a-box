@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "open_webui" — configurable keys:
 #   open_webui_version         : [OPTIONAL] Helm chart version (empty = latest)
 #   open_webui_ns              : [OPTIONAL] namespace (default: open-webui)

@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "kimi_api_base": {
+   "default": "Moonshot's global endpoint, https://api.moonshot.ai/v1; use https://api.moonshot.cn/v1 for the China region",
+   "required": false,
+   "type": "string"
+  },
+  "kimi_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "kimi_model": {
+   "default": "moonshot/kimi-k3",
+   "required": false,
+   "type": "string"
+  },
+  "kimi_ns": {
+   "default": "kimi",
+   "required": false,
+   "type": "namespace"
+  },
+  "kimi_rel": {
+   "default": "litellm",
+   "required": false,
+   "type": "string"
+  },
+  "kimi_repo_url": {
+   "default": "https://berriai.github.io/litellm",
+   "required": false,
+   "type": "url"
+  },
+  "kimi_shorthn": {
+   "default": "kimi",
+   "required": false,
+   "type": "string"
+  },
+  "kimi_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kimi",
+ "version": "1.0"
+}

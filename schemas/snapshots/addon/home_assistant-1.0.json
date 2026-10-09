@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "home_assistant_image_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "home_assistant_rel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_repo_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "home_assistant_shorthn": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_storage_class": {
+   "default": "cluster default",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "home_assistant_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:home_assistant",
+ "version": "1.0"
+}

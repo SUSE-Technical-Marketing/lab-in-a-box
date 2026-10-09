@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "mariadb_bind_address": {
+   "default": "127.0.0.1 \u2014 loopback-only; a caller relying on this from another container on the SAME host is expected to reach it via --network host, same convention as install_prometheus.py/install_grafana.py, not by opening this up to the outside",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_db": {
+   "default": "none created",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_mode": {
+   "default": "auto",
+   "enum": [
+    "auto",
+    "kubernetes",
+    "os"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_name": {
+   "default": "mariadb",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_ns": {
+   "default": "db",
+   "required": false,
+   "type": "namespace"
+  },
+  "mariadb_password": {
+   "default": "auto-generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "mariadb_port": {
+   "default": "3306",
+   "required": false,
+   "type": "port"
+  },
+  "mariadb_root_password": {
+   "default": "auto-generated and printed",
+   "required": false,
+   "type": "password"
+  },
+  "mariadb_user": {
+   "default": "none created",
+   "required": false,
+   "type": "string"
+  },
+  "mariadb_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mariadb",
+ "version": "1.0"
+}

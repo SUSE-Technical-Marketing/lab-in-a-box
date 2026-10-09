@@ -3,8 +3,10 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "codellama" — configurable keys:
-#   codellama_model   : [OPTIONAL] Code Llama model tag (default: codellama — the 7B instruct build)
+#   codellama_model   : [OPTIONAL] Code Llama model tag, the 7B instruct build by default (default: codellama)
 #                       Examples: codellama:13b, codellama:34b, codellama:70b, codellama:7b-python
 #   codellama_ns      : [OPTIONAL] Ollama namespace to pull into (default: ollama)
 #   codellama_shorthn : [OPTIONAL] hostname prefix if Ollama is not yet installed (default: ollama)

@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "NOTE": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "virt_helm_rel": {
+   "default": "harvester",
+   "required": false,
+   "type": "string"
+  },
+  "virt_namespace": {
+   "default": "harvester-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "virt_replicas": {
+   "default": "1",
+   "required": false,
+   "type": "integer"
+  },
+  "virt_repo_name": {
+   "default": "harvester",
+   "required": false,
+   "type": "string"
+  },
+  "virt_repo_url": {
+   "default": "https://charts.harvesterhci.io",
+   "required": false,
+   "type": "url"
+  },
+  "virt_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:harvester",
+ "version": "1.0"
+}

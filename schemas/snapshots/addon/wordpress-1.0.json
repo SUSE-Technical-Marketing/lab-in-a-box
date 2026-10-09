@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "wordpress_name": {
+   "default": "wordpress",
+   "required": false,
+   "type": "string"
+  },
+  "wordpress_ns": {
+   "default": "wordpress",
+   "required": false,
+   "type": "namespace"
+  },
+  "wordpress_shorthn": {
+   "default": "wordpress",
+   "required": false,
+   "type": "string"
+  },
+  "wordpress_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:wordpress",
+ "version": "1.0"
+}

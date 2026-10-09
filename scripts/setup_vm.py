@@ -28,6 +28,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
         sys.path.insert(0, _candidate)
 
 import primary  # noqa: E402
+import migrations  # noqa: E402
 from lab_creation import (  # noqa: E402
     die, log, warn,
     validate_lab_definition, load_vm_vars,
@@ -346,6 +347,7 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(json_file)
+    migrations.require_current(definition, json_file)
 
     # Destroy-before-recreate: setup_lab.py's own orchestration already does this
     # (destroy_vm() unconditionally before provision_vm(), for every node, unless

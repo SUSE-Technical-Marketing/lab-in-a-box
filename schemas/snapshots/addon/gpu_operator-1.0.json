@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "gpu_operator_driver_enabled": {
+   "default": "true",
+   "required": false,
+   "type": "boolean"
+  },
+  "gpu_operator_ns": {
+   "default": "gpu-operator",
+   "required": false,
+   "type": "namespace"
+  },
+  "gpu_operator_rel": {
+   "default": "nvidia",
+   "required": false,
+   "type": "string"
+  },
+  "gpu_operator_repo_url": {
+   "default": "https://helm.ngc.nvidia.com/nvidia",
+   "required": false,
+   "type": "url"
+  },
+  "gpu_operator_time_slicing_replicas": {
+   "default": "",
+   "required": false,
+   "type": "integer"
+  },
+  "gpu_operator_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:gpu_operator",
+ "version": "1.0"
+}

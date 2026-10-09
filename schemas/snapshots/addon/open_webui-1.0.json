@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "open_webui_ns": {
+   "default": "open-webui",
+   "required": false,
+   "type": "namespace"
+  },
+  "open_webui_ollama_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "open_webui_openai_api_keys": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "open_webui_openai_base_urls": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "open_webui_rel": {
+   "default": "open-webui",
+   "required": false,
+   "type": "string"
+  },
+  "open_webui_repo_url": {
+   "default": "https://helm.openwebui.com/",
+   "required": false,
+   "type": "url"
+  },
+  "open_webui_shorthn": {
+   "default": "openwebui",
+   "required": false,
+   "type": "string"
+  },
+  "open_webui_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:open_webui",
+ "version": "1.0"
+}

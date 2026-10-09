@@ -6,6 +6,8 @@
 # Project: https://github.com/edisgreat/skynet-simulator, also listed at
 # https://edisgreat.itch.io/skynet-simulator
 #
+# Schema version: 1.0
+#
 # JSON section: "skynet_simulator" — configurable keys:
 #   skynet_simulator_ns      : [OPTIONAL] namespace (default: skynet-simulator)
 #   skynet_simulator_shorthn : [OPTIONAL] hostname prefix for ingress (default: skynet-simulator)

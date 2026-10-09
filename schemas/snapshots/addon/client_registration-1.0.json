@@ -1,0 +1,95 @@
+{
+ "fields": {
+  "client_registration_activation_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "client_registration_activation_key_base_channel": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_activation_key_child_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_activation_key_desc": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_admin_pass": {
+   "default": "Uyuni12345 for \"uyuni\", admin123 for \"smlm\" \u2014 each product's own install default",
+   "required": false,
+   "type": "password"
+  },
+  "client_registration_admin_user": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_background_retry_delay": {
+   "default": "60",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_profile_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_reactivation_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_retry_interval": {
+   "default": "10",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_retry_limit": {
+   "default": "30",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "client_registration_server_ip": {
+   "default": "the name as resolved on the automation node",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server_node": {
+   "default": "same as client_registration_server for \"uyuni\"; REQUIRED for \"smlm\" \u2014 the k8s node running kubectl isn't necessarily the server's own ingress FQDN",
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_server_ns": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "client_registration_server_type": {
+   "default": "",
+   "enum": [
+    "uyuni",
+    "smlm"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "client_registration_sync_channels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:client_registration",
+ "version": "1.0"
+}

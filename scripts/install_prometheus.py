@@ -7,14 +7,16 @@
 # References: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
 #            https://documentation.suse.com/multi-linux-manager/5.2/en/docs/administration/monitoring.html
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "prometheus" ─────────────────────────────────────────────
 #
 # OPTIONAL
-#   prometheus_version         : container image tag (default "latest")
-#   prometheus_image           : full image reference (default "docker.io/prom/prometheus"). There is no SUSE-branded image. The SUSE
+#   prometheus_version         : container image tag (default: "latest")
+#   prometheus_image           : full image reference (default: "docker.io/prom/prometheus"). There is no SUSE-branded image. The SUSE
 #                                guide configures a third-party Prometheus against the smlm exporters.
-#   prometheus_port            : port Prometheus listens on, with host networking (default "9090")
-#   prometheus_retention       : --storage.tsdb.retention.time value (default "15d")
+#   prometheus_port            : port Prometheus listens on, with host networking (default: "9090")
+#   prometheus_retention       : --storage.tsdb.retention.time value (default: "15d")
 #   prometheus_scrape_smlm     : FQDN of an smlm server with smlm_monitoring_enabled set. A scrape job is generated for its exporter
 #                                ports 9100, 9187, 5556, 5557 and 9800, plus the message-queue job at <host>:80 with the metrics path /rhn/metrics.
 #   prometheus_scrape_configs  : [{"job_name": "...", "targets": ["host:port", ...], "metrics_path": "/metrics"}]. Extra jobs, added

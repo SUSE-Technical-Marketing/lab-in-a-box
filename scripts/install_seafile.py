@@ -39,43 +39,45 @@
 # companion database's bind-address is therefore opened to 0.0.0.0, not left at
 # the loopback-only default install_nextcloud.py uses with --network host.
 #
+# Schema version: 1.1
+#
 # ─── JSON section: "seafile" ────────────────────────────────────────────────────
 #
-#   seafile_deployment    : "podman" (default) = a standalone deployment directly on a
-#                            host/VM, no Kubernetes. "kubernetes" = the real official Helm chart.
+#   seafile_deployment    : "podman" = a standalone deployment directly on a
+#                            host/VM, no Kubernetes. "kubernetes" = the real official Helm chart. (default: podman)
 #
 # ── "podman" fields ───────────────────────────────────────────────────────────
 #   seafile_image            : container image                (default: "seafileltd/seafile-mc")
 #   seafile_version           : image tag                      (default: "13.0-latest")
-#   seafile_hostname           : the real SEAFILE_SERVER_HOSTNAME clients will reach this at
-#                             (default: the target host's own hostname)
+#   seafile_hostname           : the real SEAFILE_SERVER_HOSTNAME clients will reach this at;
+#                             when unset, the target host's own hostname
 #   seafile_http_port          : host port -> container port 80, distinct from
 #                             install_nextcloud.py's 8080 so both can run on the same lab node
 #                             (default: 8081)
-#   seafile_admin_email        : initial admin email             (default:
-#                             "admin@<seafile_hostname>") — the real INIT_SEAFILE_ADMIN_EMAIL
+#   seafile_admin_email        : initial admin email; when unset, admin@<seafile_hostname>.
+#                             The INIT_SEAFILE_ADMIN_EMAIL
 #                             env var, only used on FIRST boot
-#   seafile_admin_password      : initial admin password           (default: auto-generated and
-#                             printed) — the real INIT_SEAFILE_ADMIN_PASSWORD env var
+#   seafile_admin_password      : initial admin password, the INIT_SEAFILE_ADMIN_PASSWORD env var;
+#                             when unset, generated and printed
 #   seafile_account            : name of an encrypted credential_kind "seafile" file under
 #                             /etc/lab_creation/credentials/ to read seafile_admin_password
 #                             from instead — auto-discovered if exactly one such file exists
 #                             and this is left unset (same convention as install_ds389.py/
 #                             install_gitlab.py/install_nextcloud.py)
-#   seafile_jwt_private_key     : the real JWT_PRIVATE_KEY signing key (>=32 chars)  (default:
-#                             auto-generated and printed)
+#   seafile_jwt_private_key     : the real JWT_PRIVATE_KEY signing key (>=32 chars);
+#                             when unset, generated and printed
 #   seafile_data_size          : size of the persistent data volume — informational only,
 #                             podman named volumes aren't size-capped; documents intent
 #                             (default: unset)
 #
 #   seafile_db_user            : the real SEAFILE_MYSQL_DB_USER — the dedicated MySQL user
 #                             Seafile creates and uses for ongoing operation (default: "seafile")
-#   seafile_db_password         : the real SEAFILE_MYSQL_DB_PASSWORD                (default:
-#                             auto-generated and printed)
+#   seafile_db_password         : the real SEAFILE_MYSQL_DB_PASSWORD;
+#                             when unset, generated and printed
 #   seafile_db_root_password    : the companion MariaDB's real root password, used ONCE by
 #                             Seafile's own first-boot init to create its ccnet_db/seafile_db/
-#                             seahub_db databases and the seafile_db_user above (default:
-#                             auto-generated and printed) — passed straight through as
+#                             seahub_db databases and the seafile_db_user above; when unset,
+#                             generated and printed. Passed straight through as
 #                             mariadb_root_password to libs/db_common.py's setup_mariadb_os(),
 #                             the SAME code install_mariadb.py itself runs, not a
 #                             reimplementation (see install_nextcloud.py's own nextcloud_db for
@@ -86,7 +88,7 @@
 #                             top-of-file schema doc for the full list, e.g.
 #                             {"mariadb_pkg_version": "10.6"}
 #
-#   seafile_cache_provider      : "redis" (default) or "memcached" — the real CACHE_PROVIDER
+#   seafile_cache_provider      : "redis" or "memcached" (default: redis), the CACHE_PROVIDER
 #                             env var; deploys a matching companion container either way (no
 #                             shared addon exists for either in this project yet, so both stay
 #                             small inline containers here, same as install_prometheus.py's/
@@ -97,7 +99,7 @@
 #                             11211 for memcached when unset
 #
 # ── "kubernetes" fields ───────────────────────────────────────────────────────
-#   seafile_edition            : "ce" (default, Community Edition) or "pro" (Professional —
+#   seafile_edition            : "ce" (Community Edition) or "pro" (default: ce) (Professional —
 #                             requires a real Seafile Pro license; this addon does not manage
 #                             licensing itself)
 #   seafile_rel                : Helm repo alias               (default: "seafile")

@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "istio" — configurable keys:
 #   istio_version       : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.22.3")
 #   istio_ns            : [OPTIONAL] control plane namespace (default: istio-system)
@@ -11,7 +13,7 @@
 #   istio_repo_url      : [OPTIONAL] Helm repo URL (default: https://istio-release.storage.googleapis.com/charts)
 #   istio_install_gateway: [OPTIONAL] install ingress gateway (default: true)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "istio",

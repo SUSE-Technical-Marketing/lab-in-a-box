@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "gemini_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "gemini_model": {
+   "default": "gemini/gemini-1.5-flash",
+   "required": false,
+   "type": "string"
+  },
+  "gemini_ns": {
+   "default": "gemini",
+   "required": false,
+   "type": "namespace"
+  },
+  "gemini_rel": {
+   "default": "litellm",
+   "required": false,
+   "type": "string"
+  },
+  "gemini_repo_url": {
+   "default": "https://berriai.github.io/litellm",
+   "required": false,
+   "type": "url"
+  },
+  "gemini_shorthn": {
+   "default": "gemini",
+   "required": false,
+   "type": "string"
+  },
+  "gemini_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:gemini",
+ "version": "1.0"
+}

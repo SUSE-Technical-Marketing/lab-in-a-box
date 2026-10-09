@@ -1,0 +1,126 @@
+{
+ "fields": {
+  "seafile_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_admin_email": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_admin_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "seafile_cache_port": {
+   "default": "",
+   "required": false,
+   "type": "port"
+  },
+  "seafile_cache_provider": {
+   "default": "redis",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_cache_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  },
+  "seafile_chart_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  },
+  "seafile_data_size": {
+   "default": "unset",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_db_options": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_db_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "seafile_db_port": {
+   "default": "3306",
+   "required": false,
+   "type": "port"
+  },
+  "seafile_db_root_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "seafile_db_user": {
+   "default": "seafile",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_deployment": {
+   "default": "podman",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_edition": {
+   "default": "ce",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_extra_values": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_hostname": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_http_port": {
+   "default": "8081",
+   "required": false,
+   "type": "port"
+  },
+  "seafile_image": {
+   "default": "seafileltd/seafile-mc",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_jwt_private_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_namespace": {
+   "default": "seafile",
+   "required": false,
+   "type": "namespace"
+  },
+  "seafile_rel": {
+   "default": "seafile",
+   "required": false,
+   "type": "string"
+  },
+  "seafile_repo_url": {
+   "default": "https://haiwen.github.io/seafile-helm-chart/repo",
+   "required": false,
+   "type": "url"
+  },
+  "seafile_version": {
+   "default": "13.0-latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:seafile",
+ "version": "1.1"
+}

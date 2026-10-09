@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "fluentd" — configurable keys:
 #   fluentd_version     : Helm chart version (empty = latest, e.g. "0.5.2")
 #   fluentd_ns          : namespace (default: fluentd)
 #   fluentd_rel         : Helm repo alias (default: fluent)
 #   fluentd_repo_url    : Helm repo URL (default: https://fluent.github.io/helm-charts)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "fluentd",

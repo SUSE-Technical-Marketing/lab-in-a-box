@@ -28,6 +28,10 @@ Usage:
 
 __version__ = "1"
 
+# Version of the credentials-file schema (PROVIDER_FIELDS and SERVICE_CREDENTIAL_FIELDS), written to every file as
+# schema_version; see schemas/compatibility.json.
+CREDENTIALS_SCHEMA_VERSION = "1.0"
+
 import sys
 from pathlib import Path
 
@@ -194,7 +198,7 @@ def write_account_file(out_path, provider, fields, encrypt, passphrase=None):
     passphrase, the passphrase is prompted for."""
     import yaml
 
-    payload = {"cloudtype": provider}
+    payload = {"cloudtype": provider, "schema_version": CREDENTIALS_SCHEMA_VERSION}
     if encrypt:
         if passphrase is None:
             passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
@@ -238,7 +242,7 @@ def write_credential_file(out_path, kind, fields, encrypt, passphrase=None):
     instead of 'cloudtype' — see SERVICE_CREDENTIAL_FIELDS's own comment."""
     import yaml
 
-    payload = {"credential_kind": kind}
+    payload = {"credential_kind": kind, "schema_version": CREDENTIALS_SCHEMA_VERSION}
     if encrypt:
         if passphrase is None:
             passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)

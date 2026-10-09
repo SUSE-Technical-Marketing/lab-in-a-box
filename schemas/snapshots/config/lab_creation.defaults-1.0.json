@@ -1,0 +1,16 @@
+{
+ "fields": {
+  "ISO_LOC": {},
+  "LAB_SETUP_PATH": {},
+  "VM_IMG_LOC": {},
+  "_BOOT_PACKAGES": {},
+  "_lib_path": {},
+  "_primary_funtions": {},
+  "_templ_addons_loc": {},
+  "delay_min": {},
+  "delay_sec": {},
+  "sourcepath": {}
+ },
+ "schema": "config:lab_creation.defaults",
+ "version": "1.0"
+}

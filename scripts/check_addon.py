@@ -8,8 +8,8 @@ Usage:
 For each add-on it runs --schema json, --capabilities, --version, --help and --validate (on a lab without the add-on's
 section) and checks:
   * the file name is install_<name> (extension optional) and the file is executable;
-  * --schema json exits 0 and prints a JSON object with section, description and fields; every field has a name, a
-    known type and a boolean "required", and its default (if any) is valid for its type;
+  * --schema json exits 0 and prints a JSON object with schema_version (MAJOR.MINOR), section, description and fields;
+    every field has a name, a known type and a boolean "required", and its default (if any) is valid for its type;
   * capabilities: targets and layers are known values, requires_kubernetes is null or known clu_types, aux_services
     is a list, versions is a well-formed version matrix (libs/versions.py);
   * --capabilities prints the same targets, layers, requires_kubernetes and aux_services as the schema;
@@ -164,6 +164,8 @@ def check(exe: str, report: Callable[[bool, str], None], kinds: List[str]) -> No
     schema = json_object(r.stdout) if r.returncode == 0 else None
     report(schema is not None, "--schema json exits 0 and prints a JSON object")
     schema = schema or {}
+    report(bool(re.match(r"^\d+\.\d+$", str(schema.get("schema_version", "")))),
+           "schema has a schema_version (MAJOR.MINOR)")
     report(isinstance(schema.get("section"), str) and bool(schema.get("section")), "schema has a section")
     report(isinstance(schema.get("description"), str), "schema has a description")
     fields = schema.get("fields")

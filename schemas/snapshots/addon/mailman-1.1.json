@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "mailman_admin_email": {
+   "default": "admin@lab.local",
+   "required": false,
+   "type": "string"
+  },
+  "mailman_admin_user": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "mailman_ns": {
+   "default": "mailman",
+   "required": false,
+   "type": "namespace"
+  },
+  "mailman_shorthn": {
+   "default": "mailman",
+   "required": false,
+   "type": "string"
+  },
+  "mailman_version": {
+   "default": "0.5",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mailman",
+ "version": "1.1"
+}

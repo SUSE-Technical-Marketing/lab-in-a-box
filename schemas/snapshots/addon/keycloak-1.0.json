@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "keycloak_admin": {
+   "default": "admin",
+   "required": false,
+   "type": "string"
+  },
+  "keycloak_ns": {
+   "default": "keycloak",
+   "required": false,
+   "type": "namespace"
+  },
+  "keycloak_password": {
+   "default": "keycloak123",
+   "required": false,
+   "type": "password"
+  },
+  "keycloak_rel": {
+   "default": "bitnami",
+   "required": false,
+   "type": "string"
+  },
+  "keycloak_repo_url": {
+   "default": "https://charts.bitnami.com/bitnami",
+   "required": false,
+   "type": "url"
+  },
+  "keycloak_shorthn": {
+   "default": "keycloak",
+   "required": false,
+   "type": "string"
+  },
+  "keycloak_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:keycloak",
+ "version": "1.0"
+}

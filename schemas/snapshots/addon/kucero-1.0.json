@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "kucero_ns": {
+   "default": "kube-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "kucero_rel": {
+   "default": "reactive-tech",
+   "required": false,
+   "type": "string"
+  },
+  "kucero_repo_url": {
+   "default": "https://charts.reactive-tech.io",
+   "required": false,
+   "type": "url"
+  },
+  "kucero_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kucero",
+ "version": "1.0"
+}

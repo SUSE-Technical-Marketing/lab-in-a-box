@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "suse_observability" — configurable keys:
 #   suse_observability_license : [MANDATORY] SUSE Observability registration code, from SUSE
 #                                Customer Center's Subscription tab (valid for the life of your

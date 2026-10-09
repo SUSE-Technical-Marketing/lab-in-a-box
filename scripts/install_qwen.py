@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "qwen" — configurable keys:
 #   qwen_model      : [OPTIONAL] Qwen model tag (default: qwen2.5:7b)
 #                     Examples: qwen2.5:0.5b, qwen2.5:14b, qwen2.5:32b, qwen2.5:72b,

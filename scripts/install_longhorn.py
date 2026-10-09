@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "longhorn" — SUSE Longhorn distributed block storage
 #
 #   lh_shorthn   : [OPTIONAL] Short hostname for the UI ingress        (default: longhorn)

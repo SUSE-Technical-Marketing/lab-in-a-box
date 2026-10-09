@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "nv-demo-helm" — NeuVector Helm-based demo workloads
 #
 #   nv_demo_helm_ns   : [OPTIONAL] Kubernetes namespace                (default: demo)

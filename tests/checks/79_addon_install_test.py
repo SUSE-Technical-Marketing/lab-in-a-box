@@ -2,19 +2,23 @@
 """
 Runs the install path (main()) of every Python add-on in scripts/ with every external command faked: subprocess.run,
 check_output, call, check_call and Popen record the command and succeed; time.sleep returns at once and advances the
-clock that time.time and time.monotonic read, so deadline loops end. The lab has one
-rke2 kcluster "c1" with one server node "vm1.mydemo.lab"; the add-on's section holds a placeholder for each required
-field without a default and the add-on's entry in EXTRA_CONFIG, so every other field takes the add-on's own fallback. Each add-on runs in its own process, in a work
-directory holding lab_creation.defaults (install paths pointing at the repo and the work directory) and
-templates/lab_creation.cfg.example as lab_creation.cfg; DNS zone files go to the work directory, shutil.which finds
-every command and socket.create_connection succeeds without connecting.
+clock that time.time and time.monotonic read, so deadline loops end. The lab has one rke2 kcluster "c1" with one server
+node "vm1.mydemo.lab"; the add-on's section holds a placeholder for each required field without a default and the
+add-on's entry in EXTRA_CONFIG. Each add-on runs in its own process, in a work directory holding lab_creation.defaults
+(install paths pointing at the repo and the work directory) and templates/lab_creation.cfg.example as lab_creation.cfg;
+DNS zone files go to the work directory, shutil.which finds every command and socket.create_connection succeeds
+without connecting.
 
-An add-on passes when main() returns or exits 0, it sends at least one command, and no command runs `helm install`.
+Each add-on runs twice: with its other fields unset, so they take the code's own fallbacks, and with every schema
+default filled in. It passes when both runs exit 0, send at least one command and never run `helm install`, and both
+send the same commands (generated values and temporary paths masked): a schema default must be what the code uses.
 Add-ons listed in NOT_COVERED are reported by name, not run.
 
-Usage: 79_addon_install_test.py            run every add-on, exit 1 on any failure
-       79_addon_install_test.py --one <f>  run add-on file <f> in the current directory, print one JSON result line
+Usage: 79_addon_install_test.py                     run every add-on, exit 1 on any failure
+       79_addon_install_test.py --one <f>           run add-on file <f> in the current directory, print one JSON line
+       79_addon_install_test.py --one-defaults <f>  the same, with every schema default filled in
 """
+import difflib
 import json
 import os
 import re
@@ -55,11 +59,17 @@ COMMON_RESPONSES = [(r"%\{http_code\}", "200"), (r"source /etc/os-release", "sle
 NOT_COVERED = {}
 
 
-def lab_for(schema: dict, name: str) -> dict:
-    """A one-kcluster, one-node lab with `schema`'s section holding required-field placeholders and EXTRA_CONFIG."""
+def lab_for(schema: dict, name: str, with_defaults: bool = False) -> dict:
+    """
+    A one-kcluster, one-node lab with `schema`'s section holding required-field placeholders and EXTRA_CONFIG, and
+    every schema default when `with_defaults`.
+    """
     section = {}
     for f in schema.get("fields", []):
-        if f.get("required") and f.get("default") in (None, ""):
+        if f.get("default") not in (None, ""):
+            if with_defaults:
+                section[f["name"]] = f["default"]
+        elif f.get("required"):
             section[f["name"]] = PLACEHOLDERS.get(f.get("type"), "value1")
     section.update(EXTRA_CONFIG.get(name, {}))
     sec = schema["section"]
@@ -81,7 +91,7 @@ def write_defaults(work: Path) -> None:
     (work / "lab_creation.defaults").write_text("\n".join(lines) + "\n")
 
 
-def run_one(path: str) -> dict:
+def run_one(path: str, with_defaults: bool = False) -> dict:
     """Run add-on `path`'s main() with commands faked; the result as a dict (rc, commands, error)."""
     import importlib.util
     import time
@@ -93,7 +103,7 @@ def run_one(path: str) -> dict:
     schema = json.loads(out.stdout)
     name = Path(path).name
     with open("lab.json", "w") as fh:
-        json.dump(lab_for(schema, name), fh)
+        json.dump(lab_for(schema, name, with_defaults), fh)
 
     cmds = []
     replies = [(re.compile(rx), text) for rx, text in RESPONSES.get(name, []) + COMMON_RESPONSES]
@@ -178,9 +188,34 @@ def problems(result: dict) -> list:
     return out
 
 
+def masked(commands: list) -> list:
+    """`commands` with generated values (runs of 20+ token characters) and temporary paths replaced by <X>."""
+    return [re.sub(r"/tmp/tmp\w+|[A-Za-z0-9+/=_-]{20,}", "<X>", c) for c in commands]
+
+
+def run_isolated(path: str, mode: str):
+    """Run `79_addon_install_test.py <mode> <path>` in a fresh work directory: (result or None, problems, output lines)."""
+    work = tempfile.mkdtemp()
+    write_defaults(Path(work))
+    shutil.copy(str(REPO / "templates" / "lab_creation.cfg.example"), os.path.join(work, "lab_creation.cfg"))
+    try:
+        p = subprocess.run([sys.executable, __file__, mode, path], cwd=work, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=TIMEOUT)
+        lines = p.stdout.strip().splitlines()
+        try:
+            result = json.loads(lines[-1])
+            return result, problems(result), lines[:-1]
+        except (IndexError, ValueError):
+            return None, ["no result: " + " | ".join(lines[-3:])], lines
+    except subprocess.TimeoutExpired:
+        return None, ["still running after {}s".format(TIMEOUT)], []
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def main() -> int:
-    if sys.argv[1:2] == ["--one"]:
-        print(json.dumps(run_one(sys.argv[2])))
+    if sys.argv[1:2] in (["--one"], ["--one-defaults"]):
+        print(json.dumps(run_one(sys.argv[2], with_defaults=sys.argv[1] == "--one-defaults")))
         return 0
     addons = sorted(str(REPO / p) for p in subprocess.run(
         ["git", "-c", "safe.directory=*", "-C", str(REPO), "ls-files", "scripts/install_*.py"],
@@ -191,29 +226,22 @@ def main() -> int:
         if name in NOT_COVERED:
             print("not covered: {} ({})".format(name, NOT_COVERED[name]))
             continue
-        work = tempfile.mkdtemp()
-        write_defaults(Path(work))
-        shutil.copy(str(REPO / "templates" / "lab_creation.cfg.example"), os.path.join(work, "lab_creation.cfg"))
-        try:
-            p = subprocess.run([sys.executable, __file__, "--one", path], cwd=work, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, universal_newlines=True, timeout=TIMEOUT)
-            lines = p.stdout.strip().splitlines()
-            try:
-                result = json.loads(lines[-1])
-                found = problems(result)
-            except (IndexError, ValueError):
-                found = ["no result: " + " | ".join(lines[-3:])]
-        except subprocess.TimeoutExpired:
-            found, lines = ["still running after {}s".format(TIMEOUT)], []
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+        unset, found, lines = run_isolated(path, "--one")
+        filled, found_filled, lines_filled = run_isolated(path, "--one-defaults")
+        found += ["with defaults filled in: " + f for f in found_filled]
+        if unset and filled and not found:
+            a, b = masked(unset["commands"]), masked(filled["commands"])
+            diff = [ln for ln in difflib.unified_diff(a, b, lineterm="", n=0) if ln[:1] in "-+" and ln[:3] not in ("---", "+++")]
+            if diff:
+                found.append("schema defaults differ from the code's fallbacks (- unset, + defaults filled in)")
+                lines = ["  " + ln[:200].replace("\n", " ") for ln in diff[:6]]
         if found:
             failed += 1
             print("FAIL: {}: {}".format(name, "; ".join(found)))
-            for line in [ln for ln in lines[:-1] if re.search(r"ERROR|Error|error", ln)][:3]:
+            for line in [ln for ln in lines + lines_filled if ln.startswith("  ") or re.search(r"ERROR|Error|error", ln)][:6]:
                 print("      " + line)
         else:
-            print("ok: {} ({} commands)".format(name, len(result["commands"])))
+            print("ok: {} ({} commands)".format(name, len(unset["commands"])))
     print("{} add-on(s) failed".format(failed) if failed else "all add-on install runs passed")
     return 1 if failed else 0
 

@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "kimi" — configurable keys:
 #   kimi_api_key    : [MANDATORY] Moonshot AI API key (from https://platform.moonshot.ai)
 #   kimi_model      : [OPTIONAL] default model (default: moonshot/kimi-k3)
 #                      Examples: moonshot/kimi-k2.6 (cheaper), moonshot/kimi-k2.7-code (coding-focused),
 #                      moonshot/moonshot-v1-8k
-#   kimi_api_base   : [OPTIONAL] override endpoint (default: Moonshot's global endpoint,
-#                      https://api.moonshot.ai/v1; use https://api.moonshot.cn/v1 for the China region)
+#   kimi_api_base   : [OPTIONAL] override endpoint, Moonshot's global endpoint by default; use
+#                      https://api.moonshot.cn/v1 for the China region (default: https://api.moonshot.ai/v1)
 #   kimi_version    : [OPTIONAL] LiteLLM Helm chart version (empty = latest)
 #   kimi_ns         : [OPTIONAL] namespace (default: kimi)
 #   kimi_shorthn    : [OPTIONAL] hostname prefix (default: kimi)
@@ -80,10 +82,8 @@ def setup_kimi(hostname, clu_name, mydomain, kimi_api_key=None, kimi_rel=None, k
     ver_arg = "--version {}".format(shlex.quote(kimi_version)) if kimi_version else ""
     fqdn = "{}.{}.{}".format(kimi_shorthn or "kimi", clu_name, mydomain)
     model = kimi_model or "moonshot/kimi-k3"
-    api_base_arg = ""
-    if kimi_api_base:
-        api_base_arg = "--set proxy_config.model_list[0].litellm_params.api_base={} ".format(
-            shlex.quote(kimi_api_base))
+    api_base_arg = "--set proxy_config.model_list[0].litellm_params.api_base={} ".format(
+        shlex.quote(kimi_api_base or "https://api.moonshot.ai/v1"))
 
     ssh_run(hostname,
             "helm upgrade -i kimi-proxy {}/litellm-helm --namespace {} --create-namespace "

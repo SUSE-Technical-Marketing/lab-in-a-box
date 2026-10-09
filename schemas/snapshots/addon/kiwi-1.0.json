@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "kiwi_manifest_url": {
+   "default": "https://github.com/OSInside/kiwi-operator/releases/latest/download/kiwi-operator.yaml",
+   "required": false,
+   "type": "url"
+  },
+  "kiwi_ns": {
+   "default": "kiwi-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "kiwi_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kiwi",
+ "version": "1.0"
+}

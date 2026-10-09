@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "mistral_model": {
+   "default": "mistral",
+   "required": false,
+   "type": "string"
+  },
+  "mistral_ns": {
+   "default": "ollama",
+   "required": false,
+   "type": "namespace"
+  },
+  "mistral_rel": {
+   "default": "ollama-helm",
+   "required": false,
+   "type": "string"
+  },
+  "mistral_repo_url": {
+   "default": "https://otwld.github.io/ollama-helm/",
+   "required": false,
+   "type": "url"
+  },
+  "mistral_shorthn": {
+   "default": "ollama",
+   "required": false,
+   "type": "string"
+  },
+  "mistral_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mistral",
+ "version": "1.1"
+}

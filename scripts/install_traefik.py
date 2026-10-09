@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "traefik" — configurable keys:
 #   traefik_version     : Helm chart version (empty = latest, e.g. "28.3.0")
 #   traefik_ns          : namespace (default: traefik)
 #   traefik_rel         : Helm repo alias (default: traefik)
 #   traefik_repo_url    : Helm repo URL (default: https://traefik.github.io/charts)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "traefik",

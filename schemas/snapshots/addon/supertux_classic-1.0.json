@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "supertux_classic_ns": {
+   "default": "supertux-classic",
+   "required": false,
+   "type": "namespace"
+  },
+  "supertux_classic_shorthn": {
+   "default": "supertux-classic",
+   "required": false,
+   "type": "string"
+  },
+  "supertux_classic_version": {
+   "default": "v0.4.2",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:supertux_classic",
+ "version": "1.0"
+}

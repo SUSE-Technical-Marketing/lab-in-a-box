@@ -20,7 +20,6 @@ Usage:
 """
 
 __version__ = "__LABVERSION__"
-_SCHEMA_VERSION = "1.0"
 
 import concurrent.futures
 import os
@@ -36,6 +35,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
         sys.path.insert(0, _candidate)
 
 import primary  # noqa: E402
+import migrations  # noqa: E402
 import lab_creation as lc  # noqa: E402
 import k8s  # noqa: E402
 import targets  # noqa: E402
@@ -747,6 +747,7 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(json_file)
+    migrations.require_current(definition, json_file)
 
     iso_loc        = defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")

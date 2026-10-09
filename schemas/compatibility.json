@@ -1,0 +1,261 @@
+{
+ "about": "Every version of every schema lab-in-a-box reads, oldest first. A breaking version raises MAJOR and names the libs/migrations.py step that migrate_config.py applies; see CONTRIBUTING.md, Schema versions.",
+ "schemas": {
+  "addon:agones": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:ansible_control_node": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:anthropic": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:apertus": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."}
+  ],
+  "addon:appcollection": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."}
+  ],
+  "addon:argocd": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:client_registration": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: client_registration_admin_pass, client_registration_server_ip, client_registration_server_node, client_registration_server_type."}
+  ],
+  "addon:codellama": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: codellama_model."}
+  ],
+  "addon:colt": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:complianceascode": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:coredns": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:deepseek": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:ds389": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: ds389_dm_password, ds389_image, ds389_ldap_nodeport, ds389_ldaps_nodeport, ds389_name, ds389_ns, ds389_storage_class, ds389_storage_size."}
+  ],
+  "addon:fluentd": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:fluid": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:gemini": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:gitlab": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: gitlab_deployment, gitlab_edition, gitlab_hostname, gitlab_http_port, gitlab_https, gitlab_https_port, gitlab_image, gitlab_namespace, gitlab_rel, gitlab_repo_url, gitlab_ssh_port, gitlab_version."}
+  ],
+  "addon:gpu_operator": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:grafana": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: grafana_admin_password, grafana_image."}
+  ],
+  "addon:harbor": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:harvester": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:hermes": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: hermes_dashboard_user, hermes_git_ref, hermes_image_tag, hermes_llm_provider, hermes_ns, hermes_shorthn, hermes_storage_class, hermes_storage_size."}
+  ],
+  "addon:home_assistant": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: home_assistant_image_tag, home_assistant_ns, home_assistant_rel, home_assistant_repo_url, home_assistant_shorthn, home_assistant_storage_class, home_assistant_storage_size."}
+  ],
+  "addon:insecure_app": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:istio": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:jenkins": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:kagent": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:keycloak": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:kimi": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: kimi_api_base."}
+  ],
+  "addon:kiwi": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:kubewarden": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:kucero": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:linkerd": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:longhorn": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:mailman": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mailman_admin_email, mailman_admin_user, mailman_ns, mailman_shorthn, mailman_version."}
+  ],
+  "addon:mariadb": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mariadb_bind_address, mariadb_db, mariadb_password, mariadb_root_password, mariadb_user."}
+  ],
+  "addon:mediagoblin": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:milvus": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:mistral": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mistral_model."}
+  ],
+  "addon:neuvector": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:nextcloud": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: nextcloud_admin_password, nextcloud_admin_user, nextcloud_airgap, nextcloud_assistant, nextcloud_db, nextcloud_db_password, nextcloud_db_root_password, nextcloud_deployment, nextcloud_flow, nextcloud_groupware, nextcloud_hostname, nextcloud_http_port, nextcloud_image, nextcloud_max_upload_size, nextcloud_namespace, nextcloud_redis, nextcloud_redis_version, nextcloud_rel, nextcloud_repo_url, nextcloud_talk, nextcloud_version."}
+  ],
+  "addon:nginx": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:nv-demo-helm": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:nv_testing": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:ollama": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:open_saber": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:open_webui": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:openai": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:openldap": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:phoebe": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:postgresql": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:prometheus": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: prometheus_image, prometheus_port, prometheus_retention, prometheus_version."}
+  ],
+  "addon:qdrant": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:qwen": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:rancher": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "An unset rancher_repo_url selects Rancher Prime (https://charts.rancher.com/server-charts/prime) instead of the stable repo, an unset rancher_rel is rancher-prime, an unset rancher_helm_chart is rancher-prime/rancher instead of none, and an unset rancher_initial_pwd lets Rancher generate the bootstrap password.", "migration": "rancher_2_0"}
+  ],
+  "addon:seafile": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: seafile_admin_email, seafile_admin_password, seafile_cache_provider, seafile_db_password, seafile_db_root_password, seafile_deployment, seafile_edition, seafile_hostname, seafile_jwt_private_key."}
+  ],
+  "addon:skynet_simulator": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:smlm": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: smlm_activation_key_desc, smlm_activation_key_enable_config_deployment, smlm_activation_key_universal_default, smlm_byos, smlm_chart, smlm_coco_image, smlm_db_ha, smlm_db_ha_cnpg_version, smlm_db_ha_pg_image, smlm_db_ha_replicas, smlm_db_ha_size, smlm_db_ha_sync, smlm_deployment, smlm_email, smlm_img_tag, smlm_ingress_class, smlm_lh_overprovision, smlm_ns, smlm_org, smlm_preinstalled, smlm_registry, smlm_rel, smlm_salt_auto_accept, smlm_shorthn, smlm_super_privileged."}
+  ],
+  "addon:smlm_proxy": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: smlm_proxy_admin_pass, smlm_proxy_admin_user, smlm_proxy_email, smlm_proxy_img_repository, smlm_proxy_img_tag, smlm_proxy_max_cache, smlm_proxy_scc_password, smlm_proxy_scc_user, smlm_proxy_server, smlm_proxy_server_node."}
+  ],
+  "addon:stackpack": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: stackpack_cluster_name."}
+  ],
+  "addon:starcoder2": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: starcoder2_model."}
+  ],
+  "addon:struts_demo": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: struts_demo_attacker."}
+  ],
+  "addon:supertux_classic": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:suse_ai": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: suse_ai_components, suse_ai_ns, suse_ai_registry, suse_ai_shorthn."}
+  ],
+  "addon:suse_observability": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:traefik": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:trento": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: trento_secret_key."}
+  ],
+  "addon:uyuni": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: uyuni_activation_key_desc, uyuni_activation_key_enable_config_deployment, uyuni_activation_key_universal_default, uyuni_admin, uyuni_email, uyuni_org, uyuni_password, uyuni_ssl_password."}
+  ],
+  "addon:weaviate": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:wikimusic": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:wordpress": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:credentials": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:harvester-cluster.json": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:lab.cfg": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:lab_creation.cfg": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:lab_creation.defaults": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "lab": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ]
+ }
+}

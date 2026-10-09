@@ -3,12 +3,14 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "mailman"
-#   mailman_ns          : namespace (default mailman)
-#   mailman_shorthn     : hostname prefix for the mailman-web ingress (default mailman)
-#   mailman_version     : tag of the maxking/mailman-core and mailman-web images (default 0.5)
-#   mailman_admin_user  : admin username (default admin)
-#   mailman_admin_email : admin e-mail (default admin@lab.local)
+#   mailman_ns          : namespace (default: mailman)
+#   mailman_shorthn     : hostname prefix for the mailman-web ingress (default: mailman)
+#   mailman_version     : tag of the maxking/mailman-core and mailman-web images (default: 0.5)
+#   mailman_admin_user  : admin username (default: admin)
+#   mailman_admin_email : admin e-mail (default: admin@lab.local)
 #
 # The addon deploys the official maxking/docker-mailman images, mailman-core and mailman-web, with a PostgreSQL database. The
 # topology follows that project's docker-compose file, written as plain Kubernetes manifests. No official Helm chart exists for Mailman 3.

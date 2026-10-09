@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "keycloak" — configurable keys:
 #   keycloak_version    : [OPTIONAL] Helm chart version (empty = latest, e.g. "22.1.0")
 #   keycloak_ns         : [OPTIONAL] namespace (default: keycloak)
@@ -12,7 +14,7 @@
 #   keycloak_admin      : [OPTIONAL] admin username (default: admin)
 #   keycloak_password   : [OPTIONAL] admin password (default: keycloak123)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "keycloak",

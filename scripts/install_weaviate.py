@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "weaviate" — configurable keys:
 #   weaviate_version  : [OPTIONAL] Helm chart version (empty = latest)
 #   weaviate_ns       : [OPTIONAL] namespace (default: weaviate)
@@ -53,7 +55,7 @@ def setup_weaviate(hostname, weaviate_rel=None, weaviate_ns=None, weaviate_versi
     rel = weaviate_rel or "weaviate"
     ns = weaviate_ns or "weaviate"
     ver_arg = "--version {}".format(shlex.quote(weaviate_version)) if weaviate_version else ""
-    replicas_arg = "--set replicas={}".format(int(weaviate_replicas)) if weaviate_replicas else ""
+    replicas_arg = "--set replicas={}".format(int(weaviate_replicas or 1))
 
     ssh_run(hostname,
             "helm upgrade -i weaviate {}/weaviate --namespace {} --create-namespace "

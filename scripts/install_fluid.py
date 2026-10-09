@@ -3,13 +3,15 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "fluid" — configurable keys:
 #   fluid_version       : Helm chart version (empty = latest, e.g. "0.9.5")
 #   fluid_ns            : namespace (default: fluid-system)
 #   fluid_rel           : Helm repo alias (default: fluid)
 #   fluid_repo_url      : Helm repo URL (default: https://fluid-cloudnative.github.io/charts)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "fluid",

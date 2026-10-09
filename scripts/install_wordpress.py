@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "wordpress" — WordPress + MySQL on Kubernetes
 #
 #   wordpress_ns      : [OPTIONAL] Kubernetes namespace                (default: wordpress)
@@ -10,7 +12,7 @@
 #   wordpress_shorthn : [OPTIONAL] Short hostname for ingress          (default: wordpress)
 #   wordpress_version : [OPTIONAL] Helm chart version                  (empty = latest)
 
-__version__ = "a45abd4"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "wordpress",

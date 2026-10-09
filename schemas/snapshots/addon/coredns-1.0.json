@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "coredns_ns": {
+   "default": "coredns",
+   "required": false,
+   "type": "namespace"
+  },
+  "coredns_rel": {
+   "default": "coredns",
+   "required": false,
+   "type": "string"
+  },
+  "coredns_repo_url": {
+   "default": "https://coredns.github.io/helm",
+   "required": false,
+   "type": "url"
+  },
+  "coredns_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:coredns",
+ "version": "1.0"
+}

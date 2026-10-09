@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "fluid_ns": {
+   "default": "fluid-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "fluid_rel": {
+   "default": "fluid",
+   "required": false,
+   "type": "string"
+  },
+  "fluid_repo_url": {
+   "default": "https://fluid-cloudnative.github.io/charts",
+   "required": false,
+   "type": "url"
+  },
+  "fluid_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:fluid",
+ "version": "1.0"
+}

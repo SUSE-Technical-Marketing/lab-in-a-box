@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "milvus" — configurable keys:
 #   milvus_version    : [OPTIONAL] Helm chart version (empty = latest)
 #   milvus_ns         : [OPTIONAL] namespace (default: milvus)

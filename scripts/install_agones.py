@@ -3,6 +3,8 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.0
+#
 # JSON section: "agones" — configurable keys:
 #   agones_version : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.60.0")
 #   agones_ns      : [OPTIONAL] namespace (default: agones-system)

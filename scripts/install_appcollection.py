@@ -3,20 +3,22 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
+# Schema version: 1.1
+#
 # JSON section: "appcollection" — configurable keys:
 #   appcollection_rel       : [OPTIONAL] Helm repo alias (default: suse-application-collection)
 #   appcollection_repo_url  : [OPTIONAL] Helm repo URL
 #                             (default: https://charts.suse.com/application-collection)
 #   appcollection_ns        : [OPTIONAL] default namespace for installs (default: app-collection)
-#   appcollection_chart     : [OPTIONAL] specific chart to install from the collection (default: none)
-#   appcollection_release   : [OPTIONAL] Helm release name when installing a chart (default: chart name)
+#   appcollection_chart     : [OPTIONAL] specific chart to install from the collection; when unset, none is installed
+#   appcollection_release   : [OPTIONAL] Helm release name when installing a chart; when unset, the chart name
 #   appcollection_version   : [OPTIONAL] chart version when appcollection_chart is set (empty = latest)
 #
 # This script adds the SUSE Application Collection repository to Helm and optionally
 # installs one specific chart from it. To install multiple charts, call this script
 # multiple times with different appcollection_chart values or use 'helm install' directly.
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "appcollection",
