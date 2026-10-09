@@ -213,7 +213,7 @@ footer.site {
 <a id="top" class="anchor-top"></a>
 <div class="topbar-wrap"><header class="topbar">
 <a href="index.html" aria-label="lab-in-a-box home"><img class="lockup lockup--light" src="media/brand/lockup-horizontal-light.svg" alt="lab-in-a-box"><img class="lockup lockup--dark" src="media/brand/lockup-horizontal-dark.svg" alt="" aria-hidden="true"></a>
-<div class="topbar-right"><nav aria-label="Documentation"><a href="index.html">English</a><a href="ar.html">العربية</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html" aria-current="page">Web UI Guide</a><a href="lab-builder/">🚀 Try Lab Builder</a></nav>
+<div class="topbar-right"><nav aria-label="Documentation"><a href="index.html">English</a><a href="ar.html">العربية</a><a href="de.html">Deutsch</a><a href="es.html">Español</a><a href="fr.html">Français</a><a href="ja.html">日本語</a><a href="pt-BR.html">Português (Brasil)</a><a href="zh-CN.html">简体中文</a><a href="webui.html" aria-current="page">Web UI Guide</a><a href="addons.html">Add-on Guide</a><a href="lab-builder/">🚀 Try Lab Builder</a></nav>
 <button type="button" class="theme-toggle" id="theme-toggle">Dark</button></div>
 </header></div>
 <section class="opening">
@@ -231,7 +231,7 @@ picks it up automatically — there is <strong>no per-component code in the UI</
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#contents">Contents</a></li><li><a href="#what-it-does">What it does</a></li><li><a href="#how-it-stays-100-dynamic">How it stays 100% dynamic</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#setup--everything-from-scratch">Setup — everything, from scratch</a></li><li><a href="#configuration">Configuration</a></li><li><a href="#using-it--build-a-lab">Using it — build a lab</a></li><li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li><li><a href="#http-api">HTTP API</a></li><li><a href="#scope">Scope</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#contents">Contents</a></li><li><a href="#what-it-does">What it does</a></li><li><a href="#how-it-stays-100-dynamic">How it stays 100% dynamic</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#setup--everything-from-scratch">Setup — everything, from scratch</a></li><li><a href="#configuration">Configuration</a></li><li><a href="#using-it--build-a-lab">Using it — build a lab</a></li><li><a href="#links-and-embedding">Links and embedding</a></li><li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li><li><a href="#http-api">HTTP API</a></li><li><a href="#scope">Scope</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol></aside>
 <main class="doc">
 
 <p>Lives in <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/tree/main/webui/"><code>webui/</code></a>.</p>
@@ -492,6 +492,29 @@ the Apache config):</p>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
    the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>
+<h2 id="links-and-embedding">Links and embedding</h2>
+<p>Another page (for example rodeo-cli's Rodeo Builder) can open the lab-builder
+with a lab already started:</p>
+<ul>
+<li><code>?addons=rancher,longhorn</code> puts those add-ons on the canvas (the <code>install_</code>
+  prefix is optional). Names no add-on matches are reported and skipped.</li>
+<li><code>?lab=&lt;base64url&gt;</code> opens that lab definition (JSON, base64url-encoded).</li>
+</ul>
+<p><code>?embed=1&amp;origin=&lt;origin&gt;</code> is for a page that shows the lab-builder in an iframe;
+<code>&lt;origin&gt;</code> is that page's origin (scheme, host and port, e.g.
+<code>http://localhost:8000</code>). The lab-builder then:</p>
+<ul>
+<li>shows <strong>Send this lab to &lt;host&gt;</strong>. The first time for each origin it asks for
+  confirmation; then it posts <code>{type: "labinabox:lab", lab}</code> to the parent page,
+  to that origin only. Every password field of the lab is sent as the placeholder
+  <code>"??&lt;field name&gt;"</code> (e.g. <code>"harvester_token": "??harvester_token"</code>), never its
+  value; <strong>Download</strong> still gives the full lab.</li>
+<li>opens a lab the parent page posts as <code>{type: "labinabox:load", lab}</code>, from that
+  origin only.</li>
+<li>hides Save to server, Saved labs, Credentials and Create lab.</li>
+</ul>
+<p>Without a frame, or with an origin that is not a plain <code>http(s)://host[:port]</code>,
+<code>embed</code> is ignored.</p>
 <h2 id="login-credentials-and-create-lab">Login, credentials and Create lab</h2>
 <p><strong>Save to server</strong>, <strong>Saved labs…</strong>, <strong>Credentials</strong> and <strong>Create lab</strong>
 need a login and HTTPS. Over plain HTTP they are disabled and say "You must connect via HTTPS to use this UI";
@@ -530,7 +553,7 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <tr>
 <td>GET</td>
 <td><code>api?action=components</code></td>
-<td>list components + live count</td>
+<td>everything a lab can use: each item's <code>name</code>, <code>kind</code> (<code>addon</code>, <code>infrastructure</code> or <code>kcluster</code>), <code>targets</code>, title, description; <code>count</code> is the number of items</td>
 </tr>
 <tr>
 <td>GET</td>

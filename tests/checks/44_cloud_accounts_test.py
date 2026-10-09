@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory() as d:
         check("yaml account: parses", err is None and data.get("CLOUDTYPE") == "hetzner"
               and data.get("HETZNER_TOKEN") == "tok-123")
     except ImportError:
-        print("pyyaml not installed — skipping the YAML account-file check")
+        print("no PyYAML for this interpreter — the YAML account-file check runs under python3.11")
 
 # missing file
 with mock.patch.object(primary, "cloud_account_path", return_value=None):

@@ -10,14 +10,14 @@
 #   rancher_repo_url       : [OPTIONAL] Helm repo URL                         (default: https://charts.rancher.com/server-charts/prime)
 #   rancher_helm_rel       : [OPTIONAL] Helm release name                     (default: rancher)
 #   rancher_helm_chart     : [OPTIONAL] Helm chart reference                  (default: rancher-prime/rancher)
-#   rancher_version        : [OPTIONAL] Helm chart version flag               (empty = latest, e.g. --version 2.13.3)
+#   rancher_version        : [OPTIONAL] Helm chart version                    (empty = latest, e.g. 2.13.3)
 #   rancher_initial_pwd    : [OPTIONAL] Bootstrap admin password              (default: auto-generated)
 #   rancher_replicas       : [OPTIONAL] Number of Rancher replicas            (default: 2)
 #   rancher_cert_repo_name : [OPTIONAL] cert-manager Helm repo alias          (default: jetstack)
 #   rancher_cert_repo_url  : [OPTIONAL] cert-manager Helm repo URL            (default: https://charts.jetstack.io)
-#   cert_manager_ver       : [OPTIONAL] cert-manager version flag             (empty = latest, e.g. --version v1.14.4)
+#   cert_manager_ver       : [OPTIONAL] cert-manager Helm chart version       (empty = latest, e.g. v1.20.2)
 
-__version__ = "526bc48"
+__version__ = "__LABVERSION__"
 
 PLUGIN = {
     "name": "rancher",
@@ -25,6 +25,21 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
+    # Version matrix (libs/versions.py). Kubernetes ranges: SUSE Rancher Prime support matrix
+    # (https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/) and cert-manager's supported releases
+    # (https://cert-manager.io/docs/releases/).
+    "versions": {
+        "rancher_version": [
+            {"version": "2.15", "kubernetes": {"rke2": {"min": "1.34", "max": "1.36"}, "k3s": {"min": "1.34", "max": "1.36"}}},
+            {"version": "2.14", "kubernetes": {"rke2": {"min": "1.33", "max": "1.35"}, "k3s": {"min": "1.33", "max": "1.35"}}},
+            {"version": "2.13", "kubernetes": {"rke2": {"min": "1.32", "max": "1.34"}, "k3s": {"min": "1.32", "max": "1.34"}}},
+            {"version": "2.12", "kubernetes": {"rke2": {"min": "1.31", "max": "1.33"}, "k3s": {"min": "1.31", "max": "1.33"}}},
+        ],
+        "cert_manager_ver": [
+            {"version": "v1.21", "kubernetes": {"rke2": {"min": "1.33", "max": "1.36"}, "k3s": {"min": "1.33", "max": "1.36"}}},
+            {"version": "v1.20", "kubernetes": {"rke2": {"min": "1.32", "max": "1.35"}, "k3s": {"min": "1.32", "max": "1.35"}}},
+        ],
+    },
 }
 
 import os
@@ -40,6 +55,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
+import versions  # noqa: E402
 from lab_creation import (  # noqa: E402
     setup_helm, helm_repo_add, ssh_run, ssh_output, add_service_dns, add_dns_to_named_rr,
     restart_named, die,
@@ -75,7 +91,7 @@ def setup_rancher_repo(hostname, cfg):
 def setup_cert_manager(hostname, cfg, ingress_classname=None):
     """Install cert-manager and two staging/prod ClusterIssuers. Mirrors setup_cert-manager (bash)."""
     print("# Setup Cert-manager")
-    cert_manager_ver = cfg.get("cert_manager_ver") or ""
+    cert_manager_ver = versions.helm_version_flag(cfg.get("cert_manager_ver"))
 
     result = ssh_run(hostname,
                       "helm upgrade -i cert-manager jetstack/cert-manager {} --namespace cert-manager "
@@ -130,22 +146,16 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
     and explicitly for every matching server node), and retrieve the
     bootstrap password. Mirrors setup_rancher (bash).
 
-    NOTE: bash's own doc comment claims rancher_helm_chart defaults to
-    "rancher-prime/rancher" and rancher_version/cert_manager_ver are version
-    flags — but the executed helm command has NO fallback for
-    rancher_helm_chart at all (uses it raw; empty if unset in the JSON) and
-    rancher_version is interpolated raw too (expected to already contain the
-    literal "--version X" text, per its own doc example — same convention as
-    cert_manager_ver, and unlike every other addon's own X_version fields,
-    which are bare version strings that get wrapped in "--version " here).
-    Preserved exactly, no defaults invented.
+    rancher_helm_chart has no fallback: it is used as given (empty if unset).
+    rancher_version and cert_manager_ver take a bare chart version or
+    "--version X" (versions.helm_version_flag()).
     """
     print("# Setup Rancher {} in cluster \"{}\"".format(cfg.get("rancher_helm_rel") or "rancher", clu_name))
 
     helm_rel = cfg.get("rancher_helm_rel") or "rancher"
     helm_chart = cfg.get("rancher_helm_chart") or ""
     hostname_fqdn = "{}.{}.{}".format(cfg.get("rancher_shorthn", ""), clu_name, mydomain)
-    rancher_version = cfg.get("rancher_version") or ""
+    rancher_version = versions.helm_version_flag(cfg.get("rancher_version"))
     initial_pwd = cfg.get("rancher_initial_pwd") or ""
     replicas = cfg.get("rancher_replicas") or "2"
 

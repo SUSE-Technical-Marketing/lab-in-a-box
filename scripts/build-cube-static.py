@@ -77,11 +77,11 @@ def api_get(action: str, **params: str) -> dict:
 def collect(version: str) -> dict:
     """Every GET answer the page needs, keyed the way the static apiGet() looks them up."""
     components = api_get("components")
-    if not components["count"]:
+    if not any(c["kind"] == "addon" for c in components["components"]):
         sys.exit("build-cube-static: no add-ons found in {}".format(REPO / "scripts"))
     components["scripts_dir"] = "lab-in-a-box " + version
     components.pop("libs_dir", None)
-    schemas = {c["name"]: api_get("schema", name=c["name"]) for c in components["components"]}
+    schemas = {c["name"]: api_get("schema", name=c["name"]) for c in components["components"] if c["kind"] == "addon"}
     return {"components": components, "base": api_get("base"), "schemas": schemas}
 
 
@@ -103,9 +103,9 @@ def main() -> None:
     version = git_version()
     data = collect(version)
     args.output.write_text(build(data, version))
-    fields = sum(c["field_count"] for c in data["components"]["components"])
+    addons = [c for c in data["components"]["components"] if c["kind"] == "addon"]
     print("built {}: {} add-ons, {} fields, version {}".format(
-        args.output, data["components"]["count"], fields, version), file=sys.stderr)
+        args.output, len(addons), sum(c["field_count"] for c in addons), version), file=sys.stderr)
 
 
 if __name__ == "__main__":

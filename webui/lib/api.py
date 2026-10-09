@@ -44,7 +44,7 @@ def dispatch(action, method, params, body, user=None, https=False):
             return 200, {"login_configured": admin.login_configured(), "user": user or ""}
 
         if action == "components" and method == "GET":
-            comps = discovery.discover()
+            comps = discovery.catalogue()
             return 200, {
                 "count": len(comps),
                 "components": comps,

@@ -90,17 +90,17 @@ apps.attach_capabilities(schema, {
 })
 check("attach_capabilities adds a capabilities key without disturbing existing schema keys",
       schema["section"] == "fixture" and schema["fields"] == [])
-check("attach_capabilities's capabilities dict has all four fields",
+check("attach_capabilities's capabilities dict has all five fields",
       schema["capabilities"] == {
           "targets": ["container"], "layers": ["kubernetes"],
-          "requires_kubernetes": ["rke2", "k3s"], "aux_services": ["pxe"],
+          "requires_kubernetes": ["rke2", "k3s"], "aux_services": ["pxe"], "versions": {},
       })
 
 schema2 = {}
 apps.attach_capabilities(schema2, {})
 check("attach_capabilities on an empty plugin dict fills in empty/None defaults, never KeyErrors",
       schema2["capabilities"] == {
-          "targets": [], "layers": [], "requires_kubernetes": None, "aux_services": [],
+          "targets": [], "layers": [], "requires_kubernetes": None, "aux_services": [], "versions": {},
       })
 
 
