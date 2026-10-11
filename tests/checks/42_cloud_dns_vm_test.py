@@ -134,10 +134,10 @@ class _FakeBackendCreate:
 
 create_backend = _FakeBackendCreate()
 with tempfile.TemporaryDirectory() as tempfile_dir:
-    # ensure_cloud_dns_vm() itself (not the backend) polls `ssh ... systemctl is-active named`
-    # after create_vm() returns, because cloud-init's package install continues after the IP is assigned.
+    # ensure_cloud_dns_vm() itself (not the backend) polls over ssh until cloud-init has finished and
+    # named is active, because cloud-init's package install continues after the IP is assigned.
     # Mocked here the same way every other backend test in this suite mocks subprocess.run.
-    with mock.patch.object(backends.subprocess, "run", return_value=_cp(0)):
+    with mock.patch.object(backends.subprocess, "run", return_value=_cp(0)) as dns_ready_run:
         ip = backends.ensure_cloud_dns_vm(
             create_backend, "hetzner", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
             "ubuntu-24.04", tempfile_dir)
@@ -146,6 +146,9 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
           userdata_file.is_file())
 
 check("ensure_cloud_dns_vm() returns the newly created DNS VM's real IP", ip == "203.0.113.101")
+_ready_cmd = dns_ready_run.call_args[0][0][-1]
+check("ensure_cloud_dns_vm() waits for cloud-init to finish (zone written), not only for named to be active",
+      "/var/lib/cloud/instance/boot-finished" in _ready_cmd and "systemctl is-active named" in _ready_cmd)
 # vm_name sits at a different tuple index per call shape: index 1 for vm_exists/
 # push_provisioning_files/create_vm, index 2 for copy_vm_image(iso_image, vm_name, ...).
 _vm_name_by_call = {

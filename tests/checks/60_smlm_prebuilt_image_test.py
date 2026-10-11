@@ -120,6 +120,12 @@ calls, guard, _ = run({"smlm_preinstalled": "true", "smlm_scc_regcode": "R"}, co
 check("preinstalled without a container falls back to a full install",
       any("SUSEConnect -r" in c for c in calls) and len(guard) == 1)
 
+try:
+    run({"smlm_preinstalled": "true"}, container_exists=False)
+    check("preinstalled without a container and without a regcode exits", False)
+except SystemExit as e:
+    check("preinstalled without a container and without a regcode exits 1", e.code == 1)
+
 # ── SSL subject flags ──────────────────────────────────────────────────────
 _, guard, _ = run({"smlm_scc_regcode": "R", "smlm_ssl_country": "CH", "smlm_ssl_org": "Chameleon Air"},
                   container_exists=False)
