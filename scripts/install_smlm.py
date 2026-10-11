@@ -628,9 +628,12 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     scc_user = cfg.get("smlm_scc_user")
     scc_password = cfg.get("smlm_scc_password")
     # A pre-built image (smlm_preinstalled) already contains the registered tooling and the installed server, so SCC
-    # registration is skipped and no regcode is needed.
+    # registration is skipped and no regcode is needed. The uyuni-server unit creates its container when it starts, which
+    # can be after SSH answers on a freshly booted image, so the unit is started (it returns once the container runs)
+    # before the container is looked for.
     preinstalled = _is_true(cfg.get("smlm_preinstalled")) and ssh_run(
-        hostname, "podman container exists uyuni-server", check=False).returncode == 0
+        hostname, "systemctl cat uyuni-server.service >/dev/null 2>&1 && systemctl start uyuni-server.service; "
+                  "podman container exists uyuni-server", check=False).returncode == 0
     if preinstalled:
         print("- smlm_preinstalled: uyuni-server already present — skipping SCC registration "
               "and mgradm tooling install")

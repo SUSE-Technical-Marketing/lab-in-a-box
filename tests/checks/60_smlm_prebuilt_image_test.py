@@ -101,6 +101,8 @@ check("preinstalled: no tooling install", not any("install -y" in c for c in cal
 check("preinstalled: no mgradm install", guard == [])
 check("preinstalled: no mgr-sync when channels are present", not any("mgr-sync" in c for c in calls))
 check("preinstalled: declarative steps still run", "ensure_activation_keys" in sc_calls)
+check("preinstalled: the uyuni-server unit is started before its container is looked for",
+      any("systemctl start uyuni-server.service; podman container exists uyuni-server" in c for c in calls))
 
 # ── pre-built image: one channel missing -> needs mirror credentials ───────
 try:
