@@ -143,6 +143,33 @@ with mock.patch.object(mcp_server.api, "dispatch", return_value=(200, {"count": 
     check("list_components calls api.dispatch('components', 'GET')", d.call_args[0][:2] == ("components", "GET"))
 
 
+
+# ── _cfg() caching and _load_lab() preflight ───────────────────────────────────────────────────────────────────────
+with mock.patch.object(mcp_server, "_cfg_cache", None), \
+        mock.patch.object(mcp_server.primary, "load_config", return_value={"MCP_PORT": "1"}) as lc_cfg:
+    first, second = mcp_server._cfg(), mcp_server._cfg()
+check("_cfg: loads lab_creation.cfg once and caches it", first == second == {"MCP_PORT": "1"} and lc_cfg.call_count == 1)
+
+with mock.patch.object(mcp_server.primary, "load_defaults", return_value={"ISO_LOC": "/iso", "VM_IMG_LOC": "/img/"}), \
+        mock.patch.object(mcp_server.primary, "load_config", return_value={"K": "v"}), \
+        mock.patch.object(mcp_server.primary, "load_definition", return_value={"nodes": {}}), \
+        mock.patch.object(mcp_server.lc, "validate_lab_definition", return_value=True) as vld:
+    loaded = mcp_server._load_lab("lab.json")
+check("_load_lab: returns (definition, config, defaults)",
+      loaded == ({"nodes": {}}, {"K": "v"}, {"ISO_LOC": "/iso", "VM_IMG_LOC": "/img/"}))
+check("_load_lab: validates with the defaults' paths, VM_IMG_LOC without its trailing slash",
+      vld.call_args[0][2:] == ("/iso", "/srv/www/htdocs/lab_creation") and vld.call_args[1] == {"vm_img_loc": "/img"})
+with mock.patch.object(mcp_server.primary, "load_defaults", return_value={}), \
+        mock.patch.object(mcp_server.primary, "load_config", return_value={}), \
+        mock.patch.object(mcp_server.primary, "load_definition", return_value={}), \
+        mock.patch.object(mcp_server.lc, "validate_lab_definition", return_value=False):
+    try:
+        mcp_server._load_lab("bad.json")
+        raised = ""
+    except ValueError as e:
+        raised = str(e)
+check("_load_lab: a failed preflight raises ValueError naming the file", "bad.json" in raised)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

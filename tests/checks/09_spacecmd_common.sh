@@ -5,4 +5,7 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
 
-python3 tests/checks/09_spacecmd_common_test.py
+_fail=0
+python3 tests/checks/09_spacecmd_common_test.py || _fail=1
+python3 tests/checks/09_spacecmd_orchestration_test.py || _fail=1
+exit ${_fail}

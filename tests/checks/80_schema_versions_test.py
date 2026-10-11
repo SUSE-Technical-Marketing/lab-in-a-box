@@ -161,6 +161,63 @@ r = subprocess.run(tool + ["--kind", "nope", str(cfg)], stdout=subprocess.PIPE, 
                    universal_newlines=True)
 check("migrate_config.py rejects an unknown --kind", r.returncode == 2)
 
+
+# ── schema_versions.py diff / record / list ────────────────────────────────────────────────────────────────────────
+import contextlib  # noqa: E402
+import importlib.util  # noqa: E402
+import io  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("schema_versions_cli", str(_REPO / "scripts" / "schema_versions.py"))
+cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cli)
+
+
+def run_cli(*argv, snaps=None):
+    """schema_versions.py `argv` with the current schemas `snaps`: (exit code, output)."""
+    out = io.StringIO()
+    with mock.patch.object(cli.sv, "current_snapshots", return_value=snaps), contextlib.redirect_stdout(out):
+        rc = cli.main(list(argv))
+    return rc, out.getvalue()
+
+
+tmp = Path(tempfile.mkdtemp())
+record_file = tmp / "compatibility.json"
+load_record, save_record = sv.load_compatibility, sv.save_record
+save_record({}, record_file)
+with mock.patch.object(sv, "SNAPSHOTS", tmp / "snapshots"), \
+        mock.patch.object(sv, "load_compatibility", side_effect=lambda: load_record(record_file)), \
+        mock.patch.object(sv, "save_record", side_effect=lambda r: save_record(r, record_file)):
+    rc, out = run_cli("record", "addon:x", "First.", snaps={"addon:x": snap("1.0", f1=a)})
+    check("record: stores the first version and its snapshot",
+          rc == 0 and load_record(record_file)["addon:x"] == [
+              {"version": "1.0", "breaking": False, "changes": "First."}]
+          and sv.read_snapshot("addon:x", "1.0")["fields"] == {"f1": a})
+    check("record: refuses a version that is already recorded",
+          run_cli("record", "addon:x", "again", snaps={"addon:x": snap("1.0", f1=a)})[0] == 1)
+    rc, out = run_cli("diff", "addon:x", snaps={"addon:x": snap("1.0", f1=dict(a, required=True), f9=a)})
+    lines = out.splitlines()
+    check("diff: lists breaking changes first, then compatible ones:\n" + out,
+          rc == 0 and len(lines) == 2 and lines[0].startswith("breaking:") and "f1" in lines[0]
+          and lines[1].startswith("compatible:") and "f9" in lines[1])
+    with mock.patch.dict(migrations.MIGRATIONS, {"m1": lambda d: d}):
+        rc, out = run_cli("record", "addon:x", "f1 required.", "--migration", "m1",
+                          snaps={"addon:x": snap("2.0", f1=dict(a, required=True))})
+    check("record: a MAJOR raise is recorded as breaking with its migration:\n" + out,
+          rc == 0 and load_record(record_file)["addon:x"][-1] == {
+              "version": "2.0", "breaking": True, "changes": "f1 required.", "migration": "m1"})
+    rc, out = run_cli("list", snaps={"addon:x": snap("2.0"), "lab": snap("1.0")})
+    check("list: every schema with its declared version",
+          rc == 0 and [line.split() for line in out.splitlines()] == [["addon:x", "2.0"], ["lab", "1.0"]])
+    try:
+        run_cli("diff", "addon:nope", snaps={"addon:x": snap("2.0")})
+        exited = None
+    except SystemExit as e:
+        exited = e.code
+    check("diff: an unknown schema exits 2", exited == 2)
+check("main: an unknown command or no command exits 2, --help exits 0",
+      run_cli("bogus")[0] == 2 and run_cli()[0] == 2 and run_cli("--help")[0] == 0
+      and run_cli("record", "addon:x", "t", "--other", "m")[0] == 2)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

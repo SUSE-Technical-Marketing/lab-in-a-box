@@ -125,6 +125,54 @@ check("provision_vm: config_method='' dispatches to prepare_ignition_combustion"
       "prepare_ignition_combustion" in order and "prepare_cloud_init" not in order)
 
 
+
+# ── provision_vm(): the overlay lets a node reach its site gateway ──────────
+# Both cloud branches (node in the hub's own account, node in another account with a site gateway) open traffic between
+# the account's own VMs, so the node can reach the gateway that forwards for it.
+from unittest import mock  # noqa: E402
+
+
+class _FakeCloudBackend(_FakeBackend):
+    def __init__(self, account):
+        self.account = account
+
+    def get_subnet_cidr(self):
+        return "172.31.16.0/20"
+
+    def get_private_ip(self, vm_name):
+        return "172.31.22.45"
+
+    def disable_source_dest_check(self, vm_name):
+        order.append("disable_source_dest_check:" + self.account)
+
+    def allow_internal_traffic(self):
+        order.append("allow_internal_traffic:" + self.account)
+
+
+for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway")):
+    order.clear()
+    hub_backend, node_backend = _FakeCloudBackend("hub"), _FakeCloudBackend(node_account)
+    setup_vm.load_vm_vars = lambda definition, vm_name: {
+        "myip": "", "mymac": "", "mydomain": "mydemo.lab", "config_method": "cloud-init", "VM_CPU": "2",
+        "VM_MEM": "4096", "VM_DSK": "40", "ISO_IMAGE": "ami-1", "overlay": "true", "OVERLAY_HUB_ACCOUNT": "hub"}
+    with mock.patch.object(setup_vm.backends, "get_backend", return_value=node_backend), \
+            mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="aws"), \
+            mock.patch.object(setup_vm.backends, "resolve_cloud_account", return_value=(node_account, {}, "aws")), \
+            mock.patch.object(setup_vm.backends, "get_backend_for_account", return_value=(hub_backend, "aws")), \
+            mock.patch.object(setup_vm.backends, "ensure_cloud_dns_vm", return_value="10.0.0.53"), \
+            mock.patch.object(setup_vm, "overlay") as ov, \
+            mock.patch("pathlib.Path.read_text", return_value="ssh-rsa KEY"):
+        ov.ensure_overlay_hub.return_value = ("18.0.0.1", "10.99.0.1", "HUBPUB")
+        ov.site_name_for.side_effect = lambda backend_name, account: "aws-" + account
+        ov.list_other_sites.return_value = [("home", "192.168.88.0/24")]
+        setup_vm.provision_vm(definition, config, defaults, "vm1")
+    check("provision_vm overlay ({}): traffic between the account's own VMs is allowed".format(branch),
+          "allow_internal_traffic:" + node_account in order)
+    check("provision_vm overlay ({}): the node is routed through its site gateway".format(branch),
+          ov.ensure_route_via_site_gateway.call_args[0] == ("vm1", "172.31.22.45", ["192.168.88.0/24"]))
+    check("provision_vm overlay ({}): a site gateway VM is created only outside the hub's account".format(branch),
+          ov.ensure_site_gateway_vm.called == (node_account != "hub"))
+
 # ── main(): --version / --help exit cleanly ─────────────────────────────────
 import io
 from contextlib import redirect_stdout

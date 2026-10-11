@@ -184,6 +184,43 @@ with tempfile.TemporaryDirectory() as d:
           "Aborted" in proc.stdout and "Traceback (most recent call last)" not in proc.stdout)
 
 
+# ── interactive modes: cloud account and external-service credential files ─────────────────────────────────────────
+from unittest import mock  # noqa: E402
+
+
+def interactive(fn, answers, secrets):
+    """Run interactive builder `fn` in a new directory with typed `answers` and masked `secrets`: (path, data)."""
+    d = Path(tempfile.mkdtemp())
+    with mock.patch("builtins.input", side_effect=answers), \
+            mock.patch.object(sc.crypto_store, "prompt_passphrase", side_effect=secrets):
+        path = fn(str(d))
+    return path, yaml.safe_load(path.read_text())
+
+
+providers = sorted(sc.PROVIDER_FIELDS)
+answers = [str(providers.index("hetzner") + 1), "lab", "", "n"]  # provider, account, HETZNER_LOCATION skipped, no encryption
+path, data = interactive(sc.interactive_build, answers, ["tok-123"])
+check("interactive_build: writes <provider>-<account>.yaml with the fields filled in, unencrypted when declined",
+      path.name == "hetzner-lab.yaml" and data == {"cloudtype": "hetzner", "schema_version": sc.CREDENTIALS_SCHEMA_VERSION,
+                                                   "unencrypted": True, "HETZNER_TOKEN": "tok-123"}
+      and oct(path.stat().st_mode & 0o777) == "0o600")
+kinds = sorted(sc.SERVICE_CREDENTIAL_FIELDS)
+answers = [str(kinds.index("scc") + 1), "main", "", "user1", ""]  # kind, account, scc_user empty then given, encrypt
+path, data = interactive(sc.interactive_build_service, answers, ["sccpw", "", "pass-phrase-1", "pass-phrase-1"])
+check("interactive_build_service: asks again for an empty required field and encrypts by default",
+      path.name == "scc-main.yaml" and data["credential_kind"] == "scc" and data.get("encrypted") is True
+      and "scc_user" not in data)
+loaded, err = primary.try_load_service_credential(
+    "scc-main", config={"CREDENTIALS_PATH": str(path.parent)}, passphrase_prompt=lambda *a, **k: "pass-phrase-1")
+check("interactive_build_service: the encrypted file loads back with its fields",
+      err is None and loaded.get("scc_user") == "user1" and loaded.get("scc_password") == "sccpw")
+with mock.patch("builtins.input", side_effect=["99"]), mock.patch.object(sc, "die", side_effect=SystemExit("bad")) as died:
+    try:
+        sc.interactive_build(tempfile.mkdtemp())
+    except SystemExit:
+        pass
+check("interactive_build: dies on an invalid choice", died.called and "Invalid choice '99'" in died.call_args[0][0])
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

@@ -118,6 +118,36 @@ missing = sorted(Path(p).name for p, out in described.items()
 check("every tracked add-on's --schema json has non-empty targets and layers: {}".format(missing), missing == [])
 
 
+
+# ── load_plugin(): PATH lookup and cache; check_requirements(): hard stop ──────────────────────────────────────────
+from unittest import mock  # noqa: E402
+
+apps._cache.pop("zz_test", None)
+with mock.patch.object(apps.shutil, "which", return_value=None) as which:
+    p1 = apps.load_plugin("zz_test")
+    p2 = apps.load_plugin("zz_test")
+check("load_plugin: looks up install_<name> on PATH once, then serves the cache",
+      which.call_args_list == [mock.call("install_zz_test")] and p1 is p2)
+check("load_plugin: an add-on not on PATH gets the default capabilities with its name",
+      p1 == dict(apps.DEFAULT_PLUGIN, name="zz_test"))
+apps._cache.pop("zz_test", None)
+
+vm_only = dict(apps.DEFAULT_PLUGIN, name="vmonly", targets=["vm"])
+k3s_only = dict(apps.DEFAULT_PLUGIN, name="k3sonly", targets=["container"], requires_kubernetes=["k3s"])
+with mock.patch.object(apps, "die", side_effect=SystemExit) as die:
+    apps.check_requirements(vm_only, "vm")
+    apps.check_requirements(k3s_only, "container", clu_type="k3s")
+    check("check_requirements: a valid placement returns without dying", not die.called)
+    for plugin, target, clu, word in ((vm_only, "container", None, "does not support"),
+                                      (k3s_only, "container", "rke2", "requires a Kubernetes")):
+        die.reset_mock()
+        try:
+            apps.check_requirements(plugin, target, clu_type=clu)
+        except SystemExit:
+            pass
+        check("check_requirements: dies naming the add-on and the problem ({})".format(word),
+              die.called and plugin["name"] in die.call_args[0][0] and word in die.call_args[0][0])
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

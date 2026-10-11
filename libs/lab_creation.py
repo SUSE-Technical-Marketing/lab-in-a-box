@@ -27,7 +27,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -1045,6 +1044,25 @@ def check_ssh_conn(vm_name, tcp_port=22, retry_interval=2, retry_limit=100):
     finally:
         _level -= 2
 
+
+
+def wait_for_ssh_command(host: str, command: str, timeout: int = 300, interval: int = 5) -> bool:
+    """
+    Run `command` as root on `host` over SSH every `interval` seconds until it exits 0. Returns True once it does, or
+    False when `timeout` seconds pass first. A refused or failed SSH connection counts as a failed attempt, so this also
+    waits for a freshly created VM to accept root logins.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        attempt = subprocess.run(
+            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+             "root@{}".format(host), command],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if attempt.returncode == 0:
+            return True
+        if time.monotonic() + interval > deadline:
+            return False
+        time.sleep(interval)
 
 # ── Variable loading ──────────────────────────────────────────────────────────
 

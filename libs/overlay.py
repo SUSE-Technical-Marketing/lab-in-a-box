@@ -34,7 +34,7 @@ import ipaddress
 import shlex
 from pathlib import Path
 
-from lab_creation import ssh_run, ssh_output, log, warn, die
+from lab_creation import ssh_run, ssh_output, log, die, wait_for_ssh_command
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -107,8 +107,9 @@ def _gateway_vm_user_data(root_ssh_key):
 def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
                         root_ssh_key, open_ports=None):
     """
-    Create a gateway VM and return its IP. create_vm() requires the cloud-init user-data file, so the file is written first. The
-    same is done for the DNS VM in backends.ensure_cloud_dns_vm().
+    Create a gateway VM and return its IP once cloud-init has finished on it, so callers can SSH in as root right away.
+    create_vm() requires the cloud-init user-data file, so the file is written first. The same is done for the DNS VM in
+    backends.ensure_cloud_dns_vm().
     """
     log("- No gateway VM found for backend \"{}\" — creating \"{}\"".format(backend_name, vm_name))
     base = Path(lab_setup_path) / "cloud-init"
@@ -122,6 +123,10 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
     if not ip:
         die("gateway VM '{}' was created on backend '{}' but create_vm() reported "
             "no IP".format(vm_name, backend_name))
+    log("- Waiting for \"{}\" to finish cloud-init".format(vm_name))
+    if not wait_for_ssh_command(ip, "test -f /var/lib/cloud/instance/boot-finished", timeout=600):
+        die("gateway VM '{}' ({}) did not finish cloud-init within 600s — check it manually "
+            "(/var/log/cloud-init-output.log)".format(vm_name, ip))
     return ip
 
 

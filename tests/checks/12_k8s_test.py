@@ -311,6 +311,61 @@ except SystemExit:
 check("setup_traefik_k3s: happy path (no extra ports) completes without dying", ok)
 
 
+
+# ── K8sDistro.install_cluster: each node of the kcluster in order, server or agent, passing the token on ─────────────
+from unittest import mock  # noqa: E402
+
+
+class RecordingDistro(k8s.K8sDistro):
+    def __init__(self):
+        self.calls = []
+
+    def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
+        self.calls.append(("server", hostname, token, rancher1_ip))
+        return (token or "tok-1"), (rancher1_ip or "10.0.0.1")
+
+    def install_agent(self, hostname, clu_name, clu_ctx, token, rancher1_ip):
+        self.calls.append(("agent", hostname, token, rancher1_ip))
+        return token, rancher1_ip
+
+
+cluster_lab = {"nodes": {
+    "s1": {"kcluster": "c1"},
+    "a1": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
+    "s2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "server"},
+    "other": {"kcluster": "c2"},
+    "a2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "agent"},
+}}
+distro = RecordingDistro()
+distro.install_cluster(cluster_lab, "c1", {})
+check("install_cluster: installs only the kcluster's nodes, in the lab definition's order",
+      [c[1] for c in distro.calls] == ["s1", "a1", "s2", "a2"])
+check("install_cluster: KUBERNETES_NODE_TYPE and INSTALL_RKE2_TYPE pick agent or server (default server)",
+      [c[0] for c in distro.calls] == ["server", "agent", "server", "agent"])
+check("install_cluster: the first server's token and address go to every later node",
+      distro.calls[0][2:] == (None, None) and all(c[2:] == ("tok-1", "10.0.0.1") for c in distro.calls[1:]))
+
+# ── HarvesterDistro.install_cluster: waits on HTTPS, fetches the kubeconfig, waits for Ready nodes, applies settings ─
+import harvester  # noqa: E402
+
+hv_lab = {"kclusters": {"hv": {"clu_type": "harvester", "harvester_settings": {"ntp-servers": "x"}}},
+          "nodes": {"h1": {"kcluster": "hv"}, "h2": {"kcluster": "hv"}}}
+with mock.patch.object(harvester, "cluster_nodes", return_value=["h1", "h2"]), \
+        mock.patch("socket.gethostbyname", return_value="10.0.0.5"), \
+        mock.patch.object(harvester, "wait_https") as wait_https, \
+        mock.patch.object(harvester, "kubeconfig_path", return_value="/etc/lab_creation/hv.kubeconfig"), \
+        mock.patch.object(harvester, "fetch_kubeconfig", return_value="/etc/lab_creation/hv.kubeconfig") as fetch, \
+        mock.patch.object(harvester, "wait_nodes_ready") as ready, \
+        mock.patch.object(harvester, "apply_settings") as settings:
+    k8s.HarvesterDistro().install_cluster(hv_lab, "hv", {})
+check("HarvesterDistro: waits for the create node's HTTPS", wait_https.call_args[0] == ("10.0.0.5",))
+check("HarvesterDistro: fetches the kubeconfig from the create node, API on :6443, TLS name localhost",
+      fetch.call_args[0] == ("10.0.0.5", "/etc/lab_creation/hv.kubeconfig", "https://10.0.0.5:6443")
+      and fetch.call_args[1] == {"tls_server_name": "localhost"})
+check("HarvesterDistro: waits for every node to be Ready", ready.call_args[0] == ("/etc/lab_creation/hv.kubeconfig", 2))
+check("HarvesterDistro: applies the kcluster's harvester_settings",
+      settings.call_args[0] == ("/etc/lab_creation/hv.kubeconfig", {"ntp-servers": "x"}))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

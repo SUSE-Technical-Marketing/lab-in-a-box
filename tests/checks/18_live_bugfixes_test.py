@@ -166,6 +166,23 @@ check("DNSService.add_to_dns: removing a stale PTR for octet '1' never touches "
       and any("node10.mydemo.lab" in l for l in rev_lines2))
 
 
+# ── No mynet_reverse: only the A record, no "<empty>.db" reverse zone file ──
+services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
+fake = FakeSSH()
+services.ssh_run = fake
+ptr_svc.add_to_dns("cloud1.mydemo.lab", "18.0.0.5", "mydemo.lab", "", remote_dns_servers=["1.2.3.4"])
+check("DNSService.add_to_dns: without mynet_reverse the A record is still added",
+      "cloud1" in (services.NAMED_ZONE_DIR / "mydemo.lab.lan").read_text())
+check("DNSService.add_to_dns: without mynet_reverse no reverse zone file is written",
+      sorted(p.name for p in services.NAMED_ZONE_DIR.iterdir()) == ["mydemo.lab.lan"])
+check("DNSService.add_to_dns: without mynet_reverse no remote call touches a .db file",
+      not any(".db" in c for h, c, kw in fake.calls))
+ptr_svc.del_from_dns("cloud1.mydemo.lab", "18.0.0.5", "mydemo.lab", "", remote_dns_servers=["1.2.3.4"])
+check("DNSService.del_from_dns: without mynet_reverse the A record is removed and no .db file appears",
+      "cloud1" not in (services.NAMED_ZONE_DIR / "mydemo.lab.lan").read_text()
+      and not any(p.suffix == ".db" for p in services.NAMED_ZONE_DIR.iterdir())
+      and not any(".db" in c for h, c, kw in fake.calls))
+
 # ── --qemu-commandline is passed as one argv element ──────────────────────
 # The value starts with "-". Passed as separate arguments, argparse reads it as a flag, so it is one token: --qemu-commandline="...".
 subproc_calls = []

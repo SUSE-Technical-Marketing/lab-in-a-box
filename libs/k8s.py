@@ -6,7 +6,6 @@ Python equivalent of k8s_functions.bash.
 Typical usage:
     from k8s import (
         list_kclusters, get_vm_kcluster, load_kclu_vars,
-        setup_k3s, setup_rke2,
         add_kclu_dns,
         first_server_node, addon_nodes, iter_cluster_nodes,
         setup_traefik_rke2, setup_traefik_k3s,
@@ -20,7 +19,6 @@ Typical usage:
 
 import shlex
 import subprocess
-import sys
 import textwrap
 import time
 from pathlib import Path
@@ -97,8 +95,7 @@ def add_kclu_dns(definition, clu_name, clu_type, mydomain, remote_dns_servers=No
 # K8sDistro is the interface for each Kubernetes distribution. get_distro() returns the implementation by name, so a new
 # distribution needs no change in the orchestrator. clu_ctx is the dict that load_kclu_vars() returns.
 #
-# setup_k3s() and setup_rke2() remain as thin wrappers with their original signatures. The RKE2 node config is written by
-# RKE2Distro.write_node_config().
+# The RKE2 node config is written by RKE2Distro.write_node_config().
 
 class K8sDistro(object):
     """Interface a Kubernetes distribution implements."""
@@ -154,9 +151,7 @@ class K3sDistro(K8sDistro):
         node. Pass the returned token to each subsequent node to join the
         cluster. K3s has no separate "agent install" step — providing
         K3S_URL/K3S_TOKEN is what makes a node an agent — so install_server
-        and install_agent both funnel into this one path, exactly as the
-        original setup_k3s() did (dispatching on token is None vs not, with
-        no node_type parameter at all).
+        and install_agent both use this path, and a token makes the node join.
 
         Returns (token, rancher1_ip) — pass these to subsequent node calls.
         """
@@ -258,7 +253,6 @@ class RKE2Distro(K8sDistro):
         clu_type = self.name
         clu_rel = clu_ctx.get("clu_rel") or "stable"
         install_method = clu_ctx.get("install_method", "")
-        mydomain = clu_ctx.get("mydomain", "")
 
         prepare_local_as_kubeclient()
 
@@ -353,38 +347,6 @@ def get_distro(clu_type):
         die("Unknown Kubernetes distribution '{}' — supported: {}".format(
             clu_type, ", ".join(sorted(DISTROS))))
     return cls()
-
-
-# ── K3s / RKE2 back-compat wrappers ─────────────────────────────────────────
-
-def setup_k3s(hostname, clu_name, clu_rel, mydomain, token=None, rancher1_ip=None):
-    """
-    Install K3s on a node. Thin wrapper — body moved to K3sDistro.
-    """
-    clu_ctx = {"clu_rel": clu_rel, "mydomain": mydomain}
-    distro = K3sDistro()
-    if token is None:
-        return distro.install_server(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
-    return distro.install_agent(hostname, clu_name, clu_ctx, token, rancher1_ip)
-
-
-def setup_rke2(
-    hostname, vm_name, clu_name, clu_type, clu_rel, mydomain,
-    node_type="server", token=None, rancher1_ip=None, install_method="",
-):
-    """
-    Install RKE2 on a node. Thin wrapper — body moved to RKE2Distro.
-
-    vm_name/clu_type are accepted for signature back-compat but unused:
-    vm_name was already dead in the original (never referenced in its body);
-    clu_type is now implied by RKE2Distro itself (this codebase only ever
-    called setup_rke2 with clu_type="rke2").
-    """
-    clu_ctx = {"clu_rel": clu_rel, "mydomain": mydomain, "install_method": install_method}
-    distro = RKE2Distro()
-    if node_type == "agent":
-        return distro.install_agent(hostname, clu_name, clu_ctx, token, rancher1_ip)
-    return distro.install_server(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
 
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────

@@ -2,8 +2,10 @@
 # Mocked unit tests for scripts/setup_lab.py. Covers:
 # _merged_env's defaults/config/JSON precedence, the addon-dispatch block
 # (shutil.which + subprocess.run, duplicate-addon skip, missing-installer
-# die()) for both cluster- and VM-level addons, and phase_create_vms's
-# --keep reusability logic. Run from 17_setup_lab.sh, in its own container
+# die()) for both cluster- and VM-level addons, phase_create_vms's
+# --keep reusability logic, phase_services, phase_dns,
+# phase_reboot_and_wait_kept_nodes, phase_install_k8s_and_addons and the
+# phase order of setup_lab(). Run from 17_setup_lab.sh, in its own container
 # — see tests/run_tests.sh.
 import io
 import sys
@@ -15,6 +17,8 @@ sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
 import setup_lab  # noqa: E402
+
+REAL_SETUP_LAB = setup_lab.setup_lab  # later checks replace setup_lab.setup_lab to test main()
 
 failures = []
 
@@ -598,6 +602,105 @@ check("phase_create_vms: parallel=4 — one node dying doesn't stop the rest fro
 check("phase_create_vms: parallel=4 — the dying node is recorded FAILED, others as created",
       any(name == "pvm3" and status == "FAILED" for name, status in setup_lab._report.nodes)
       and sum(1 for _, status in setup_lab._report.nodes if status == "created") == 7)
+
+
+
+# ── phase_services: install, configure, enable each common.services entry in order ─────────────────────────────────
+from unittest import mock  # noqa: E402
+
+svc_calls = []
+
+
+class FakeService:
+    def __init__(self, name):
+        self.name = name
+
+    def install(self):
+        svc_calls.append(("install", self.name))
+
+    def configure(self, definition, config):
+        svc_calls.append(("configure", self.name))
+
+    def enable(self):
+        svc_calls.append(("enable", self.name))
+
+
+with mock.patch.object(setup_lab.services, "get", side_effect=lambda name, **kw: FakeService(name)) as got:
+    setup_lab.phase_services({"common": {"services": ["pxe", "dhcp"]}}, {}, {"LAB_SETUP_PATH": "/srv/x"})
+    check("phase_services: installs, configures and enables every service, in order",
+          svc_calls == [(a, n) for n in ("pxe", "dhcp") for a in ("install", "configure", "enable")])
+    check("phase_services: passes LAB_SETUP_PATH to the service", got.call_args[1]["lab_setup_path"] == "/srv/x")
+    svc_calls.clear()
+    setup_lab.phase_services({"common": {}}, {}, {})
+    check("phase_services: does nothing without common.services", svc_calls == [] and got.call_count == 2)
+
+# ── phase_dns: one DNS registration per kcluster, with its type, domain and the remote DNS servers ──────────────────
+dns_lab = {"kclusters": {"c1": {"clu_type": "rke2", "mydomain": "a.lab"}, "c2": {"clu_type": "k3s", "mydomain": "b.lab"}},
+           "nodes": {"n1": {"kcluster": "c1"}, "n2": {"kcluster": "c2"}}}
+with mock.patch.object(setup_lab.k8s, "add_kclu_dns") as add_dns:
+    setup_lab.phase_dns(dns_lab, ["10.0.0.53"])
+    check("phase_dns: registers each kcluster with its clu_type and mydomain",
+          sorted((c[0][1], c[0][2], c[0][3]) for c in add_dns.call_args_list) == [("c1", "rke2", "a.lab"), ("c2", "k3s", "b.lab")])
+    check("phase_dns: passes the remote DNS servers", all(c[1]["remote_dns_servers"] == ["10.0.0.53"] for c in add_dns.call_args_list))
+
+# ── phase_reboot_and_wait_kept_nodes: only with --keep; reboots owned kcluster VMs, then waits for each ────────────
+reboot_lab = {"nodes": {"k1": {"kcluster": "c1"}, "k2": {"kcluster": "c1", "existing": True}, "plain": {}},
+              "kclusters": {"c1": {"clu_type": "rke2"}}}
+with mock.patch.object(setup_lab.lc, "reboot_vm") as reboot, \
+        mock.patch.object(setup_lab.lc, "check_ssh_conn") as wait_ssh, \
+        mock.patch.object(setup_lab.lc, "locate_kvm_host", return_value=("hv1", "qemu+ssh://hv1/system")), \
+        mock.patch.object(setup_lab.targets, "is_existing_node", side_effect=lambda cfg: bool(cfg.get("existing"))), \
+        mock.patch.object(setup_lab.harvester, "cluster_of", return_value=None), \
+        mock.patch.object(setup_lab.time, "sleep"):
+    setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=False)
+    check("phase_reboot_and_wait_kept_nodes: does nothing without --keep", not reboot.called and not wait_ssh.called)
+    setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=True)
+    check("phase_reboot_and_wait_kept_nodes: reboots only kcluster VMs this tool owns, on their KVM host",
+          [c[0][1] for c in reboot.call_args_list] == ["k1"] and reboot.call_args[1]["remote_host"] == "hv1")
+    check("phase_reboot_and_wait_kept_nodes: waits for SSH on every kcluster node",
+          sorted(c[0][0] for c in wait_ssh.call_args_list) == ["k1", "k2"])
+
+# ── phase_install_k8s_and_addons: Kubernetes per kcluster, then its add-ons; a failed install skips that cluster's ─
+k8s_lab = {"kclusters": {"good": {"clu_type": "rke2"}, "bad": {"clu_type": "k3s"}},
+           "nodes": {"g1": {"kcluster": "good"}, "b1": {"kcluster": "bad"}}, "common": {"delay_min": "0"}}
+installed, addon_runs = [], []
+
+
+class FakeDistro:
+    def install_cluster(self, definition, clu_name, clu_cfg):
+        installed.append(clu_name)
+        if clu_name == "bad":
+            raise SystemExit(1)
+
+
+setup_lab._report = setup_lab._RunReport()
+with mock.patch.object(setup_lab.k8s, "get_distro", return_value=FakeDistro()), \
+        mock.patch.object(setup_lab, "_install_cluster_addons",
+                          side_effect=lambda d, c, df, j, clu, cfg: addon_runs.append(clu)), \
+        mock.patch.object(setup_lab.time, "sleep") as slept:
+    setup_lab.phase_install_k8s_and_addons(k8s_lab, {}, {}, "lab.json")
+check("phase_install_k8s_and_addons: installs Kubernetes on every kcluster", sorted(installed) == ["bad", "good"])
+check("phase_install_k8s_and_addons: installs add-ons only on the kcluster whose Kubernetes install worked",
+      addon_runs == ["good"])
+check("phase_install_k8s_and_addons: records ok and FAILED per kcluster and the error",
+      sorted(setup_lab._report.clusters) == [("bad", "FAILED"), ("good", "ok")] and len(setup_lab._report.errors) == 1)
+check("phase_install_k8s_and_addons: waits 2 + delay_min minutes before the add-ons", slept.call_args[0][0] == 120)
+
+# ── setup_lab(): the phases in order; Kubernetes phases only for a lab with kclusters ─────────────────────────────
+order = []
+phases = ["phase_services", "phase_dns", "phase_create_vms", "phase_reboot_and_wait_kept_nodes",
+          "phase_install_k8s_and_addons", "phase_vm_addons", "print_summary"]
+patches = [mock.patch.object(setup_lab, p, side_effect=lambda *a, _p=p, **k: order.append(_p)) for p in phases]
+for p in patches:
+    p.start()
+REAL_SETUP_LAB(k8s_lab, {"REMOTE_DNS_SERVERS": "10.0.0.53 10.0.0.54"}, {}, "lab.json", keep=True)
+check("setup_lab: runs every phase in order for a lab with kclusters", order == phases)
+order.clear()
+REAL_SETUP_LAB({"nodes": {"v1": {}}}, {}, {}, "lab.json")
+check("setup_lab: skips the DNS, reboot and Kubernetes phases for a VM-only lab",
+      order == ["phase_services", "phase_create_vms", "phase_vm_addons", "print_summary"])
+for p in patches:
+    p.stop()
 
 
 if failures:

@@ -279,6 +279,7 @@ def provision_vm(definition, config, defaults, vm_name):
                                                   site_name=hub_site, site_cidr=site_cidr)
                 hub_vm_name = overlay.hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
                 hub_backend.disable_source_dest_check(hub_vm_name)
+                hub_backend.allow_internal_traffic()
                 gateway_lan_ip = hub_backend.get_private_ip(hub_vm_name)
             else:
                 warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "
@@ -306,6 +307,7 @@ def provision_vm(definition, config, defaults, vm_name):
                 overlay.ensure_overlay_site_gateway(this_site, gw_public_ip, hub_host, hub_pubkey,
                                                      wg_port, site_cidr, overlay_cidr=overlay_cidr)
                 backend.disable_source_dest_check(gw_vm_name)
+                backend.allow_internal_traffic()
                 gateway_lan_ip = backend.get_private_ip(gw_vm_name)
             else:
                 warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "

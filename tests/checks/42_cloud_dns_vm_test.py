@@ -69,7 +69,17 @@ try:
           < runcmd.index(next(c for c in runcmd if "apparmor_parser -r" in c))
           < runcmd.index("systemctl enable --now named"))
     check("runcmd enables and starts named (no alias needed) at the end",
-          any(c == "systemctl enable --now named" for c in runcmd))
+          runcmd[-1] == "systemctl enable --now named")
+    detect = runcmd[0]
+    check("runcmd first picks the BIND package, user and config file per OS family from /etc/os-release",
+          detect.startswith(". /etc/os-release") and "apt-get install -y bind9" in detect
+          and "zypper --non-interactive install bind" in detect and "dnf install -y bind" in detect)
+    check("cloud-config installs no package itself: the package name differs per OS family",
+          "packages" not in parsed)
+    check("non-Debian families include the zone stanza from /etc/named.conf",
+          any('include "/etc/named.lab.conf";' in c for c in runcmd))
+    check("a localhost-only named.conf is opened to clients, recursion kept to local networks",
+          any("listen-on port 53 { any; };" in c and "allow-recursion { localnets; localhost; };" in c for c in runcmd))
 
     # Every runcmd entry must actually be a runnable shell command — real, not just
     # syntactically-plausible-looking text.

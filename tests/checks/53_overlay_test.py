@@ -10,6 +10,7 @@
 import ipaddress
 import sys
 import tempfile
+from unittest import mock
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -320,7 +321,7 @@ scripted["203.0.113.77"] = {
     "cat /etc/wireguard/wg0.key": FakeResult(returncode=0, stdout="NEWHUBPRIV\n"),
 }
 create_backend = _FakeBackendCreate()
-with tempfile.TemporaryDirectory() as tmp:
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
     hub_public_ip2, _, _ = overlay.ensure_overlay_hub(
         create_backend, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example", wg_port=51820)
     check("ensure_overlay_hub: create path writes a cloud-init user-data file "
@@ -337,10 +338,23 @@ check("ensure_overlay_hub: create path opens the WireGuard UDP port via the exis
 
 reset()
 create_backend2 = _FakeBackendCreate()
-with tempfile.TemporaryDirectory() as tmp:
+waits = []
+with tempfile.TemporaryDirectory() as tmp, \
+        mock.patch.object(overlay, "wait_for_ssh_command", side_effect=lambda h, c, **kw: waits.append((h, c)) or True):
     gw_ip = overlay.ensure_site_gateway_vm(create_backend2, "aws", "ami-xyz", tmp,
                                             "ssh-ed25519 AAAAfake test@example")
 check("ensure_site_gateway_vm: create path returns the new gateway's real IP", gw_ip == "203.0.113.77")
+check("ensure_site_gateway_vm: create path waits for cloud-init to finish before returning",
+      waits == [("203.0.113.77", "test -f /var/lib/cloud/instance/boot-finished")])
+died = []
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=False), \
+        mock.patch.object(overlay, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit(1))):
+    try:
+        overlay.ensure_site_gateway_vm(_FakeBackendCreate(), "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")
+    except SystemExit:
+        pass
+check("ensure_site_gateway_vm: dies naming the VM when cloud-init never finishes",
+      len(died) == 1 and "lab-overlay-gw-aws-prod" in died[0])
 gw_create_call = next(c for c in create_backend2.calls if c[0] == "create_vm")
 check("ensure_site_gateway_vm: does NOT open any inbound port (a spoke gateway only connects OUT)",
       "open_ports" not in gw_create_call[-1] or not gw_create_call[-1].get("open_ports"))

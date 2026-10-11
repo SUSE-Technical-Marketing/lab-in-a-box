@@ -208,7 +208,7 @@ class DNSService(AuxService):
         path.write_text("\n".join(lines) + "\n")
 
     def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Add forward (A) and reverse (PTR) DNS records for a VM."""
+        """Add forward (A) and reverse (PTR) DNS records for a VM. Without `mynet_reverse` only the A record is added."""
         log("Adding DNS entry for '{}' → {}".format(vm_name, myip))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
@@ -220,20 +220,24 @@ class DNSService(AuxService):
 
         with _dns_lock:
             for server in (remote_dns_servers or []):
-                self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
+                if mynet_reverse:
+                    self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
                 self._remote_dns_add(server, lan_file, a_record)
-                self._remote_dns_add(server, rev_file, ptr_record)
+                if mynet_reverse:
+                    self._remote_dns_add(server, rev_file, ptr_record)
                 self._remote(server, "systemctl restart named", check=False)
 
             # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
-            self._dns_remove_ptr_for_octet(rev_file, last_octet)
+            if mynet_reverse:
+                self._dns_remove_ptr_for_octet(rev_file, last_octet)
             self._dns_add_line(lan_file, a_record)
-            self._dns_add_line(rev_file, ptr_record)
+            if mynet_reverse:
+                self._dns_add_line(rev_file, ptr_record)
             self._update_hosts_file(vm_name, myip)
             self.restart_named()
 
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Remove forward and reverse DNS records for a VM."""
+        """Remove forward and reverse DNS records for a VM. Without `mynet_reverse` only the A record is removed."""
         log("Removing DNS entry for '{}'".format(vm_name))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
@@ -247,11 +251,13 @@ class DNSService(AuxService):
             for server in (remote_dns_servers or []):
                 # check=False: same non-fatal-secondary-server rationale as
                 # _remote_dns_add above.
-                self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
+                if mynet_reverse:
+                    self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
                 self._remote(server, "sed '/{}/d' -i {}".format(a_record, lan_file), check=False)
                 self._remote(server, "systemctl restart named", check=False)
 
-            self._dns_remove_line(rev_file, ptr_record)
+            if mynet_reverse:
+                self._dns_remove_line(rev_file, ptr_record)
             self._dns_remove_line(lan_file, a_record)
             self._update_hosts_file(vm_name)
             self.restart_named()
