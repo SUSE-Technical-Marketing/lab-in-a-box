@@ -142,6 +142,8 @@ calls, _, _ = run({"smlm_preinstalled": "true", "smlm_salt_auto_accept": "true",
                   container_exists=True)
 check("auto_accept drop-in written and salt-master restarted",
       any("zz-lab-auto-accept.conf" in c and "restart salt-master" in c for c in calls))
+check("auto_accept script reaches the container over stdin, not as a mgrctl argument",
+      any("zz-lab-auto-accept.conf" in c and "| mgrctl exec -i -- bash -s" in c and "sh -c" not in c for c in calls))
 check("bootstrap script copied into /pub/bootstrap",
       any("mgrctl cp" in c and "/srv/www/htdocs/pub/bootstrap/generic_bootstrap.sh" in c for c in calls))
 calls, _, _ = run({"smlm_preinstalled": "true"}, container_exists=True)

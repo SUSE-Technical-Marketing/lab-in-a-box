@@ -472,7 +472,9 @@ def ensure_salt_auto_accept(hostname):
     script = ("mkdir -p /etc/salt/master.d && "
               "printf 'auto_accept: True\\n' > /etc/salt/master.d/zz-lab-auto-accept.conf && "
               "systemctl restart salt-master")
-    ssh_run(hostname, "mgrctl exec -- sh -c {}".format(shlex.quote(script)), check=False)
+    # mgrctl exec joins its arguments without quoting, so `sh -c '<script>'` would run only its first word: the script
+    # goes in over stdin instead.
+    ssh_run(hostname, "echo {} | mgrctl exec -i -- bash -s".format(shlex.quote(script)), check=False)
 
 
 def ensure_bootstrap_scripts(hostname, scripts):
