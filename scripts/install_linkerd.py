@@ -3,15 +3,19 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 2.0
 #
 # JSON section: "linkerd" — configurable keys:
-#   linkerd_version     : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.14.10")
+#   linkerd_version     : [OPTIONAL] chart version of the edge charts (empty = latest, e.g. "2026.10.1")
 #   linkerd_ns          : [OPTIONAL] control plane namespace (default: linkerd)
 #   linkerd_viz_ns      : [OPTIONAL] viz extension namespace (default: linkerd-viz)
-#   linkerd_rel         : [OPTIONAL] Helm repo alias (default: linkerd)
-#   linkerd_repo_url    : [OPTIONAL] Helm repo URL (default: https://helm.linkerd.io/stable)
+#   linkerd_rel         : [OPTIONAL] Helm repo alias (default: linkerd-edge)
+#   linkerd_repo_url    : [OPTIONAL] Helm repo URL (default: https://helm.linkerd.io/edge)
 #   linkerd_install_viz : [OPTIONAL] install viz dashboard (default: true)
+#
+# The mesh identity (an ECDSA P-256 trust anchor and issuer, valid 10 years) is generated once with openssl on the node
+# and kept in the secret linkerd-lab-identity of linkerd_ns; later runs reuse it. The Gateway API CRDs are installed
+# with linkerd-crds only when the cluster has none (K3s ships them with its Traefik).
 
 __version__ = "__LABVERSION__"
 
@@ -23,6 +27,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -42,37 +47,61 @@ def _validate(v):
     v.vurl("linkerd")
 
 
-def setup_linkerd_repo(hostname, linkerd_rel=None, linkerd_repo_url=None):
-    """Add the Linkerd Helm repo. Mirrors setup_linkerd_repo (bash)."""
-    helm_repo_add(hostname, linkerd_rel or "linkerd", linkerd_repo_url or "https://helm.linkerd.io/stable")
+_IDENTITY_SCRIPT = r"""set -eu
+ns=$1
+kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$ns" get secret linkerd-lab-identity >/dev/null 2>&1 && exit 0
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; cd "$d"
+openssl ecparam -name prime256v1 -genkey -noout -out ca.key
+openssl req -x509 -new -key ca.key -subj /CN=root.linkerd.cluster.local -days 3650 -sha256 \
+    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -out ca.crt
+openssl ecparam -name prime256v1 -genkey -noout -out issuer.key
+openssl req -new -key issuer.key -subj /CN=identity.linkerd.cluster.local -out issuer.csr
+printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' > ext
+openssl x509 -req -in issuer.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 -sha256 -extfile ext -out issuer.crt
+kubectl -n "$ns" create secret generic linkerd-lab-identity --from-file=ca.crt --from-file=issuer.crt --from-file=issuer.key
+"""
+
+_CONTROL_PLANE_SCRIPT = r"""set -eu
+ns=$1; chart=$2; shift 2
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+for f in ca.crt issuer.crt issuer.key; do
+    kubectl -n "$ns" get secret linkerd-lab-identity -o "jsonpath={.data.${f//./\\.}}" | base64 -d > "$d/$f"
+done
+helm upgrade --install linkerd-control-plane "$chart" --namespace "$ns" --wait --timeout 10m "$@" \
+    --set-file identityTrustAnchorsPEM="$d/ca.crt" \
+    --set-file identity.issuer.tls.crtPEM="$d/issuer.crt" --set-file identity.issuer.tls.keyPEM="$d/issuer.key"
+"""
 
 
-def setup_linkerd(hostname, linkerd_rel=None, linkerd_ns=None, linkerd_viz_ns=None,
-                   linkerd_version=None, linkerd_install_viz=None):
-    """Install Linkerd (CRDs -> control plane -> viz). Mirrors setup_linkerd (bash)."""
-    rel = linkerd_rel or "linkerd"
+def setup_linkerd_repo(hostname: str, linkerd_rel: str = None, linkerd_repo_url: str = None) -> None:
+    """Add the Linkerd edge Helm repo."""
+    helm_repo_add(hostname, linkerd_rel or "linkerd-edge", linkerd_repo_url or "https://helm.linkerd.io/edge")
+
+
+def setup_linkerd(hostname: str, linkerd_rel: str = None, linkerd_ns: str = None, linkerd_viz_ns: str = None,
+                  linkerd_version: str = None, linkerd_install_viz: str = None) -> None:
+    """Install the Linkerd CRDs, the control plane with the lab's mesh identity and, unless disabled, the viz extension."""
+    rel = linkerd_rel or "linkerd-edge"
     ns = linkerd_ns or "linkerd"
     viz_ns = linkerd_viz_ns or "linkerd-viz"
-    ver_arg = "--version {}".format(linkerd_version) if linkerd_version else ""
+    ver = ["--version", linkerd_version] if linkerd_version else []
+    ver_arg = "".join(" {}".format(shlex.quote(a)) for a in ver)
 
     print("# Installing Linkerd CRDs")
-    ssh_run(hostname,
-            "helm upgrade -i linkerd-crds {}/linkerd-crds "
-            "--namespace {} --create-namespace {}".format(rel, ns, ver_arg))
+    ssh_run(hostname, "gw=true; kubectl get crd httproutes.gateway.networking.k8s.io >/dev/null 2>&1 && gw=false; "
+                      "helm upgrade --install linkerd-crds {}/linkerd-crds --namespace {} --create-namespace{} --wait "
+                      "--set installGatewayAPI=$gw".format(shlex.quote(rel), shlex.quote(ns), ver_arg))
 
     print("# Installing Linkerd control plane")
-    ssh_run(hostname,
-            "helm upgrade -i linkerd-control-plane {}/linkerd-control-plane "
-            "--namespace {} "
-            "--set-file identityTrustAnchorsPEM=/dev/null "
-            "--set identity.issuer.scheme=kubernetes.io/tls "
-            "{}".format(rel, ns, ver_arg))
+    ssh_run(hostname, "bash -s -- {}".format(shlex.quote(ns)), input_text=_IDENTITY_SCRIPT)
+    ssh_run(hostname, "bash -s -- {} {}{}".format(shlex.quote(ns), shlex.quote("{}/linkerd-control-plane".format(rel)), ver_arg),
+            input_text=_CONTROL_PLANE_SCRIPT)
 
     if str(linkerd_install_viz or "true") != "false":
         print("# Installing Linkerd viz extension")
-        ssh_run(hostname,
-                "helm upgrade -i linkerd-viz {}/linkerd-viz "
-                "--namespace {} --create-namespace {}".format(rel, viz_ns, ver_arg))
+        ssh_run(hostname, "helm upgrade --install linkerd-viz {}/linkerd-viz --namespace {} --create-namespace{} --wait "
+                          "--timeout 10m".format(shlex.quote(rel), shlex.quote(viz_ns), ver_arg))
         print("Linkerd viz dashboard installed. Namespace: {}".format(viz_ns))
 
     print("Linkerd installed. Namespace: {}".format(ns))

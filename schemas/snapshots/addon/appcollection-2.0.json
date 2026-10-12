@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_chart": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_ns": {
+   "default": "app-collection",
+   "required": false,
+   "type": "namespace"
+  },
+  "appcollection_password": {
+   "default": "",
+   "required": true,
+   "type": "password"
+  },
+  "appcollection_registry": {
+   "default": "dp.apps.rancher.io",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_release": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "appcollection_user": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "appcollection_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:appcollection",
+ "version": "2.0"
+}

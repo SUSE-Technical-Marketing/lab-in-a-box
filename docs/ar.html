@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة.</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -582,7 +582,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
-<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية.</p>
+<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -1124,10 +1124,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>DNS العنقود</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>تدوير شهادات عنقود Kubernetes</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>تنسيق البيانات وتخزينها المؤقت لأحمال العمل السحابية الأصلية</td>
 </tr>
@@ -1168,8 +1164,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>أحمال عمل تجريبية لـ NeuVector قائمة على Helm</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>مشغّل OpenSCAP/ComplianceAsCode</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>مشغّل الامتثال من Rancher: فحوصات CIS Benchmark لعنقود RKE2/K3s</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1177,7 +1173,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>مساعد أمني لـ Kubernetes بالذكاء الاصطناعي الوكيلي</td>
+<td>إطار لتشغيل وكلاء الذكاء الاصطناعي على Kubernetes مع واجهة ويب؛ النموذج من OpenAI أو Anthropic أو Gemini أو Azure OpenAI أو Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1411,10 +1407,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>نموذج StarCoder2، يُقدَّم عبر Ollama</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>(راجع <code>install_phoebe --schema</code>)</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1434,10 +1426,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>تجهيز عقد SUSE Virtualization ‏(Harvester/KubeVirt)</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>أداة بناء أجهزة KIWI</td>
 </tr>
 </tbody>
 </table>

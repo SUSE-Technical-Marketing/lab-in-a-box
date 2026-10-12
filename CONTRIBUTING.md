@@ -188,6 +188,9 @@ the JSON shape add-ons plug into. In short:
    `scripts/schema_versions.py record addon:<name> "First recorded version."`
    (see [Schema versions](#schema-versions)).
 2. Add templates under `templates/addons/<name>/` if the add-on needs any.
+   If it sets an ingress host or prints a URL under the lab domain, register
+   that name with `addon_common.register_service_dns(definition, clu_name, fqdn)`;
+   check 85 enforces it.
 3. Add `"<name>"` to the `addons` array of a test lab JSON to exercise it.
 4. Add a test under `tests/checks/`.
 

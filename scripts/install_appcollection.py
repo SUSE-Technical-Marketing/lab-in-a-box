@@ -1,22 +1,26 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will add the SUSE Application Collection Helm repository
+# Part of lab-in-a-box, it will log the cluster in to the SUSE Application Collection and optionally install one of its charts
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 2.0
 #
 # JSON section: "appcollection" — configurable keys:
-#   appcollection_rel       : [OPTIONAL] Helm repo alias (default: suse-application-collection)
-#   appcollection_repo_url  : [OPTIONAL] Helm repo URL
-#                             (default: https://charts.suse.com/application-collection)
-#   appcollection_ns        : [OPTIONAL] default namespace for installs (default: app-collection)
-#   appcollection_chart     : [OPTIONAL] specific chart to install from the collection; when unset, none is installed
-#   appcollection_release   : [OPTIONAL] Helm release name when installing a chart; when unset, the chart name
-#   appcollection_version   : [OPTIONAL] chart version when appcollection_chart is set (empty = latest)
+#   appcollection_user      : [MANDATORY] SUSE Application Collection user (https://apps.rancher.io, profile), or a service
+#                             account's user; may come from appcollection_account instead
+#   appcollection_password  : [MANDATORY] its access token; may come from appcollection_account instead
+#   appcollection_account   : [OPTIONAL] name of an encrypted credential file of kind "appcollection" under
+#                             /etc/lab_creation/credentials/ holding the user and token; when it and the two keys above are
+#                             unset, the only such file is used
+#   appcollection_registry  : [OPTIONAL] registry host (default: dp.apps.rancher.io)
+#   appcollection_ns        : [OPTIONAL] namespace of the installed chart and its pull secret (default: app-collection)
+#   appcollection_chart     : [OPTIONAL] chart to install, e.g. "redis" (oci://<registry>/charts/<chart>); when unset, none is installed
+#   appcollection_release   : [OPTIONAL] Helm release name; when unset, the chart name
+#   appcollection_version   : [OPTIONAL] chart version (empty = latest)
 #
-# This script adds the SUSE Application Collection repository to Helm and optionally
-# installs one specific chart from it. To install multiple charts, call this script
-# multiple times with different appcollection_chart values or use 'helm install' directly.
+# helm on the cluster's first server node is logged in to <registry>/charts, and the namespace gets the docker-registry
+# secret "application-collection" that the chart's images are pulled with (global.imagePullSecrets). The catalog is at
+# https://apps.rancher.io/applications.
 
 __version__ = "__LABVERSION__"
 
@@ -28,6 +32,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -38,36 +43,33 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+import appco_common  # noqa: E402
+from lab_creation import setup_helm, ssh_run  # noqa: E402
 
 
 def _validate(v):
+    v.vreq_or_credential("appcollection", "appcollection_user", "appcollection")
+    v.vreq_or_credential("appcollection", "appcollection_password", "appcollection")
     v.vver("appcollection")
-    v.vurl("appcollection")
 
 
-def setup_appcollection_repo(hostname, appcollection_rel=None, appcollection_repo_url=None):
-    """Add the SUSE Application Collection Helm repo. Mirrors setup_appcollection_repo (bash)."""
-    helm_repo_add(hostname, appcollection_rel or "suse-application-collection",
-                  appcollection_repo_url or "https://charts.suse.com/application-collection")
-
-
-def setup_appcollection(hostname, appcollection_rel=None, appcollection_ns=None, appcollection_chart=None,
-                         appcollection_release=None, appcollection_version=None):
-    """Add the repo and optionally install a single chart from it. Mirrors setup_appcollection (bash)."""
-    rel = appcollection_rel or "suse-application-collection"
-    if appcollection_chart:
-        ns = appcollection_ns or "app-collection"
-        ver_arg = "--version {}".format(appcollection_version) if appcollection_version else ""
-        release = appcollection_release or appcollection_chart
-        ssh_run(hostname,
-                "helm upgrade -i {} {}/{} --namespace {} --create-namespace {}".format(
-                    release, rel, appcollection_chart, ns, ver_arg))
-        print("Installed '{}' from SUSE Application Collection.".format(appcollection_chart))
-    else:
-        print("SUSE Application Collection repo added.")
-        print("List available charts with:")
-        print("  helm search repo {}".format(rel))
+def setup_appcollection(hostname: str, cfg: dict, user: str, password: str) -> None:
+    """Log helm in to the registry; with appcollection_chart, create the pull secret and install the chart."""
+    registry = cfg.get("appcollection_registry") or appco_common.DEFAULT_REGISTRY
+    appco_common.helm_login(hostname, "{}/charts".format(registry), user, password)
+    chart = cfg.get("appcollection_chart")
+    if not chart:
+        print("helm is logged in to {0}/charts. Install a chart with: helm upgrade --install <release> "
+              "oci://{0}/charts/<chart> (catalog: https://apps.rancher.io/applications)".format(registry))
+        return
+    ns = cfg.get("appcollection_ns") or "app-collection"
+    release = cfg.get("appcollection_release") or chart
+    appco_common.pull_secret(hostname, appco_common.SECRET_NAME, registry, user, password, ns)
+    ver_arg = " --version {}".format(shlex.quote(cfg["appcollection_version"])) if cfg.get("appcollection_version") else ""
+    ssh_run(hostname, "helm upgrade --install {} oci://{}/charts/{} --namespace {}{} --wait --timeout 10m{}".format(
+        shlex.quote(release), registry, shlex.quote(chart), shlex.quote(ns), ver_arg,
+        appco_common.set_flags(appco_common.pull_secret_pairs([appco_common.SECRET_NAME]))))
+    print("Installed '{}' from the SUSE Application Collection as release '{}' in namespace '{}'.".format(chart, release, ns))
 
 
 def main():
@@ -86,16 +88,17 @@ def main():
 
     clu_name = k8s.get_vm_kcluster(definition, vm_name)
     cfg = definition.get("appcollection", {}) or {}
-    online = definition.get("common", {}).get("online") == "1"
+    creds = ac.resolve_credential(cfg, "appcollection", {
+        "appcollection_user": "appcollection_user",
+        "appcollection_password": "appcollection_password",
+    })
+    if not creds["appcollection_user"] or not creds["appcollection_password"]:
+        print("ERROR: appcollection_user and appcollection_password (or appcollection_account) are mandatory "
+              "(SUSE Application Collection, https://apps.rancher.io).", file=sys.stderr)
+        sys.exit(1)
 
-    setup_helm(vm_name, clu_name, online=online)
-    setup_appcollection_repo(vm_name, appcollection_rel=cfg.get("appcollection_rel"),
-                              appcollection_repo_url=cfg.get("appcollection_repo_url"))
-    setup_appcollection(
-        vm_name, appcollection_rel=cfg.get("appcollection_rel"), appcollection_ns=cfg.get("appcollection_ns"),
-        appcollection_chart=cfg.get("appcollection_chart"), appcollection_release=cfg.get("appcollection_release"),
-        appcollection_version=cfg.get("appcollection_version"),
-    )
+    setup_helm(vm_name, clu_name, online=definition.get("common", {}).get("online") == "1")
+    setup_appcollection(vm_name, cfg, creds["appcollection_user"], creds["appcollection_password"])
 
 
 if __name__ == "__main__":

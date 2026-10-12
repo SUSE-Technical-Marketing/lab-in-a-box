@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
-<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。</p>
+<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
 <p>ラボは 1 台のハイパーバイザーに限定されません。オートメーション VM の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを使えます。</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -582,7 +582,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web UI（lab-builder）</h2>
-<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。</p>
+<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -1122,10 +1122,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>クラスター DNS</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Kubernetes クラスターの証明書ローテーション</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>クラウドネイティブなワークロード向けのデータオーケストレーションとキャッシュ</td>
 </tr>
@@ -1166,8 +1162,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>Helm ベースの NeuVector デモワークロード</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>OpenSCAP/ComplianceAsCode オペレーター</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Rancher のコンプライアンスオペレーター: RKE2/K3s クラスターの CIS ベンチマークスキャン</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1175,7 +1171,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>エージェント型 AI による Kubernetes セキュリティアシスタント</td>
+<td>Kubernetes 上で AI エージェントを動かすフレームワーク（Web UI 付き）。モデルは OpenAI、Anthropic、Gemini、Azure OpenAI、Ollama から選択</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1409,10 +1405,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>StarCoder2 モデル（Ollama で提供）</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>（<code>install_phoebe --schema</code> を参照）</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1432,10 +1424,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>SUSE Virtualization（Harvester/KubeVirt）のノードのプロビジョニング</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>KIWI アプライアンスビルダー</td>
 </tr>
 </tbody>
 </table>

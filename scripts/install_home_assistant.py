@@ -117,6 +117,7 @@ def setup_home_assistant(hostname, clu_name, mydomain, home_assistant_rel=None, 
 
     print("Home Assistant installed. Namespace: {}".format(ns))
     print("Available at: http://{}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -141,14 +142,15 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_home_assistant_repo(vm_name, home_assistant_rel=cfg.get("home_assistant_rel"),
                                home_assistant_repo_url=cfg.get("home_assistant_repo_url"))
-    setup_home_assistant(vm_name, clu_name, clu_cfg.get("mydomain"),
-                          home_assistant_rel=cfg.get("home_assistant_rel"),
-                          home_assistant_ns=cfg.get("home_assistant_ns"),
-                          home_assistant_version=cfg.get("home_assistant_version"),
-                          home_assistant_shorthn=cfg.get("home_assistant_shorthn"),
-                          home_assistant_storage_size=cfg.get("home_assistant_storage_size"),
-                          home_assistant_storage_class=cfg.get("home_assistant_storage_class"),
-                          home_assistant_image_tag=cfg.get("home_assistant_image_tag"))
+    fqdn = setup_home_assistant(vm_name, clu_name, clu_cfg.get("mydomain"),
+                                 home_assistant_rel=cfg.get("home_assistant_rel"),
+                                 home_assistant_ns=cfg.get("home_assistant_ns"),
+                                 home_assistant_version=cfg.get("home_assistant_version"),
+                                 home_assistant_shorthn=cfg.get("home_assistant_shorthn"),
+                                 home_assistant_storage_size=cfg.get("home_assistant_storage_size"),
+                                 home_assistant_storage_class=cfg.get("home_assistant_storage_class"),
+                                 home_assistant_image_tag=cfg.get("home_assistant_image_tag"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

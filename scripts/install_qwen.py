@@ -75,6 +75,7 @@ def setup_qwen(hostname, clu_name, mydomain, qwen_rel=None, qwen_ns=None, qwen_v
     print("Qwen2.5 deployed via Ollama. Namespace: {}".format(ns))
     print("API available at: http://{}".format(fqdn))
     print("Model pre-pulled: {}".format(model))
+    return fqdn
 
 
 def main():
@@ -98,10 +99,11 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_qwen_repo(vm_name, qwen_rel=cfg.get("qwen_rel"), qwen_repo_url=cfg.get("qwen_repo_url"))
-    setup_qwen(vm_name, clu_name, clu_cfg.get("mydomain"),
-               qwen_rel=cfg.get("qwen_rel"), qwen_ns=cfg.get("qwen_ns"),
-               qwen_version=cfg.get("qwen_version"), qwen_shorthn=cfg.get("qwen_shorthn"),
-               qwen_model=cfg.get("qwen_model"))
+    fqdn = setup_qwen(vm_name, clu_name, clu_cfg.get("mydomain"),
+                      qwen_rel=cfg.get("qwen_rel"), qwen_ns=cfg.get("qwen_ns"),
+                      qwen_version=cfg.get("qwen_version"), qwen_shorthn=cfg.get("qwen_shorthn"),
+                      qwen_model=cfg.get("qwen_model"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

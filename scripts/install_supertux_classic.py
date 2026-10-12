@@ -76,6 +76,7 @@ def setup_supertux_classic(hostname, clu_name, mydomain, cfg):
 
     print("SuperTux Classic deployed. Namespace: {}".format(ns))
     print("Available at: http://{}".format(host))
+    return host
 
 
 def main():
@@ -96,7 +97,8 @@ def main():
     clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
     cfg = definition.get("supertux_classic", {}) or {}
 
-    setup_supertux_classic(vm_name, clu_name, clu_cfg.get("mydomain"), cfg)
+    host = setup_supertux_classic(vm_name, clu_name, clu_cfg.get("mydomain"), cfg)
+    ac.register_service_dns(definition, clu_name, host)
 
 
 if __name__ == "__main__":

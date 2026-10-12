@@ -25,7 +25,12 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
         "aux_services": [],                     # names from the services registry
         "versions": {...},                      # optional version matrix per version field (libs/versions.py)
+        "status": "under-construction",         # optional; STATUSES; absent means "stable"
+        "status_note": "...",                   # required with "under-construction": what does not work yet
     }
+
+An add-on under construction is listed and runs like any other, but announces itself: a warning when it runs, at the lab
+preflight and in --help, and a badge with the note in the web UI.
 
 describe() runs `--schema json` and caches the output per file signature; load_plugin() returns the capabilities from it.
 An add-on whose output is missing or invalid falls back to a conservative default, which still validates it as before the
@@ -49,6 +54,10 @@ DEFAULT_PLUGIN = {
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }
+
+STATUS_STABLE = "stable"
+STATUS_UNDER_CONSTRUCTION = "under-construction"
+STATUSES = (STATUS_STABLE, STATUS_UNDER_CONSTRUCTION)
 
 _cache = {}
 
@@ -255,8 +264,18 @@ def attach_capabilities(schema_dict, plugin_dict):
         "requires_kubernetes": plugin_dict.get("requires_kubernetes"),
         "aux_services": plugin_dict.get("aux_services") or [],
         "versions": plugin_dict.get("versions") or {},
+        "status": plugin_dict.get("status") or STATUS_STABLE,
+        "status_note": plugin_dict.get("status_note") or "",
     }
     return schema_dict
+
+
+def status_warning(plugin_dict: dict) -> str:
+    """The warning an add-on under construction shows ("" for a stable one)."""
+    if (plugin_dict.get("status") or STATUS_STABLE) != STATUS_UNDER_CONSTRUCTION:
+        return ""
+    return "addon '{}' is UNDER CONSTRUCTION and may not work: {}".format(
+        plugin_dict.get("name") or "?", plugin_dict.get("status_note") or "no details given")
 
 
 def supports(plugin, target_kind):

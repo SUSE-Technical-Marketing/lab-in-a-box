@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes-Einrichtung</h3>
-<p>Sobald die VMs laufen, installiert <code>setup_lab.py</code> Kubernetes auf jedem Knoten gemäß dem Abschnitt <code>kclusters</code> der JSON. RKE2 und K3s werden beide unterstützt. Sobald ein Cluster bereit ist, laufen seine Add-ons nacheinander. VM-Add-ons (einem einzelnen Knoten statt einem Cluster zugeordnet) laufen danach, sobald dieser Knoten bereitgestellt ist.</p>
+<p>Sobald die VMs laufen, installiert <code>setup_lab.py</code> Kubernetes auf jedem Knoten gemäß dem Abschnitt <code>kclusters</code> der JSON. RKE2 und K3s werden beide unterstützt. Sobald ein Cluster bereit ist, laufen seine Add-ons nacheinander. VM-Add-ons (einem einzelnen Knoten statt einem Cluster zugeordnet) laufen danach, sobald dieser Knoten bereitgestellt ist. Jeder RKE2-Knoten und jeder K3s-Server-Knoten erhält <code>/etc/profile.d/rke2.sh</code> bzw. <code>/etc/profile.d/k3s.sh</code>, das <code>KUBECONFIG</code> setzt, sodass <code>kubectl</code> und <code>helm</code> in jeder Root-Shell auf dem Knoten funktionieren, auch in SSH-Befehlen. Add-ons, die einen Web-Hostnamen bereitstellen (zum Beispiel <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>), tragen ihn im Lab-DNS ein, mit Verweis auf die Knoten des kclusters; beim Zerstören eines Knotens werden die auf ihn zeigenden Einträge entfernt.</p>
 <h3 id="multi-host-labs">Multi-Host-Labs</h3>
 <p>Ein Lab ist nicht auf einen Hypervisor beschränkt. Setzen Sie <code>KVM_HOSTS</code> (durch Leerzeichen getrennt) in <code>/etc/lab_creation.cfg</code> auf der Automatisierungs-VM, um mehr als einen Hypervisor verfügbar zu machen:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -514,7 +514,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web-UI (lab-builder)</h2>
-<p>Ein browserbasierter Designer für <code>lab.json</code>-Dateien, der <strong>die eigenen Python-Bibliotheken des Projekts zur Laufzeit auswertet</strong>. Er hat kein fest eingebautes Wissen über ein Add-on. Wählen Sie eine Komponente, und es wird ein Formular direkt aus deren Schema gerendert. Fügen Sie ein Feld zu einem Skript hinzu, und die UI zeigt es ohne jede Frontend-Änderung an.</p>
+<p>Ein browserbasierter Designer für <code>lab.json</code>-Dateien, der <strong>die eigenen Python-Bibliotheken des Projekts zur Laufzeit auswertet</strong>. Er hat kein fest eingebautes Wissen über ein Add-on. Wählen Sie eine Komponente, und es wird ein Formular direkt aus deren Schema gerendert. Fügen Sie ein Feld zu einem Skript hinzu, und die UI zeigt es ohne jede Frontend-Änderung an. Ein als in Arbeit markiertes Add-on (<code>status</code> in seinem <code>PLUGIN</code>, siehe <a href="addons.html">Add-on-Leitfaden</a>) trägt ein Badge „under construction“. Fahren Sie mit der Maus darüber, um zu sehen, was noch nicht funktioniert. Es lässt sich trotzdem hinzufügen und ausführen, mit einer Warnung.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -1032,10 +1032,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>DNS im Cluster</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Rotation der Zertifikate eines Kubernetes-Clusters</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>Datenorchestrierung und Caching für Cloud-native-Workloads</td>
 </tr>
@@ -1076,8 +1072,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>NeuVector-Demo-Workloads auf Helm-Basis</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>OpenSCAP/ComplianceAsCode-Operator</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Compliance-Operator von Rancher: CIS-Benchmark-Scans des RKE2/K3s-Clusters</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1085,7 +1081,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>Assistent für Kubernetes-Sicherheit auf Basis agentischer KI</td>
+<td>Framework für KI-Agenten auf Kubernetes mit Web-UI; Modell von OpenAI, Anthropic, Gemini, Azure OpenAI oder Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1319,10 +1315,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>StarCoder2-Modell, bereitgestellt über Ollama</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>(siehe <code>install_phoebe --schema</code>)</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1342,10 +1334,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>Bereitstellung von Knoten für SUSE Virtualization (Harvester/KubeVirt)</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>KIWI-Appliance-Builder</td>
 </tr>
 </tbody>
 </table>

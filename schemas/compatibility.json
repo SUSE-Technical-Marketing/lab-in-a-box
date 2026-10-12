@@ -8,7 +8,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:anthropic": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart anthropic_chart (default oci://ghcr.io/berriai/litellm-helm); anthropic_rel and anthropic_repo_url removed. No database; clients use the master key in the anthropic-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "anthropic_2_0"}
   ],
   "addon:apertus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -16,7 +17,8 @@
   ],
   "addon:appcollection": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."},
+   {"version": "2.0", "breaking": true, "changes": "Logs helm in to the OCI registry appcollection_registry (default dp.apps.rancher.io) with the new mandatory appcollection_user and appcollection_password, or the credential file appcollection_account; installs appcollection_chart from oci://<registry>/charts with the pull secret application-collection. appcollection_rel and appcollection_repo_url removed.", "migration": "appcollection_2_0"}
   ],
   "addon:argocd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -33,7 +35,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:complianceascode": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "Installs Rancher's compliance operator (rancher-compliance, or rancher-cis-benchmark for older Kubernetes) from https://charts.rancher.io, picking the chart version for the cluster's Kubernetes version, and runs a CIS scan (new complianceascode_scan). complianceascode_profile is a ClusterScanProfile name; complianceascode_ns removed.", "migration": "complianceascode_2_0"}
   ],
   "addon:coredns": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -52,7 +55,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:gemini": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart gemini_chart (default oci://ghcr.io/berriai/litellm-helm); gemini_rel and gemini_repo_url removed. No database; clients use the master key in the gemini-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts. The default model is gemini/gemini-2.5-flash (gemini-1.5-flash is retired).", "migration": "gemini_2_0"}
   ],
   "addon:gitlab": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -86,29 +90,28 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:jenkins": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "New jenkins_ns and jenkins_shorthn. Installs from <jenkins_rel>/jenkins with jenkins_version, through the chart's own ingress (service jenkins:8080) instead of an ingress to jenkins-server:443, and registers the hostname in DNS."}
   ],
   "addon:kagent": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "Charts install from the OCI registry kagent_registry (kagent-crds, then kagent); kagent_rel and kagent_repo_url removed. New kagent_provider, kagent_model, kagent_api_key and kagent_ollama_host select the default model provider. The web UI gets an ingress and a DNS record.", "migration": "kagent_2_0"}
   ],
   "addon:keycloak": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "Installs codecentric/keycloakx (official Keycloak image, development mode) instead of bitnami/keycloak, whose images are no longer published; defaults keycloak_rel codecentric and keycloak_repo_url https://codecentric.github.io/helm-charts. The bootstrap admin comes from the keycloak-admin secret; an unset keycloak_password is generated once and kept instead of keycloak123.", "migration": "keycloak_2_0"}
   ],
   "addon:kimi": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: kimi_api_base."}
-  ],
-  "addon:kiwi": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: kimi_api_base."},
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart kimi_chart (default oci://ghcr.io/berriai/litellm-helm); kimi_rel and kimi_repo_url removed. No database; clients use the master key in the kimi-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "kimi_2_0"}
   ],
   "addon:kubewarden": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
-  "addon:kucero": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
-  ],
   "addon:linkerd": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "Installs from the edge channel (linkerd_rel linkerd-edge, linkerd_repo_url https://helm.linkerd.io/edge; the stable channel ended at 2.14). The mesh identity is generated once and kept in the linkerd-lab-identity secret; the Gateway API CRDs are installed only when the cluster has none.", "migration": "linkerd_2_0"}
   ],
   "addon:longhorn": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -157,16 +160,15 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:openai": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart openai_chart (default oci://ghcr.io/berriai/litellm-helm); openai_rel and openai_repo_url removed. No database; clients use the master key in the openai-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "openai_2_0"}
   ],
   "addon:openldap": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
-  "addon:phoebe": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
-  ],
   "addon:postgresql": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "2.0", "breaking": true, "changes": "Kubernetes mode runs a StatefulSet of registry.suse.com/suse/postgres:<postgresql_pg_version> (new postgresql_image, postgresql_storage) instead of the Bitnami chart, whose images are no longer published; postgresql_rel, postgresql_repo_url and postgresql_version removed. postgresql_pg_version applies to both modes.", "migration": "postgresql_2_0"}
   ],
   "addon:prometheus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -214,17 +216,20 @@
   ],
   "addon:suse_ai": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: suse_ai_components, suse_ai_ns, suse_ai_registry, suse_ai_shorthn."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: suse_ai_components, suse_ai_ns, suse_ai_registry, suse_ai_shorthn."},
+   {"version": "1.2", "breaking": false, "changes": "Added suse_ai_regcode and suse_ai_scc_account (registry.suse.com pull secret), suse_ai_ollama_models and suse_ai_gpu."}
   ],
   "addon:suse_observability": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:traefik": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "New traefik_ingress_class (default traefik-standalone, not the cluster default; the release serves only that class) and traefik_service_type (default NodePort), so the release runs next to the cluster's own ingress controller."}
   ],
   "addon:trento": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: trento_secret_key."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: trento_secret_key."},
+   {"version": "2.0", "breaking": true, "changes": "Installs Trento Server from the OCI chart trento_chart (default oci://registry.suse.com/trento/trento-server); trento_rel and trento_repo_url removed. trento_admin is the admin user name (default admin); trento_password and trento_secret_key default to values the chart generates and keeps. New trento_ingress_class (default traefik).", "migration": "trento_2_0"}
   ],
   "addon:uyuni": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

@@ -75,6 +75,7 @@ def setup_nv(hostname, clu_name, mydomain, rancher_shorthn, nv_shorthn=None):
             "--set controller.ranchersso.enabled=true "
             "--set rbac=true".format(fqdn, rancher_url))
     print("NeuVector should be available in a few minutes in: {}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -106,8 +107,9 @@ def main():
 
         setup_helm(vm_name, clu_name, online=online)
         setup_nv_repo(vm_name, nv_rel=nv_cfg.get("nv_rel"), nv_repo_url=nv_cfg.get("nv_repo_url"))
-        setup_nv(vm_name, clu_name, clu_cfg.get("mydomain", ""), rancher_shorthn,
-                 nv_shorthn=nv_cfg.get("nv_shorthn"))
+        fqdn = setup_nv(vm_name, clu_name, clu_cfg.get("mydomain", ""), rancher_shorthn,
+                        nv_shorthn=nv_cfg.get("nv_shorthn"))
+        ac.register_service_dns(definition, clu_name, fqdn)
         time.sleep(60)
 
 

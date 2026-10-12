@@ -68,6 +68,7 @@ def setup_ollama(hostname, clu_name, mydomain, ollama_rel=None, ollama_ns=None,
     print("Ollama installed. Namespace: {}".format(ns))
     print("API available at: http://{}".format(fqdn))
     print("Model pre-pulled: {}".format(model))
+    return fqdn
 
 
 def main():
@@ -91,12 +92,13 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_ollama_repo(vm_name, ollama_rel=cfg.get("ollama_rel"), ollama_repo_url=cfg.get("ollama_repo_url"))
-    setup_ollama(
+    fqdn = setup_ollama(
         vm_name, clu_name, clu_cfg.get("mydomain", ""),
         ollama_rel=cfg.get("ollama_rel"), ollama_ns=cfg.get("ollama_ns"),
         ollama_version=cfg.get("ollama_version"), ollama_shorthn=cfg.get("ollama_shorthn"),
         ollama_model=cfg.get("ollama_model"),
     )
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

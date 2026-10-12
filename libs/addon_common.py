@@ -268,7 +268,12 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
             sys.exit(0)
         sys.exit(run_validate(argv[1], validate_fn, plugin=plugin))
 
+    import apps  # deferred, as in print_schema()
+    status = apps.status_warning(dict(plugin or {}, name=(plugin or {}).get("name") or Path(script_path).stem[8:]))
+
     if argv and argv[0] == "--help":
+        if status:
+            print("STATUS: " + status + "\n")
         print_help(script_path, usage=usage)
         sys.exit(0)
 
@@ -279,6 +284,10 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
     if argv and argv[0] == "--capabilities":
         print(json.dumps(plugin or {}, indent=2))
         sys.exit(0)
+
+    if status:
+        from lab_creation import warn
+        warn(status)
 
 
 # ── External-service credentials ────────────────────────────────────────────
@@ -332,3 +341,25 @@ def resolve_credential(cfg, kind, field_map, account_key=None, config=None):
         return {canon: (data.get(canon) or cfg.get(cfg_key) or "")
                 for canon, cfg_key in field_map.items()}
     return {canon: (cfg.get(cfg_key) or "") for canon, cfg_key in field_map.items()}
+
+
+# ── Service DNS ──────────────────────────────────────────────────────────────
+
+def register_service_dns(definition: dict, clu_name: str, fqdn: str) -> None:
+    """
+    Point `fqdn`, a hostname an add-on exposes under the kcluster's mydomain, at that kcluster's nodes: round-robin A records
+    written by add_service_dns() to the local BIND zone and to every REMOTE_DNS_SERVERS server of lab_creation.cfg. A name
+    outside mydomain is not registered; a warning names it.
+    """
+    import k8s
+    from lab_creation import add_service_dns, warn
+
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name)
+    mydomain = clu_cfg.get("mydomain", "")
+    suffix = ".{}".format(mydomain)
+    if not mydomain or not fqdn.endswith(suffix) or fqdn == suffix:
+        warn("'{}' is not under the lab domain '{}': add its DNS record yourself".format(fqdn, mydomain))
+        return
+    remote = (primary.load_config().get("REMOTE_DNS_SERVERS") or "").split() or None
+    add_service_dns(definition, clu_name, clu_cfg.get("clu_type", ""), fqdn[:-len(suffix)], mydomain,
+                    remote_dns_servers=remote)

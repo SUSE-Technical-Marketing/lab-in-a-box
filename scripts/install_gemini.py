@@ -3,17 +3,16 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 2.0
 #
 # JSON section: "gemini" — configurable keys:
 #   gemini_api_key      : [MANDATORY] Google Gemini API key (from https://aistudio.google.com)
-#   gemini_model        : [OPTIONAL] default Gemini model (default: gemini/gemini-1.5-flash)
-#                         Examples: gemini/gemini-1.5-pro, gemini/gemini-2.0-flash
-#   gemini_version      : [OPTIONAL] LiteLLM Helm chart version (empty = latest)
+#   gemini_model        : [OPTIONAL] default Gemini model (default: gemini/gemini-2.5-flash)
+#                         Examples: gemini/gemini-2.5-pro, gemini/gemini-2.5-flash-lite
+#   gemini_version      : [OPTIONAL] litellm-helm chart version (empty = latest)
+#   gemini_chart        : [OPTIONAL] litellm-helm chart (default: oci://ghcr.io/berriai/litellm-helm)
 #   gemini_ns           : [OPTIONAL] namespace (default: gemini)
 #   gemini_shorthn      : [OPTIONAL] hostname prefix (default: gemini)
-#   gemini_rel          : [OPTIONAL] Helm repo alias (default: litellm)
-#   gemini_repo_url     : [OPTIONAL] Helm repo URL (default: https://berriai.github.io/litellm)
 #
 # This script deploys LiteLLM as an OpenAI-compatible proxy for Google Gemini.
 # The proxy exposes the same API as OpenAI so any OpenAI SDK can reach Gemini models.
@@ -38,7 +37,8 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+import litellm_common  # noqa: E402
+from lab_creation import setup_helm  # noqa: E402
 
 
 def _validate(v):
@@ -47,37 +47,14 @@ def _validate(v):
     v.vver("gemini")
 
 
-def setup_gemini_repo(hostname, gemini_rel=None, gemini_repo_url=None):
-    """Add the LiteLLM Helm repo (used as the Gemini proxy). Mirrors setup_gemini_repo (bash)."""
-    helm_repo_add(hostname, gemini_rel or "litellm", gemini_repo_url or "https://berriai.github.io/litellm")
-
-
-def setup_gemini(hostname, clu_name, mydomain, gemini_api_key=None, gemini_rel=None, gemini_ns=None,
-                  gemini_version=None, gemini_shorthn=None, gemini_model=None):
-    """Install LiteLLM configured for Google Gemini. Mirrors setup_gemini (bash)."""
-    if not gemini_api_key:
-        print("ERROR: gemini_api_key is mandatory. Get one at https://aistudio.google.com", file=sys.stderr)
-        sys.exit(1)
-
-    rel = gemini_rel or "litellm"
-    ns = gemini_ns or "gemini"
-    ver_arg = "--version {}".format(gemini_version) if gemini_version else ""
-    fqdn = "{}.{}.{}".format(gemini_shorthn or "gemini", clu_name, mydomain)
-    model = gemini_model or "gemini/gemini-1.5-flash"
-
-    ssh_run(hostname,
-            "helm upgrade -i gemini-proxy {}/litellm-helm --namespace {} --create-namespace "
-            "--set proxy_config.model_list[0].model_name=gemini "
-            "--set proxy_config.model_list[0].litellm_params.model={} "
-            "--set proxy_config.model_list[0].litellm_params.api_key={} "
-            "--set ingress.enabled=true "
-            "--set ingress.host={} "
-            "{}".format(rel, ns, model, gemini_api_key, fqdn, ver_arg))
-
-    print("Gemini proxy (LiteLLM) installed. Namespace: {}".format(ns))
-    print("OpenAI-compatible endpoint: http://{}/v1".format(fqdn))
-    print("Default model: {}".format(model))
-    print("Usage: curl http://{}/v1/chat/completions -H 'Authorization: Bearer sk-anything' ...".format(fqdn))
+def setup_gemini(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
+    """Install the LiteLLM proxy in front of the configured model; returns the endpoint hostname."""
+    ns = cfg.get("gemini_ns") or "gemini"
+    fqdn = "{}.{}.{}".format(cfg.get("gemini_shorthn") or "gemini", clu_name, mydomain)
+    litellm_common.setup_litellm_proxy(hostname, "gemini-proxy", ns, fqdn, "gemini", cfg.get("gemini_model") or "gemini/gemini-2.5-flash",
+                                       cfg["gemini_api_key"], chart=cfg.get("gemini_chart") or "",
+                                       version=cfg.get("gemini_version") or "")
+    return fqdn
 
 
 def main():
@@ -97,16 +74,13 @@ def main():
     clu_name = k8s.get_vm_kcluster(definition, vm_name)
     clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
     cfg = definition.get("gemini", {}) or {}
-    online = definition.get("common", {}).get("online") == "1"
+    if not cfg.get("gemini_api_key"):
+        print("ERROR: gemini.gemini_api_key is mandatory.", file=sys.stderr)
+        sys.exit(1)
 
-    setup_helm(vm_name, clu_name, online=online)
-    setup_gemini_repo(vm_name, gemini_rel=cfg.get("gemini_rel"), gemini_repo_url=cfg.get("gemini_repo_url"))
-    setup_gemini(
-        vm_name, clu_name, clu_cfg.get("mydomain", ""),
-        gemini_api_key=cfg.get("gemini_api_key"), gemini_rel=cfg.get("gemini_rel"), gemini_ns=cfg.get("gemini_ns"),
-        gemini_version=cfg.get("gemini_version"), gemini_shorthn=cfg.get("gemini_shorthn"),
-        gemini_model=cfg.get("gemini_model"),
-    )
+    setup_helm(vm_name, clu_name, online=definition.get("common", {}).get("online") == "1")
+    fqdn = setup_gemini(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

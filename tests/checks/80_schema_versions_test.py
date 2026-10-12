@@ -126,6 +126,52 @@ check("needed_changes leaves the definition unchanged",
 migrations.stamp("lab", d, record)
 check("stamp records the current versions of the schemas a lab uses",
       d["schema_versions"] == {"lab": record["lab"][-1]["version"], "addon:rancher": "2.0"})
+
+# ── kagent_2_0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
+d = {"kagent": {"kagent_rel": "kagent", "kagent_repo_url": "https://kagent-ai.github.io/helm-charts", "kagent_ns": "k"},
+     "kclusters": {"c1": {"clu_type": "k3s", "addons": [{"kagent": {"kagent_rel": "mine"}}]}}}
+changes = migrations.migrate("lab", d, record)
+check("kagent_2_0 removes kagent_rel and kagent_repo_url from the section and an addons[] override",
+      d["kagent"] == {"kagent_ns": "k"} and d["kclusters"]["c1"]["addons"][0]["kagent"] == {} and len(changes) == 3)
+check("kagent_2_0 changes nothing on a second run", migrations.migrate("lab", d, record) == [])
+for name in ("anthropic", "gemini", "kimi", "openai"):
+    d = {name: {name + "_rel": "litellm", name + "_repo_url": "https://berriai.github.io/litellm", name + "_api_key": "k"}}
+    migrations.migrate("lab", d, record)
+    check("{}_2_0 removes {}_rel and {}_repo_url".format(name, name, name), d[name] == {name + "_api_key": "k"})
+d = {"trento": {"trento_rel": "trento", "trento_repo_url": "https://trento-project.io/helm", "trento_admin": "admin@lab.local",
+                "trento_ns": "t"}}
+migrations.migrate("lab", d, record)
+check("trento_2_0 removes the repo keys and an e-mail trento_admin", d["trento"] == {"trento_ns": "t"})
+d = {"appcollection": {"appcollection_rel": "x", "appcollection_repo_url": "https://charts.suse.com/application-collection",
+                       "appcollection_chart": "redis"}}
+migrations.migrate("lab", d, record)
+check("appcollection_2_0 removes the repo keys", d["appcollection"] == {"appcollection_chart": "redis"})
+d = {"keycloak": {"keycloak_rel": "bitnami", "keycloak_repo_url": "https://charts.bitnami.com/bitnami", "keycloak_version": "22.1.0",
+                  "keycloak_ns": "k"}}
+migrations.migrate("lab", d, record)
+check("keycloak_2_0 removes the Bitnami repo keys and chart version", d["keycloak"] == {"keycloak_ns": "k"})
+d = {"keycloak": {"keycloak_rel": "mirror", "keycloak_version": "7.3.2"}}
+check("keycloak_2_0 keeps a non-Bitnami repo", migrations.migrate("lab", d, record) == [])
+d = {"postgresql": {"postgresql_rel": "bitnami", "postgresql_repo_url": "https://charts.bitnami.com/bitnami",
+                    "postgresql_version": "15.5.17", "postgresql_pg_version": "16"}}
+migrations.migrate("lab", d, record)
+check("postgresql_2_0 removes the Bitnami chart keys", d["postgresql"] == {"postgresql_pg_version": "16"})
+d = {"linkerd": {"linkerd_rel": "linkerd", "linkerd_repo_url": "https://helm.linkerd.io/stable", "linkerd_version": "1.16.11",
+                 "linkerd_ns": "l"}}
+migrations.migrate("lab", d, record)
+check("linkerd_2_0 removes the stable-channel keys and version", d["linkerd"] == {"linkerd_ns": "l"})
+d = {"linkerd": {"linkerd_version": "2026.10.1"}}
+check("linkerd_2_0 keeps an edge chart version", migrations.migrate("lab", d, record) == [])
+d = {"complianceascode": {"complianceascode_ns": "compliance-operator", "complianceascode_rel": "compliance-operator",
+                          "complianceascode_repo_url": "https://openshift.github.io/compliance-operator",
+                          "complianceascode_version": "0.1.69", "complianceascode_profile": "cis"}}
+migrations.migrate("lab", d, record)
+check("complianceascode_2_0 removes the ComplianceAsCode keys", d["complianceascode"] == {})
+d = {"complianceascode": {"complianceascode_profile": "rke2-cis-2.0-profile", "complianceascode_version": "110.2.0+up1.5.3"}}
+check("complianceascode_2_0 keeps a profile and a Rancher chart version", migrations.migrate("lab", d, record) == [])
+d = {"trento": {"trento_admin": "ops"}}
+check("trento_2_0 keeps a user-name trento_admin", migrations.migrate("lab", d, record) == [] and d["trento"] == {"trento_admin": "ops"})
+
 lines = ["# Schema version: 0.9", "A=1"]
 migrations.stamp("config:lab.cfg", lines, record)
 check("stamp rewrites a shell file's version line", lines[0] == "# Schema version: " + record["config:lab.cfg"][-1]["version"])

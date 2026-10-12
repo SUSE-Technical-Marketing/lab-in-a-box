@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
-<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。</p>
+<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
 <p>实验室并不局限于一台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -582,7 +582,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web 界面（lab-builder）</h2>
-<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。</p>
+<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。 标记为开发中的附加组件（其 <code>PLUGIN</code> 中的 <code>status</code>，参见<a href="addons.html">附加组件指南</a>）带有“under construction”徽章；将鼠标悬停在徽章上可查看尚未正常工作的部分。它仍可被添加和运行，并会显示警告。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -1119,10 +1119,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>集群 DNS</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Kubernetes 集群证书轮换</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>面向云原生工作负载的数据编排与缓存</td>
 </tr>
@@ -1163,8 +1159,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>基于 Helm 的 NeuVector 演示工作负载</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>OpenSCAP/ComplianceAsCode Operator</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Rancher 合规 Operator：对 RKE2/K3s 集群进行 CIS 基准扫描</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1172,7 +1168,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>Kubernetes 智能体 AI 安全助手</td>
+<td>在 Kubernetes 上运行 AI 智能体的框架，带 Web 界面；模型可选 OpenAI、Anthropic、Gemini、Azure OpenAI 或 Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1406,10 +1402,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>StarCoder2 模型，通过 Ollama 提供</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>（请参阅 <code>install_phoebe --schema</code>）</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1429,10 +1421,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>SUSE Virtualization（Harvester/KubeVirt）节点预配</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>KIWI 设备镜像构建器</td>
 </tr>
 </tbody>
 </table>

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install the ComplianceAsCode compliance operator
+# Part of lab-in-a-box, it will install Rancher's compliance operator and run a CIS benchmark scan of the cluster
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 2.0
 #
 # JSON section: "complianceascode" — configurable keys:
-#   complianceascode_version : [OPTIONAL] operator version tag (empty = latest, e.g. "0.1.69")
-#   complianceascode_ns      : [OPTIONAL] namespace (default: compliance-operator)
-#   complianceascode_profile : [OPTIONAL] scan profile to apply (default: cis)
-#                              Examples: cis, stig, pci-dss, moderate
-#   complianceascode_rel     : [OPTIONAL] Helm repo alias (default: compliance-operator)
-#   complianceascode_repo_url: [OPTIONAL] Helm repo URL
-#                              (default: https://openshift.github.io/compliance-operator)
+#   complianceascode_version : [OPTIONAL] chart version; when unset, the newest rancher-compliance version whose supported
+#                              Kubernetes range includes the cluster's version, else the newest such rancher-cis-benchmark
+#   complianceascode_profile : [OPTIONAL] ClusterScanProfile of the scan, e.g. k3s-cis-2.0-profile, rke2-cis-2.0-profile;
+#                              when unset, the operator's default for the cluster's distribution
+#   complianceascode_scan    : [OPTIONAL] "true" runs a scan named lab-cis-scan after the install (default: true)
+#   complianceascode_rel     : [OPTIONAL] Helm repo alias (default: rancher-charts)
+#   complianceascode_repo_url: [OPTIONAL] Helm repo URL (default: https://charts.rancher.io)
+#
+# rancher-compliance (Kubernetes 1.34 and later) and its predecessor rancher-cis-benchmark are Rancher cluster tools; they
+# run with or without Rancher. They install with the release names and namespaces Rancher uses (rancher-compliance in
+# compliance-operator-system, rancher-cis-benchmark in cis-operator-system), so Rancher shows them as installed.
 
 __version__ = "__LABVERSION__"
 
@@ -24,6 +28,9 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import json
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -34,36 +41,85 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import die, setup_helm, helm_repo_add, ssh_run  # noqa: E402
+
+
+# chart, namespace, ClusterScan API version; newest family first.
+_FAMILIES = (
+    ("rancher-compliance", "compliance-operator-system", "compliance.cattle.io/v1"),
+    ("rancher-cis-benchmark", "cis-operator-system", "cis.cattle.io/v1"),
+)
+_SCAN = "lab-cis-scan"
 
 
 def _validate(v):
-    v.vns("complianceascode")
     v.vver("complianceascode")
     v.vurl("complianceascode")
+    v.vbool("complianceascode", "complianceascode_scan")
 
 
-def setup_complianceascode_repo(hostname, complianceascode_rel=None, complianceascode_repo_url=None):
-    """Add the ComplianceAsCode Helm repo. Mirrors setup_complianceascode_repo (bash)."""
-    helm_repo_add(hostname, complianceascode_rel or "compliance-operator",
-                  complianceascode_repo_url or "https://openshift.github.io/compliance-operator")
+def setup_complianceascode_repo(hostname: str, rel: str = None, repo_url: str = None) -> None:
+    """Add Rancher's chart repository."""
+    helm_repo_add(hostname, rel or "rancher-charts", repo_url or "https://charts.rancher.io")
 
 
-def setup_complianceascode(hostname, complianceascode_rel=None, complianceascode_ns=None,
-                            complianceascode_version=None, complianceascode_profile=None):
-    """Install compliance-operator. Mirrors setup_complianceascode (bash)."""
-    rel = complianceascode_rel or "compliance-operator"
-    ns = complianceascode_ns or "compliance-operator"
-    profile = complianceascode_profile or "cis"
-    ver_arg = "--version {}".format(complianceascode_version) if complianceascode_version else ""
+def _version_tuple(version: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", version.split("-")[0].split("+")[0])[:3])
 
-    ssh_run(hostname,
-            "helm upgrade -i compliance-operator {}/compliance-operator "
-            "--namespace {} --create-namespace {}".format(rel, ns, ver_arg))
 
-    print("ComplianceAsCode operator installed. Namespace: {}".format(ns))
-    print("Default scan profile: {}".format(profile))
-    print("Create scans with: kubectl -n {} apply -f your-scan.yaml".format(ns))
+def in_range(version: str, constraint: str) -> bool:
+    """`version` (e.g. v1.36.5+k3s1) satisfies every ">= X" / "< Y" term of `constraint` (e.g. '>= 1.34.0-0 < 1.37.0-0')."""
+    ops = {">=": lambda a, b: a >= b, ">": lambda a, b: a > b, "<=": lambda a, b: a <= b, "<": lambda a, b: a < b}
+    return all(ops[op](_version_tuple(version), _version_tuple(bound))
+               for op, bound in re.findall(r"(>=|<=|>|<)\s*([0-9][^\s,]*)", constraint))
+
+
+def chart_versions(hostname: str, rel: str) -> dict:
+    """{chart: [(version, kube-version constraint), …] newest first} for each chart family, read from the repo index."""
+    out = {}
+    for chart, _ns, _api in _FAMILIES:
+        listing = ssh_run(hostname, "helm search repo {}/{} --versions -o json".format(shlex.quote(rel), chart),
+                          capture=True, check=False).stdout or "[]"
+        versions = [e["version"] for e in json.loads(listing) if e["name"] == "{}/{}".format(rel, chart)][:20]
+        shown = ssh_run(hostname, "for v in {}; do echo \"@@$v\"; helm show chart {}/{} --version \"$v\"; done".format(
+            " ".join(shlex.quote(v) for v in versions), shlex.quote(rel), chart), capture=True, check=False).stdout or ""
+        ranges = {}
+        for block in shown.split("@@")[1:]:
+            version, _, body = block.partition("\n")
+            m = re.search(r"catalog\.cattle\.io/kube-version:\s*['\"]?([^'\"\n]+)", body)
+            ranges[version.strip()] = m.group(1).strip() if m else ""
+        out[chart] = [(v, ranges.get(v, "")) for v in versions]
+    return out
+
+
+def pick_chart(versions: dict, kube_version: str, wanted: str = "") -> tuple:
+    """(chart, namespace, ClusterScan API, chart version): `wanted` when given, else the newest version supporting the cluster."""
+    for chart, ns, api in _FAMILIES:
+        for version, constraint in versions.get(chart, []):
+            if (wanted and version == wanted) or (not wanted and constraint and in_range(kube_version, constraint)):
+                return chart, ns, api, version
+    return None
+
+
+def setup_complianceascode(hostname: str, cfg: dict) -> None:
+    """Install the compliance operator matching the cluster's Kubernetes version and, unless disabled, start a scan."""
+    rel = cfg.get("complianceascode_rel") or "rancher-charts"
+    kube = json.loads(ssh_run(hostname, "kubectl version -o json", capture=True).stdout)["serverVersion"]["gitVersion"]
+    picked = pick_chart(chart_versions(hostname, rel), kube, cfg.get("complianceascode_version") or "")
+    if not picked:
+        die("no rancher-compliance or rancher-cis-benchmark chart {} supports Kubernetes {}".format(
+            cfg.get("complianceascode_version") or "version", kube))
+    chart, ns, api, version = picked
+    for release in ("{}-crd".format(chart), chart):
+        ssh_run(hostname, "helm upgrade --install {0} {1}/{0} --namespace {2} --create-namespace --version {3} --wait "
+                          "--timeout 10m".format(release, shlex.quote(rel), ns, shlex.quote(version)))
+    print("{} {} installed for Kubernetes {}. Namespace: {}".format(chart, version, kube, ns))
+    if str(cfg.get("complianceascode_scan") or "true") == "false":
+        return
+    spec = {"scanProfileName": cfg["complianceascode_profile"]} if cfg.get("complianceascode_profile") else {}
+    ssh_run(hostname, "kubectl apply -f -", input_text=json.dumps(
+        {"apiVersion": api, "kind": "ClusterScan", "metadata": {"name": _SCAN}, "spec": spec}))
+    print("Scan '{}' started. Progress: kubectl get clusterscans; results: kubectl get clusterscanreports".format(_SCAN))
 
 
 def main():
@@ -85,15 +141,8 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_complianceascode_repo(vm_name, complianceascode_rel=cfg.get("complianceascode_rel"),
-                                 complianceascode_repo_url=cfg.get("complianceascode_repo_url"))
-    setup_complianceascode(
-        vm_name, complianceascode_rel=cfg.get("complianceascode_rel"),
-        complianceascode_ns=cfg.get("complianceascode_ns"),
-        complianceascode_version=cfg.get("complianceascode_version"),
-        complianceascode_profile=cfg.get("complianceascode_profile"),
-    )
-
+    setup_complianceascode_repo(vm_name, cfg.get("complianceascode_rel"), cfg.get("complianceascode_repo_url"))
+    setup_complianceascode(vm_name, cfg)
 
 if __name__ == "__main__":
     main()

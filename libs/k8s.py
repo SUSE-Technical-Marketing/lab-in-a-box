@@ -176,6 +176,8 @@ class K3sDistro(K8sDistro):
             # flag. The service starts without a reboot. The distribution therefore runs an explicit systemctl enable --now afterwards,
             # as RKE2Distro does, and does not rely on the vendor script to start it.
             ssh_run(hostname, "systemctl enable --now k3s")
+            ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/k3s.sh; chmod 0644 /etc/profile.d/k3s.sh".format(
+                self.kubeconfig_path()))
             token = ssh_output(hostname, "cat /var/lib/rancher/k3s/server/node-token")
             return token, hostname
         else:

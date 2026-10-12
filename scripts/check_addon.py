@@ -11,7 +11,8 @@ section) and checks:
   * --schema json exits 0 and prints a JSON object with schema_version (MAJOR.MINOR), section, description and fields;
     every field has a name, a known type and a boolean "required", and its default (if any) is valid for its type;
   * capabilities: targets and layers are known values, requires_kubernetes is null or known clu_types, aux_services
-    is a list, versions is a well-formed version matrix (libs/versions.py);
+    is a list, versions is a well-formed version matrix (libs/versions.py), status is one of apps.STATUSES and an add-on
+    under construction has a status_note;
   * --capabilities prints the same targets, layers, requires_kubernetes and aux_services as the schema;
   * --version and --help exit 0;
   * --validate prints only [ERROR] and [WARNING] lines, and exits non-zero only with an [ERROR] line.
@@ -36,6 +37,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(_HERE.parent / "libs")):
     if Path(_candidate).is_dir() and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 
+from apps import STATUS_STABLE, STATUS_UNDER_CONSTRUCTION, STATUSES  # noqa: E402
 from layers import ALL_LAYERS  # noqa: E402
 from targets import TARGET_BAREMETAL, TARGET_CONTAINER, TARGET_VM  # noqa: E402
 
@@ -123,6 +125,11 @@ def capability_problems(caps: dict, field_names: List[str], kinds: List[str]) ->
         out.append("requires_kubernetes {!r} must be null or a list of {}".format(req, ", ".join(kinds)))
     if not isinstance(caps.get("aux_services", []), list):
         out.append("aux_services must be a list")
+    status = caps.get("status", STATUS_STABLE)
+    if status not in STATUSES:
+        out.append("status {!r} must be one of {}".format(status, ", ".join(STATUSES)))
+    elif status == STATUS_UNDER_CONSTRUCTION and not caps.get("status_note"):
+        out.append("status_note must say what does not work yet")
     versions = caps.get("versions") or {}
     if not isinstance(versions, dict):
         return out + ["versions must be a mapping of version field to entries"]

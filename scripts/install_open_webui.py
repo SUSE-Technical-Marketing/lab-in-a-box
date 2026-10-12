@@ -110,6 +110,7 @@ def setup_open_webui(hostname, clu_name, mydomain, definition, open_webui_rel=No
         print("Attached OpenAI-compatible endpoint(s): {}".format(", ".join(base_urls)))
     if not ollama_url and not base_urls:
         print("No ollama/OpenAI-compatible endpoint configured — using the chart's own bundled Ollama subchart default.")
+    return fqdn
 
 
 def main():
@@ -134,14 +135,15 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_open_webui_repo(vm_name, open_webui_rel=cfg.get("open_webui_rel"),
                            open_webui_repo_url=cfg.get("open_webui_repo_url"))
-    setup_open_webui(vm_name, clu_name, clu_cfg.get("mydomain"), definition,
-                      open_webui_rel=cfg.get("open_webui_rel"),
-                      open_webui_ns=cfg.get("open_webui_ns"),
-                      open_webui_version=cfg.get("open_webui_version"),
-                      open_webui_shorthn=cfg.get("open_webui_shorthn"),
-                      open_webui_ollama_url=cfg.get("open_webui_ollama_url"),
-                      open_webui_openai_base_urls=cfg.get("open_webui_openai_base_urls"),
-                      open_webui_openai_api_keys=cfg.get("open_webui_openai_api_keys"))
+    fqdn = setup_open_webui(vm_name, clu_name, clu_cfg.get("mydomain"), definition,
+                             open_webui_rel=cfg.get("open_webui_rel"),
+                             open_webui_ns=cfg.get("open_webui_ns"),
+                             open_webui_version=cfg.get("open_webui_version"),
+                             open_webui_shorthn=cfg.get("open_webui_shorthn"),
+                             open_webui_ollama_url=cfg.get("open_webui_ollama_url"),
+                             open_webui_openai_base_urls=cfg.get("open_webui_openai_base_urls"),
+                             open_webui_openai_api_keys=cfg.get("open_webui_openai_api_keys"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

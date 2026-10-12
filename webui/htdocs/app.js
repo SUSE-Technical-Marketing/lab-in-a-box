@@ -123,14 +123,21 @@ function paletteCube(spec, label, letter, tip) {
   return d;
 }
 
-function paletteRow(spec, title, desc, meta, layers, tip) {
+function paletteRow(spec, title, desc, meta, layers, tip, note) {
   const li = el("li", "pal-row");
   li.tabIndex = 0; li.draggable = true; li.title = tip + ", or click to add";
   const flat = el("span", "flat");
   for (let j = 0; j < 9; j++) { const t = el("span"); t.style.background = CUBE_PAL.addon[CUBE_PAT[j]]; flat.appendChild(t); }
   li.appendChild(flat);
   const txt = el("div", "pal-txt");
-  txt.appendChild(el("div", "ci-title", title));
+  const head = el("div", "ci-title", title);
+  if (note) {
+    const b = el("span", "status-badge", "under construction");
+    b.title = note; b.tabIndex = 0; b.setAttribute("aria-label", "Under construction: " + note);
+    b.addEventListener("click", (e) => e.stopPropagation());
+    head.appendChild(b);
+  }
+  txt.appendChild(head);
   if (desc) txt.appendChild(el("div", "ci-desc", desc));
   if (meta) txt.appendChild(el("div", "ci-meta", meta));
   if (layers && layers.length) {
@@ -198,7 +205,8 @@ function renderPalette(filter) {
     const rows = matches
       .filter((c) => addonSection(c.layers || []) === s.key)
       .map((c) => paletteRow({ type: "addon", comp: c.name, title: c.title }, c.title,
-        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, shownLayers(c.layers, s.key), s.hint));
+        c.description, `${c.field_count} option${c.field_count === 1 ? "" : "s"}`, shownLayers(c.layers, s.key), s.hint,
+        c.status === "under-construction" ? (c.status_note || "Under construction: may not work") : ""));
     if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
   });
   const pxe = !f || "pxe tftp dhcp boot service".includes(f);

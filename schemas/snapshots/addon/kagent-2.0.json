@@ -1,0 +1,53 @@
+{
+ "fields": {
+  "kagent_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_model": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_ns": {
+   "default": "kagent-system",
+   "required": false,
+   "type": "namespace"
+  },
+  "kagent_ollama_host": {
+   "default": "ollama.ollama.svc.cluster.local:11434, where the ollama addon installs it",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_provider": {
+   "default": "openAI",
+   "enum": [
+    "openAI",
+    "anthropic",
+    "gemini",
+    "azureOpenAI",
+    "ollama"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "kagent_registry": {
+   "default": "oci://ghcr.io/kagent-dev/kagent/helm",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_shorthn": {
+   "default": "kagent",
+   "required": false,
+   "type": "string"
+  },
+  "kagent_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:kagent",
+ "version": "2.0"
+}

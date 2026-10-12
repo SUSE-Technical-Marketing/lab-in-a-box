@@ -45,6 +45,7 @@ def setup_nv_demo_helm(hostname, clu_name, mydomain, cfg):
     name = cfg.get("nv_demo_helm_name") or "nvdemohelm"
     tag = cfg.get("nv_demo_helm_tag") or "0.4"
     repo_dir = "/var/tmp/nv-demo-helm"
+    fqdn = "struts-{}.{}.{}".format(name, clu_name, mydomain)
 
     ssh_run(hostname,
             "if [ -d {0}/.git ]; then git -C {0} pull --ff-only; "
@@ -54,10 +55,10 @@ def setup_nv_demo_helm(hostname, clu_name, mydomain, cfg):
             "--set exploit.image_tag={} "
             "--set struts.ingress.enabled=true "
             "--set struts.ingress.host={}".format(
-                repo_dir, shlex.quote(ns), shlex.quote(tag),
-                shlex.quote("struts-{}.{}.{}".format(name, clu_name, mydomain))))
+                repo_dir, shlex.quote(ns), shlex.quote(tag), shlex.quote(fqdn)))
     print("NV demo helm should be available in a few minutes, for instructions please visit: "
           "https://github.com/horantj/nv-demo-helm/tree/main")
+    return fqdn
 
 
 def main():
@@ -80,7 +81,8 @@ def main():
         clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
 
         print("# Using node: {}".format(vm_name))
-        setup_nv_demo_helm(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+        fqdn = setup_nv_demo_helm(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+        ac.register_service_dns(definition, clu_name, fqdn)
         time.sleep(60)
         break
 

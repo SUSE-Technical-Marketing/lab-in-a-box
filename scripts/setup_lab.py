@@ -270,6 +270,9 @@ def validate_addon_configs(definition, json_file, issues_out=None):
             issues.append("  {}[ERROR]{} addon '{}': install_{} not found on PATH".format(
                 lc._RED, lc._RESET, addon, addon))
             continue
+        status = apps.status_warning(apps.load_plugin(addon))
+        if status:
+            lc.warn(status)
         r = subprocess.run([installer, "--validate", json_file],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         if r.returncode != 0:

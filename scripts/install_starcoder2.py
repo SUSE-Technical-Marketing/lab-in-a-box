@@ -74,6 +74,7 @@ def setup_starcoder2(hostname, clu_name, mydomain, starcoder2_rel=None, starcode
     print("StarCoder2 deployed via Ollama. Namespace: {}".format(ns))
     print("API available at: http://{}".format(fqdn))
     print("Model pre-pulled: {}".format(model))
+    return fqdn
 
 
 def main():
@@ -98,11 +99,12 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_starcoder2_repo(vm_name, starcoder2_rel=cfg.get("starcoder2_rel"),
                            starcoder2_repo_url=cfg.get("starcoder2_repo_url"))
-    setup_starcoder2(vm_name, clu_name, clu_cfg.get("mydomain"),
-                      starcoder2_rel=cfg.get("starcoder2_rel"), starcoder2_ns=cfg.get("starcoder2_ns"),
-                      starcoder2_version=cfg.get("starcoder2_version"),
-                      starcoder2_shorthn=cfg.get("starcoder2_shorthn"),
-                      starcoder2_model=cfg.get("starcoder2_model"))
+    fqdn = setup_starcoder2(vm_name, clu_name, clu_cfg.get("mydomain"),
+                             starcoder2_rel=cfg.get("starcoder2_rel"), starcoder2_ns=cfg.get("starcoder2_ns"),
+                             starcoder2_version=cfg.get("starcoder2_version"),
+                             starcoder2_shorthn=cfg.get("starcoder2_shorthn"),
+                             starcoder2_model=cfg.get("starcoder2_model"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

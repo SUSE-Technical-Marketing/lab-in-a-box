@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>
-<p>Une fois les VM démarrées, <code>setup_lab.py</code> installe Kubernetes sur chaque nœud selon la section <code>kclusters</code> du JSON. RKE2 et K3s sont tous deux pris en charge. Quand un cluster est prêt, ses modules s'exécutent les uns après les autres ; les modules de VM (rattachés à un nœud plutôt qu'à un cluster) s'exécutent une fois ce nœud provisionné.</p>
+<p>Une fois les VM démarrées, <code>setup_lab.py</code> installe Kubernetes sur chaque nœud selon la section <code>kclusters</code> du JSON. RKE2 et K3s sont tous deux pris en charge. Quand un cluster est prêt, ses modules s'exécutent les uns après les autres ; les modules de VM (rattachés à un nœud plutôt qu'à un cluster) s'exécutent une fois ce nœud provisionné. Chaque nœud RKE2 et chaque nœud serveur K3s reçoit <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, qui définit <code>KUBECONFIG</code> : <code>kubectl</code> et <code>helm</code> fonctionnent ainsi dans tout shell root du nœud, y compris les commandes SSH. Les modules qui exposent un nom d'hôte web (par exemple <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) l'enregistrent dans le DNS du lab, pointant vers les nœuds du kcluster ; la destruction d'un nœud supprime les enregistrements qui pointent vers lui.</p>
 <h3 id="multi-host-labs">Laboratoires multi-hôtes</h3>
 <p>Un laboratoire n'est pas limité à un seul hyperviseur. Définissez <code>KVM_HOSTS</code> (séparés par des espaces) dans <code>/etc/lab_creation.cfg</code> sur la VM d'automatisation pour rendre plusieurs hyperviseurs disponibles :</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -395,7 +395,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Interface web (lab-builder)</h2>
-<p>Un éditeur de fichiers <code>lab.json</code> dans le navigateur qui <strong>examine à l'exécution les bibliothèques Python du projet lui-même</strong> : il ne contient aucune connaissance figée d'un module. Choisissez un composant et il affiche un formulaire construit directement à partir de son schéma ; ajoutez un champ à un script et l'interface l'affiche sans aucune modification du frontend.</p>
+<p>Un éditeur de fichiers <code>lab.json</code> dans le navigateur qui <strong>examine à l'exécution les bibliothèques Python du projet lui-même</strong> : il ne contient aucune connaissance figée d'un module. Choisissez un composant et il affiche un formulaire construit directement à partir de son schéma ; ajoutez un champ à un script et l'interface l'affiche sans aucune modification du frontend. Un module marqué en construction (<code>status</code> dans son <code>PLUGIN</code>, voir le <a href="addons.html">Guide des modules</a>) porte un badge « under construction » ; survolez-le pour savoir ce qui ne fonctionne pas encore. Il peut quand même être ajouté et exécuté, avec un avertissement.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -945,10 +945,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>DNS du cluster</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Rotation des certificats du cluster Kubernetes</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>Orchestration et mise en cache des données pour les charges cloud-native</td>
 </tr>
@@ -989,8 +985,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>Charges de démonstration NeuVector basées sur Helm</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>Opérateur OpenSCAP/ComplianceAsCode</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Opérateur de conformité de Rancher : analyses CIS Benchmark du cluster RKE2/K3s</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -998,7 +994,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>Assistant de sécurité Kubernetes à IA agentique</td>
+<td>Framework d'agents IA sur Kubernetes, avec interface web ; modèle d'OpenAI, Anthropic, Gemini, Azure OpenAI ou Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1232,10 +1228,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>Modèle StarCoder2, servi via Ollama</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>(voir <code>install_phoebe --schema</code>)</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1255,10 +1247,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>Provisionnement de nœuds SUSE Virtualization (Harvester/KubeVirt)</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>Générateur d'appliances KIWI</td>
 </tr>
 </tbody>
 </table>

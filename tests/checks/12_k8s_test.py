@@ -81,6 +81,8 @@ token_call_idx = next(i for i, (h, c, kw) in enumerate(fake.calls) if "node-toke
 check("K3sDistro first node: starts the service BEFORE reading the node-token "
       "(the actual bug — reading it first raced against a service that was never started)",
       enable_call_idx < token_call_idx)
+check("K3sDistro first node: /etc/profile.d/k3s.sh exports KUBECONFIG for helm",
+      any("export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" in c and "/etc/profile.d/k3s.sh" in c for h, c, kw in fake.calls))
 
 fake = FakeSSH()
 k8s.ssh_run = fake
@@ -93,6 +95,8 @@ check("K3sDistro join: K3S_URL points at the first server", "K3S_URL=https://vm1
 check("K3sDistro join: K3S_TOKEN carries the join token", "K3S_TOKEN=TOKEN123" in join_cmd)
 check("K3sDistro join: explicitly starts k3s-agent itself, same reasoning as the server case",
       any(c == "systemctl enable --now k3s-agent" for h, c, kw in fake.calls))
+check("K3sDistro join: no profile.d KUBECONFIG on an agent (it has no kubeconfig)",
+      not any("profile.d/k3s.sh" in c for h, c, kw in fake.calls))
 
 # ── K3sDistro: clu_rel, clu_name and mydomain are shell-quoted ───────────────
 # These values are free text from the lab JSON. They are quoted, so no value can break or inject into the remote command.
