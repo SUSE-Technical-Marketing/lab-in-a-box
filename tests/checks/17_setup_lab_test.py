@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Mocked unit tests for scripts/setup_lab.py. Covers:
 # _merged_env's defaults/config/JSON precedence, the addon-dispatch block
-# (shutil.which + subprocess.run, duplicate-addon skip, missing-installer
+# (apps.addon_installer + subprocess.run, duplicate-addon skip, missing-installer
 # die()) for both cluster- and VM-level addons, phase_create_vms's
 # --keep reusability logic, phase_services, phase_dns,
 # phase_reboot_and_wait_kept_nodes, phase_install_k8s_and_addons and the
@@ -59,13 +59,13 @@ check("_merged_env: common section values are present", env["shared_only"] == "c
 # apps.check_requirements is stubbed out here: it's exercised by its own
 # concerns (plugin target/distro compatibility), not by what this test is
 # actually after (setup_lab.py's own installer lookup + dispatch + dedup
-# logic) — and shutil.which is one shared, mutable module object, so
-# pointing it at a fake path for setup_lab.py's own lookup below would also
+# logic) — and apps.addon_installer is one shared, mutable module attribute,
+# so pointing it at a fake path for setup_lab.py's own lookup below would also
 # feed apps.load_plugin() a "found" installer it can't really import,
 # falling back to a container-only default plugin that would spuriously
 # reject VM-targeted addons in the phase_vm_addons tests further down.
 setup_lab.apps.check_requirements = lambda *a, **kw: None
-setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name) if "missing" not in name else None
+setup_lab.apps.addon_installer = lambda name: "/fake/bin/install_{}".format(name) if "missing" not in name else None
 run_calls = []
 setup_lab.subprocess.run = lambda args, env=None, **kw: run_calls.append((args, env)) or FakeCompleted()
 
@@ -108,7 +108,7 @@ check("_install_cluster_addons: no-op when the cluster has no addons", run_calls
 
 # ── phase_vm_addons: per-node dispatch ───────────────────────────────────────
 run_calls.clear()
-setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name)
+setup_lab.apps.addon_installer = lambda name: "/fake/bin/install_{}".format(name)
 definition3 = {"nodes": {"vm1": {"addons": ["mariadb", "openldap"]}, "vm2": {}}}
 setup_lab.phase_vm_addons(definition3, "lab.json")
 check("phase_vm_addons: runs each of vm1's addons once", len(run_calls) == 2)
@@ -145,7 +145,7 @@ check("collect_addon_names: a lab with no addons anywhere returns an empty list"
 # An invalid addon configuration value is reported before any VM or cluster is created.
 validate_def = {"kclusters": {"c1": {"addons": ["rancher", "longhorn"]}}, "nodes": {}}
 
-setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name)
+setup_lab.apps.addon_installer = lambda name: "/fake/bin/install_{}".format(name)
 setup_lab.subprocess.run = lambda args, **kw: FakeCompleted(returncode=0, stdout="")
 check("validate_addon_configs: every addon validating clean returns True",
       setup_lab.validate_addon_configs(validate_def, "lab.json") is True)
@@ -161,14 +161,14 @@ check("validate_addon_configs: one failing addon's [ERROR] makes the whole check
 check("validate_addon_configs: the failing addon's own error text is included in the report",
       "longhorn_ns" in _out.getvalue())
 
-setup_lab.shutil.which = lambda name: None
+setup_lab.apps.addon_installer = lambda name: None
 _out = io.StringIO()
 with redirect_stdout(_out):
     result = setup_lab.validate_addon_configs(validate_def, "lab.json")
 check("validate_addon_configs: a completely missing installer is reported as an error too",
-      result is False and "not found on PATH" in _out.getvalue())
+      result is False and "install_rancher not found" in _out.getvalue())
 
-setup_lab.shutil.which = lambda name: "/fake/bin/{}".format(name)
+setup_lab.apps.addon_installer = lambda name: "/fake/bin/install_{}".format(name)
 setup_lab.subprocess.run = lambda args, **kw: FakeCompleted(returncode=0, stdout="")
 check("validate_addon_configs: a lab with no addons anywhere returns True without running anything",
       setup_lab.validate_addon_configs({"kclusters": {}, "nodes": {}}, "lab.json") is True)
@@ -461,6 +461,35 @@ except SystemExit as e:
 finally:
     sys.argv = old_argv
 check("main --help: exits 0 and prints usage mentioning --keep", code == 0 and "--keep" in buf.getvalue())
+
+for argv in (["setup_lab.py", "lab.json", "--help"], ["setup_lab.py", "-h", "lab.json"]):
+    sys.argv = argv
+    buf = io.StringIO()
+    code = None
+    try:
+        with redirect_stdout(buf):
+            setup_lab.main()
+    except SystemExit as e:
+        code = e.code
+    finally:
+        sys.argv = old_argv
+    check("main {}: prints the help and exits 0 without deploying".format(" ".join(argv[1:])),
+          code == 0 and "--keep" in buf.getvalue())
+
+_die_msgs = []
+_orig_die = setup_lab.lc.die
+setup_lab.lc.die = lambda msg, *a, **kw: _die_msgs.append(msg) or (_ for _ in ()).throw(SystemExit(1))
+sys.argv = ["setup_lab.py", "lab.json", "--bogus"]
+code = None
+try:
+    setup_lab.main()
+except SystemExit as e:
+    code = e.code
+finally:
+    sys.argv = old_argv
+    setup_lab.lc.die = _orig_die
+check("main: an unknown option stops with an error naming it",
+      code == 1 and len(_die_msgs) == 1 and "--bogus" in _die_msgs[0])
 
 # main(): a failing validate_addon_configs() must abort before setup_lab() —
 # a bad addon config must not leave a half-deployed lab behind it.

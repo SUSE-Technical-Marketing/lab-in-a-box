@@ -134,6 +134,27 @@ check("load_plugin: an add-on not on PATH gets the default capabilities with its
       p1 == dict(apps.DEFAULT_PLUGIN, name="zz_test"))
 apps._cache.pop("zz_test", None)
 
+# ── addon_installer(): the running program's directory first, then PATH ──────────────────────────────────────────
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+with tempfile.TemporaryDirectory() as d:
+    local = os.path.join(d, "install_zz_test.py")
+    with open(local, "w") as f:
+        f.write("#!/bin/sh\n")
+    os.chmod(local, 0o755)
+    with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
+            mock.patch.object(apps.shutil, "which", return_value="/usr/local/bin/install_zz_test") as which:
+        found = apps.addon_installer("zz_test")
+    check("addon_installer: an executable install_<name>.py next to the program wins over PATH",
+          found == local and not which.called)
+    os.chmod(local, 0o644)
+    with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
+            mock.patch.object(apps.shutil, "which", return_value="/usr/local/bin/install_zz_test"):
+        found = apps.addon_installer("zz_test")
+    check("addon_installer: a non-executable local file is skipped and PATH is used",
+          found == "/usr/local/bin/install_zz_test")
+
 vm_only = dict(apps.DEFAULT_PLUGIN, name="vmonly", targets=["vm"])
 k3s_only = dict(apps.DEFAULT_PLUGIN, name="k3sonly", targets=["container"], requires_kubernetes=["k3s"])
 with mock.patch.object(apps, "die", side_effect=SystemExit) as die:

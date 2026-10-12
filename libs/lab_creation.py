@@ -518,8 +518,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         from apps import addon_entry_name
         for addon_entry in clu_cfg.get("addons") or []:
             addon = addon_entry_name(addon_entry)
-            if shutil.which("install_{}".format(addon)) is None:
-                err("kclusters.{}: addon '{}' — script 'install_{}' not found in PATH".format(clu, addon, addon))
+            from apps import addon_installer
+            if addon_installer(addon) is None:
+                err("kclusters.{}: addon '{}' — script 'install_{}' not found".format(clu, addon, addon))
                 continue
             from apps import load_plugin, requirement_issue
             from targets import TARGET_CONTAINER
@@ -542,8 +543,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         from apps import addon_entry_name
         for addon_entry in node_cfg.get("addons") or []:
             addon = addon_entry_name(addon_entry)
-            if shutil.which("install_{}".format(addon)) is None:
-                err("nodes.{}: addon '{}' — script 'install_{}' not found in PATH".format(node, addon, addon))
+            from apps import addon_installer
+            if addon_installer(addon) is None:
+                err("nodes.{}: addon '{}' — script 'install_{}' not found".format(node, addon, addon))
                 continue
             from apps import load_plugin, requirement_issue
             from targets import node_kind
@@ -570,8 +572,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             addon_list += list((node_cfg or {}).get("addons") or [])
     all_addons = sorted(set(addon_entry_name(e) for e in addon_list))
 
+    from apps import addon_installer
     for addon in all_addons:
-        exe = shutil.which("install_{}".format(addon))
+        exe = addon_installer(addon)
         if not exe:
             continue
         result = subprocess.run([exe, "--validate", str(definition.source_path)], capture_output=True, text=True)

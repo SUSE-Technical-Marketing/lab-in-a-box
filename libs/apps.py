@@ -42,7 +42,9 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from lab_creation import die
@@ -185,20 +187,29 @@ def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> di
     return plugin
 
 
+def addon_installer(name: str) -> Optional[str]:
+    """
+    Path of add-on `name`'s install script: install_<name> or install_<name>.py in the running program's own directory (a
+    repository checkout's scripts/, or the deployed bin directory), else install_<name> on PATH; None when there is none.
+    Running from a checkout therefore uses that checkout's add-ons, not the deployed ones.
+    """
+    here = Path(sys.argv[0]).resolve().parent
+    for candidate in (here / "install_{}".format(name), here / "install_{}.py".format(name)):
+        if candidate.is_file() and os.access(str(candidate), os.X_OK):
+            return str(candidate)
+    return shutil.which("install_{}".format(name))
+
+
 def load_plugin(name):
     """
-    Return the PLUGIN dict for addon `name` (looks up install_<name> in
-    PATH, same resolution setup_lab.py already uses via shutil.which). Thin
-    wrapper around load_plugin_from_path() — every CLI/orchestration call
-    site (validate_lab_definition, setup_lab.py) resolves addons via PATH,
-    so this is what they use; discovery.py uses load_plugin_from_path()
-    directly instead, since it already has the addon's real file path from
-    its own directory-scanning discovery.
+    Return the PLUGIN dict for addon `name`, whose script addon_installer() finds. Thin wrapper around
+    load_plugin_from_path() for the CLI/orchestration call sites (validate_lab_definition, setup_lab.py); discovery.py
+    uses load_plugin_from_path() directly, since its own directory scan already has the file path.
     """
     if name in _cache:
         return _cache[name]
 
-    exe = shutil.which("install_{}".format(name))
+    exe = addon_installer(name)
     plugin = load_plugin_from_path(exe, name=name)
     _cache[name] = plugin
     return plugin
