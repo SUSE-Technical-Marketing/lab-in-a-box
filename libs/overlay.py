@@ -285,34 +285,6 @@ def add_peer_to_hub(hub_host, peer_name, peer_pubkey, allowed_cidrs):
         peer_name, allowed_csv))
 
 
-def remove_peer_from_hub(hub_host, peer_name):
-    """
-    Best-effort removal of `peer_name`'s peer entry from the hub — both the
-    LIVE wg0 interface state (`wg set ... remove`) and the persisted
-    wg0.conf block. Looked up entirely from the hub's own recorded state
-    (the marker comment + its own PublicKey line), never from the peer
-    itself. Never dies (mirrors ensure_cloud_dns_vm()'s own best-effort
-    teardown-time cleanup convention elsewhere in this project) — a hub
-    that's unreachable, or a peer that was never registered, is a silent
-    no-op. Nothing calls this automatically today — see module docstring
-    ("the hub itself is never auto-destroyed") — site gateways are shared,
-    persistent infrastructure, not torn down per-node.
-    """
-    marker = "# peer: {}".format(peer_name)
-    script = (
-        "ln=$(grep -nxF {marker} {conf} 2>/dev/null | head -1 | cut -d: -f1); "
-        "if [ -n \"$ln\" ]; then "
-        "pubkey=$(sed -n \"$((ln+2))p\" {conf} | awk '{{print $3}}'); "
-        "[ -n \"$pubkey\" ] && wg set wg0 peer \"$pubkey\" remove 2>/dev/null; "
-        "end=$(awk -v start=\"$ln\" 'NR>start && /^$/{{print NR; exit}}' {conf}); "
-        "[ -z \"$end\" ] && end=$(wc -l < {conf}); "
-        "sed -i \"${{ln}},${{end}}d\" {conf}; "
-        "fi"
-    ).format(marker=shlex.quote(marker), conf=shlex.quote(_WG_CONF_PATH))
-    ssh_run(hub_host, script, check=False)
-    log("- Removed site gateway '{}' from the overlay hub (best-effort)".format(peer_name))
-
-
 def ensure_overlay_hub_ready(hub_host, wg_port=DEFAULT_WG_PORT, overlay_cidr=DEFAULT_OVERLAY_CIDR,
                               site_name=None, site_cidr=None):
     """

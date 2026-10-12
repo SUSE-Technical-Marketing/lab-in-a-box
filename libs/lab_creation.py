@@ -6,7 +6,7 @@ Python equivalent of lab_creation.bash.
 Typical usage:
     from lab_creation import (
         ssh_run, ssh_output, check_ssh_conn,
-        load_vm_vars, section_vars,
+        load_vm_vars,
         add_to_dns, del_from_dns,
         setup_helm, helm_repo_add,
         process_template,
@@ -107,12 +107,6 @@ def set_debug(on):
 
 def debug_enabled():
     return _DEBUG
-
-
-def debug(msg):
-    """Print a debug line, only when debug is enabled."""
-    if _DEBUG:
-        print("{}DEBUG:{} {}".format(_WHITE, _RESET, msg))
 
 
 def _looks_noisy(text):
@@ -776,21 +770,6 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
 
 # ── MAC address handling ────────────────────────────────────────────────────
 
-def _list_domain_macs(virt_srv, remote_host=None):
-    """
-    Returns (all_domain_lines, mac_by_domain) for the hypervisor at virt_srv.
-    Thin wrapper — body moved to backends.LibvirtBackend.list_used_macs().
-
-    remote_host is optional and defaults to None for backward compatibility
-    with every existing caller — it's only actually needed by
-    run_libvirt_tool()'s SSH fallback, when no local virsh binary exists
-    (see its own docstring); every environment with a local virsh (the bare
-    automation VM host, unchanged) never touches it.
-    """
-    from backends import LibvirtBackend
-    return LibvirtBackend(virt_srv, remote_host=remote_host).list_used_macs()
-
-
 def _generate_unused_mac(used_macs):
     """
     Generate a random locally-administered unicast MAC not present in used_macs
@@ -1065,30 +1044,6 @@ def wait_for_ssh_command(host: str, command: str, timeout: int = 300, interval: 
         time.sleep(interval)
 
 # ── Variable loading ──────────────────────────────────────────────────────────
-
-def section_vars(definition, section):
-    """
-    Return all key-value pairs from a named top-level section of the definition.
-
-    Replaces the family of load_*_vars bash functions:
-        load_rancher_vars() → section_vars(definition, "rancher")
-        load_lh_vars()      → section_vars(definition, "longhorn")
-        load_nv_vars()      → section_vars(definition, "neuvector")
-        … and so on for every addon section.
-
-    Only scalar values are returned; nested objects and arrays are skipped.
-    Returns a dict.
-    """
-    raw = definition.get(section, {})
-    if not raw:
-        warn("No variables defined for section '{}'".format(section))
-    return {k: v for k, v in raw.items() if isinstance(v, (str, int, float, bool))}
-
-
-def load_common_vars(definition):
-    """Return all key-value pairs from the 'common' section. Returns a dict."""
-    return dict(definition.get("common", {}))
-
 
 def load_vm_vars(definition, vm_name, config=None):
     """
@@ -1445,52 +1400,6 @@ def locate_kvm_host(definition, vm_name, config):
 
 
 # ── VM management ─────────────────────────────────────────────────────────────
-
-def copy_vm_image(remote_host, iso_loc, iso_image, vm_img_loc, vm_name, vm_dsk_gb, config_method=""):
-    """
-    Copy a QCOW2 source image and resize it on the hypervisor. Thin wrapper —
-    body moved to backends.LibvirtBackend.copy_vm_image().
-    """
-    from backends import LibvirtBackend
-    backend = LibvirtBackend(None, remote_host=remote_host, iso_loc=iso_loc, vm_img_loc=vm_img_loc)
-    backend.copy_vm_image(iso_image, vm_name, vm_dsk_gb, config_method=config_method)
-
-
-def create_vm(
-    virt_srv, vm_name, vm_cpu, vm_mem, vm_dsk_gb, vm_img_loc, network, remote_host,
-    os_variant="slem5.4", boot="uefi", config_method="",  # boot: "uefi", "firmware=bios", "hd", …
-    lab_setup_path="/srv/www/htdocs/lab_creation",
-    extra_disks=None, extra_filesystems=None, vm_dsk_bus="virtio",
-    ign_file=None, com_file=None, salt_states="",
-    install_type="", iso_image="", iso_loc="", mydns="",
-    vcluster="",
-):
-    """
-    Create a VM on a KVM hypervisor via virt-install, covering all 6
-    config_method branches (see backends.LibvirtBackend.create_vm for the
-    full branch-by-branch description). Thin wrapper — body moved there.
-    """
-    from backends import LibvirtBackend
-    backend = LibvirtBackend(virt_srv, remote_host=remote_host, iso_loc=iso_loc,
-                              vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
-    backend.create_vm(
-        vm_name, vm_cpu, vm_mem, vm_dsk_gb, network,
-        os_variant=os_variant, boot=boot, config_method=config_method,
-        extra_disks=extra_disks, extra_filesystems=extra_filesystems, vm_dsk_bus=vm_dsk_bus,
-        ign_file=ign_file, com_file=com_file, salt_states=salt_states,
-        install_type=install_type, iso_image=iso_image, iso_loc=iso_loc, mydns=mydns,
-        vcluster=vcluster,
-    )
-
-
-def delete_vm(virt_srv, vm_name):
-    """
-    Remove a VM and all its storage from the hypervisor. Thin wrapper — body
-    moved to backends.LibvirtBackend.delete_vm().
-    """
-    from backends import LibvirtBackend
-    LibvirtBackend(virt_srv).delete_vm(vm_name)
-
 
 def clean_ssh_keys(vm_name, myip):
     """Remove stale SSH known-hosts entries for a VM (mirrors clean_ssh_keys)."""
@@ -2331,136 +2240,21 @@ def setup_salt(vm_name, salt_states, lab_setup_path):
         out.write_text(process_template(str(tmpl), {"_vm_name": vm_name}))
 
 
-# ── OS detection (local) ──────────────────────────────────────────────────────
-
-def find_os():
-    """
-    Return (os_id, version_id, arch) for the local machine (mirrors find_OS).
-    Reads /etc/os-release and uname -m.
-    """
-    os_id = version_id = ""
-    try:
-        for line in Path("/etc/os-release").read_text().splitlines():
-            m = re.match(r'^ID="?([^"]+)"?', line)
-            if m:
-                os_id = m.group(1)
-            m = re.match(r'^VERSION_ID="?([^"]+)"?', line)
-            if m:
-                version_id = m.group(1)
-    except IOError:
-        pass
-    arch = subprocess.run(
-        ["uname", "-m"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        universal_newlines=True
-    ).stdout.strip()
-    return os_id, version_id, arch
-
-
-def boot_packages_for(os_id):
-    """
-    Return the space-separated BOOT_PACKAGES list for a detected OS id, or
-    raise via die() for unsupported OSes. Mirrors install_packages (bash).
-
-    NOTE: bash's install_packages only ever assigns the BOOT_PACKAGES variable
-    — nothing in the bash codebase reads it afterwards (verified with grep);
-    it's effectively dead code today. Kept here as a pure function (returning
-    the value bash would have assigned) rather than a no-op, since a future
-    caller may still want it and there's no behavioural risk either way.
-    """
-    if os_id == "sles":
-        return "vim-small apparmor-parser iptables NetworkManager-cloud-setup wget git"
-    elif os_id == "sle-micro":
-        return "vim-small iptables NetworkManager-cloud-setup wget git"
-    elif os_id == "opensuse-leap":
-        return "vim-small apparmor-parser iptables NetworkManager-cloud-setup wget git"
-    else:
-        die("ERROR - OS not supported yet")
-
-
 # ── Misc ──────────────────────────────────────────────────────────────────────
-
-def check_exists(needle, haystack):
-    """Return True if needle is a whole word in the space-separated haystack (mirrors check_exists)."""
-    return " {} ".format(needle) in " {} ".format(haystack)
-
 
 def reboot_vm(virt_srv, vm_name, remote_host=None):
     """
     Reboot a VM, forcing a power cycle if it doesn't respond within 120s.
     Thin wrapper — body moved to backends.LibvirtBackend.reboot_vm().
 
-    remote_host: see _list_domain_macs()'s docstring — optional, only needed
-    by the SSH fallback (and only reached at all when the guest isn't
-    reachable over SSH directly, in which case this same host is exactly
-    where a virsh fallback would need to reach anyway).
+    remote_host: optional; the KVM host that runs virsh for the fallback
+    used when the guest is not reachable over SSH.
     """
     from backends import LibvirtBackend
     LibvirtBackend(virt_srv, remote_host=remote_host).reboot_vm(vm_name)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _run(cmd, error_msg):
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        die(error_msg)
-
-
-def _remote(hostname, cmd, check=True):
-    return ssh_run(hostname, cmd, check=check)
-
-
-def _remote_dns_add(server, zone_file, record):
-    _remote(server,
-            "grep -qF '{}' {} 2>/dev/null || echo '{}' >> {}".format(
-                record, zone_file, record, zone_file))
-
-
-def _dns_add_line(zone_file, record):
-    """
-    Append `record` to zone_file unless a line exactly equal to it already
-    exists. Mirrors the intent of bash's `grep -qi <pattern> || echo <record>
-    >> zone_file` dedup checks in add_to_dns/add_dns_to_named_rr.
-
-    NOTE: an earlier version of this took a separate `dedup_key` substring
-    (e.g. just the short hostname or the last IP octet) and checked whether
-    that fragment appeared ANYWHERE in the file — which is a real false-
-    positive risk given this project's hostnames (node1/node10/node101,
-    n1/n10/n11, …): adding "node1" would wrongly be skipped as a duplicate
-    once "node10" was already present, since "node1" is a substring of
-    "node10". This project's actual bash also had a related but different
-    bug here (see lab_creation.bash's add_to_dns — a stray quote character
-    meant the PTR dedup check never matched anything, causing duplicates
-    instead of false-skips). Exact-line matching on the full record avoids
-    both failure modes.
-    """
-    zone_file = Path(zone_file)
-    zone_file.touch()
-    lines = zone_file.read_text().splitlines()
-    if record not in lines:
-        zone_file.write_text("\n".join(lines + [record]) + "\n")
-
-
-def _dns_remove_line(zone_file, record):
-    """
-    Remove any line exactly equal to `record` from zone_file. Mirrors bash's
-    `sed "/<full record text>/d"` calls in del_from_dns/add_service_dns, which
-    always passed the complete record text as the delete pattern (not a bare
-    hostname/octet fragment) — exact-line matching here preserves that same
-    precision, avoiding substring false-positives (see _dns_add_line's note).
-    """
-    zone_file = Path(zone_file)
-    if zone_file.exists():
-        lines = [l for l in zone_file.read_text().splitlines() if l != record]
-        zone_file.write_text("\n".join(lines) + "\n")
-
-
-def _dns_append_line(zone_file, record):
-    zone_file = Path(zone_file)
-    zone_file.touch()
-    with zone_file.open("a") as f:
-        f.write(record + "\n")
-
 
 def _detect_dns():
     try:

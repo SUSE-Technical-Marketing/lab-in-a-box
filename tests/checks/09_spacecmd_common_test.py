@@ -1116,16 +1116,6 @@ except SystemExit:
     died = True
 check("schedule_ansible_playbook: server-side failure dies", died)
 
-# -- ansible_playbook_status: reuses native schedule_* commands --------------
-fake = FakeSSH(responses=[
-    ("schedule_details", FakeResult(returncode=0, stdout="Action: foo")),
-    ("schedule_getoutput", FakeResult(returncode=0, stdout="output text")),
-])
-sc.ssh_run = fake
-details, output = sc.ansible_playbook_status("host1", "mgrctl exec --", 42)
-check("ansible_playbook_status: returns (details, output) via schedule_details/schedule_getoutput",
-      details == "Action: foo" and output == "output text")
-
 # -- content_project_exists / ensure_content_project -------------------------
 fake = FakeSSH(responses=[("contentmanagement.listProjects", FakeResult(returncode=0, stdout="web-lifecycle\n"))])
 sc.ssh_run = fake
@@ -1522,22 +1512,6 @@ except SystemExit:
     died = True
 check("ensure_scap_scan: schedule failure dies", died)
 
-# -- list_scap_scans / scap_scan_details / scap_scan_rule_results -----------
-fake = FakeSSH(responses=[("scap_listxccdfscans", FakeResult(returncode=0, stdout="scan list text"))])
-sc.ssh_run = fake
-check("list_scap_scans: returns raw text",
-      sc.list_scap_scans("host1", "mgrctl exec --", "web1") == "scan list text")
-
-fake = FakeSSH(responses=[("scap_getxccdfscandetails", FakeResult(returncode=0, stdout="details text"))])
-sc.ssh_run = fake
-check("scap_scan_details: returns raw text",
-      sc.scap_scan_details("host1", "mgrctl exec --", 42) == "details text")
-
-fake = FakeSSH(responses=[("scap_getxccdfscanruleresults", FakeResult(returncode=0, stdout="rule results text"))])
-sc.ssh_run = fake
-check("scap_scan_rule_results: returns raw text",
-      sc.scap_scan_rule_results("host1", "mgrctl exec --", 42) == "rule results text")
-
 # -- run_scap_scans: orchestration, no-op, validation ------------------------
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -1778,15 +1752,11 @@ except SystemExit:
     died = True
 check("ensure_system_group: create failure dies", died)
 
-# -- list_group_systems / group_has_system / ensure_group_systems -----------
+# -- list_group_systems / ensure_group_systems --------------------------------
 fake = FakeSSH(responses=[("group_listsystems", FakeResult(returncode=0, stdout="dev1.lab\ndev2.lab\n"))])
 sc.ssh_run = fake
 check("list_group_systems: returns raw text",
       sc.list_group_systems("host1", "mgrctl exec --", "dev-systems") == "dev1.lab\ndev2.lab\n")
-check("group_has_system: found",
-      sc.group_has_system("host1", "mgrctl exec --", "dev-systems", "dev1.lab") is True)
-check("group_has_system: not found",
-      sc.group_has_system("host1", "mgrctl exec --", "dev-systems", "prod1.lab") is False)
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -4143,100 +4113,12 @@ except SystemExit:
     died = True
 check("provision_virtual_guests: an entry missing 'name'/'kickstart_profile' dies", died)
 
-# -- SCAP Beta policy-based scanning (system.scap.*) ---------------------
-fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 5, "name": "SLES15 DataStream",
-                                       "dataStreamFileName": "ssg-sle15-ds.xml"}])))])
-sc.ssh_run = fake
-out = sc.list_scap_content("host1", "mgrctl exec --")
-check("list_scap_content: returns the parsed real response shape", out[0]["id"] == 5)
-
-fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(returncode=1, stderr="no beta"))])
-sc.ssh_run = fake
-died = False
-try:
-    sc.list_scap_content("host1", "mgrctl exec --")
-except SystemExit:
-    died = True
-check("list_scap_content: server-side failure dies", died)
-
+# -- list_scap_policies (system.scap.*, Beta) ---------------------------
 fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
     returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline", "scapContentId": 5}])))])
 sc.ssh_run = fake
 out = sc.list_scap_policies("host1", "mgrctl exec --")
 check("list_scap_policies: returns the parsed real response shape", out[0]["policyName"] == "sles15-baseline")
-
-fake = FakeSSH(responses=[("system.scap.listTailoringFiles", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 3, "name": "strict-tailoring", "orgId": 1}])))])
-sc.ssh_run = fake
-out = sc.list_scap_tailoring_files("host1", "mgrctl exec --")
-check("list_scap_tailoring_files: returns the parsed real response shape", out[0]["id"] == 3)
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanWithPolicy", FakeResult(returncode=0, stdout="42")),
-])
-sc.ssh_run = fake
-action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
-                                                     date="2000-01-01T00:00:00")
-check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
-schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
-check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
-      "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
-      "sol.mydemo.lab" not in unwrap(schedule_cmd))
-check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
-      "2000-01-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
-
-fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
-sc.ssh_run = fake
-died = False
-try:
-    sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["nosuch.lab"], 7)
-except SystemExit:
-    died = True
-check("schedule_beta_xccdf_scan_with_policy: an unresolvable system dies (via _system_id)", died)
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="43")),
-])
-sc.ssh_run = fake
-action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
-                                                tailoring_file_id=3, fetch_remote_resources=True,
-                                                date="2000-01-01T00:00:00")
-check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
-custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
-check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
-      "params struct", '"scapContentId": 5' in unwrap(custom_cmd) and
-      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in unwrap(custom_cmd))
-check("schedule_beta_xccdf_scan_custom: optional tailoringFileId/fetchRemoteResources are "
-      "included when given", '"tailoringFileId": 3' in unwrap(custom_cmd) and
-      '"fetchRemoteResources": true' in unwrap(custom_cmd))
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="44")),
-])
-sc.ssh_run = fake
-sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
-                                    "xccdf_org.ssgproject.content_profile_standard",
-                                    date="2000-01-01T00:00:00")
-custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
-check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
-      "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and
-      "fetchRemoteResources" not in unwrap(custom_cmd))
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=1, stderr="beta features not enabled")),
-])
-sc.ssh_run = fake
-died = False
-try:
-    sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_profile")
-except SystemExit:
-    died = True
-check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
 
 # -- SCAP policy creation via the Web UI REST route -----------------------
 fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="200"))])
@@ -4299,14 +4181,6 @@ except SystemExit:
     died = True
 check("create_scap_policy: unparseable output (e.g. an HTML redirect from an expired/missing "
       "session) dies with a clear message instead of crashing on json.loads", died)
-
-fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline"}])))])
-sc.ssh_run = fake
-check("scap_policy_exists: true when a policy with that name is already in list_scap_policies()",
-      sc.scap_policy_exists("host1", "mgrctl exec --", "sles15-baseline"))
-check("scap_policy_exists: false for a name not present",
-      not sc.scap_policy_exists("host1", "mgrctl exec --", "nosuchpolicy"))
 
 fake = FakeSSH()
 sc.ssh_run = fake

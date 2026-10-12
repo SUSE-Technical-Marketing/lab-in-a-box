@@ -1574,8 +1574,8 @@ def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_p
     Schedule an Ansible playbook run with ansible.schedulePlaybook. There is no spacecmd subcommand for the 'ansible'
     namespace, so the call goes through the api passthrough. `earliest` is an ISO-8601 string. The default is the current UTC
     time, meaning "run as soon as possible". The passthrough converts an ISO-8601 string argument to a datetime, so no manual
-    conversion is needed. The function returns the scheduled action id as a string. Pass it to ansible_playbook_status() to check
-    on the run.
+    conversion is needed. The function returns the scheduled action id as a string; spacecmd's schedule_details and
+    schedule_getoutput commands report on the run.
 
     Each call schedules a new run, so the call is not idempotent. Invoke it once per intended run, through the install scripts'
     --run-ansible-playbooks flag. Do not place it in the automatic ensure_* flow.
@@ -1601,17 +1601,6 @@ def schedule_ansible_playbook(hostname, exec_prefix, control_node_id, playbook_p
     print("  Scheduled playbook '{}' on control node {} (inventory: {}) — action id: {}".format(
         playbook_path, control_node_id, inventory_path, action_id))
     return action_id
-
-
-def ansible_playbook_status(hostname, exec_prefix, action_id):
-    """
-    Return (details, output): the text of spacecmd's schedule_details and schedule_getoutput commands for a scheduled action id.
-    These are native spacecmd commands, unlike the ansible namespace. The function is read-only, and callers decide what to do
-    with the text.
-    """
-    details = _spacecmd(hostname, exec_prefix, "schedule_details {}".format(shlex.quote(str(action_id))))
-    output = _spacecmd(hostname, exec_prefix, "schedule_getoutput {}".format(shlex.quote(str(action_id))))
-    return (details.stdout or ""), (output.stdout or "")
 
 
 def _api_call(hostname, exec_prefix, method, args):
@@ -1958,22 +1947,6 @@ def ensure_scap_scan(hostname, exec_prefix, system, xccdf_path, profile=None):
     print("  Scheduled XCCDF scan of '{}' on '{}' (profile: {})".format(xccdf_path, system, profile or "default"))
 
 
-def list_scap_scans(hostname, exec_prefix, system):
-    """Raw text of 'spacecmd scap_listxccdfscans <system>'. Read-only."""
-    return _spacecmd(hostname, exec_prefix, "scap_listxccdfscans {}".format(shlex.quote(system))).stdout or ""
-
-
-def scap_scan_details(hostname, exec_prefix, xid):
-    """Raw text of 'spacecmd scap_getxccdfscandetails <xid>'. Read-only."""
-    return _spacecmd(hostname, exec_prefix, "scap_getxccdfscandetails {}".format(shlex.quote(str(xid)))).stdout or ""
-
-
-def scap_scan_rule_results(hostname, exec_prefix, xid):
-    """Raw text of 'spacecmd scap_getxccdfscanruleresults <xid>'. Read-only."""
-    return _spacecmd(hostname, exec_prefix,
-                      "scap_getxccdfscanruleresults {}".format(shlex.quote(str(xid)))).stdout or ""
-
-
 def run_scap_scans(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_scap_scans: a list of {system or group, xccdf_path, profile} dicts, run in order through
@@ -2033,30 +2006,9 @@ def list_images_by_patch_status(hostname, exec_prefix, cve_id, patch_status_labe
     return r.stdout or ""
 
 
-# ─── SCAP Beta policy-based scanning (system.scap.*) — examples ─────────────
-# The five functions below wrap the Beta system.scap methods. Parameter names and structure follow the 5.2 API reference.
-# The acting user must enable beta features in the Web UI account preferences. The XML-RPC API has no toggle for that.
-# listPolicies, listScapContent and listTailoringFiles are read-only. Their catalog objects are uploaded through the Web UI.
-# The usual flow is to upload the content, policy or tailoring file in the Web UI, use the list functions to find its
-# numeric id, and then trigger a scan with one of the two schedule functions.
-
-def list_scap_content(hostname, exec_prefix):
-    """
-    Returns system.scap.listScapContent(sessionKey) — every SCAP content
-    object (a DataStream + XCCDF file pair) already uploaded via the Web
-    UI, each a dict with real fields id/name/description/
-    dataStreamFileName/xccdfFileName. Pure read-only catalog lookup: use
-    the returned "id" as schedule_beta_xccdf_scan_custom()'s own
-    scap_content_id argument.
-    """
-    r = _api_call(hostname, exec_prefix, "system.scap.listScapContent", [])
-    if r.returncode != 0:
-        die("could not list SCAP content: {}".format((r.stderr or r.stdout or "").strip()))
-    try:
-        return json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        die("system.scap.listScapContent returned unparseable output: {}".format(r.stdout))
-
+# ─── SCAP policies (system.scap.*, Beta) ─────────────────────────────────────
+# Wraps the Beta system.scap.listPolicies method; parameter names follow the 5.2 API reference. The acting user must enable
+# beta features in the Web UI account preferences. The XML-RPC API has no toggle for that.
 
 def list_scap_policies(hostname, exec_prefix):
     """
@@ -2065,8 +2017,8 @@ def list_scap_policies(hostname, exec_prefix):
     a scan can be triggered by policy id alone), each a dict with real
     fields id/policyName/description/scapContentId/xccdfProfileId/
     tailoringFileId/tailoringProfileId/ovalFiles/advancedArgs/
-    fetchRemoteResources. Pure read-only catalog lookup: use the returned
-    "id" as schedule_beta_xccdf_scan_with_policy()'s own policy_id argument.
+    fetchRemoteResources. Read-only; ensure_scap_policies() uses it to skip
+    policies that already exist.
     """
     r = _api_call(hostname, exec_prefix, "system.scap.listPolicies", [])
     if r.returncode != 0:
@@ -2075,101 +2027,6 @@ def list_scap_policies(hostname, exec_prefix):
         return json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         die("system.scap.listPolicies returned unparseable output: {}".format(r.stdout))
-
-
-def list_scap_tailoring_files(hostname, exec_prefix):
-    """
-    Returns system.scap.listTailoringFiles(sessionKey) — every saved SCAP
-    tailoring file (an override of a content's own default XCCDF profile
-    rules) already uploaded via the Web UI, each a dict with real fields
-    id/name/fileName/orgId. Pure read-only catalog lookup: use the
-    returned "id" as either schedule_beta_xccdf_scan_custom()'s own
-    tailoring_file_id argument, or as a policy's own tailoringFileId when
-    building one through the Web UI.
-    """
-    r = _api_call(hostname, exec_prefix, "system.scap.listTailoringFiles", [])
-    if r.returncode != 0:
-        die("could not list SCAP tailoring files: {}".format((r.stderr or r.stdout or "").strip()))
-    try:
-        return json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        die("system.scap.listTailoringFiles returned unparseable output: {}".format(r.stdout))
-
-
-def schedule_beta_xccdf_scan_with_policy(hostname, exec_prefix, systems, policy_id, date=None):
-    """
-    Schedules a SCAP scan against `systems` (a list of hostnames/minion
-    ids, resolved to numeric sids via _system_id()) using an existing,
-    already-uploaded SCAP policy — see list_scap_policies() for real
-    policy ids on this server — via
-    system.scap.scheduleBetaXccdfScanWithPolicy(sessionKey, sids, policyId,
-    date). `date` is an ISO-8601 string (default: the current UTC time,
-    i.e. "run as soon as possible") — spacecmd's own 'api' passthrough
-    auto-converts a top-level ISO-8601-looking string into a real
-    dateTime.iso8601 before the XML-RPC call, the same mechanism
-    schedule_ansible_playbook() already relies on; no manual DateTime
-    construction needed here either. Returns the real numeric SCAP action
-    id. NOT IDEMPOTENT: each call schedules a brand-new scan, same
-    one-shot reasoning as every other schedule_* function in this module —
-    meant to be invoked explicitly, never as part of the automatic
-    ensure_* flow.
-    """
-    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    sids = [_system_id(hostname, exec_prefix, s) for s in systems]
-    r = _api_call(hostname, exec_prefix, "system.scap.scheduleBetaXccdfScanWithPolicy",
-                  [sids, int(policy_id), date])
-    if r.returncode != 0:
-        die("could not schedule SCAP policy scan (policy {}) on {}: {}".format(
-            policy_id, systems, (r.stderr or r.stdout or "").strip()))
-    action_id = (r.stdout or "").strip()
-    print("  Scheduled SCAP scan (policy {}) on {} — action id: {}".format(policy_id, systems, action_id))
-    return action_id
-
-
-def schedule_beta_xccdf_scan_custom(hostname, exec_prefix, systems, scap_content_id, xccdf_profile_id,
-                                    tailoring_file_id=None, tailoring_profile_id=None, oval_files=None,
-                                    advanced_args=None, fetch_remote_resources=False, date=None):
-    """
-    Schedules a SCAP scan against `systems` with an explicit
-    content+profile combination instead of a pre-saved policy (see
-    schedule_beta_xccdf_scan_with_policy() for that path), via
-    system.scap.scheduleBetaXccdfScanCustom(sessionKey, sids, params,
-    date). `scap_content_id` comes from list_scap_content(); the real API
-    doesn't expose a way to discover a content's own valid
-    `xccdf_profile_id` values — read them directly out of the uploaded
-    XCCDF/DataStream document, or from the Web UI's own scan-scheduling
-    form. `tailoring_file_id`/`tailoring_profile_id` (see
-    list_scap_tailoring_files()) let a saved tailoring override the
-    content's own default profile rules; `oval_files`/`advanced_args`/
-    `fetch_remote_resources` map straight onto the real params struct's own
-    same-named optional keys (fetch_remote_resources defaults to False,
-    matching the API's own documented default). `date` handling is
-    identical to schedule_beta_xccdf_scan_with_policy() above. Returns the
-    real numeric SCAP action id. NOT IDEMPOTENT — same one-shot reasoning
-    as every other schedule_* function in this module.
-    """
-    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    sids = [_system_id(hostname, exec_prefix, s) for s in systems]
-    params = {"scapContentId": int(scap_content_id), "xccdfProfileId": xccdf_profile_id}
-    if tailoring_file_id is not None:
-        params["tailoringFileId"] = int(tailoring_file_id)
-    if tailoring_profile_id:
-        params["tailoringProfileId"] = tailoring_profile_id
-    if oval_files:
-        params["ovalFiles"] = oval_files
-    if advanced_args:
-        params["advancedArgs"] = advanced_args
-    if fetch_remote_resources:
-        params["fetchRemoteResources"] = True
-
-    r = _api_call(hostname, exec_prefix, "system.scap.scheduleBetaXccdfScanCustom", [sids, params, date])
-    if r.returncode != 0:
-        die("could not schedule custom SCAP scan (content {}, profile {}) on {}: {}".format(
-            scap_content_id, xccdf_profile_id, systems, (r.stderr or r.stdout or "").strip()))
-    action_id = (r.stdout or "").strip()
-    print("  Scheduled custom SCAP scan (content {}, profile {}) on {} — action id: {}".format(
-        scap_content_id, xccdf_profile_id, systems, action_id))
-    return action_id
 
 
 # ─── SCAP policy creation (Web UI REST route, not XML-RPC) ──────────
@@ -2205,20 +2062,6 @@ def scap_web_login(hostname, exec_prefix, user, password):
             user, status or "?", (r.stderr or "").strip()))
 
 
-def scap_policy_exists(hostname, exec_prefix, policy_name):
-    """
-    Whether a SCAP policy named `policy_name` already exists, via
-    list_scap_policies() — the real XML-RPC read path, and the SAME
-    underlying ScapPolicy database row the web-only create route below
-    writes to (both go through the same ScapFactory/ScapPolicy domain
-    classes, confirmed directly from the real source), so this stays a
-    reliable idempotency check despite the two paths using different
-    protocols.
-    """
-    policies = list_scap_policies(hostname, exec_prefix)
-    return any(p.get("policyName") == policy_name for p in policies)
-
-
 def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccdf_profile_id,
                        description=None, earliest=None, tailoring_file=None, tailoring_profile_id=None,
                        oval_files=None, advanced_args=None, fetch_remote_resources=False):
@@ -2226,7 +2069,7 @@ def create_scap_policy(hostname, exec_prefix, policy_name, scap_content_id, xccd
     Create a SCAP policy with POST /rhn/manager/api/audit/scap/policy/create. This is the only mechanism for it. Call
     scap_web_login() first on the same host and exec_prefix, so the cookie jar exists.
 
-    policy_name, scap_content_id (from list_scap_content()) and xccdf_profile_id are required. Every other parameter is optional
+    policy_name, scap_content_id (the numeric id of SCAP content uploaded in the Web UI) and xccdf_profile_id are required. Every other parameter is optional
     and uses the same field names as the server's ScapPolicyJson. `earliest`, if given, is a string in ISO_LOCAL_DATE_TIME format,
     for example "2000-01-01T00:00:00". This is a plain JSON string field, unlike the XML-RPC schedule calls, which convert a
     top-level ISO-8601 argument. The function returns the numeric policy id. It is not idempotent on its own. Use
@@ -2431,11 +2274,6 @@ def list_group_systems(hostname, exec_prefix, name):
     """Raw text of 'spacecmd group_listsystems <name>' — one system name
     per line, per source. Read-only."""
     return _spacecmd(hostname, exec_prefix, "group_listsystems {}".format(shlex.quote(name))).stdout or ""
-
-
-def group_has_system(hostname, exec_prefix, group_name, system):
-    """Whether `system` appears in group_name's member list."""
-    return system in list_group_systems(hostname, exec_prefix, group_name)
 
 
 def ensure_group_systems(hostname, exec_prefix, group_name, systems):

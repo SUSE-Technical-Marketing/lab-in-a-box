@@ -206,7 +206,7 @@ except SystemExit:
 check("load_kclu_vars: dies for an undefined kcluster", died)
 
 
-# ── first_server_node / addon_nodes / iter_cluster_nodes ─────────────────────
+# ── first_server_node / addon_nodes ──────────────────────────────────────────
 definition2 = {
     "nodes": {
         "srv1": {"INSTALL_RKE2_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
@@ -227,10 +227,6 @@ check("addon_nodes: given an explicit vm_name, returns just that one without sca
       [n for n, _ in k8s.addon_nodes(definition2, "rancher", vm_name="agt1")] == ["agt1"])
 check("addon_nodes: empty list when nothing has the addon",
       k8s.addon_nodes(definition2, "nope") == [])
-
-c1_nodes = [n for n, _, _ in k8s.iter_cluster_nodes(definition2, "c1")]
-check("iter_cluster_nodes: yields only nodes in the given cluster, in order",
-      c1_nodes == ["srv1", "agt1"])
 
 
 # ── create_basic_auth_secret / set_longhorn_overprovisioning ─────────────────

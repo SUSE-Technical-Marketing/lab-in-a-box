@@ -178,7 +178,7 @@ check("list_other_sites: with no exclusion, returns every registered site",
       set(others_none_excluded) == {("home", "192.168.88.0/24"), ("aws-aws-tmm", "172.31.0.0/20")})
 
 
-# ── add_peer_to_hub / remove_peer_from_hub: multi-CIDR AllowedIPs, idempotent ──
+# ── add_peer_to_hub: multi-CIDR AllowedIPs, idempotent ──
 reset()
 scripted["hub1"] = {"grep -qxF": FakeResult(returncode=1)}  # marker not yet present
 overlay.add_peer_to_hub("hub1", "aws-aws-tmm", "GWPUB", ["10.99.0.5/32", "172.31.0.0/20"])
@@ -201,13 +201,6 @@ check("add_peer_to_hub: does NOT re-append the [Peer] block when the marker alre
       not any(inp and "# peer: aws-aws-tmm" in inp for _, _, inp in calls))
 check("add_peer_to_hub: still re-asserts the live wg set (idempotent, cheap, always correct)",
       any("wg set wg0 peer" in c for _, c, _ in calls))
-
-reset()
-overlay.remove_peer_from_hub("hub1", "aws-aws-tmm")
-check("remove_peer_from_hub: looks up the marker on the HUB itself, never contacts the peer",
-      all(h == "hub1" for h, _, _ in calls))
-check("remove_peer_from_hub: the removal script greps the exact marker and calls wg set ... remove",
-      any("# peer: aws-aws-tmm" in c and "wg set wg0 peer" in c and "remove" in c for _, c, _ in calls))
 
 
 # ── ensure_overlay_hub_ready: init vs already-up vs down, + optional site registration ──

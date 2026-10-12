@@ -455,7 +455,7 @@ class LibvirtBackend(VMBackend):
         return cls(virt_srv, remote_host=remote_host, iso_loc=iso_loc,
                    vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
-    # ── MAC / domain introspection (moved from _list_domain_macs) ──────────
+    # ── MAC / domain introspection ──────────
 
     def list_used_macs(self):
         """

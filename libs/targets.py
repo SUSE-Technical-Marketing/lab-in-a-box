@@ -41,31 +41,6 @@ def node_kind(definition, node_name):
     return TARGET_BAREMETAL if is_existing_node(node_cfg) else TARGET_VM
 
 
-def app_target(definition, app_name):
-    """
-    Returns (target_kind, placement_name) for where app_name would run:
-      - (TARGET_CONTAINER, clu_name) if app_name is in some kcluster's addons[]
-      - (node_kind(...), node_name) if app_name is in some node's addons[]
-      - (None, None) if app_name isn't referenced anywhere in the definition
-
-    kclusters are checked first: an addon name could in principle appear in
-    both a kcluster's addons[] and some node's addons[] (nothing stops
-    that today), and the container placement is the more common/intended one
-    for addon scripts that assume a running kubectl context.
-    """
-    from apps import addon_entry_name  # lazy: apps imports lab_creation, avoid a module cycle
-
-    for clu_name, clu_cfg in (definition.get("kclusters", {}) or {}).items():
-        if any(addon_entry_name(e) == app_name for e in (clu_cfg or {}).get("addons", [])):
-            return TARGET_CONTAINER, clu_name
-
-    for node_name, node_cfg in (definition.get("nodes", {}) or {}).items():
-        if any(addon_entry_name(e) == app_name for e in (node_cfg or {}).get("addons", [])):
-            return node_kind(definition, node_name), node_name
-
-    return None, None
-
-
 def check_ssh_only_reachability(node_name, timeout=5):
     """
     One-shot SSH reachability probe for an existing node, for use in

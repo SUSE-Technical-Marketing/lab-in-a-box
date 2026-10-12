@@ -7,7 +7,7 @@ Typical usage:
     from k8s import (
         list_kclusters, get_vm_kcluster, load_kclu_vars,
         add_kclu_dns,
-        first_server_node, addon_nodes, iter_cluster_nodes,
+        first_server_node, addon_nodes,
         setup_traefik_rke2, setup_traefik_k3s,
         create_basic_auth_secret, set_longhorn_overprovisioning,
         setup_cnpg_operator,
@@ -420,17 +420,6 @@ def addon_node_config(definition, addon, vm_name):
             if overrides:
                 return dict(shared, **overrides)
     return shared
-
-
-def iter_cluster_nodes(definition, clu_name):
-    """
-    Yield (vm_name, node_cfg, ssh_cmd) for every node that belongs to clu_name,
-    in definition order.
-    """
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("kcluster") == clu_name:
-            ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
-            yield vm_name, node_cfg, ssh_cmd
 
 
 # ── Traefik on RKE2 ────────────────────────────────────────────────────────────
