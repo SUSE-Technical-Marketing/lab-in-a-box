@@ -1043,6 +1043,51 @@ def wait_for_ssh_command(host: str, command: str, timeout: int = 300, interval: 
             return False
         time.sleep(interval)
 
+
+def boot_id(host: str) -> str:
+    """The kernel's random boot ID of `host`, which changes on every boot; "" when SSH or the read fails."""
+    r = ssh_run(host, "cat /proc/sys/kernel/random/boot_id", check=False, capture=True)
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
+def wait_for_reboot(host: str, old_boot_id: str, timeout: int = 600) -> bool:
+    """Wait until `host` accepts SSH with a boot ID other than `old_boot_id`. True once it does, False after `timeout`
+    seconds."""
+    return wait_for_ssh_command(host, "test \"$(cat /proc/sys/kernel/random/boot_id)\" != {}".format(
+        shlex.quote(old_boot_id)), timeout=timeout)
+
+
+def pending_snapshot(host: str) -> bool:
+    """Whether `host` is a transactional-update system whose next boot uses a snapshot other than the running one."""
+    r = ssh_run(host, "[ -x /usr/sbin/transactional-update ] && "
+                      "snapper --csvout list --columns active,default | grep -qx 'no,yes'", check=False, capture=True)
+    return r.returncode == 0
+
+
+def wait_for_transactional_update_lock(host: str, timeout: int = 600) -> None:
+    """Wait until no running transactional-update holds its lock on `host` (a lock file whose PID is gone counts as free); dies
+    after `timeout` seconds. Returns at once on a host without transactional-update."""
+    lock = "/run/transactional-update.pid"
+    if not wait_for_ssh_command(host, "[ ! -e {0} ] || ! kill -0 \"$(head -1 {0})\" 2>/dev/null".format(lock), timeout=timeout):
+        die("transactional-update on '{}' was still locked after {}s".format(host, timeout))
+
+
+def reboot_into_pending_snapshot(host: str, timeout: int = 600) -> bool:
+    """
+    Reboot `host` when a transactional-update snapshot is pending, and wait for the new boot. Packages installed with
+    transactional-update are only in the running system after that reboot, and a later transaction started from the running
+    snapshot discards the pending one. Returns True when it rebooted, False when nothing was pending; dies when the host does
+    not come back within `timeout` seconds.
+    """
+    if not pending_snapshot(host):
+        return False
+    old = boot_id(host)
+    log("Rebooting {}{}{} into its pending transactional-update snapshot".format(_RED, host, _RESET))
+    ssh_run(host, "systemctl reboot", check=False, capture=True)
+    if not wait_for_reboot(host, old, timeout=timeout):
+        die("'{}' did not come back within {}s after rebooting into its pending snapshot".format(host, timeout))
+    return True
+
 # ── Variable loading ──────────────────────────────────────────────────────────
 
 def load_vm_vars(definition, vm_name, config=None):

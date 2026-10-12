@@ -26,7 +26,7 @@ from pathlib import Path
 from lab_creation import (
     die, log, warn, _RED, _RESET,
     ssh_run, ssh_output,
-    prepare_local_as_kubeclient,
+    prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock,
 )
 from services import DNSService
 import apps
@@ -160,6 +160,10 @@ class K3sDistro(K8sDistro):
 
         prepare_local_as_kubeclient()
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
+        # The installer's transaction starts from the running snapshot; a snapshot already pending would be discarded. It also
+        # fails while another transactional-update holds the lock.
+        reboot_into_pending_snapshot(hostname)
+        wait_for_transactional_update_lock(hostname)
 
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
@@ -174,10 +178,7 @@ class K3sDistro(K8sDistro):
                     shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
                     shlex.quote(clu_name), shlex.quote(mydomain))
             )
-            # The k3s install script can leave the service enabled but not started, on an immutable-root image with a pending reboot
-            # flag. The service starts without a reboot. The distribution therefore runs an explicit systemctl enable --now afterwards,
-            # as RKE2Distro does, and does not rely on the vendor script to start it.
-            ssh_run(hostname, "systemctl enable --now k3s")
+            self._start(hostname, "k3s")
             ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/k3s.sh; chmod 0644 /etc/profile.d/k3s.sh".format(
                 self.kubeconfig_path()))
             token = ssh_output(hostname, "cat /var/lib/rancher/k3s/server/node-token")
@@ -192,8 +193,21 @@ class K3sDistro(K8sDistro):
                 "K3S_TOKEN={} "
                 "sh -".format(shlex.quote(clu_rel), shlex.quote(rancher1_ip), shlex.quote(token))
             )
-            ssh_run(hostname, "systemctl enable --now k3s-agent")
+            self._start(hostname, "k3s-agent")
             return token, rancher1_ip
+
+    def _start(self, hostname, service):
+        """
+        Start `service` after the K3s installer has run. On a transactional-update system the installer puts k3s-selinux in a
+        new snapshot, does not start K3s and asks for a reboot, so the node first reboots into that snapshot. Dies when SELinux is
+        enabled and the k3s SELinux policy is still missing.
+        """
+        reboot_into_pending_snapshot(hostname)
+        missing_policy = ssh_run(hostname, "selinuxenabled && [ ! -f /usr/share/selinux/packages/k3s.pp ]",
+                                 check=False, capture=True)
+        if missing_policy.returncode == 0:
+            die("'{}': SELinux is enabled but the k3s-selinux policy is not installed".format(hostname))
+        ssh_run(hostname, "systemctl enable --now {}".format(service))
 
 
 # These base64 blobs encode small config snippets (NetworkManager, sysctl, PATH)

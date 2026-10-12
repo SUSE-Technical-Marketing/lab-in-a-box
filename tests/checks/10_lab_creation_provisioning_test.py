@@ -149,6 +149,52 @@ with mock.patch.object(lc.subprocess, "run", return_value=subprocess.CompletedPr
     ok = lc.wait_for_ssh_command("10.0.0.7", "false", timeout=12, interval=5)
 check("wait_for_ssh_command: False after the timeout, without sleeping past it", ok is False and sum(sleeps) <= 12)
 
+# ── boot_id(), wait_for_reboot(), pending_snapshot(), reboot_into_pending_snapshot() ──
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 0, stdout="abc-123\n")):
+    check("boot_id: the stripped boot ID", lc.boot_id("vm1") == "abc-123")
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 255, stdout="")):
+    check("boot_id: empty when SSH fails", lc.boot_id("vm1") == "")
+with mock.patch.object(lc, "wait_for_ssh_command", return_value=True) as wait:
+    lc.wait_for_reboot("vm1", "abc-123", timeout=30)
+check("wait_for_reboot: waits for a boot ID other than the old one",
+      "/proc/sys/kernel/random/boot_id" in wait.call_args[0][1] and "!= abc-123" in wait.call_args[0][1]
+      and wait.call_args[1]["timeout"] == 30)
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 1)) as run:
+    check("pending_snapshot: False when the check fails", lc.pending_snapshot("vm1") is False)
+check("pending_snapshot: needs transactional-update and a default snapshot that is not the running one",
+      "/usr/sbin/transactional-update" in run.call_args[0][1] and "'no,yes'" in run.call_args[0][1])
+with mock.patch.object(lc, "pending_snapshot", return_value=False), mock.patch.object(lc, "ssh_run") as run:
+    check("reboot_into_pending_snapshot: no reboot when nothing is pending",
+          lc.reboot_into_pending_snapshot("vm1") is False and run.call_count == 0)
+with mock.patch.object(lc, "pending_snapshot", return_value=True), \
+        mock.patch.object(lc, "boot_id", return_value="abc-123"), \
+        mock.patch.object(lc, "ssh_run") as run, \
+        mock.patch.object(lc, "wait_for_reboot", return_value=True) as wait:
+    rebooted = lc.reboot_into_pending_snapshot("vm1")
+check("reboot_into_pending_snapshot: reboots and waits for a new boot ID",
+      rebooted is True and run.call_args[0][1] == "systemctl reboot" and wait.call_args[0][:2] == ("vm1", "abc-123"))
+with mock.patch.object(lc, "pending_snapshot", return_value=True), \
+        mock.patch.object(lc, "boot_id", return_value="abc-123"), \
+        mock.patch.object(lc, "ssh_run"), \
+        mock.patch.object(lc, "wait_for_reboot", return_value=False):
+    died = False
+    try:
+        lc.reboot_into_pending_snapshot("vm1", timeout=5)
+    except SystemExit:
+        died = True
+check("reboot_into_pending_snapshot: dies when the host does not come back", died)
+with mock.patch.object(lc, "wait_for_ssh_command", return_value=True) as wait:
+    lc.wait_for_transactional_update_lock("vm1", timeout=30)
+check("wait_for_transactional_update_lock: free when the lock file is absent or its PID is gone",
+      "[ ! -e /run/transactional-update.pid ]" in wait.call_args[0][1] and "kill -0" in wait.call_args[0][1])
+with mock.patch.object(lc, "wait_for_ssh_command", return_value=False):
+    died = False
+    try:
+        lc.wait_for_transactional_update_lock("vm1", timeout=5)
+    except SystemExit:
+        died = True
+check("wait_for_transactional_update_lock: dies when the lock is still held after the timeout", died)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

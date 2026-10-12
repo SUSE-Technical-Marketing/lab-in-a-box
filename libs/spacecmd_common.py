@@ -52,7 +52,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lab_creation import ssh_run, scp_to, die, warn, error
+from lab_creation import ssh_run, scp_to, die, warn, error, boot_id, wait_for_reboot
 
 
 def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
@@ -3015,7 +3015,9 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
       1. Generate a bootstrap script for this activation key on the server, with mgr-bootstrap --activation-keys=<key>. The file
          /pub/bootstrap/bootstrap.sh does not exist until a script is generated. A fetch from a fresh server returns the login page
          instead. The script is named after the activation key, so several keys do not overwrite each other's script.
-      2. Run the script on the client over SSH. The client is a plain SSH target, not part of the server's exec_prefix.
+      2. Run the script on the client over SSH. The client is a plain SSH target, not part of the server's exec_prefix. On a
+         transactional-update client the script reboots the client at its end; a dropped connection (rc 255) followed by a new
+         boot ID counts as success.
       3. Poll the server's pending-key list until the minion ID appears, up to retry_limit attempts.
       4. Accept the key.
 
@@ -3082,9 +3084,17 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
         "rm -f \"$_tmp\" /tmp/.lab-bootstrap-curl-err\n"
         "exit $_rc"
     ).format(url=shlex.quote(bootstrap_url), env=env)
+    old_boot_id = boot_id(client_hostname)
     r = ssh_run(client_hostname, bootstrap_cmd, check=False, capture=True)
     bootstrap_out = (r.stdout or "") + (r.stderr or "")
-    if r.returncode != 0:
+    if r.returncode == 255 and old_boot_id:
+        # 255 is ssh's own code for a dropped connection: on a transactional-update client the bootstrap ends with a reboot.
+        print("  SSH to '{}' dropped during bootstrap — waiting for the client to reboot".format(client_hostname))
+        if not wait_for_reboot(client_hostname, old_boot_id):
+            die("bootstrap on '{}' lost its SSH connection (rc=255) and the client did not come back with a new boot".format(
+                client_hostname))
+        print("  '{}' rebooted after bootstrap".format(client_hostname))
+    elif r.returncode != 0:
         die("bootstrap script failed on '{}' (rc={})".format(client_hostname, r.returncode))
 
     def _wait_for_pending_key():

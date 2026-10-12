@@ -2138,6 +2138,9 @@ sc.socket.gethostbyname = _real_gethostbyname
 
 # -- ensure_client_registered -------------------------------------------------
 sc.time.sleep = lambda s: None  # never actually wait in tests
+_reboot_waits = []
+sc.boot_id = lambda hostname: "boot-1"
+sc.wait_for_reboot = lambda hostname, old: _reboot_waits.append((hostname, old)) or True
 
 # Already accepted: pure no-op, no bootstrap curl issued — confirms
 # _ensure_client_can_resolve_server() isn't even attempted for a client
@@ -2215,6 +2218,37 @@ try:
 except SystemExit:
     died = True
 check("ensure_client_registered: dies immediately if the bootstrap script itself fails", died)
+
+# The bootstrap on a transactional-update client reboots it, so SSH returns 255. A new boot ID means it worked.
+def _bootstrap_reboots(hostname, cmd, **kwargs):
+    if "curl -Sks" in cmd:
+        return FakeResult(returncode=255)
+    return _responder(hostname, cmd, **kwargs)
+
+
+_poll_count["n"] = 0
+sc.ssh_run = _bootstrap_reboots
+sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                             retry_limit=5, retry_interval=0)
+check("ensure_client_registered: rc 255 from a rebooting client waits for the new boot and carries on to the key",
+      _reboot_waits == [("client1.mydemo.lab", "boot-1")] and _poll_count["n"] >= 2)
+
+sc.wait_for_reboot = lambda hostname, old: False
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+except SystemExit:
+    died = True
+check("ensure_client_registered: rc 255 without a new boot dies", died)
+sc.wait_for_reboot = lambda hostname, old: True
+sc.boot_id = lambda hostname: ""
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+except SystemExit:
+    died = True
+check("ensure_client_registered: rc 255 dies when the boot ID could not be read before the bootstrap", died)
+sc.boot_id = lambda hostname: "boot-1"
 
 # Key never goes pending -> dies with a clear message after exhausting retries.
 def _never_pending(hostname, cmd, **kwargs):

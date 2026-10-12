@@ -41,10 +41,22 @@ class FakeSSH:
         for substr, result in self.responses:
             if substr in cmd:
                 return result
+        if "selinuxenabled" in cmd:
+            return FakeResult(returncode=1)
         return FakeResult()
 
 
 k8s.prepare_local_as_kubeclient = lambda: None  # never touch the real ~/.kube
+
+
+def _record_reboot(hostname):
+    """Stands in for reboot_into_pending_snapshot: records the call in the active FakeSSH's call list."""
+    k8s.ssh_run.calls.append((hostname, "<reboot_into_pending_snapshot>", {}))
+    return True
+
+
+k8s.reboot_into_pending_snapshot = _record_reboot
+k8s.wait_for_transactional_update_lock = lambda hostname: k8s.ssh_run.calls.append((hostname, "<wait_for_lock>", {}))
 
 
 # ── get_distro dispatch ───────────────────────────────────────────────────────
@@ -106,6 +118,26 @@ check("K3sDistro join: explicitly starts k3s-agent itself, same reasoning as the
       any(c == "systemctl enable --now k3s-agent" for h, c, kw in fake.calls))
 check("K3sDistro join: no profile.d KUBECONFIG on an agent (it has no kubeconfig)",
       not any("profile.d/k3s.sh" in c for h, c, kw in fake.calls))
+
+# ── K3sDistro: transactional-update nodes reboot into the installer's snapshot before K3s starts ──
+_cmds = [c for h, c, kw in fake.calls]
+_reboots = [i for i, c in enumerate(_cmds) if c == "<reboot_into_pending_snapshot>"]
+_installer = next(i for i, c in enumerate(_cmds) if "get.k3s.io" in c)
+check("K3sDistro join: reboots into a pending snapshot before the installer, so its transaction does not discard it",
+      any(i < _installer for i in _reboots))
+check("K3sDistro join: waits for the transactional-update lock before the installer",
+      "<wait_for_lock>" in _cmds and _cmds.index("<wait_for_lock>") < _installer)
+check("K3sDistro join: reboots into the installer's snapshot after it and before starting k3s-agent",
+      any(_installer < i < _cmds.index("systemctl enable --now k3s-agent") for i in _reboots))
+fake = FakeSSH(responses=[("selinuxenabled", FakeResult(returncode=0)), ("node-token", FakeResult(stdout="T\n"))])
+k8s.ssh_run = fake
+died = False
+try:
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+except SystemExit:
+    died = True
+check("K3sDistro: dies without starting k3s when SELinux is enabled and the k3s policy is missing",
+      died and not any(c.startswith("systemctl enable --now") for h, c, kw in fake.calls))
 
 # ── K3sDistro: clu_rel, clu_name and mydomain are shell-quoted ───────────────
 # These values are free text from the lab JSON. They are quoted, so no value can break or inject into the remote command.
