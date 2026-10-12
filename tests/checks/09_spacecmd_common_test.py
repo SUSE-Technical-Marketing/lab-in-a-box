@@ -4300,6 +4300,103 @@ except SystemExit:
     died = True
 check("ensure_scap_policies: an entry missing scap_content_id/xccdf_profile_id dies", died)
 
+
+# -- distributions: install tree from an ISO, kernel options -----------------------------
+check("distribution_path: an explicit path wins", sc.distribution_path({"name": "d", "path": "/x", "iso_url": "http://h/i.iso"}) == "/x")
+check("distribution_path: iso_url defaults to /srv/www/distributions/<name>",
+      sc.distribution_path({"name": "d", "iso_url": "http://h/i.iso"}) == "/srv/www/distributions/d")
+check("distribution_path: empty without path or iso_url", sc.distribution_path({"name": "d"}) == "")
+
+_real = {k: getattr(sc, k) for k in ("_run", "ssh_run", "_api_call", "kickstart_exists", "distribution_exists", "warn")}
+_warns = []
+sc.warn = lambda msg: _warns.append(msg)
+sc._run = lambda h, e, cmd, **kw: FakeResult(returncode=0)
+fake = FakeSSH()
+sc.ssh_run = fake
+check("ensure_distribution_tree: a present tree needs no import",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "iso_url": "http://h/i.iso"}) and not fake.calls)
+sc._run = lambda h, e, cmd, **kw: FakeResult(returncode=1)
+check("ensure_distribution_tree: a missing tree without iso_url is not imported",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "path": "/x"}) is False and not fake.calls)
+ok = sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "leap16", "iso_url": "http://h/dir/leap.iso",
+                                                            "iso_checksum_url": "http://h/dir/leap.iso.sha512"})
+_cmd = fake.calls[-1][1] if fake.calls else ""
+check("ensure_distribution_tree: downloads the ISO on the server host, checks it, then runs mgradm distribution copy",
+      ok and fake.calls[-1][0] == "srv" and "curl -sSfL -C - -o /root/isos/leap.iso http://h/dir/leap.iso" in _cmd
+      and "128) sum=sha512sum" in _cmd and _cmd.endswith("mgradm distribution copy /root/isos/leap.iso leap16"))
+check("ensure_distribution_tree: the checksum comparison comes before the copy",
+      _cmd.index("http://h/dir/leap.iso.sha512") < _cmd.index("mgradm distribution copy"))
+fake = FakeSSH()
+sc.ssh_run = fake
+check("ensure_distribution_tree: iso_url with another path warns and imports nothing",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "path": "/x", "iso_url": "http://h/i.iso"}) is False
+      and not fake.calls and _warns)
+
+_api = []
+
+
+def _tree_api(h, e, method, args):
+    _api.append((method, args))
+    if method == "kickstart.tree.getDetails":
+        return FakeResult(stdout=json.dumps([{"abs_path": "/srv/www/distributions/leap16", "kernel_options": " install=x self_update=0",
+                                              "post_kernel_options": "", "install_type": {"label": "suse"}}]))
+    return FakeResult()
+
+
+sc._api_call = _tree_api
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16", "base_channel": "leap-16", "kernel_options": ""})
+check("ensure_distribution_kernel_options: clears kernel options that differ, keeping path, channel and install type",
+      ("kickstart.tree.update", ["leap16", "/srv/www/distributions/leap16", "leap-16", "suse", "", ""]) in _api)
+_api.clear()
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16", "kernel_options": "install=x self_update=0"})
+check("ensure_distribution_kernel_options: no update when the options already match",
+      [m for m, a in _api] == ["kickstart.tree.getDetails"])
+_api.clear()
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16"})
+check("ensure_distribution_kernel_options: nothing to do without kernel_options/post_kernel_options", not _api)
+
+# -- Agama profiles ------------------------------------------------------------------------
+_src = {"product": {"id": "openSUSE_Leap"}, "root": {"password": "pw"}, "user": {"userName": "u", "fullName": "U",
+                                                                                     "password": "$6$given", "hashedPassword": True}}
+_doc = sc.agama_profile_document("leap-ks", _src)
+check("agama_profile_document: a plain root password becomes a SHA-512 hash",
+      _doc["root"]["password"].startswith("$6$") and _doc["root"]["hashedPassword"] is True)
+check("agama_profile_document: an already hashed password is kept", _doc["user"]["password"] == "$6$given")
+check("agama_profile_document: the same input gives the same document", sc.agama_profile_document("leap-ks", _src) == _doc)
+check("agama_profile_document: the input is not modified", _src["root"] == {"password": "pw"})
+
+_exists = {"v": False}
+_served = {"v": None}
+
+
+def _agama_api(h, e, method, args):
+    _api.append((method, args))
+    if method == "kickstart.profile.downloadRenderedKickstart":
+        return FakeResult(stdout=json.dumps([json.dumps(_served["v"])]))
+    return FakeResult()
+
+
+sc._api_call = _agama_api
+sc.kickstart_exists = lambda h, e, n: _exists["v"]
+sc.distribution_exists = lambda h, e, n: True
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+_imp = [a for m, a in _api if m == "kickstart.importRawFile"]
+check("ensure_kickstart_profile: an agama_profile entry is imported as a raw file wrapped in #raw",
+      len(_imp) == 1 and _imp[0][:3] == ["leap-ks", "none", "leap16"] and _imp[0][3].startswith("#raw\n")
+      and _imp[0][3].endswith("#end raw\n") and json.loads(_imp[0][3][5:-9]) == _doc)
+_exists["v"], _served["v"] = True, _doc
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+check("ensure_agama_profile: an up-to-date profile is left alone", [m for m, a in _api] == ["kickstart.profile.downloadRenderedKickstart"])
+_served["v"] = dict(_doc, localization={"keyboard": "de"})
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+check("ensure_agama_profile: a changed profile is deleted and imported again",
+      [m for m, a in _api] == ["kickstart.profile.downloadRenderedKickstart", "kickstart.deleteProfile", "kickstart.importRawFile"])
+for _k, _v in _real.items():
+    setattr(sc, _k, _v)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

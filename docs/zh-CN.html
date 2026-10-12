@@ -1204,7 +1204,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager 服务器：功能与 <code>uyuni</code> 相同，可用 Helm 部署在 Kubernetes 上，或设置 <code>smlm_deployment: "podman"</code> 后由 <code>mgradm</code> 直接部署到主机或虚拟机上</td>
+<td>SUSE Multi-Linux Manager 服务器：功能与 <code>uyuni</code> 相同，可用 Helm 部署在 Kubernetes 上，或设置 <code>smlm_deployment: "podman"</code> 后由 <code>mgradm</code> 直接部署到主机或虚拟机上。还可自动安装 SUSE Linux 16 和 openSUSE Leap 16：带 <code>agama_profile</code> 的 <code>smlm_kickstart_profiles</code> 条目提供 Agama JSON 配置文件，带 <code>iso_url</code> 的 <code>smlm_distributions</code> 条目从 ISO 导入安装树</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>

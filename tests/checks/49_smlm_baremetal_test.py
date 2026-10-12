@@ -549,6 +549,25 @@ check("main(): podman mode never touches any Kubernetes/Helm-chart setup functio
       k8s_setup_touched == [])
 
 
+# ── _validate(): Agama profiles and distribution ISOs ───────────────────────
+def _errors(extra):
+    v = ac.Validator({"smlm": dict(podman_def["smlm"], **extra)})
+    ism._validate(v)
+    return v.errors
+
+
+check("_validate: an agama_profile with product.id and an https iso_url are accepted", _errors({
+    "smlm_distributions": [{"name": "leap16", "iso_url": "https://h/leap.iso", "iso_checksum_url": "https://h/leap.iso.sha512"}],
+    "smlm_kickstart_profiles": [{"name": "k", "distribution": "leap16", "agama_profile": {"product": {"id": "openSUSE_Leap"}}}]}) == [])
+check("_validate: an iso_url that is not http(s) is rejected",
+      any("iso_url" in e for e in _errors({"smlm_distributions": [{"name": "d", "iso_url": "/tmp/x.iso"}]})))
+check("_validate: an agama_profile without product.id is rejected", any("agama_profile" in e for e in _errors({
+    "smlm_kickstart_profiles": [{"name": "k", "distribution": "d", "agama_profile": {"root": {"password": "x"}}}]})))
+check("_validate: kickstart-only fields on an agama_profile entry are rejected", any("do not apply" in e for e in _errors({
+    "smlm_kickstart_profiles": [{"name": "k", "distribution": "d", "root_password": "x",
+                                 "agama_profile": {"product": {"id": "openSUSE_Leap"}}}]})))
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

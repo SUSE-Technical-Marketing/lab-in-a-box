@@ -48,6 +48,7 @@ import json
 import re
 import shlex
 import socket
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -529,14 +530,103 @@ def distribution_exists(hostname, exec_prefix, name):
     return name in [line.strip() for line in (r.stdout or "").splitlines()]
 
 
+DISTRIBUTIONS_DIR = "/srv/www/distributions"
+ISO_DIR = "/root/isos"
+
+
+def distribution_path(dist: dict) -> str:
+    """The install tree directory of a <prefix>_distributions entry: its `path`, else the directory `mgradm distribution
+    copy` fills for an entry with `iso_url`; "" when neither is given."""
+    if dist.get("path"):
+        return dist["path"]
+    return "{}/{}".format(DISTRIBUTIONS_DIR, dist["name"]) if dist.get("iso_url") else ""
+
+
+def _tree_present(hostname: str, exec_prefix: str, path: str) -> bool:
+    """Whether `path` is a non-empty directory inside the server."""
+    return _run(hostname, exec_prefix, "test -n \"$(ls -A {} 2>/dev/null)\"".format(shlex.quote(path)),
+                check=False, capture=True).returncode == 0
+
+
+def ensure_distribution_tree(hostname: str, exec_prefix: str, dist: dict) -> bool:
+    """
+    Make the install tree of a <prefix>_distributions entry present. With `iso_url`, a missing tree is filled from that ISO:
+    it is downloaded on the server host to ISO_DIR, checked against `iso_checksum_url` when given (a sha256sum or sha512sum
+    file), and copied with `mgradm distribution copy` to DISTRIBUTIONS_DIR/<name>. Returns whether the tree is present;
+    warns when it cannot be filled.
+    """
+    name = dist["name"]
+    path = distribution_path(dist)
+    if path and _tree_present(hostname, exec_prefix, path):
+        return True
+    iso_url = dist.get("iso_url")
+    if not iso_url:
+        return False
+    if path != "{}/{}".format(DISTRIBUTIONS_DIR, name):
+        warn("distribution '{}': with iso_url, path must be {}/{} (where mgradm distribution copy puts the tree)".format(
+            name, DISTRIBUTIONS_DIR, name))
+        return False
+    iso = "{}/{}".format(ISO_DIR, iso_url.rstrip("/").rsplit("/", 1)[-1])
+    cmd = "command -v mgradm >/dev/null && mkdir -p {d} && curl -sSfL -C - -o {i} {u}".format(
+        d=ISO_DIR, i=shlex.quote(iso), u=shlex.quote(iso_url))
+    if dist.get("iso_checksum_url"):
+        cmd += (" && want=$(curl -sSfL {c} | cut -d' ' -f1) && case ${{#want}} in 64) sum=sha256sum;; 128) sum=sha512sum;; "
+                "*) exit 3;; esac && [ \"$($sum {i} | cut -d' ' -f1)\" = \"$want\" ]").format(
+            c=shlex.quote(dist["iso_checksum_url"]), i=shlex.quote(iso))
+    cmd += " && mgradm distribution copy {} {}".format(shlex.quote(iso), shlex.quote(name))
+    print("  Importing distribution '{}' from {}".format(name, iso_url))
+    r = ssh_run(hostname, cmd, check=False, capture=True)
+    if r.returncode != 0:
+        warn("distribution '{}': could not download, verify or copy {} (needs mgradm on '{}'): {}".format(
+            name, iso_url, hostname, ((r.stderr or "") + (r.stdout or "")).strip()[-300:]))
+        return False
+    return True
+
+
+def _api_single(r) -> object:
+    """The value of an _api_call result for a method that returns one object or string, which spacecmd's api command prints
+    as a one-element list; None when the call failed or printed something else."""
+    if r.returncode != 0:
+        return None
+    try:
+        result = json.loads(r.stdout or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return result[0] if isinstance(result, list) and len(result) == 1 else None
+
+
+def ensure_distribution_kernel_options(hostname: str, exec_prefix: str, dist: dict) -> None:
+    """Keep the distribution's kernel_options and post_kernel_options at the values the entry sets ("" clears them), with
+    kickstart.tree.update. Fields the entry leaves out are kept."""
+    if "kernel_options" not in dist and "post_kernel_options" not in dist:
+        return
+    name = dist["name"]
+    current = _api_single(_api_call(hostname, exec_prefix, "kickstart.tree.getDetails", [name]))
+    if not isinstance(current, dict):
+        warn("distribution '{}': could not read its kernel options".format(name))
+        return
+    kernel = dist.get("kernel_options", current.get("kernel_options") or "")
+    post = dist.get("post_kernel_options", current.get("post_kernel_options") or "")
+    if (kernel.strip(), post.strip()) == ((current.get("kernel_options") or "").strip(),
+                                          (current.get("post_kernel_options") or "").strip()):
+        return
+    r = _api_call(hostname, exec_prefix, "kickstart.tree.update", [
+        name, current.get("abs_path") or distribution_path(dist), dist.get("base_channel"),
+        (current.get("install_type") or {}).get("label") or dist.get("install_type"), kernel, post])
+    if r.returncode != 0:
+        warn("distribution '{}': could not set kernel options: {}".format(name, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Set kernel options of distribution '{}'".format(name))
+
+
 def ensure_distribution(hostname, exec_prefix, dist):
     """
     Idempotently create one autoinstall tree (the "Kickstart Distribution" in the Web UI) with distribution_create, from one
-    entry in <prefix>_distributions: {"name", "path", "base_channel", "install_type"}. `path` must be a directory on the server
-    that already holds an extracted installer tree, because distribution_create checks for the initrd and fails if the tree is
-    missing. This function does not create or upload that tree: mirror the ISO's contents to the path first, for example with a
-    loop mount. install_type is one of the labels that `distribution_create --help` lists on the server. That list changes
-    between releases.
+    entry in <prefix>_distributions: {"name", "path", "base_channel", "install_type", "iso_url", "iso_checksum_url",
+    "kernel_options", "post_kernel_options"}. The install tree under `path` must exist, because distribution_create checks for
+    the initrd; with `iso_url` a missing tree is imported first (see ensure_distribution_tree()). install_type is one of the
+    labels that `distribution_create --help` lists on the server. That list changes between releases. kernel_options and
+    post_kernel_options are applied on every run (see ensure_distribution_kernel_options()).
 
     A failed creation is reported as a warning, and the function then returns normally. A missing tree is an ordinary state
     while media is staged outside this project. Dying here would stop the unrelated steps that follow in the caller. A kickstart
@@ -547,8 +637,10 @@ def ensure_distribution(hostname, exec_prefix, dist):
         die("distributions: an entry is missing required 'name'")
     if distribution_exists(hostname, exec_prefix, name):
         print("  Distribution '{}' already exists — leaving it alone".format(name))
+        ensure_distribution_kernel_options(hostname, exec_prefix, dist)
         return
-    path = dist.get("path")
+    path = distribution_path(dist)
+    ensure_distribution_tree(hostname, exec_prefix, dist)
     base_channel = dist.get("base_channel")
     install_type = dist.get("install_type")
     if not (path and base_channel and install_type):
@@ -562,6 +654,7 @@ def ensure_distribution(hostname, exec_prefix, dist):
                  name, path, (r.stderr or r.stdout or "").strip()))
         return
     print("  Created distribution '{}'".format(name))
+    ensure_distribution_kernel_options(hostname, exec_prefix, dist)
 
 
 def ensure_distributions(hostname, exec_prefix, cfg, prefix):
@@ -594,12 +687,73 @@ def kickstart_variables(hostname, exec_prefix, name):
     return result
 
 
+def _crypt_sha512(password: str, salt: str) -> str:
+    """SHA-512 crypt hash of `password` with `salt`, from the local openssl."""
+    r = subprocess.run(["openssl", "passwd", "-6", "-salt", salt, "-stdin"], input=password + "\n",
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    if r.returncode != 0 or not r.stdout.startswith("$6$"):
+        die("could not hash a password with openssl: {}".format(r.stderr.strip()))
+    return r.stdout.strip()
+
+
+def agama_profile_document(name: str, profile: dict) -> dict:
+    """
+    The Agama profile served for kickstart profile `name`: `profile` with the plain root and first-user passwords replaced by
+    SHA-512 crypt hashes (hashedPassword: true). The salt derives from `name`, so the same input gives the same document and
+    a repeat run can compare it with the served one.
+    """
+    doc = json.loads(json.dumps(profile))
+    salt = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+    for section in ("root", "user"):
+        entry = doc.get(section)
+        if isinstance(entry, dict) and entry.get("password") and not entry.get("hashedPassword"):
+            entry["password"] = _crypt_sha512(entry["password"], salt)
+            entry["hashedPassword"] = True
+    return doc
+
+
+def ensure_agama_profile(hostname: str, exec_prefix: str, ks: dict) -> None:
+    """
+    Make kickstart profile ks["name"] serve the Agama profile ks["agama_profile"] (see agama_profile_document()), for SUSE
+    Linux 16 and openSUSE Leap 16, whose Agama installer reads a JSON profile from the inst.auto= boot argument. The profile
+    is a raw autoinstall file on ks["distribution"], created with kickstart.importRawFile and wrapped in #raw so Cobbler
+    serves it unchanged. When the served document differs, the profile is deleted and imported again.
+    """
+    name = ks["name"]
+    distribution = ks.get("distribution")
+    doc = agama_profile_document(name, ks["agama_profile"])
+    if kickstart_exists(hostname, exec_prefix, name):
+        text = _api_single(_api_call(hostname, exec_prefix, "kickstart.profile.downloadRenderedKickstart", [name]))
+        try:
+            served = json.loads(text) if isinstance(text, str) else None
+        except json.JSONDecodeError:
+            served = None
+        if served == doc:
+            print("  Agama profile '{}' is up to date — leaving it alone".format(name))
+            return
+        r = _api_call(hostname, exec_prefix, "kickstart.deleteProfile", [name])
+        if r.returncode != 0:
+            warn("could not replace Agama profile '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
+            return
+    elif not distribution_exists(hostname, exec_prefix, distribution):
+        warn("Agama profile '{}': distribution '{}' doesn't exist yet — skipping".format(name, distribution))
+        return
+    contents = "#raw\n{}\n#end raw\n".format(json.dumps(doc, indent=2))
+    r = _api_call(hostname, exec_prefix, "kickstart.importRawFile",
+                  [name, ks.get("virt_type") or "none", distribution, contents])
+    if r.returncode != 0:
+        warn("could not create Agama profile '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
+        return
+    print("  Created Agama profile '{}'".format(name))
+
+
 def ensure_kickstart_profile(hostname, exec_prefix, ks):
     """
     Idempotently create the kickstart profile described by one entry of <prefix>_kickstart_profiles: {"name",
     "distribution", "root_password", "virt_type": "none" (default), "para_host", "qemu", "xenfv" or "xenpv", "variables":
     {"key": "value", ...}, "activation_keys": [...], "child_channels": [...] and "scripts": [...] (see
-    ensure_kickstart_scripts())}.
+    ensure_kickstart_scripts())}. An entry with "agama_profile" is an Agama JSON profile instead (see ensure_agama_profile());
+    only name, distribution and virt_type apply to it.
 
     `distribution` is a name reference into <prefix>_distributions, which must be defined there. kickstart_create requires the
     distribution to exist. root_password is used only at creation. The server stores a hash, so a repeat run cannot detect or
@@ -610,6 +764,9 @@ def ensure_kickstart_profile(hostname, exec_prefix, ks):
     name = ks.get("name")
     if not name:
         die("kickstart_profiles: an entry is missing required 'name'")
+    if ks.get("agama_profile") is not None:
+        ensure_agama_profile(hostname, exec_prefix, ks)
+        return
 
     if kickstart_exists(hostname, exec_prefix, name):
         print("  Kickstart profile '{}' already exists — leaving it alone".format(name))
