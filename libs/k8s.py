@@ -163,14 +163,16 @@ class K3sDistro(K8sDistro):
 
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
-            # clu_rel, clu_name and mydomain are free text from the lab JSON, with no validation. They are shell-quoted before they
-            # reach the remote command.
+            # clu_rel, clu_name, mydomain and clu_token are free text from the lab JSON. They are shell-quoted before they reach
+            # the remote command. K3S_TOKEN sets the cluster token when clu_token is given.
+            clu_token = clu_ctx.get("clu_token") or ""
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} "
+                "INSTALL_K3S_CHANNEL={} {}"
                 "sh -s - server --tls-san {}.{}".format(
-                    shlex.quote(clu_rel), shlex.quote(clu_name), shlex.quote(mydomain))
+                    shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
+                    shlex.quote(clu_name), shlex.quote(mydomain))
             )
             # The k3s install script can leave the service enabled but not started, on an immutable-root image with a pending reboot
             # flag. The service starts without a reboot. The distribution therefore runs an explicit systemctl enable --now afterwards,
@@ -289,6 +291,9 @@ class RKE2Distro(K8sDistro):
 
         if token is None:
             log("  Starting RKE2 server on '{}' (first node of '{}')".format(hostname, clu_name))
+            if clu_ctx.get("clu_token"):
+                ssh_run(hostname, "echo {} >> /etc/rancher/{}/config.yaml".format(
+                    shlex.quote("token: {}".format(clu_ctx["clu_token"])), clu_type))
             ssh_run(hostname, "systemctl enable --now {}-{}.service".format(clu_type, node_type))
             token = ssh_output(hostname, "cat /var/lib/rancher/{}/server/node-token".format(clu_type))
             return token, hostname

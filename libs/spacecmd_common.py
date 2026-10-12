@@ -598,7 +598,8 @@ def ensure_kickstart_profile(hostname, exec_prefix, ks):
     """
     Idempotently create the kickstart profile described by one entry of <prefix>_kickstart_profiles: {"name",
     "distribution", "root_password", "virt_type": "none" (default), "para_host", "qemu", "xenfv" or "xenpv", "variables":
-    {"key": "value", ...}, "activation_keys": [...] and "child_channels": [...]}.
+    {"key": "value", ...}, "activation_keys": [...], "child_channels": [...] and "scripts": [...] (see
+    ensure_kickstart_scripts())}.
 
     `distribution` is a name reference into <prefix>_distributions, which must be defined there. kickstart_create requires the
     distribution to exist. root_password is used only at creation. The server stores a hash, so a repeat run cannot detect or
@@ -669,6 +670,71 @@ def ensure_kickstart_profile(hostname, exec_prefix, ks):
         if r.returncode != 0:
             warn("could not link child channel(s) ({}) to kickstart profile '{}': {}".format(
                 ", ".join(missing_channels), name, (r.stderr or r.stdout or "").strip()))
+
+    ensure_kickstart_scripts(hostname, exec_prefix, name, ks.get("scripts") or [])
+
+
+_KS_SCRIPT_TYPES = ("pre", "post")
+
+
+def kickstart_scripts(hostname: str, exec_prefix: str, ks_label: str) -> list:
+    """The scripts of kickstart profile `ks_label` (kickstart.profile.listScripts), [] when they cannot be read."""
+    r = _api_call(hostname, exec_prefix, "kickstart.profile.listScripts", [ks_label])
+    if r.returncode != 0:
+        return []
+    try:
+        return json.loads(r.stdout or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _script_spec(script: dict) -> tuple:
+    """The fields of a <prefix>_kickstart_profiles script entry that kickstart.profile.addScript stores, with defaults."""
+    return (script.get("contents", ""), script.get("type") or "post", script.get("interpreter") or "",
+            script.get("chroot", True) is not False, bool(script.get("template", False)),
+            bool(script.get("erroronfail", False)))
+
+
+def ensure_kickstart_scripts(hostname: str, exec_prefix: str, ks_label: str, scripts: list) -> None:
+    """
+    Make kickstart profile `ks_label` carry `scripts`: [{"name", "contents", "type": "post" (default) | "pre",
+    "interpreter" ("" = the kickstart default shell), "chroot" (true), "template" (false: true lets Cobbler expand
+    $variables from the profile's variables), "erroronfail" (false)}].
+
+    A script is matched by name. One with the same fields is left alone; one whose fields differ is removed and added
+    again (kickstart.profile.removeScript, then addScript), because the API cannot edit a script. The server stores the
+    contents without trailing whitespace, so contents are compared without it. Scripts on the server that `scripts` does
+    not name are kept.
+    """
+    existing = {}
+    for current in kickstart_scripts(hostname, exec_prefix, ks_label):
+        existing.setdefault(current.get("name"), current)
+    for script in scripts:
+        name = script.get("name")
+        contents, script_type, interpreter, chroot, template, erroronfail = _script_spec(script)
+        if not (name and contents) or script_type not in _KS_SCRIPT_TYPES:
+            warn("kickstart profile '{}': a script needs 'name', 'contents' and a 'type' of pre or post — "
+                 "skipping {!r}".format(ks_label, name))
+            continue
+        current = existing.get(name)
+        if current is not None:
+            if (current.get("contents", "").rstrip(), current.get("script_type"), current.get("interpreter") or "",
+                    bool(current.get("chroot")), bool(current.get("template")),
+                    bool(current.get("erroronfail"))) == (contents.rstrip(), script_type, interpreter, chroot, template,
+                                                          erroronfail):
+                continue
+            r = _api_call(hostname, exec_prefix, "kickstart.profile.removeScript", [ks_label, current.get("id")])
+            if r.returncode != 0:
+                warn("could not replace script '{}' of kickstart profile '{}': {}".format(
+                    name, ks_label, (r.stderr or r.stdout or "").strip()))
+                continue
+        r = _api_call(hostname, exec_prefix, "kickstart.profile.addScript",
+                      [ks_label, name, contents, interpreter, script_type, chroot, template, erroronfail])
+        if r.returncode != 0:
+            warn("could not add script '{}' to kickstart profile '{}': {}".format(
+                name, ks_label, (r.stderr or r.stdout or "").strip()))
+            continue
+        print("  {} script '{}' on kickstart profile '{}'".format("Replaced" if current else "Added", name, ks_label))
 
 
 def ensure_kickstart_profiles(hostname, exec_prefix, cfg, prefix):
@@ -1616,8 +1682,12 @@ def _api_call(hostname, exec_prefix, method, args):
 
     The command is built as `spacecmd -- api -A ... method`. The `--` separator is required, as in _spacecmd(). Without it the
     argument parser rejects -A.
+
+    spacecmd rebuilds its command line from its arguments, wrapping each one that contains whitespace in single quotes without
+    escaping, and splits that line again with shlex. A single quote in the JSON would end that quoting, so it is written as the
+    JSON escape \\u0027, which the JSON parser reads back as the same character.
     """
-    args_json = json.dumps(args[0] if len(args) == 1 else args)
+    args_json = json.dumps(args[0] if len(args) == 1 else args).replace("'", "\\u0027")
     return _fault_check(_run(hostname, exec_prefix, "spacecmd -- api -A {} {}".format(shlex.quote(args_json), method),
                               check=False, capture=True))
 

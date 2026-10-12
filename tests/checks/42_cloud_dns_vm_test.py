@@ -111,6 +111,9 @@ class _FakeBackendReuse:
         self.calls.append(("create_vm", a, kw))
         raise AssertionError("create_vm() must not be called when the DNS VM already exists")
 
+    def opensuse_image(self):
+        raise AssertionError("opensuse_image() must not be called when the DNS VM already exists")
+
 
 reuse_backend = _FakeBackendReuse()
 with tempfile.TemporaryDirectory() as tempfile_dir:
@@ -124,8 +127,13 @@ check("ensure_cloud_dns_vm() calls get_ip() on reuse", ("get_ip", "lab-dns-aws")
 
 # ── ensure_cloud_dns_vm(): create path — vm_exists() False, full create flow, real IP returned ──
 class _FakeBackendCreate:
-    def __init__(self):
+    def __init__(self, opensuse=""):
         self.calls = []
+        self.opensuse = opensuse
+
+    def opensuse_image(self):
+        self.calls.append(("opensuse_image",))
+        return self.opensuse
 
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
@@ -161,18 +169,73 @@ check("ensure_cloud_dns_vm() returns the newly created DNS VM's real IP", ip == 
 _vm_name_by_call = {
     "vm_exists": lambda c: c[1], "copy_vm_image": lambda c: c[2],
     "push_provisioning_files": lambda c: c[1], "create_vm": lambda c: c[1],
+    "opensuse_image": lambda c: "lab-dns-hetzner",
 }
 check("ensure_cloud_dns_vm() uses the fixed 'lab-dns-<backend>' name throughout",
       all(_vm_name_by_call[c[0]](c) == "lab-dns-hetzner" for c in create_backend.calls)
       and ("vm_exists", "lab-dns-hetzner") in create_backend.calls)
-check("ensure_cloud_dns_vm() reuses the SAME ISO_IMAGE the calling lab already configured",
+check("ensure_cloud_dns_vm() falls back to the lab's own image when the backend has no openSUSE image",
       any(c[0] == "create_vm" and c[6] == "ubuntu-24.04" for c in create_backend.calls))
 check("ensure_cloud_dns_vm() sizes the DNS VM tiny (1 vCPU / 512 MiB) — cheap by design",
       any(c[0] == "create_vm" and c[2] == 1 and c[3] == 512 for c in create_backend.calls))
 call_order = [c[0] for c in create_backend.calls]
 check("ensure_cloud_dns_vm() follows the real call order: vm_exists -> copy_vm_image -> "
       "push_provisioning_files -> create_vm",
-      call_order == ["vm_exists", "copy_vm_image", "push_provisioning_files", "create_vm"])
+      call_order == ["vm_exists", "opensuse_image", "copy_vm_image", "push_provisioning_files", "create_vm"])
+
+
+# ── ensure_cloud_dns_vm(): image order — CLOUD_DNS_IMAGE, then openSUSE, then the lab's image ──
+def _created_image(backend, preferred=""):
+    with tempfile.TemporaryDirectory() as d, mock.patch.object(backends.subprocess, "run", return_value=_cp(0)):
+        backends.ensure_cloud_dns_vm(backend, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
+                                     "ami-lab", d, preferred_image=preferred)
+    return [c[6] for c in backend.calls if c[0] == "create_vm"][0]
+
+
+check("ensure_cloud_dns_vm() boots the backend's openSUSE image when CLOUD_DNS_IMAGE is unset",
+      _created_image(_FakeBackendCreate(opensuse="ami-leap")) == "ami-leap")
+_preferred_backend = _FakeBackendCreate(opensuse="ami-leap")
+check("ensure_cloud_dns_vm() boots CLOUD_DNS_IMAGE when set, without looking up openSUSE",
+      _created_image(_preferred_backend, preferred="ami-chosen") == "ami-chosen"
+      and ("opensuse_image",) not in _preferred_backend.calls)
+check("ensure_cloud_dns_vm() boots the lab's image when there is neither",
+      _created_image(_FakeBackendCreate()) == "ami-lab")
+
+
+# ── suse_catalogue.newest_leap(): highest Leap version, then newest date, matching architecture ──
+import suse_catalogue  # noqa: E402
+
+_catalogue = [
+    {"name": "openSUSE-Leap-15-6-v20261001-hvm-ssd-x86_64", "id": "ami-156", "publishedon": "20261001"},
+    {"name": "openSUSE-Leap-16-0-v20260801-hvm-ssd-x86_64", "id": "ami-16-old", "publishedon": "20260801"},
+    {"name": "openSUSE-Leap-16-0-v20260930-hvm-ssd-x86_64", "id": "ami-16-new", "publishedon": "20260930"},
+    {"name": "openSUSE-Leap-16-0-v20261005-hvm-ssd-arm64", "id": "ami-16-arm", "publishedon": "20261005"},
+    {"name": "suse-sles-16-0-v20261010-hvm-ssd-x86_64", "id": "ami-sles", "publishedon": "20261010"},
+]
+check("newest_leap(): picks Leap 16.0 over a newer-dated 15.6, the latest 16.0 build, and only x86_64",
+      suse_catalogue.newest_leap(_catalogue, "-x86_64").get("id") == "ami-16-new")
+check("newest_leap(): the arm64 build when asked for it",
+      suse_catalogue.newest_leap(_catalogue, "-arm64").get("id") == "ami-16-arm")
+check("newest_leap(): {} when the list has no openSUSE Leap image",
+      suse_catalogue.newest_leap(_catalogue[-1:], "-x86_64") == {})
+
+
+# ── AWSBackend.opensuse_image(): the region's newest Leap AMI; "" with a warning when unreachable ──
+_aws = backends.AWSBackend.__new__(backends.AWSBackend)
+_aws.region = "eu-central-1"
+with mock.patch.object(suse_catalogue, "active_images", return_value=_catalogue) as _active:
+    check("AWSBackend.opensuse_image(): the newest Leap x86_64 AMI of the region",
+          _aws.opensuse_image() == "ami-16-new")
+check("AWSBackend.opensuse_image(): asks SUSE's catalogue for its own region",
+      _active.call_args[0] == ("amazon", "eu-central-1"))
+_warnings = []
+with mock.patch.object(suse_catalogue, "active_images", side_effect=OSError("timed out")), \
+     mock.patch.object(backends._lc, "warn", side_effect=_warnings.append):
+    check("AWSBackend.opensuse_image(): \"\" when the catalogue cannot be reached", _aws.opensuse_image() == "")
+check("AWSBackend.opensuse_image(): warns when the catalogue cannot be reached",
+      len(_warnings) == 1 and "eu-central-1" in _warnings[0])
+check("VMBackend.opensuse_image(): \"\" for a backend without a lookup",
+      backends.HetznerBackend.__new__(backends.HetznerBackend).opensuse_image() == "")
 
 
 # ── ensure_cloud_dns_vm(): create path — create_vm() reports no IP dies clearly ──

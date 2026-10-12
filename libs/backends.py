@@ -34,6 +34,7 @@ from pathlib import Path
 
 import primary
 import provisioning
+import suse_catalogue
 from lab_creation import (
     _RED, _YELLOW, _RESET,
     _empty,
@@ -389,6 +390,13 @@ class VMBackend(object):
         Allow all traffic between this backend's own VMs, so a node can reach its site gateway and its kcluster peers.
         No-op by default; AWSBackend adds a security-group rule whose source is the group itself.
         """
+
+    def opensuse_image(self) -> str:
+        """
+        The newest openSUSE Leap image this backend can boot, in the form its create_vm() takes as iso_image, or "" when
+        the provider publishes none or it cannot be looked up. "" by default; AWSBackend overrides it.
+        """
+        return ""
 
 
 class LibvirtBackend(VMBackend):
@@ -1991,6 +1999,18 @@ class AWSBackend(VMBackend):
         result = self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id)
         subnets = (result or {}).get("Subnets") or []
         return subnets[0].get("CidrBlock") if subnets else None
+
+    def opensuse_image(self) -> str:
+        """
+        VMBackend.opensuse_image() override: the newest openSUSE Leap x86_64 AMI SUSE publishes in this region, from the
+        SUSE Public Cloud Information Tracker. "" with a warning when the tracker cannot be reached.
+        """
+        try:
+            image = suse_catalogue.newest_leap(suse_catalogue.active_images("amazon", self.region), "-x86_64")
+        except (OSError, ValueError) as exc:
+            _lc.warn("could not read SUSE's public cloud image list for AWS region '{}': {}".format(self.region, exc))
+            return ""
+        return image.get("id", "")
 
     def disable_source_dest_check(self, vm_name):
         """
@@ -3792,15 +3812,15 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
 def cloud_dns_image(definition, config, vm_name):
     """
     The image for the cloud DNS VM of `vm_name`'s backend: CLOUD_DNS_IMAGE from its cloud account (or
-    lab_creation.cfg), "" when unset. The DNS VM's cloud-init (_cloud_dns_vm_user_data()) expects an Ubuntu or Debian
-    image, so a lab whose own image is something else (e.g. a SLES BYOS AMI) sets this to an Ubuntu image. When it is
-    unset, the caller falls back to the lab's own ISO_IMAGE.
+    lab_creation.cfg), "" when unset; ensure_cloud_dns_vm() then uses the backend's opensuse_image(), then the lab's
+    own image. The DNS VM's cloud-init (_cloud_dns_vm_user_data()) supports Debian/Ubuntu, SUSE and Fedora-family
+    images.
     """
     _account, eff_config, _cloudtype = resolve_cloud_account(definition, config, vm_name)
     return str(eff_config.get("CLOUD_DNS_IMAGE") or "")
 
 
-def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path):
+def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
     """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
     There is one DNS VM per backend, e.g. "lab-dns-aws", reused by every lab that uses that backend. It is not
@@ -3821,9 +3841,10 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
     If the VM does not exist, it is created with the same backend's create_vm(), at the smallest instance or plan size
-    (1 vCPU and 512 MiB, enough for BIND) and with `iso_image`: the account's CLOUD_DNS_IMAGE when set (see
-    cloud_dns_image()), else the ISO_IMAGE the calling lab already configured. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
-    copy_vm_image() validation is a no-op.
+    (1 vCPU and 512 MiB, enough for BIND). Its image is the first of: `preferred_image` (the account's CLOUD_DNS_IMAGE,
+    see cloud_dns_image()), the backend's opensuse_image(), and `iso_image`, the image the calling lab configured. The
+    image is looked up only when the VM is created. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each
+    cloud backend's copy_vm_image() validation is a no-op.
 
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
@@ -3844,6 +3865,9 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     log("- No cloud DNS VM found for backend \"{}{}{}\" — creating \"{}{}{}\"".format(
         _RED, backend_name, _RESET, _RED, dns_vm_name, _RESET))
+
+    iso_image = preferred_image or backend.opensuse_image() or iso_image
+    log("- Cloud DNS VM image: {}".format(iso_image))
 
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)

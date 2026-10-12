@@ -69,6 +69,15 @@ check("K3sDistro first node: rancher1_ip is the node itself", addr == "vm1")
 install_cmd = next(c for h, c, kw in fake.calls if "get.k3s.io" in c)
 check("K3sDistro first node: no K3S_URL/K3S_TOKEN on the server install",
       "K3S_URL" not in install_cmd and "K3S_TOKEN" not in install_cmd)
+_tfake = FakeSSH(responses=[("node-token", FakeResult(stdout="K10x::server:lab-token-0123456789\n"))])
+k8s.ssh_run = _tfake
+k8s.K3sDistro().install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab",
+                                                   "clu_token": "lab-token-0123456789"})
+_tcmd = next(c for h, c, kw in _tfake.calls if "get.k3s.io" in c)
+check("K3sDistro first node: clu_token reaches the server install as K3S_TOKEN, without K3S_URL",
+      "K3S_TOKEN=lab-token-0123456789 " in _tcmd and "K3S_URL" not in _tcmd)
+k8s.ssh_run = fake
+
 check("K3sDistro first node: --tls-san includes the cluster FQDN",
       "--tls-san cluster1.mydemo.lab" in install_cmd)
 # K3sDistro starts the service explicitly. The k3s install script can leave the service enabled but not started, so both RKE2Distro
@@ -160,6 +169,18 @@ try:
           any("systemctl enable --now rke2-server.service" in c for h, c, kw in fake_ssh.calls))
     check("RKE2Distro: rsyncs the rendered config to the remote host",
           any(a[0] == "rsync" for a, kw in fake_subproc.calls))
+    check("RKE2Distro first node: no token line without clu_token",
+          not any("token: " in c for h, c, kw in fake_ssh.calls))
+
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab",
+                                              "clu_token": "lab-token-0123456789"})
+    _cmds = [c for h, c, kw in fake_ssh.calls]
+    _token_at = next((i for i, c in enumerate(_cmds) if "'token: lab-token-0123456789' >> /etc/rancher/rke2/config.yaml" in c), -1)
+    _start_at = next((i for i, c in enumerate(_cmds) if "systemctl enable --now rke2-server.service" in c), -1)
+    check("RKE2Distro first node: clu_token is written to config.yaml before rke2-server starts",
+          0 <= _token_at < _start_at)
 
     # ── clu_rel and install_method are shell-quoted ──────────────────────────
     # These are free text from the lab JSON, so they are quoted before they reach the remote install command.

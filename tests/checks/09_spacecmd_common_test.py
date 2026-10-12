@@ -112,6 +112,18 @@ sc._api_call("host1", "mgrctl exec --", "saltkey.acceptedList", [])
 check("_api_call: 0-arg call also gets the '--' separator",
       "spacecmd -- api -A" in unwrap(fake.calls[0][1]) and "saltkey.acceptedList" in unwrap(fake.calls[0][1]))
 
+# spacecmd re-wraps whitespace-containing arguments in unescaped single quotes, so the JSON carries none.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._api_call("host1", "mgrctl exec --", "kickstart.profile.addScript", ["ks", "s", "echo 'a b'", "", "post", True])
+cmd = unwrap(fake.calls[0][1])
+match = re.search(r"spacecmd -- api -A '([^']*)' kickstart\.profile\.addScript", cmd)
+json_arg = match.group(1) if match else ""
+check("_api_call: a single quote in an argument is sent as the JSON escape \\u0027",
+      match is not None and "\\u0027" in json_arg)
+check("_api_call: the escaped JSON decodes back to the original arguments",
+      json.loads(json_arg or "null") == ["ks", "s", "echo 'a b'", "", "post", True])
+
 # -- _fault_check: a server-side fault gives a nonzero return code ------------------------
 # spacecmd can exit 0 when the server returns a Fault. _api_call and _spacecmd turn that into a nonzero return code,
 # so callers' returncode checks see the failure.
@@ -2549,6 +2561,42 @@ check("ensure_kickstart_profile: sets a variable not already present",
       any("kickstart_addvariable test-ks lab solar-system" in c for c in cmds))
 check("ensure_kickstart_profile: links an activation key not already present",
       any("kickstart_addactivationkeys test-ks 1-key" in c for c in cmds))
+
+# -- ensure_kickstart_scripts: add, keep unchanged, replace changed, skip invalid ----
+_ks_script = {"name": "k8s-node", "contents": "echo hi\n", "template": True}
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [_ks_script])
+_add = [c[1] for c in fake.calls if "kickstart.profile.addScript" in c[1]]
+check("ensure_kickstart_scripts: adds a new script with addScript's 8 positional arguments and its defaults",
+      len(_add) == 1 and json.dumps(["test-ks", "k8s-node", "echo hi\n", "", "post", True, True, False]) in _add[0])
+
+_same = json.dumps([{"id": 7, "name": "k8s-node", "contents": "echo hi\n", "script_type": "post", "interpreter": "",
+                     "chroot": True, "template": True, "erroronfail": False}])
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout=_same))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [_ks_script])
+check("ensure_kickstart_scripts: leaves an identical script alone",
+      not any("addScript" in c[1] or "removeScript" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout=_same))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [dict(_ks_script, contents="echo changed\n")])
+_order = [("remove" if "removeScript" in c[1] else "add") for c in fake.calls
+          if "removeScript" in c[1] or "addScript" in c[1]]
+check("ensure_kickstart_scripts: replaces a changed script: removeScript of its id, then addScript",
+      _order == ["remove", "add"] and any("removeScript" in c[1] and "7" in c[1] for c in fake.calls))
+
+_warned = []
+_real_warn = sc.warn
+sc.warn = _warned.append
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks",
+                            [{"name": "bad", "contents": "x", "type": "during"}, {"name": "", "contents": "x"}])
+sc.warn = _real_warn
+check("ensure_kickstart_scripts: skips entries without name/contents or with a type other than pre/post, with a warning",
+      len(_warned) == 2 and not any("addScript" in c[1] for c in fake.calls))
 
 fake = FakeSSH(responses=[
     ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\nlab = solar-system\n")),

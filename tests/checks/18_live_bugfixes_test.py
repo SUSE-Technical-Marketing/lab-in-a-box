@@ -1038,20 +1038,19 @@ check("copy_vm_image: every backend accepts source_sha256 ({} backends)".format(
       len(_backends) > 1 and all("source_sha256" in inspect.signature(c.copy_vm_image).parameters for c in _backends))
 
 # ── the cloud DNS VM's image comes from CLOUD_DNS_IMAGE when set ─────────
-# The DNS VM's cloud-init expects Ubuntu/Debian; booting it from a lab's SLES BYOS AMI left BIND uninstalled and the
-# deploy timed out waiting for named.
+# A lab whose own image cannot install BIND (e.g. an unregistered SLES BYOS AMI) gives its DNS VM another image.
 _real_resolve = backends.resolve_cloud_account
 backends.resolve_cloud_account = lambda d, c, v: ("bake", dict(c, CLOUD_DNS_IMAGE="ami-ubuntu"), "aws")
 check("cloud_dns_image: the account's CLOUD_DNS_IMAGE wins",
       backends.cloud_dns_image({}, {}, "smlm.rodeo.lab") == "ami-ubuntu")
 backends.resolve_cloud_account = lambda d, c, v: ("bake", dict(c), "aws")
-check("cloud_dns_image: unset gives \"\" (setup_vm.py falls back to the lab's ISO_IMAGE)",
+check("cloud_dns_image: unset gives \"\" (ensure_cloud_dns_vm() then tries openSUSE, then the lab's image)",
       backends.cloud_dns_image({}, {}, "smlm.rodeo.lab") == "")
 backends.resolve_cloud_account = _real_resolve
 _setup_vm_src = (_REPO / "scripts" / "setup_vm.py").read_text()
-check("setup_vm.py: the cloud DNS VM is created from cloud_dns_image() before the lab's own image",
-      "backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
-      and "env.get(\"mydomain\", \"\"), dns_image, lab_setup_path" in _setup_vm_src)
+check("setup_vm.py: cloud_dns_image() reaches ensure_cloud_dns_vm() as preferred_image, the lab's image as iso_image",
+      "preferred_image=backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
+      and "env.get(\"SOURCE_IMAGE\") or env.get(\"ISO_IMAGE\", \"\"), lab_setup_path" in _setup_vm_src)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

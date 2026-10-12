@@ -6,7 +6,7 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/server-kubernetes-deployment.html
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
 # ─── JSON section: "smlm" ───────────────────────────────────────────────────────
 #
@@ -201,10 +201,14 @@
 #                            sles16generic, rhel_9 or generic_rpm.
 #   smlm_kickstart_profiles: [{"name", "distribution" (name of an smlm_distributions entry), "root_password",
 #                            "virt_type": "none" (default) | "para_host" | "qemu" | "xenfv" | "xenpv",
-#                            "variables": {"key": "value"}, "activation_keys": [...], "child_channels": [...]}]
+#                            "variables": {"key": "value"}, "activation_keys": [...], "child_channels": [...],
+#                            "scripts": [{"name", "contents", "type": "post" (default) | "pre", "interpreter" ("" for
+#                            the kickstart shell), "chroot" (true), "template" (false), "erroronfail" (false)}]}]
 #                            root_password is used only at creation, because the server stores only a hash. To change
 #                            it, delete and recreate the profile. variables, activation_keys and child_channels are
-#                            applied on every run, diffed against the server's current lists.
+#                            applied on every run, diffed against the server's current lists. scripts are matched by
+#                            name: a changed script is replaced, scripts the list does not name are kept. With
+#                            "template": true, Cobbler expands $variables from the profile's variables in the script.
 #
 # Server self-monitoring (Admin -> Manager Configuration -> Monitoring)
 #   smlm_monitoring_enabled: "true" enables the bundled exporters for node, tomcat, postgres, taskomatic and
@@ -569,6 +573,12 @@ def _validate(v):
         if not isinstance(entry, dict) or not entry.get("url") or not _BOOTSTRAP_NAME_RE.match(str(entry.get("name", ""))):
             v.errors.append("[ERROR] smlm.smlm_bootstrap_scripts: every entry needs a plain file "
                             "'name' (letters, digits, '.', '_', '-') and a 'url'")
+    for ks in cfg.get("smlm_kickstart_profiles") or []:
+        for script in (ks.get("scripts") or []) if isinstance(ks, dict) else []:
+            if (not isinstance(script, dict) or not script.get("name") or not script.get("contents")
+                    or (script.get("type") or "post") not in ("pre", "post")):
+                v.errors.append("[ERROR] smlm.smlm_kickstart_profiles[{}].scripts: every script needs 'name', "
+                                "'contents' and a 'type' of pre or post".format(ks.get("name", "?")))
     v.vport("smlm", "smlm_db_ha_replicas")
 
 
