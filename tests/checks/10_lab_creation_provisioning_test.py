@@ -159,6 +159,20 @@ with mock.patch.object(lc, "wait_for_ssh_command", return_value=True) as wait:
 check("wait_for_reboot: waits for a boot ID other than the old one",
       "/proc/sys/kernel/random/boot_id" in wait.call_args[0][1] and "!= abc-123" in wait.call_args[0][1]
       and wait.call_args[1]["timeout"] == 30)
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 0)) as run:
+    check("is_transactional: True when transactional-update is present",
+          lc.is_transactional("vm1") is True and "/usr/sbin/transactional-update" in run.call_args[0][1])
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+        mock.patch.object(lc, "warn") as warned:
+    lc.update_kernel("vm1")
+check("update_kernel: updates the running kernel's package with transactional-update",
+      "transactional-update -n pkg update" in run.call_args[0][1] and "/usr/lib/modules/$(uname -r)/vmlinuz"
+      in run.call_args[0][1] and not warned.called)
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 1, "", "no repositories")), \
+        mock.patch.object(lc, "warn") as warned:
+    lc.update_kernel("vm1")
+check("update_kernel: a failed update warns instead of stopping",
+      warned.called and "no repositories" in warned.call_args[0][0])
 with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 1)) as run:
     check("pending_snapshot: False when the check fails", lc.pending_snapshot("vm1") is False)
 check("pending_snapshot: needs transactional-update and a default snapshot that is not the running one",

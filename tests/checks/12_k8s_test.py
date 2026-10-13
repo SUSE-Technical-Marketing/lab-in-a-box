@@ -57,6 +57,8 @@ def _record_reboot(hostname):
 
 k8s.reboot_into_pending_snapshot = _record_reboot
 k8s.wait_for_transactional_update_lock = lambda hostname: k8s.ssh_run.calls.append((hostname, "<wait_for_lock>", {}))
+k8s.update_kernel = lambda hostname: k8s.ssh_run.calls.append((hostname, "<update_kernel>", {}))
+k8s.is_transactional = lambda hostname: False
 
 
 # ── get_distro dispatch ───────────────────────────────────────────────────────
@@ -236,6 +238,40 @@ try:
     check("RKE2Distro join: appends server/token to config.yaml",
           any("server: https://vm1:9345" in c for h, c, kw in fake_ssh.calls)
           and any("token: RKE2TOKEN" in c for h, c, kw in fake_ssh.calls))
+
+    # ── transactional-update nodes: RPM method, reboot into its snapshot, SELinux on ──
+    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional node without install_method",
+          "INSTALL_RKE2_METHOD='' " in install_cmd)
+    k8s.is_transactional = lambda hostname: True
+    fake_ssh = FakeSSH()
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"}, "RKE2TOKEN", "vm1")
+    _cmds = [c for h, c, kw in fake_ssh.calls]
+    _installer = next(i for i, c in enumerate(_cmds) if "get.rke2.io" in c)
+    _reboots = [i for i, c in enumerate(_cmds) if c == "<reboot_into_pending_snapshot>"]
+    _selinux = next(i for i, c in enumerate(_cmds) if "selinux: true" in c)
+    _start = next(i for i, c in enumerate(_cmds) if "systemctl enable --now rke2-agent.service" in c)
+    check("RKE2Distro: a transactional-update node without install_method uses the RPM method",
+          "INSTALL_RKE2_METHOD=rpm " in _cmds[_installer])
+    check("RKE2Distro: waits for the transactional-update lock and boots a pending snapshot before the installer",
+          _cmds.index("<wait_for_lock>") < _installer and any(i < _installer for i in _reboots))
+    _kernel = _cmds.index("<update_kernel>") if "<update_kernel>" in _cmds else None
+    check("RKE2Distro: the RPM method on a transactional-update node updates the kernel and boots it before the installer",
+          _kernel is not None and _cmds.index("<wait_for_lock>") < _kernel < _installer
+          and any(_kernel < i < _installer for i in _reboots))
+    check("RKE2Distro: reboots into the installer's snapshot, then enables SELinux support, before starting RKE2",
+          any(_installer < i < _selinux for i in _reboots) and _selinux < _start)
+    check("RKE2Distro: selinux: true only when SELinux is enabled and rke2-selinux is installed",
+          "selinuxenabled && rpm -q --quiet rke2-selinux" in _cmds[_selinux])
+    fake_ssh = FakeSSH()
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab", "install_method": "tar"},
+                         "RKE2TOKEN", "vm1")
+    check("RKE2Distro: an explicit install_method wins on a transactional-update node",
+          "INSTALL_RKE2_METHOD=tar " in next(c for h, c, kw in fake_ssh.calls if "get.rke2.io" in c))
+    check("RKE2Distro: the tarball method leaves the kernel alone",
+          "<update_kernel>" not in [c for h, c, kw in fake_ssh.calls])
+    k8s.is_transactional = lambda hostname: False
 finally:
     os.chdir(_orig_cwd)
 
@@ -417,7 +453,6 @@ check("kubectl_command: RKE2 uses its bundled kubectl with the admin kubeconfig"
       k8s.RKE2Distro().kubectl_command() == "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml")
 check("kubectl_command: K3s uses k3s kubectl, found in /usr/local/bin or /opt/bin",
       k8s.K3sDistro().kubectl_command().endswith("k3s kubectl"))
-
 
 # ── HarvesterDistro.install_cluster: waits on HTTPS, fetches the kubeconfig, waits for Ready nodes, applies settings ─
 import harvester  # noqa: E402

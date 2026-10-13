@@ -1060,6 +1060,23 @@ def wait_for_reboot(host: str, old_boot_id: str, timeout: int = 600) -> bool:
         shlex.quote(old_boot_id)), timeout=timeout)
 
 
+def is_transactional(host: str) -> bool:
+    """Whether `host` changes its root filesystem through transactional-update (SL Micro, MicroOS)."""
+    return ssh_run(host, "[ -x /usr/sbin/transactional-update ]", check=False, capture=True).returncode == 0
+
+
+def update_kernel(host: str) -> None:
+    """
+    Update the package of `host`'s running kernel into a new transactional-update snapshot, which
+    reboot_into_pending_snapshot() then boots. Warns instead of failing when the update does not run, for example without
+    reachable repositories.
+    """
+    r = ssh_run(host, "transactional-update -n pkg update "
+                      "\"$(rpm -q --qf '%{NAME}' -f /usr/lib/modules/$(uname -r)/vmlinuz)\"", check=False, capture=True)
+    if r.returncode != 0:
+        warn("could not update the kernel on '{}': {}".format(host, (r.stderr or r.stdout or "").strip()[-300:]))
+
+
 def pending_snapshot(host: str) -> bool:
     """Whether `host` is a transactional-update system whose next boot uses a snapshot other than the running one."""
     r = ssh_run(host, "[ -x /usr/sbin/transactional-update ] && "

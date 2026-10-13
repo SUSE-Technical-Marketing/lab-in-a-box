@@ -26,8 +26,8 @@ from pathlib import Path
 from lab_creation import (
     die, log, warn, _RED, _RESET,
     ssh_run, ssh_output,
-    prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock,
-    wait_for_ssh_command,
+    prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock, is_transactional,
+    wait_for_ssh_command, update_kernel,
 )
 from services import DNSService
 import apps
@@ -139,6 +139,13 @@ class K8sDistro(object):
         """Shell command that runs kubectl with the cluster's admin kubeconfig on a server node."""
         raise NotImplementedError
 
+    @staticmethod
+    def _before_installer(hostname):
+        """Run before a vendor installer: its transaction starts from the running snapshot, so a pending one is booted
+        first, and it fails while another transactional-update holds the lock. No-op outside transactional-update."""
+        reboot_into_pending_snapshot(hostname)
+        wait_for_transactional_update_lock(hostname)
+
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         raise NotImplementedError
 
@@ -185,10 +192,7 @@ class K3sDistro(K8sDistro):
 
         prepare_local_as_kubeclient()
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
-        # The installer's transaction starts from the running snapshot; a snapshot already pending would be discarded. It also
-        # fails while another transactional-update holds the lock.
-        reboot_into_pending_snapshot(hostname)
-        wait_for_transactional_update_lock(hostname)
+        self._before_installer(hostname)
 
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
@@ -299,6 +303,12 @@ class RKE2Distro(K8sDistro):
         clu_type = self.name
         clu_rel = clu_ctx.get("clu_rel") or "stable"
         install_method = clu_ctx.get("install_method", "")
+        # The tarball method installs no rke2-selinux policy. On transactional-update systems the RPM method installs it,
+        # through transactional-update, and needs a reboot. Under that policy the SL Micro 6.1 GM kernel (6.4.0-19) denies
+        # RKE2 its MPTCP connections and 6.4.0-52 does not, so the kernel is updated first.
+        transactional = is_transactional(hostname)
+        if not install_method and transactional:
+            install_method = "rpm"
 
         prepare_local_as_kubeclient()
 
@@ -308,6 +318,11 @@ class RKE2Distro(K8sDistro):
         ssh_run(hostname, "echo '{}' | base64 -d > /etc/profile.d/rke2.sh; chmod 0420 /etc/profile.d/rke2.sh".format(_RKE2_PATH))
         ssh_run(hostname, "mkdir -p /var/lib/rancher/{0} /etc/rancher/{0}".format(clu_type))
 
+        self._before_installer(hostname)
+        if install_method == "rpm" and transactional:
+            log("  Updating the kernel on '{}'".format(hostname))
+            update_kernel(hostname)
+            reboot_into_pending_snapshot(hostname)
         log("  Installing RKE2 on '{}'".format(hostname))
         # install_method and clu_rel are free text from the lab JSON, so they are shell-quoted. clu_type and node_type are fixed
         # literals, so they are not quoted.
@@ -330,6 +345,9 @@ class RKE2Distro(K8sDistro):
              "root@{}:/etc/rancher/{}/config.yaml".format(hostname, clu_type)],
             check=True,
         )
+        reboot_into_pending_snapshot(hostname)
+        ssh_run(hostname, "if selinuxenabled && rpm -q --quiet {0}-selinux; then echo 'selinux: true' >> "
+                          "/etc/rancher/{0}/config.yaml; fi".format(clu_type))
 
         if token is None:
             log("  Starting RKE2 server on '{}' (first node of '{}')".format(hostname, clu_name))
