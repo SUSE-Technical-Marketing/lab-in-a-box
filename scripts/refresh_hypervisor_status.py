@@ -19,7 +19,7 @@
 #   (output_path defaults to $LABBUILDER_STATUS_FILE or
 #    /srv/www/lab-builder/status.json)
 
-__version__ = "bac232b"
+__version__ = "__LABVERSION__"
 
 import json
 import os
@@ -131,7 +131,22 @@ def build_status():
     }
 
 
+_HELP_TEXT = """\
+Usage: refresh_hypervisor_status.py [output_path]
+
+Writes the hypervisor status snapshot that the lab-builder web UI reads: hosts, their state and their source images.
+Secret-shaped configuration values are masked. output_path defaults to $LABBUILDER_STATUS_FILE, else
+/srv/www/lab-builder/status.json.
+
+Options:
+  --help, -h  Print this help and exit.
+"""
+
+
 def main():
+    if primary.wants_help(sys.argv[1:]):
+        print(_HELP_TEXT, end="")
+        sys.exit(0)
     out_path = sys.argv[1] if len(sys.argv) > 1 else \
         os.environ.get("LABBUILDER_STATUS_FILE", "/srv/www/lab-builder/status.json")
     try:

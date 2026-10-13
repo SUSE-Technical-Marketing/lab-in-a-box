@@ -323,7 +323,7 @@ def provision_vm(definition, config, defaults, vm_name):
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--help":
+    if primary.wants_help(sys.argv[1:]):
         print(
             "Usage: setup_vm.py <lab.json> <vm_hostname>\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"

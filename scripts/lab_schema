@@ -347,7 +347,23 @@ def _emit(schema, fmt):
         print(yaml.dump(schema, default_flow_style=False, allow_unicode=True, sort_keys=False))
 
 
+_HELP_TEXT = """\
+Usage: lab_schema <script_path> [json|yaml]
+       lab_schema --base [json|yaml]
+
+Prints the option schema of a lab-in-a-box install script, read from its "JSON section:" comment block, in JSON
+(default) or YAML. YAML output requires pyyaml.
+
+Options:
+  --base      Print the base lab-definition schema (common, nodes, kclusters) instead.
+  --help, -h  Print this help and exit.
+"""
+
+
 def main():
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(_HELP_TEXT, end="")
+        sys.exit(0)
     if len(sys.argv) < 2:
         print(f"Usage: {Path(sys.argv[0]).name} <script_path>|--base [json|yaml]", file=sys.stderr)
         sys.exit(1)

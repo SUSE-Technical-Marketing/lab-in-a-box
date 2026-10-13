@@ -215,7 +215,7 @@ def main() -> int:
         return 0
     quiet = "--quiet" in args
     exes = [a for a in args if a != "--quiet"]
-    if not exes or exes[0] in ("-h", "--help"):
+    if not exes or "-h" in exes or "--help" in exes:
         print(__doc__.strip())
         return 0 if exes else 2
     kinds = clu_types()

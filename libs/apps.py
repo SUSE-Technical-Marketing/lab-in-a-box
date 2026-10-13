@@ -189,14 +189,13 @@ def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> di
 
 def addon_installer(name: str) -> Optional[str]:
     """
-    Path of add-on `name`'s install script: install_<name> or install_<name>.py in the running program's own directory (a
-    repository checkout's scripts/, or the deployed bin directory), else install_<name> on PATH; None when there is none.
-    Running from a checkout therefore uses that checkout's add-ons, not the deployed ones.
+    Path of add-on `name`'s install script: the executable install_<name> that addon_files() picks in the running
+    program's own directory (a repository checkout's scripts/, or the deployed bin directory), else install_<name> on PATH;
+    None when there is none. Running from a checkout therefore uses that checkout's add-ons, not the deployed ones.
     """
-    here = Path(sys.argv[0]).resolve().parent
-    for candidate in (here / "install_{}".format(name), here / "install_{}.py".format(name)):
-        if candidate.is_file() and os.access(str(candidate), os.X_OK):
-            return str(candidate)
+    path = addon_files(str(Path(sys.argv[0]).resolve().parent)).get("install_{}".format(name))
+    if path and os.access(path, os.X_OK):
+        return path
     return shutil.which("install_{}".format(name))
 
 

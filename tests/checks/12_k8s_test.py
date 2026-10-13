@@ -381,6 +381,9 @@ class RecordingDistro(k8s.K8sDistro):
         self.calls.append(("agent", hostname, token, rancher1_ip))
         return token, rancher1_ip
 
+    def kubectl_command(self):
+        return "kubectl"
+
 
 cluster_lab = {"nodes": {
     "s1": {"kcluster": "c1"},
@@ -390,13 +393,31 @@ cluster_lab = {"nodes": {
     "a2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "agent"},
 }}
 distro = RecordingDistro()
-distro.install_cluster(cluster_lab, "c1", {})
+ready_waits = []
+with mock.patch.object(k8s, "wait_for_ssh_command",
+                       side_effect=lambda host, cmd, **kw: ready_waits.append((host, cmd, kw)) or True):
+    distro.install_cluster(cluster_lab, "c1", {})
 check("install_cluster: installs only the kcluster's nodes, in the lab definition's order",
       [c[1] for c in distro.calls] == ["s1", "a1", "s2", "a2"])
 check("install_cluster: KUBERNETES_NODE_TYPE and INSTALL_RKE2_TYPE pick agent or server (default server)",
       [c[0] for c in distro.calls] == ["server", "agent", "server", "agent"])
 check("install_cluster: the first server's token and address go to every later node",
       distro.calls[0][2:] == (None, None) and all(c[2:] == ("tok-1", "10.0.0.1") for c in distro.calls[1:]))
+check("install_cluster: then waits on the first server until all 4 nodes of the kcluster are Ready",
+      len(ready_waits) == 1 and ready_waits[0][0] == "10.0.0.1" and "kubectl get nodes" in ready_waits[0][1]
+      and "-ge 4" in ready_waits[0][1] and ready_waits[0][2].get("timeout") == distro.ready_timeout)
+with mock.patch.object(k8s, "wait_for_ssh_command", return_value=False):
+    try:
+        RecordingDistro().install_cluster(cluster_lab, "c1", {})
+        raised = False
+    except RuntimeError as e:
+        raised = "not all Ready" in str(e)
+check("install_cluster: nodes not Ready in time raise RuntimeError, so setup_lab marks the kcluster FAILED", raised)
+check("kubectl_command: RKE2 uses its bundled kubectl with the admin kubeconfig",
+      k8s.RKE2Distro().kubectl_command() == "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml")
+check("kubectl_command: K3s uses k3s kubectl, found in /usr/local/bin or /opt/bin",
+      k8s.K3sDistro().kubectl_command().endswith("k3s kubectl"))
+
 
 # ── HarvesterDistro.install_cluster: waits on HTTPS, fetches the kubeconfig, waits for Ready nodes, applies settings ─
 import harvester  # noqa: E402

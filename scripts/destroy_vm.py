@@ -13,7 +13,7 @@ Usage:
     destroy_vm.py <lab.json> <vm_hostname>
 """
 
-__version__ = "ca2d2d5"
+__version__ = "__LABVERSION__"
 
 import sys
 from pathlib import Path
@@ -95,6 +95,9 @@ def destroy_vm(definition, config, defaults, vm_name):
 
 
 def main():
+    if primary.wants_help(sys.argv[1:]):
+        print(__doc__.strip())
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)

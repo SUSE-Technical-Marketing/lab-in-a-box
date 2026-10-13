@@ -708,7 +708,7 @@ def main():
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
 
-    if "--help" in args or "-h" in args:
+    if primary.wants_help(args):
         print(_HELP_TEXT)
         sys.exit(0)
 

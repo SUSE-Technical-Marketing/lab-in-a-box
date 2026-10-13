@@ -333,7 +333,7 @@ def write_encrypted_copy(path, data, keys, passphrase):
 def main():
     args = sys.argv[1:]
 
-    if args and args[0] in ("--help", "-h"):
+    if primary.wants_help(args):
         print(_HELP_TEXT)
         sys.exit(0)
     if args and args[0] in ("--version", "-v"):

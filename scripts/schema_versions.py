@@ -90,7 +90,7 @@ def cmd_list() -> int:
 
 
 def main(argv: list) -> int:
-    if not argv or argv[0] == "--help":
+    if not argv or "--help" in argv or "-h" in argv:
         print(__doc__.strip())
         return 0 if argv else 2
     cmd, rest = argv[0], argv[1:]

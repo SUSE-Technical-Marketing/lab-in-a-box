@@ -14,7 +14,7 @@
 # --build-only stops when the lab-host VM's raw disk is a complete, shut-down image, and prints its path. It does not write to a
 # USB device. Writing to a real device (selection, confirmation, dd and growing the partition) is not implemented yet, so pass
 # --build-only until it is.
-__version__ = "6be996d"
+__version__ = "__LABVERSION__"
 
 import ipaddress
 import subprocess
@@ -381,7 +381,22 @@ def configure_handoff(definition):
     log("Root password (also written to /etc/issue on the nested automation VM): {}".format(password))
 
 
+_HELP_TEXT = """\
+Usage: build_lab_usb.py <lab.json> [--build-only]
+
+Builds a lab-host VM that runs the whole lab, so its disk can be written to a USB stick and run on other hardware.
+
+Options:
+  --build-only  Stop when the lab-host VM's raw disk is a complete, shut-down image and print its path. Writing to a
+                USB device is not implemented yet, so this option is currently required.
+  --help, -h    Print this help and exit.
+"""
+
+
 def main():
+    if primary.wants_help(sys.argv[1:]):
+        print(_HELP_TEXT, end="")
+        sys.exit(0)
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json> [--build-only]".format(Path(sys.argv[0]).name))
         sys.exit(1)

@@ -154,6 +154,15 @@ with tempfile.TemporaryDirectory() as d:
         found = apps.addon_installer("zz_test")
     check("addon_installer: a non-executable local file is skipped and PATH is used",
           found == "/usr/local/bin/install_zz_test")
+    os.chmod(local, 0o755)
+    bare = os.path.join(d, "install_zz_test")
+    with open(bare, "w") as f:
+        f.write("#!/bin/sh\n")
+    os.chmod(bare, 0o755)
+    with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]):
+        found = apps.addon_installer("zz_test")
+    check("addon_installer: with install_<name> and install_<name>.py both present, the one addon_files() deploys wins",
+          found == local)
 
 vm_only = dict(apps.DEFAULT_PLUGIN, name="vmonly", targets=["vm"])
 k3s_only = dict(apps.DEFAULT_PLUGIN, name="k3sonly", targets=["container"], requires_kubernetes=["k3s"])

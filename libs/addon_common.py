@@ -238,8 +238,9 @@ def print_schema(script_path, fmt, plugin=None):
 
 def handle_common_args(script_path, version, validate_fn=None, usage=None, plugin=None):
     """
-    Handle --version/-v, --validate <json>, --help, --input-definition/
-    --schema, --capabilities if present as sys.argv[1] (mirrors the identical
+    Handle --version/-v, --validate <json>, --input-definition/--schema and
+    --capabilities when they are sys.argv[1], and --help/-h anywhere in the
+    arguments (mirrors the identical
     dispatch block at the top of every install_<addon> script). Exits the
     process if one of these matched; otherwise returns None so the caller
     proceeds normally.
@@ -271,7 +272,7 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
     import apps  # deferred, as in print_schema()
     status = apps.status_warning(dict(plugin or {}, name=(plugin or {}).get("name") or Path(script_path).stem[8:]))
 
-    if argv and argv[0] == "--help":
+    if primary.wants_help(argv):
         if status:
             print("STATUS: " + status + "\n")
         print_help(script_path, usage=usage)

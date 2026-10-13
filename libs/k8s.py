@@ -27,6 +27,7 @@ from lab_creation import (
     die, log, warn, _RED, _RESET,
     ssh_run, ssh_output,
     prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock,
+    wait_for_ssh_command,
 )
 from services import DNSService
 import apps
@@ -102,20 +103,41 @@ class K8sDistro(object):
 
     name = None
 
+    ready_timeout = 1200
+
     def install_cluster(self, definition, clu_name, clu_ctx):
         """Install the cluster on its nodes: install_server() or install_agent() on each, in the lab definition's
-        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server."""
+        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server. Then wait until the
+        first server reports every node Ready; raises RuntimeError when that takes longer than ready_timeout seconds."""
         token = None
         rancher1_ip = None
+        node_count = 0
         for vm_name, node_cfg in (definition.get("nodes") or {}).items():
             if node_cfg.get("kcluster") != clu_name:
                 continue
+            node_count += 1
             node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
             if node_type == "agent":
                 token, rancher1_ip = self.install_agent(vm_name, clu_name, clu_ctx, token, rancher1_ip)
             else:
                 token, rancher1_ip = self.install_server(vm_name, clu_name, clu_ctx, token=token,
                                                          rancher1_ip=rancher1_ip)
+        if rancher1_ip:
+            self.wait_nodes_ready(rancher1_ip, clu_name, node_count)
+
+    def wait_nodes_ready(self, server, clu_name, count):
+        """Wait until kubectl on `server` lists at least `count` Ready nodes; raises RuntimeError after ready_timeout
+        seconds."""
+        log("  Waiting for the {} node(s) of '{}' to be Ready".format(count, clu_name))
+        check = "[ \"$({} get nodes --no-headers 2>/dev/null | awk '$2 ~ /^Ready/' | wc -l)\" -ge {} ]".format(
+            self.kubectl_command(), count)
+        if not wait_for_ssh_command(server, check, timeout=self.ready_timeout, interval=15):
+            raise RuntimeError("the nodes of '{}' were not all Ready after {}s; check the {} service on '{}'".format(
+                clu_name, self.ready_timeout, self.name, server))
+
+    def kubectl_command(self):
+        """Shell command that runs kubectl with the cluster's admin kubeconfig on a server node."""
+        raise NotImplementedError
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         raise NotImplementedError
@@ -138,6 +160,9 @@ class K3sDistro(K8sDistro):
 
     def token_path(self):
         return "/var/lib/rancher/k3s/server/node-token"
+
+    def kubectl_command(self):
+        return "PATH=$PATH:/usr/local/bin:/opt/bin k3s kubectl"
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         return self._install(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
@@ -225,6 +250,9 @@ class RKE2Distro(K8sDistro):
 
     def token_path(self):
         return "/var/lib/rancher/rke2/server/node-token"
+
+    def kubectl_command(self):
+        return "/var/lib/rancher/rke2/bin/kubectl --kubeconfig {}".format(self.kubeconfig_path())
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         return self._install(hostname, clu_name, clu_ctx, "server", token=token, rancher1_ip=rancher1_ip)
