@@ -73,6 +73,55 @@ check("discover()'s install_grafana entry targets vm and baremetal only",
       grafana_item is not None and grafana_item["targets"] == ["vm", "baremetal"])
 
 
+# ── validate_lab(): the real preflight, not a structural-only check ──────────
+# The web UI must reject what a deploy would reject. These are the values the structural check used to wave through.
+import os  # noqa: E402
+import tempfile  # noqa: E402
+from unittest import mock  # noqa: E402
+
+_outdir = tempfile.mkdtemp()
+os.environ["LABBUILDER_OUTPUT_DIR"] = _outdir
+_good_node = {"myip": "192.168.1.50", "mymac": "aa:bb:cc:dd:ee:01", "config_method": "virt_customize"}
+_common = {"SOURCE_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2",
+           "mymask": "24", "mygw": "192.168.1.1", "mydns": "192.168.1.1", "mydomain": "test.lab"}
+
+r = discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": dict(_good_node)}})
+check("validate_lab: a valid lab passes", r["ok"] is True)
+check("validate_lab: the report is returned without colour codes", "\x1b[" not in r["output"])
+
+r = discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": {"config_method": "virt_customize"}}})
+check("validate_lab: a node with no myip fails", r["ok"] is False and "myip" in r["output"])
+
+r = discovery.validate_lab({"common": dict(_common),
+                            "nodes": {"vm1": dict(_good_node), "vm2": dict(_good_node, mymac="aa:bb:cc:dd:ee:02")}})
+check("validate_lab: two nodes sharing one IP fail", r["ok"] is False and "already assigned" in r["output"])
+
+r = discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": dict(_good_node, backend="nosuch")}})
+check("validate_lab: an invalid backend fails", r["ok"] is False and "nosuch" in r["output"])
+
+r = discovery.validate_lab({"common": dict(_common),
+                            "nodes": {"vm1": dict(_good_node, addons=["nosuchaddon"])}})
+check("validate_lab: an add-on with no install script fails",
+      r["ok"] is False and "nosuchaddon" in r["output"])
+
+r = discovery.validate_lab({"common": dict(_common),
+                            "nodes": {"vm1": dict(_good_node, kcluster="nope")}, "kclusters": {}})
+check("validate_lab: a node referencing an undefined kcluster still fails",
+      r["ok"] is False and "nope" in r["output"])
+
+# host_checks=False: nothing may reach a hypervisor or the network from the web server's user.
+_lc = discovery._lab_creation_lib()
+with mock.patch.object(_lc.subprocess, "run") as _run, \
+        mock.patch.object(_lc, "run_libvirt_tool") as _virsh:
+    discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": dict(_good_node)}})
+_cmds = [c.args[0] for c in _run.call_args_list if c.args and isinstance(c.args[0], list)]
+check("validate_lab: no ping and no virsh call", not _virsh.called
+      and not any(c and c[0] in ("ping", "virsh", "ssh") for c in _cmds))
+check("validate_lab: the add-on --validate step still runs through the lab file it wrote",
+      all(os.path.basename(c[-1]).startswith("lab-builder-validate-") for c in _cmds if "--validate" in c))
+check("validate_lab: the temporary lab file is removed",
+      [f for f in os.listdir(_outdir) if f.startswith("lab-builder-validate-")] == [])
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

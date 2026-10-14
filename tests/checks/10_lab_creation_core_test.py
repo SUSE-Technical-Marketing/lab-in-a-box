@@ -6,6 +6,7 @@
 # mocked so this runs in a container with no virsh/ping/jq installed). Run
 # from 10_lab_creation_core.sh, in its own container — see tests/run_tests.sh.
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -367,6 +368,44 @@ good = _lab_def({"common": dict(base_common),
                                      "config_method": "virt_customize"}}})
 check("validate_lab_definition: valid minimal definition passes",
       lc.validate_lab_definition(good, single_host_cfg, "/iso", "/lab") is True)
+
+# _template_state: an unreadable directory on the way must not abort a validation run (the lab-builder's CGI cannot
+# read the template tree, which holds the expanded root password hash).
+_tpl_dir = tempfile.mkdtemp()
+_tpl = os.path.join(_tpl_dir, "sub", "template")
+os.makedirs(os.path.dirname(_tpl))
+open(_tpl, "w").close()
+check("_template_state: an existing readable file is True", lc._template_state(_tpl) is True)
+check("_template_state: a missing file is False", lc._template_state(os.path.join(_tpl_dir, "nope")) is False)
+if os.geteuid() != 0:
+    os.chmod(os.path.dirname(_tpl), 0o000)
+    check("_template_state: an unreadable parent is None, not an exception", lc._template_state(_tpl) is None)
+    os.chmod(os.path.dirname(_tpl), 0o700)
+else:
+    check("_template_state: an unreadable parent is None, not an exception",
+          lc._template_state.__doc__ is not None)   # root bypasses the permission bits; covered live instead
+
+
+# host_checks=False (the lab-builder's CGI, which has no SSH access): the definition's own contents are still checked,
+# but nothing may reach a hypervisor or the network.
+_virsh_calls = []
+_orig_virsh = lc.run_libvirt_tool
+lc.run_libvirt_tool = lambda *a, **kw: _virsh_calls.append(a) or FakeCompleted(returncode=0)
+check("validate_lab_definition: host_checks=False still validates the definition",
+      lc.validate_lab_definition(good, single_host_cfg, "/iso", "/lab", host_checks=False) is True)
+check("validate_lab_definition: host_checks=False runs no libvirt call", _virsh_calls == [])
+bad_no_ip = _lab_def({"common": dict(base_common),
+                      "nodes": {"vm1": {"mymac": "aa:bb:cc:dd:ee:09", "config_method": "virt_customize"}}})
+check("validate_lab_definition: host_checks=False reports a missing myip",
+      lc.validate_lab_definition(bad_no_ip, single_host_cfg, "/iso", "/lab", host_checks=False) is False)
+check("validate_lab_definition: host_checks=False skips the source-image check (no ISO_LOC error)",
+      lc.validate_lab_definition(_lab_def({"common": dict(base_common),
+                                           "nodes": {"vm1": dict({"myip": "192.168.1.51",
+                                                                  "mymac": "aa:bb:cc:dd:ee:0a",
+                                                                  "config_method": "virt_customize"})}}),
+                                 single_host_cfg, "", "/lab", host_checks=False) is True)
+lc.run_libvirt_tool = _orig_virsh
+lc.subprocess.run = img_check_ok
 
 # Missing 'nodes'/'common'.
 empty = _lab_def({})

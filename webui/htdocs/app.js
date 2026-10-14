@@ -1616,7 +1616,10 @@ async function validateLab() {
     const r = await apiPost("validate", { config: state.lab });
     box.hidden = false;
     box.className = "validate-result " + (r.ok ? "ok" : "err");
-    box.textContent = r.ok ? "✓ Valid lab definition." : (r.output || "Validation failed.");
+    // A valid lab can still carry warnings, so the report is shown either way.
+    box.textContent = r.ok
+      ? "✓ Valid lab definition." + (r.output ? "\n" + r.output : "")
+      : (r.output || "Validation failed.");
   } catch (e) { toast("Validate error: " + e.message); }
 }
 function downloadLab() {

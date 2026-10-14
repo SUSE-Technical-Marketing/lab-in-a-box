@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from importlib.machinery import SourceFileLoader
 
 # Only definitions with these name shapes are ever introspected.
@@ -274,16 +275,66 @@ def catalogue():
     return items
 
 
+_lab_creation = None
+
+
+def _lab_creation_lib():
+    """libs/lab_creation.py — the preflight validator, same lazy-cached import as _primary_lib()."""
+    global _lab_creation
+    if _lab_creation is None:
+        d = libs_dir()
+        if d not in sys.path:
+            sys.path.insert(0, d)
+        import lab_creation  # noqa: E402  (loaded from libs_dir)
+        _lab_creation = lab_creation
+    return _lab_creation
+
+
 def validate_lab(definition):
-    """Validate a full lab definition via libs/primary (captures its stderr)."""
+    """
+    Validate a full lab definition with the same preflight setup_lab.py runs (lab_creation.validate_lab_definition),
+    so what this reports and what a deploy accepts cannot drift apart. Its host checks are off: this runs as the web
+    server's user, which has no SSH access to the hypervisors, so a node's reachability and the source image on the
+    host are not checked here.
+
+    The definition is written to a temporary file first, because the preflight reads source_path for its report and
+    passes that path to each referenced add-on's own --validate. The file is removed before returning.
+
+    Returns {"ok": bool, "output": str} — the full report without terminal colour codes. A valid lab still reports its
+    warnings in output.
+    """
+    primary = _primary_lib()
+    lc = _lab_creation_lib()
     buf = io.StringIO()
     ok = True
+    fd, path = tempfile.mkstemp(prefix="lab-builder-validate-", suffix=".json", dir=output_dir())
     try:
-        with contextlib.redirect_stderr(buf):
-            _primary_lib().validate_definition(definition, "lab.json")
-    except SystemExit:
-        ok = False
-    return {"ok": ok, "output": _ANSI.sub("", buf.getvalue()).strip()}
+        with os.fdopen(fd, "w") as fh:
+            json.dump(definition, fh)
+        # The paths and host settings come from the status snapshot, which refresh_hypervisor_status.py writes with its
+        # secret-shaped values masked. /etc/lab_creation.defaults is root-only and lab_creation.cfg can hold
+        # credentials, so this never reads them: the web server's user has no business doing so, and the host checks
+        # those settings drive are off here anyway.
+        snapshot = status().get("config", {})
+        config = {k: v for k, v in snapshot.items() if k in ("REMOTE_HOST", "KVM_HOSTS", "VIRT_SRV", "BACKEND")}
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            try:
+                loaded = primary.load_definition(path)
+                ok = lc.validate_lab_definition(
+                    loaded, config,
+                    snapshot.get("ISO_LOC") or "/var/lib/libvirt/images/sources",
+                    os.environ.get("LABBUILDER_LAB_SETUP_PATH") or "/srv/www/htdocs/lab_creation",
+                    vm_img_loc=(snapshot.get("VM_IMG_LOC") or "/var/lib/libvirt/images/").rstrip("/"),
+                    host_checks=False,
+                )
+            except SystemExit:
+                ok = False
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return {"ok": bool(ok), "output": _ANSI.sub("", buf.getvalue()).strip()}
 
 
 def _safe_name(filename):
