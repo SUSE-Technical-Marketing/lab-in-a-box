@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_ds389.py — no real kubectl available in
+# Unit tests for scripts/install_ds389 — no real kubectl available in
 # this container. Verifies the real image/env-var-name/mount-path/port
 # ground-truthing against 389ds/ds-container's own kustomize manifests and
 # howto-deploy-389ds-on-openshift.html doc, the YAML-safe (not shell-safe)
@@ -14,7 +14,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_ds389 as ids  # noqa: E402
+import apps  # noqa: E402
+ids = apps.load_addon_module("install_ds389", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 

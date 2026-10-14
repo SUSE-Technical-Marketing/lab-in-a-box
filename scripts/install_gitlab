@@ -81,8 +81,8 @@ def _validate(v):
 def setup_gitlab_podman(hostname, cfg):
     """
     Deploys GitLab as a single standalone Omnibus podman container directly
-    on `hostname` — no Kubernetes, matching install_grafana.py/
-    install_prometheus.py's own style (raw SSH, a host-level systemd unit
+    on `hostname` — no Kubernetes, matching install_grafana/
+    install_prometheus's own style (raw SSH, a host-level systemd unit
     for persistence) and GitLab's own official Docker deployment shape
     exactly (one all-in-one container; GitLab runs its own internal
     PostgreSQL/Redis/Gitaly/nginx inside it — no external dependencies).
@@ -210,8 +210,8 @@ def setup_gitlab_kubernetes(hostname, cfg):
     Installs GitLab via its own real, official Helm chart (charts.gitlab.io)
     — see this file's own top-of-file reference for the exact values keys,
     which match the chart's current values.yaml. Deployed ONCE
-    to the cluster's server node, matching install_jenkins.py/
-    install_ds389.py's own convention for a cluster-wide Kubernetes app
+    to the cluster's server node, matching install_jenkins/
+    install_ds389's own convention for a cluster-wide Kubernetes app
     (not per-node, unlike the podman path above).
     """
     ns = ac.require_k8s_name(cfg, "gitlab_namespace", "gitlab")

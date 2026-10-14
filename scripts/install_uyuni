@@ -238,12 +238,12 @@ def setup_uyuni(hostname, virt_srv, cfg):
         rps = sc.run_provisioning_step
         rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
         rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "uyuni")
-        # System groups BEFORE any activation key — see install_smlm.py's
+        # System groups BEFORE any activation key — see install_smlm's
         # identical comment on the same reorder for why (activationkey_
         # addgroups dies if the named group doesn't exist yet server-side).
         rps("system groups", sc.ensure_system_groups, hostname, exec_prefix, cfg, "uyuni")
         # activation key(s) depend on the system groups step just above —
-        # see install_smlm.py's identical comment on this same retry window.
+        # see install_smlm's identical comment on this same retry window.
         rps("activation key", sc.ensure_activation_key, hostname, exec_prefix, cfg, "uyuni",
             retries=3, retry_delay=15)
         rps("appstreams", sc.ensure_appstreams, hostname, exec_prefix, cfg, "uyuni")

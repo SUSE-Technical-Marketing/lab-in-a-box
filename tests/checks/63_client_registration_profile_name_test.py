@@ -8,7 +8,8 @@ sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
 import spacecmd_common as sc  # noqa: E402
-import install_client_registration as icr  # noqa: E402
+import apps  # noqa: E402
+icr = apps.load_addon_module("install_client_registration", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 _real_resolve = sc._ensure_client_can_resolve_server

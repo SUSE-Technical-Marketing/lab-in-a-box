@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_gitlab.py — no real podman/kubectl available
+# Unit tests for scripts/install_gitlab — no real podman/kubectl available
 # in this container. Verifies the podman-mode Omnibus container invocation
 # (real image, port mapping, GITLAB_OMNIBUS_CONFIG assembly and its Ruby-DSL
 # escaping, credential resolution) and the kubernetes-mode Helm invocation
@@ -16,7 +16,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_gitlab as igl  # noqa: E402
+import apps  # noqa: E402
+igl = apps.load_addon_module("install_gitlab", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 
@@ -105,7 +106,7 @@ check("setup_gitlab_podman: escapes an embedded single quote as a Ruby string, n
       "pass\\'word" in omnibus_config(run_cmd))
 
 # Credential-store path: the "gitlab" kind is auto-discovered when
-# gitlab_account is unset — same convention as install_ds389.py.
+# gitlab_account is unset — same convention as install_ds389.
 ssh_calls.clear()
 with mock.patch.object(igl.primary, "find_service_credential_for_kind",
                         return_value=("my-gitlab-creds", ["my-gitlab-creds"])), \

@@ -48,12 +48,12 @@ flowchart LR
 2. Make your change. Match the style of the surrounding code:
    - Python targets **3.11**, stdlib-only. No new third-party dependency
      without discussing it in an issue first.
-   - Every `scripts/install_<addon>.py` is self-contained and follows the
+   - Every `scripts/install_<addon>` is self-contained and follows the
      same pattern: a `# JSON section: "<name>" — configurable keys: ...`
      comment block at the top (this is what `--schema`/the web UI read to
      build forms), then `import addon_common`/`primary`/`k8s` from `libs/`,
      then the actual work over SSH. Look at a small existing add-on (e.g.
-     `install_argocd.py`) before writing a new one.
+     `install_argocd`) before writing a new one.
    - Logic used by more than one script belongs in `libs/`, not copy-pasted.
    - Don't use a fixed `sleep()` to wait on something coming up (a reboot, a
      service, an API) — poll for the actual condition instead
@@ -181,7 +181,7 @@ See [Available addons](README.md#available-addons) and
 [Lab definition format](README.md#lab-definition-format) in the README for
 the JSON shape add-ons plug into. In short:
 
-1. Create `scripts/install_<name>.py` following the pattern of an existing
+1. Create `scripts/install_<name>` following the pattern of an existing
    add-on (self-contained, `# Schema version: 1.0` line and `# JSON section:`
    doc comment, `addon_common` dispatch for `--help`/`--version`/`--schema`).
    Record its first version with

@@ -2,7 +2,7 @@
 # Part of lab-in-a-box, it will install Seafile — either as a standalone
 # podman deployment directly on a host/VM (no Kubernetes needed) or on a
 # real Kubernetes cluster via Seafile's own official Helm chart. Same
-# dual-mode philosophy as install_nextcloud.py: a "podman" mode for a
+# dual-mode philosophy as install_nextcloud: a "podman" mode for a
 # single lab node, a "kubernetes" mode for a real cluster, and as much of
 # the underlying image's own real configuration surface exposed as
 # reasonably possible.
@@ -19,7 +19,7 @@
 #
 # Seafile CE requires MariaDB or MySQL, not PostgreSQL. The seafile-mc image creates and migrates its
 # three databases on first boot, using root database credentials. This addon therefore does not
-# pre-create them, unlike install_nextcloud.py. The port is published directly, with no TLS frontend,
+# pre-create them, unlike install_nextcloud. The port is published directly, with no TLS frontend,
 # because the lab domains are not publicly resolvable and cannot get Let's Encrypt certificates.
 #
 # Real env vars confirmed from the docs above: SEAFILE_SERVER_HOSTNAME,
@@ -31,13 +31,13 @@
 # documented env var exists for changing the seafile-mc image's own internal
 # nginx listening port — its real, confirmed mechanism is a plain docker/podman
 # port-publish (-p {host_port}:80), not an env var, so (unlike
-# install_nextcloud.py's APACHE_PORT-based --network host approach) this addon
+# install_nextcloud's APACHE_PORT-based --network host approach) this addon
 # uses ordinary bridge networking + port-publish for the app container, and
 # reaches the companion MariaDB/Redis on the SAME host via the
 # "host.containers.internal:host-gateway" special add-host entry (a real,
 # documented Docker/Podman mechanism, not this addon's own invention) — the
 # companion database's bind-address is therefore opened to 0.0.0.0, not left at
-# the loopback-only default install_nextcloud.py uses with --network host.
+# the loopback-only default install_nextcloud uses with --network host.
 #
 # Schema version: 1.1
 #
@@ -172,10 +172,10 @@ def setup_seafile_podman(hostname, cfg, virt_srv=None):
     `hostname` — the official seafileltd/seafile-mc image, plus a
     companion MariaDB installed NATIVELY on the same host (via
     libs/db_common.py's setup_mariadb_os() — the identical code
-    install_mariadb.py itself runs) and a companion Redis/Memcached
+    install_mariadb itself runs) and a companion Redis/Memcached
     container. See this file's own top-of-file reference for why bridge
     networking + host.containers.internal is used here instead of
-    install_nextcloud.py's --network host approach.
+    install_nextcloud's --network host approach.
     """
     image = cfg.get("seafile_image") or _DEFAULT_IMAGE
     version = cfg.get("seafile_version") or _DEFAULT_VERSION
@@ -209,7 +209,7 @@ def setup_seafile_podman(hostname, cfg, virt_srv=None):
         "mariadb_port": cfg.get("seafile_db_port"),
         # Reached from a bridge-networked container via host.containers.internal
         # below, not the host's own loopback — must listen on every interface,
-        # unlike install_nextcloud.py's --network host approach, which keeps the
+        # unlike install_nextcloud's --network host approach, which keeps the
         # loopback-only default.
         "mariadb_bind_address": "0.0.0.0",
     }, **db_options)
@@ -283,7 +283,7 @@ def setup_seafile_kubernetes(hostname, cfg):
     """
     Installs Seafile via its own real official Helm chart
     (haiwen.github.io/seafile-helm-chart) — deployed ONCE to the cluster's
-    server node, matching install_nextcloud.py/install_gitlab.py's own
+    server node, matching install_nextcloud/install_gitlab's own
     convention for a cluster-wide Kubernetes app.
     """
     edition = (cfg.get("seafile_edition") or "ce").lower()

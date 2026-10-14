@@ -5,8 +5,8 @@
 """
 libs/apps.py: the plugin registry for install_<addon> executables.
 
-An add-on is any executable named install_<addon>, with or without a file extension (install_<addon>.py,
-install_<addon>.sh, a compiled binary, ...), written in any language. Its contract:
+An add-on is any executable named install_<addon>, with or without a file extension (install_<addon>.sh, a compiled
+binary, ...), written in any language. Its contract:
 
     install_<addon> --schema json      prints its schema as JSON, with a "capabilities" object:
                                        {"targets": [...], "layers": [...], "requires_kubernetes": [...] or null,
@@ -168,6 +168,29 @@ def describe(path: str) -> dict:
     """Return the add-on executable's `--schema json` output (cached), or {} when it provides none."""
     real = os.path.realpath(path)
     return describe_many([real])[real]
+
+
+def load_addon_module(name: str, directory: Optional[str] = None):
+    """
+    Import add-on `name`'s script as a module and return it, for callers that need its functions rather than its
+    capabilities (its own unit tests, mainly). `directory` defaults to where addon_installer() looks. An add-on file
+    carries no .py extension, so a plain import statement cannot reach it; this loads it by path.
+
+    Raises FileNotFoundError when there is no such add-on.
+    """
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+
+    key = "install_{}".format(name) if not name.startswith("install_") else name
+    directory = directory or str(Path(sys.argv[0]).resolve().parent)
+    path = addon_files(directory).get(key)
+    if not path:
+        raise FileNotFoundError("no add-on {} in {}".format(key, directory))
+    loader = SourceFileLoader(key, path)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(key, loader))
+    sys.modules.setdefault(key, mod)
+    loader.exec_module(mod)
+    return mod
 
 
 def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> dict:

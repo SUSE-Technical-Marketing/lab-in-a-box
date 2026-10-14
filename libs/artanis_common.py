@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Part of lab-in-a-box — shared Kubernetes-manifest shape for GNU Artanis (Guile Scheme web
-# framework) applications, reused by install_colt.py and install_wikimusic.py.
+# framework) applications, reused by install_colt and install_wikimusic.
 # Author/s: Raul Mahiques
 # License: GPLv3
 """

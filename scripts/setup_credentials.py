@@ -116,7 +116,7 @@ PROVIDER_FIELDS = {
 # libs/addon_common.py's resolve_credential()) so the two concepts never
 # collide: a file is either a cloud account or a service credential, never
 # both. One credential file per kind is reusable across every addon that
-# needs it (e.g. a single "scc" file for install_smlm.py's smlm_scc_user
+# needs it (e.g. a single "scc" file for install_smlm's smlm_scc_user
 # AND any other addon that later wants SCC credentials too), regardless of
 # each addon's own JSON-field prefix — see each field's own canonical name.
 SERVICE_CREDENTIAL_FIELDS = {

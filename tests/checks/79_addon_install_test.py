@@ -38,26 +38,26 @@ PLACEHOLDERS = {"integer": "1", "port": "8080", "boolean": "true", "url": "https
 
 # Section fields an add-on's code requires beyond its schema's required fields.
 EXTRA_CONFIG = {
-    "install_client_registration.py": {"client_registration_activation_key_base_channel": "sles15-sp7-pool-x86_64"},
-    "install_hermes.py": {"hermes_llm_api_key": "key-123"},
-    "install_prometheus.py": {"prometheus_scrape_configs": [{"job_name": "node", "targets": ["vm1.mydemo.lab:9100"]}]},
-    "install_smlm.py": {"smlm_fqdn": "smlm.mydemo.lab", "smlm_scc_user": "scc-user", "smlm_scc_password": "Secret-123"},
-    "install_smlm_proxy.py": {"smlm_proxy_server": "smlm.mydemo.lab", "smlm_proxy_scc_user": "scc-user",
+    "install_client_registration": {"client_registration_activation_key_base_channel": "sles15-sp7-pool-x86_64"},
+    "install_hermes": {"hermes_llm_api_key": "key-123"},
+    "install_prometheus": {"prometheus_scrape_configs": [{"job_name": "node", "targets": ["vm1.mydemo.lab:9100"]}]},
+    "install_smlm": {"smlm_fqdn": "smlm.mydemo.lab", "smlm_scc_user": "scc-user", "smlm_scc_password": "Secret-123"},
+    "install_smlm_proxy": {"smlm_proxy_server": "smlm.mydemo.lab", "smlm_proxy_scc_user": "scc-user",
                               "smlm_proxy_scc_password": "Secret-123"},
 }
 
 # Canned replies for commands an add-on reads or polls: add-on file name -> [(regex on the command, stdout)].
 # COMMON_RESPONSES apply to every add-on, after its own.
 RESPONSES = {
-    "install_complianceascode.py": [
+    "install_complianceascode": [
         (r"kubectl version -o json", '{"serverVersion": {"gitVersion": "v1.36.5+k3s1"}}'),
         (r"helm search repo rancher-charts/rancher-compliance ",
          '[{"name": "rancher-charts/rancher-compliance", "version": "110.2.0+up1.5.3"}]'),
         (r"helm show chart rancher-charts/rancher-compliance ",
          "@@110.2.0+up1.5.3\n  catalog.cattle.io/kube-version: '>= 1.34.0-0 < 1.37.0-0'\nname: rancher-compliance"),
     ],
-    "install_rancher.py": [(r"bootstrapPassword", "bootstrap-pw")],
-    "install_uyuni.py": [(r"cat /tmp/mgradm_install\.rc", "0")],
+    "install_rancher": [(r"bootstrapPassword", "bootstrap-pw")],
+    "install_uyuni": [(r"cat /tmp/mgradm_install\.rc", "0")],
 }
 COMMON_RESPONSES = [(r"%\{http_code\}", "200"), (r"source /etc/os-release", "sles|15.7|suse"),
                     (r"systemctl is-active", "active"), (r"\.State\.Health\.Status", "healthy")]

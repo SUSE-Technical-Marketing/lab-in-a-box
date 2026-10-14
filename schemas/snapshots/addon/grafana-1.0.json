@@ -16,7 +16,7 @@
    "type": "string"
   },
   "grafana_image": {
-   "default": "\"docker.io/grafana/grafana\" \u2014 the standard upstream image; there is no SUSE-branded Grafana image, same reasoning as install_prometheus.py's own grafana_image-equivalent field",
+   "default": "\"docker.io/grafana/grafana\" \u2014 the standard upstream image; there is no SUSE-branded Grafana image, same reasoning as install_prometheus's own grafana_image-equivalent field",
    "required": false,
    "type": "string"
   },

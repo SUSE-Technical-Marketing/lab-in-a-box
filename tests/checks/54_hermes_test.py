@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_hermes.py. Verifies the env var names against Hermes Agent's docs,
+# Unit tests for scripts/install_hermes. Verifies the env var names against Hermes Agent's docs,
 # the image build command
 # construction, the credential-store-with-plaintext-fallback wiring, and
 # the manifest's real structure. Run from 54_hermes.sh, in its own
@@ -12,7 +12,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_hermes as ih  # noqa: E402
+import apps  # noqa: E402
+ih = apps.load_addon_module("install_hermes", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 

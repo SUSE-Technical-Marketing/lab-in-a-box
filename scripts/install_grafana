@@ -7,11 +7,11 @@
 #
 # Reference: https://grafana.com/docs/grafana/latest/administration/provisioning/
 #            https://grafana.com/grafana/dashboards/10277-uyuni-suse-manager-server/
-#            (community dashboard for the exporters that install_prometheus.py's
+#            (community dashboard for the exporters that install_prometheus's
 #            _smlm_scrape_job() targets, uid 2p2qPSUik). Its raw JSON carries two unfilled
 #            placeholders: ${DS_PROMETHEUS} (the datasource name) and ${VAR_JOB} (the Prometheus
 #            job label). Grafana normally prompts for them on import. This addon substitutes them,
-#            using the datasource name it provisions and the job name from install_prometheus.py's
+#            using the datasource name it provisions and the job name from install_prometheus's
 #            scrape config.)
 #
 # Schema version: 1.1
@@ -118,7 +118,7 @@ def _datasource_provisioning_config(prometheus_url):
 def setup_grafana(hostname, cfg):
     """
     Deploys a standalone Grafana server as a podman container directly on `hostname` — no
-    Kubernetes, matching install_prometheus.py's own style exactly (raw SSH, heredoc config,
+    Kubernetes, matching install_prometheus's own style exactly (raw SSH, heredoc config,
     --network host, a host-level systemd unit for persistence). See that file's own comment on
     setup_prometheus() for why host networking specifically: the same container-DNS-resolves-a-
     real-hostname-to-127.0.0.1 pitfall applies here whenever Grafana's own datasource URL uses a
@@ -138,7 +138,7 @@ def setup_grafana(hostname, cfg):
             "grafana_dashboards is set — a dashboard needs a datasource to query")
     if import_smlm and not cfg.get("grafana_smlm_job_name"):
         die("grafana: grafana_smlm_job_name is required when grafana_import_smlm_dashboard is "
-            "\"true\" — must match install_prometheus.py's own scrape job_name for that server "
+            "\"true\" — must match install_prometheus's own scrape job_name for that server "
             "(its auto-generated smlm job is \"smlm-<hostname>\")")
 
     print("- Installing podman (if not already present)")

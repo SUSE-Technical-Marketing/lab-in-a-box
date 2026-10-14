@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Pure-logic unit tests for libs/addon_common.py — the CLI
-# scaffolding shared by every install_<addon>.py script. No SSH/subprocess
+# scaffolding shared by every install_<addon> script. No SSH/subprocess
 # needed except for print_schema's lab_schema delegation, which is mocked.
 # Run from 13_addon_common.sh, in its own container — see tests/run_tests.sh.
 import io

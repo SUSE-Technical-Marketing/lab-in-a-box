@@ -191,7 +191,7 @@ def _ensure_document_server(hostname, provider, cfg_office):
     Deploys a real, standalone Document Server container for `provider`
     (onlyoffice/eurooffice/collabora) directly on `hostname` via podman —
     same "podman rm -f; podman run" pattern already used by
-    install_gitlab.py/install_grafana.py. Returns (base_url, jwt_secret_or_None).
+    install_gitlab/install_grafana. Returns (base_url, jwt_secret_or_None).
     """
     default_image, default_version = _OFFICE_SERVER_DEFAULTS[provider]
     image = cfg_office.get("server_image") or default_image
@@ -222,11 +222,11 @@ def setup_nextcloud_podman(hostname, cfg, virt_srv=None):
     `hostname` — the official nextcloud image, plus a companion MariaDB or
     PostgreSQL installed NATIVELY on the same host (if nextcloud_db is
     "mariadb"/"postgresql") via libs/db_common.py's own setup_mariadb_os()/
-    setup_postgresql_os() — the exact same install_mariadb.py/
-    install_postgresql.py logic, not a re-implementation — and a companion
+    setup_postgresql_os() — the exact same install_mariadb/
+    install_postgresql logic, not a re-implementation — and a companion
     Redis container (if nextcloud_redis; no shared addon exists for Redis
     in this project yet, so it stays a small inline container here, same as
-    install_prometheus.py/install_grafana.py's own single-container addons).
+    install_prometheus/install_grafana's own single-container addons).
     The podman container deployment is the only shape that supports
     nextcloud_airgap.
     """
@@ -303,7 +303,7 @@ def setup_nextcloud_podman(hostname, cfg, virt_srv=None):
     # PostgreSQL NATIVELY on this same host (via db_common.py), and Redis
     # above joins the same host network — host networking is what lets this
     # container reach either one at a plain 127.0.0.1, the identical
-    # reasoning already used by install_prometheus.py/install_grafana.py for
+    # reasoning already used by install_prometheus/install_grafana for
     # their own cross-service localhost resolution. APACHE_PORT (the
     # official image's own documented env var for exactly this scenario)
     # makes Apache itself listen on nextcloud_http_port instead of the
@@ -408,7 +408,7 @@ def setup_nextcloud_kubernetes(hostname, cfg):
     """
     Installs Nextcloud via its own real community Helm chart
     (nextcloud.github.io/helm) — deployed ONCE to the cluster's server
-    node, matching install_gitlab.py/install_jenkins.py's own convention
+    node, matching install_gitlab/install_jenkins's own convention
     for a cluster-wide Kubernetes app.
     """
     ns = ac.require_k8s_name(cfg, "nextcloud_namespace", "nextcloud")

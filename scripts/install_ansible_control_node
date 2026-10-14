@@ -113,8 +113,8 @@ def _find_uyuni_server(definition):
     None if neither is present (a lab using this control node addon with
     no SMLM/Uyuni server at all — the dynamic inventory script then simply
     isn't usable, which is fine; nothing here depends on it existing).
-    Prefers 'smlm' if both somehow exist (matches install_smlm.py's own
-    field-naming convention for credentials over install_uyuni.py's).
+    Prefers 'smlm' if both somehow exist (matches install_smlm's own
+    field-naming convention for credentials over install_uyuni's).
     """
     smlm_nodes = list(k8s.addon_nodes(definition, "smlm"))
     if smlm_nodes:
@@ -137,7 +137,7 @@ def _write_inventory_env(hostname, server_host, admin_user, admin_pass):
     process environment. That environment does not inherit anything exported in an interactive
     shell, so the file is the only source of the variables for that path. UYUNI_VERIFY_SSL is
     always written "false" — this project's own labs use a self-signed
-    cert, the same reality install_smlm.py itself already works around.
+    cert, the same reality install_smlm itself already works around.
     """
     env_content = (
         "UYUNI_HOST={host}\n"

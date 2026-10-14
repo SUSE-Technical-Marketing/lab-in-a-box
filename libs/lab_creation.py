@@ -880,9 +880,9 @@ def ssh_output(hostname, cmd):
 def detect_os(hostname):
     """
     Detect the remote OS family/version from /etc/os-release. Shared by every
-    OS-native addon installer (install_postgresql.py, install_mariadb.py, ...)
+    OS-native addon installer (install_postgresql, install_mariadb, ...)
     that has to branch on distro to pick a package manager — promoted here
-    from install_postgresql.py's own former private pg_detect_os() once a
+    from install_postgresql's own former private pg_detect_os() once a
     second addon needed the identical logic.
     """
     raw = ssh_run(hostname, "source /etc/os-release 2>/dev/null && "

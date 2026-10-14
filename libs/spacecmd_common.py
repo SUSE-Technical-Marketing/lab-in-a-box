@@ -2,7 +2,7 @@
 Shared spacecmd and mgr-sync helpers for SUSE Multi-Linux Manager (SMLM) and Uyuni servers.
 
 The same server tooling is reached through an exec wrapper that depends on how the server is
-deployed: install_smlm.py (Kubernetes) and install_uyuni.py (podman, via mgradm) pass their own
+deployed: install_smlm (Kubernetes) and install_uyuni (podman, via mgradm) pass their own
 wrapper as `exec_prefix`, for example "kubectl exec -n {ns} deploy/uyuni -c uyuni --" or
 "mgrctl exec --".
 
@@ -58,7 +58,7 @@ from lab_creation import ssh_run, scp_to, die, warn, error, boot_id, wait_for_re
 
 def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
     """
-    Run one config-provisioning step from install_smlm.py's or install_uyuni.py's setup orchestration, and report a
+    Run one config-provisioning step from install_smlm's or install_uyuni's setup orchestration, and report a
     failure without stopping the remaining steps.
 
     A die() raised by one step (an uncaught SystemExit) would otherwise unwind out of the whole orchestration function and
@@ -347,7 +347,7 @@ def pending_channels(hostname, exec_prefix, channels):
     """
     Return the subset of `channels` that have not finished syncing. An empty set means every channel is ready. A channel is
     ready when its reposync log, /var/log/rhn/reposync/<label>.log inside the server container, ends with "Sync completed.".
-    This is the same signal the channel sync monitor in install_smlm.py uses. The check runs through the module's exec_prefix,
+    This is the same signal the channel sync monitor in install_smlm uses. The check runs through the module's exec_prefix,
     so it works for both podman and Kubernetes deployments. Callers use it for a one-shot decision, without a blocking wait.
     """
     pending = set()
@@ -1105,7 +1105,7 @@ def import_images(hostname, exec_prefix, cfg, prefix):
     """
     Runs every entry in <prefix>_image_imports through
     import_container_image() — see its own docstring for why this is a
-    SEPARATE, explicit trigger (install_smlm.py's own
+    SEPARATE, explicit trigger (install_smlm's own
     --import-images/--run-recurring-schedules-style flag), never part of
     the automatic install flow: entry shape is {"name", "version",
     "build_host_id", "store", "activation_key"}.
@@ -1304,8 +1304,8 @@ def ensure_orgs(hostname, exec_prefix, cfg, prefix, default_admin_user, default_
 
         ensure_config_channels(hostname, exec_prefix, org, prefix)
         # System groups BEFORE any activation key — same reorder, same
-        # reason, as the top-level orchestration in install_smlm.py/
-        # install_uyuni.py: ensure_activation_key()'s own group-linking dies
+        # reason, as the top-level orchestration in install_smlm/
+        # install_uyuni: ensure_activation_key()'s own group-linking dies
         # if the named group doesn't exist yet server-side.
         ensure_system_groups(hostname, exec_prefix, org, prefix)
         ensure_activation_key(hostname, exec_prefix, org, prefix)
@@ -1517,7 +1517,7 @@ def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
 
     This function only enables the entitlement and triggers the package install. It does not create the playbook or inventory
     files, which live on the control node and are managed outside this module. It also does not set up SSH keys from the
-    control node to managed targets. install_ansible_control_node.py does both, over SSH to the control node.
+    control node to managed targets. install_ansible_control_node does both, over SSH to the control node.
     """
     entries = cfg.get("{}_ansible_control_nodes".format(prefix)) or []
     for entry in entries:
@@ -2064,7 +2064,7 @@ def wait_for_content_environment(hostname, exec_prefix, project_label, env_label
     "built" or "failed". Returns the final status string. The function gives up after `timeout` seconds.
 
     die_on_timeout defaults to True and dies with a clear message on timeout. With False it returns the last status seen, which
-    may be None, so the caller can recover. install_uyuni.py's CLM retry wrapper uses that to restart the server and try again.
+    may be None, so the caller can recover. install_uyuni's CLM retry wrapper uses that to restart the server and try again.
     """
     waited = 0
     status = None
@@ -2131,7 +2131,7 @@ def ensure_openscap_prerequisites(system, xccdf_path):
     Returns True if `xccdf_path` exists on `system` afterwards. The path is located with `rpm -ql scap-security-guide`, because the
     content path depends on the product and version. If the path is missing, the function returns False and warns, rather than
     dying. A scan against a missing profile is a scheduling problem to report through its own error, and it should not stop the
-    whole install_smlm.py run.
+    whole install_smlm run.
     """
     r = ssh_run(system, "test -f {}".format(shlex.quote(xccdf_path)), check=False)
     if r.returncode == 0:
@@ -2345,7 +2345,7 @@ def ensure_scap_policies(hostname, exec_prefix, cfg, prefix, admin_user, admin_p
     fetch_remote_resources are optional, and they match create_scap_policy()'s parameters.
 
     The function is idempotent. It logs in once with scap_web_login(), using `admin_user` and `admin_pass` from the caller, which
-    are the admin account the caller resolved. The config key names differ between install_smlm.py and install_uyuni.py, so the
+    are the admin account the caller resolved. The config key names differ between install_smlm and install_uyuni, so the
     caller passes them explicitly. It lists the existing policies once, and creates only the policies that are not present by
     name. The function does nothing if the field is unset or empty.
     """
@@ -2844,7 +2844,7 @@ def ensure_virtual_host_managers(hostname, exec_prefix, cfg, prefix):
 
     Credential resolution mirrors the rest of this project's own
     resolve_credential() convention (libs/addon_common.py) at the CALLER's
-    level, not here — install_smlm.py resolves
+    level, not here — install_smlm resolves
     smlm_vhm_aws_access_key/smlm_vhm_aws_secret_key (directly, or via a
     named/auto-discovered 'aws' kind credentials file) BEFORE calling this,
     and fills them into each entry's access_key_id/secret_access_key here.
@@ -2867,7 +2867,7 @@ def ensure_grafana_formula(hostname, exec_prefix, cfg, prefix):
     built-in formula support. The formula installs and configures Grafana on the target. It adds a Prometheus data source, and when
     reportdb is enabled it creates a read-only reportdb Postgres user and the formula's own dashboards.
 
-    This is separate from the standalone install_grafana.py and install_prometheus.py addons, which run podman containers and use
+    This is separate from the standalone install_grafana and install_prometheus addons, which run podman containers and use
     no Salt formula. spacecmd has no subcommand for the formula namespace, so the calls go through the api passthrough. Each entry
     makes two calls: formula.setFormulasOfServer, which enables the formula, and formula.setSystemFormulaData, which configures it.
     Repeating the same configuration overwrites the data with the same values, so the call is safe to repeat.
@@ -2994,7 +2994,7 @@ def run_environment_schedules(hostname, exec_prefix, cfg, prefix):
 
 # ── Client registration (Salt bootstrap) ───────────────────────────────────
 #
-# For install_client_registration.py — registers some OTHER host (not the
+# For install_client_registration — registers some OTHER host (not the
 # server itself) as a Salt client. `hostname`/`exec_prefix` below are always
 # the SERVER's (for spacecmd/saltkey calls); the client is addressed
 # separately via ssh_run(client_hostname, ...) for the bootstrap curl, since
@@ -3803,7 +3803,7 @@ def ensure_rhnpush_available(hostname, exec_prefix):
 def ensure_channel_package(hostname, exec_prefix, channel_label, local_rpm_path, username, password):
     """
     Idempotently pushes one RPM, at `local_rpm_path` on THIS machine (the
-    automation node running install_smlm.py — e.g. this project's own
+    automation node running install_smlm — e.g. this project's own
     packaging/nfpm.yaml build output), into `channel_label` via rhnpush on
     the server. Only supports a podman-deployed target (needs direct
     host+podman access to move a binary file all the way into the
@@ -4053,7 +4053,7 @@ def build_images(hostname, exec_prefix, cfg, prefix):
     version} dicts. `build_host` is a hostname, resolved via _system_id().
     NOT part of the automatic ensure_* flow — same one-shot reasoning as
     import_images(); meant to be run via an explicit trigger flag, not on
-    every install_smlm.py invocation.
+    every install_smlm invocation.
     """
     for entry in cfg.get("{}_image_builds".format(prefix)) or []:
         profile = entry.get("profile")

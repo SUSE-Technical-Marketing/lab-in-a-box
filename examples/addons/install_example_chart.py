@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.11
 # Part of lab-in-a-box: example add-on that installs one Helm chart (podinfo) on a Kubernetes cluster.
-# See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name>.py to start a new add-on.
+# See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name> to start a new add-on.
 # License: GPLv3
 #
 # Schema version: 1.0

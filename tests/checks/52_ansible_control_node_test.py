@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_ansible_control_node.py — mocked ssh_run/
+# Unit tests for scripts/install_ansible_control_node — mocked ssh_run/
 # ensure_lab_ssh_key, no real SSH. Verifies the real bundled example
 # playbook/dynamic-inventory content actually gets pushed (not just that
 # *some* SSH call happens), the SSH-key generation + one-hop distribution
@@ -13,7 +13,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_ansible_control_node as acn  # noqa: E402
+import apps  # noqa: E402
+acn = apps.load_addon_module("install_ansible_control_node", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 
@@ -163,7 +164,7 @@ acn.primary.load_definition = lambda json_file: {
 }
 acn.primary.load_defaults = lambda: {"_templ_addons_loc": templ_addons_loc}
 old_argv = sys.argv
-sys.argv = ["install_ansible_control_node.py", "lab.json"]
+sys.argv = ["install_ansible_control_node", "lab.json"]
 try:
     acn.main()
 finally:

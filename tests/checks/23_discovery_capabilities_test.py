@@ -23,21 +23,21 @@ def check(desc, cond):
 
 
 # ── _def_path(): finds a ported addon across BOTH addon_dirs(), not just
-#    scripts_dir() alone (the bug this fix closes — install_mariadb.py only
+#    scripts_dir() alone (the bug this fix closes — install_mariadb only
 #    lives in scripts/, not scripts/) ────────────────────────
 try:
     path = discovery._def_path("install_mariadb")
-    check("_def_path finds install_mariadb.py in the scripts/ addon dir",
-          path.endswith("install_mariadb.py") and Path(path).is_file())
+    check("_def_path finds install_mariadb in the scripts/ addon dir",
+          path.endswith("install_mariadb") and Path(path).is_file())
 except FileNotFoundError:
-    check("_def_path finds install_mariadb.py in the scripts/ addon dir", False)
+    check("_def_path finds install_mariadb in the scripts/ addon dir", False)
 
 try:
     path = discovery._def_path("install_ds389")
-    check("_def_path finds install_ds389.py (a Python addon script)",
-          path.endswith("install_ds389.py") and Path(path).is_file())
+    check("_def_path finds install_ds389 (a Python addon script)",
+          path.endswith("install_ds389") and Path(path).is_file())
 except FileNotFoundError:
-    check("_def_path finds install_ds389.py (a Python addon script)", False)
+    check("_def_path finds install_ds389 (a Python addon script)", False)
 
 
 # ── schema(): capabilities for a kubernetes-layer addon ──────────────────────

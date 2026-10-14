@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_nextcloud.py. Verifies the podman-mode container invocation
+# Unit tests for scripts/install_nextcloud. Verifies the podman-mode container invocation
 # (host networking + APACHE_PORT, credential resolution, delegation to
 # libs/db_common.py for a companion mariadb/postgresql instead of an ad-hoc
 # container, the office/document-server integration, the airgap app-install
@@ -16,7 +16,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_nextcloud as inc  # noqa: E402
+import apps  # noqa: E402
+inc = apps.load_addon_module("install_nextcloud", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 
@@ -74,7 +75,7 @@ cmds, run_cmd, m_db, p_db = _run_podman({})
 check("setup_nextcloud_podman: uses the real upstream nextcloud image by default, latest tag",
       "nextcloud:latest" in run_cmd)
 check("setup_nextcloud_podman: uses --network host, not a port-publish, matching install_"
-      "prometheus.py's/install_grafana.py's own cross-service localhost-resolution convention",
+      "prometheus.py's/install_grafana's own cross-service localhost-resolution convention",
       "--network host" in run_cmd and "-p 8080:80" not in run_cmd)
 check("setup_nextcloud_podman: APACHE_PORT is set to the real nextcloud_http_port default (8080) "
       "since host networking has no separate host/container port mapping to remap through",
@@ -92,7 +93,7 @@ check("setup_nextcloud_podman: creates a systemd unit so the container survives 
 #    ad-hoc "podman run mariadb" container ───────────────────────────────────
 cmds, run_cmd, m_db, p_db = _run_podman({"nextcloud_db": "mariadb", "nextcloud_db_password": "dbpw123"})
 check("setup_nextcloud_podman: nextcloud_db=mariadb calls setup_mariadb_os() — the SAME code "
-      "install_mariadb.py itself runs — instead of a separate ad-hoc container",
+      "install_mariadb itself runs — instead of a separate ad-hoc container",
       m_db.called and not any("podman run" in c and "mariadb" in c and "--name nextcloud-db" in c
                               for c in cmds))
 check("setup_nextcloud_podman: no separate MariaDB container is deployed any more (installed "

@@ -1,5 +1,5 @@
 #!/bin/bash
-# install_suse_ai.py: component order, derived chart values, pull secrets, cert-manager and registry logins. SSH and the credential
+# install_suse_ai: component order, derived chart values, pull secrets, cert-manager and registry logins. SSH and the credential
 # store are faked. Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit

@@ -637,10 +637,10 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     Install SUSE Multi-Linux Manager with mgradm and podman directly on a dedicated host or VM, without Kubernetes.
 
     The function reuses the mgradm install and container health-wait helpers in libs/mgradm_common.py, which are shared with
-    install_uyuni.py. The underlying tool and container mechanics are the same for Uyuni and SMLM. What differs is where mgradm,
+    install_uyuni. The underlying tool and container mechanics are the same for Uyuni and SMLM. What differs is where mgradm,
     mgrctl and the server images come from.
 
-    install_uyuni.py adds Uyuni's community OBS repository, which needs no entitlement. A SMLM install registers the host with SCC
+    install_uyuni adds Uyuni's community OBS repository, which needs no entitlement. A SMLM install registers the host with SCC
     for the SUSE Multi-Linux Manager module, so mgradm, mgrctl and the entitled images pulled from registry.suse.com are the
     licensed product.
 
@@ -693,7 +693,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         if is_transactional:
             # SL Micro base — ships podman by default; package changes land in a
             # new snapshot that only takes effect after a reboot, same as
-            # install_uyuni.py's own (Micro-only) assumption.
+            # install_uyuni's own (Micro-only) assumption.
             ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
             reboot_vm(virt_srv, hostname)
             time.sleep(5)
@@ -712,7 +712,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     admin = cfg.get("smlm_admin_user") or "admin"
     password = cfg.get("smlm_admin_pass") or "Smlm12345"
     org = cfg.get("smlm_org") or "lab"
-    # Same flags as install_uyuni.py's `mgradm install podman` call. mgradm and podman behave the same for both products.
+    # Same flags as install_uyuni's `mgradm install podman` call. mgradm and podman behave the same for both products.
     # Every value is shell-quoted. An unquoted multi-word value such as --organization "SUSE Test" is split by the remote
     # shell, and mgradm then reads the leftover word as an FQDN.
     #
@@ -837,7 +837,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
               "a time (see the channel-sync monitor above). Depending on how many channels and "
               "how large they are, this can legitimately take SEVERAL HOURS to finish. Clients "
               "registering against a channel that isn't fully synced yet won't fail — "
-              "install_client_registration.py detects this and retries automatically in the "
+              "install_client_registration detects this and retries automatically in the "
               "background until it's ready — but don't expect every system to show up "
               "registered right away.")
 
@@ -934,7 +934,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # ansible_control_node/ansible_paths get the most generous retry
         # window of anything in this block: they're the one real, CONFIRMED
         # cross-dependency on a system that registers on its own, completely
-        # decoupled schedule (install_client_registration.py's background
+        # decoupled schedule (install_client_registration's background
         # retry workers) — 10 attempts 60s apart gives a client that's just
         # about to finish registering a real chance, without blocking this
         # whole run indefinitely for one that's genuinely still hours away
@@ -978,7 +978,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
 
 
 _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
-# Installed by lab-in-a-box's install_smlm.py (ensure_channel_sync_monitor). It checks every software channel on this
+# Installed by lab-in-a-box's install_smlm (ensure_channel_sync_monitor). It checks every software channel on this
 # SMLM server for a completed reposync, and re-triggers any channel that never synced, failed, or was interrupted, for
 # example by a server restart. It runs periodically through smlm-channel-sync-monitor.timer, with the .service unit
 # next to this file.
@@ -1110,7 +1110,7 @@ def ensure_channel_sync_monitor(hostname, admin, password):
 
 
 _BOOTSTRAP_REPO_MONITOR_SCRIPT = """#!/bin/bash
-# Installed by lab-in-a-box's install_smlm.py (ensure_bootstrap_repo_monitor). It retries mgr-create-bootstrap-repo for
+# Installed by lab-in-a-box's install_smlm (ensure_bootstrap_repo_monitor). It retries mgr-create-bootstrap-repo for
 # each distribution whose bootstrap repository failed to build. The usual cause is venv-salt-minion, which is not yet in
 # the locally synced Tools/managertools channel content. It runs periodically through
 # smlm-bootstrap-repo-monitor.timer, with the .service unit next to this file.
@@ -1144,7 +1144,7 @@ mcbr() {
 # newly-seen one — queue it. Covers both the very first run (nothing is
 # DONE or PENDING yet, so every label gets queued) and a distribution/
 # product that only appeared later (e.g. a lab JSON adding a new
-# activation key and re-running install_smlm.py), with no need for --auto's
+# activation key and re-running install_smlm), with no need for --auto's
 # own separate "changed products" bookkeeping.
 while IFS= read -r label; do
     [ -n "$label" ] || continue
@@ -1914,7 +1914,7 @@ def main():
     # dedicated host/VM, no Kubernetes cluster involved at all (see
     # setup_smlm_podman()'s own docstring). Dispatched via k8s.addon_nodes()
     # (any node with "smlm" in its addons[] list), same shape as
-    # install_uyuni.py's own main() — NOT k8s.first_server_node(), which only
+    # install_uyuni's own main() — NOT k8s.first_server_node(), which only
     # makes sense for the Kubernetes/Helm-chart deployment below.
     if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
         if not cfg.get("smlm_scc_regcode"):

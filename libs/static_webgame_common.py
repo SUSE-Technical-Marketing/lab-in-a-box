@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Part of lab-in-a-box — shared Kubernetes-manifest shape for self-hosting a real, pre-built
-# static/HTML5 game, reused by install_supertux_classic.py, install_skynet_simulator.py, and
-# install_open_saber.py.
+# static/HTML5 game, reused by install_supertux_classic, install_skynet_simulator, and
+# install_open_saber.
 # Author/s: Raul Mahiques
 # License: GPLv3
 """

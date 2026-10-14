@@ -146,7 +146,7 @@ with tempfile.TemporaryDirectory() as d:
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
             mock.patch.object(apps.shutil, "which", return_value="/usr/local/bin/install_zz_test") as which:
         found = apps.addon_installer("zz_test")
-    check("addon_installer: an executable install_<name>.py next to the program wins over PATH",
+    check("addon_installer: an executable install_<name> next to the program wins over PATH",
           found == local and not which.called)
     os.chmod(local, 0o644)
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory() as d:
     os.chmod(bare, 0o755)
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]):
         found = apps.addon_installer("zz_test")
-    check("addon_installer: with install_<name> and install_<name>.py both present, the one addon_files() deploys wins",
+    check("addon_installer: with install_<name> and install_<name> both present, the one addon_files() deploys wins",
           found == local)
 
 vm_only = dict(apps.DEFAULT_PLUGIN, name="vmonly", targets=["vm"])

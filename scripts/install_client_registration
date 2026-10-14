@@ -9,7 +9,7 @@
 # The mechanism is the same across Uyuni and current SMLM versions. See libs/spacecmd_common.py's
 # module docstring, "Client registration" section, for the research notes and caveats.
 #
-# This is the CLIENT side — install_uyuni.py/install_smlm.py install the
+# This is the CLIENT side — install_uyuni/install_smlm install the
 # SERVER. This addon runs on a plain VM/baremetal node (nodes[x].addons, not
 # a kcluster addon) and points it at an already-running server elsewhere in
 # the lab (or outside it entirely — client_registration_server just needs to
@@ -134,7 +134,7 @@ def _validate(v):
 def _server_access(cfg):
     """
     Returns (server_node, exec_prefix, admin_user, admin_pass) for the two
-    deployment shapes install_uyuni.py/install_smlm.py themselves use.
+    deployment shapes install_uyuni/install_smlm themselves use.
     """
     server_type = cfg.get("client_registration_server_type") or "uyuni"
     server_fqdn = cfg.get("client_registration_server")
@@ -169,7 +169,7 @@ def _wait_channels(cfg, hostname=None, exec_prefix=None, activation_key=None):
     will actually consume, whether or not they were separately named in
     sync_channels too.
 
-    Keys created by install_smlm.py's smlm_activation_keys list do not carry this addon's
+    Keys created by install_smlm's smlm_activation_keys list do not carry this addon's
     client_registration_activation_key_base_channel or _child_channels fields. For an existing key,
     those fields stay empty in a per-node override, so the channel list comes back empty.
     register_client() then treats the pending-channels check as satisfied and registers at once, even
@@ -225,7 +225,7 @@ def _launch_background_retry(json_file, vm_name):
     registration — no artificial timeout, it only stops once registration
     has actually succeeded — while THIS process returns immediately so the
     rest of the deployment keeps moving. Matches this project's existing
-    nohup'd-background-worker convention (see e.g. install_smlm.py's own
+    nohup'd-background-worker convention (see e.g. install_smlm's own
     channel-sync monitor). Output goes to a per-node log file rather than
     setup_lab.py's own captured output, since this worker outlives the
     addon invocation that launched it.

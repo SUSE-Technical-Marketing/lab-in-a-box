@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Unit tests for scripts/install_seafile.py — no real podman/kubectl available
+# Unit tests for scripts/install_seafile — no real podman/kubectl available
 # in this container. Verifies the podman-mode container invocation (bridge
-# networking + host.containers.internal, since — unlike install_nextcloud.py's
+# networking + host.containers.internal, since — unlike install_nextcloud's
 # --network host approach — no documented port-override env var exists for
 # the seafile-mc image; delegation to libs/db_common.py for the companion
 # MariaDB instead of an ad-hoc container; the real env vars the image needs)
@@ -16,7 +16,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
-import install_seafile as isf  # noqa: E402
+import apps  # noqa: E402
+isf = apps.load_addon_module("install_seafile", str(_REPO / "scripts"))  # no .py: loaded by path
 
 failures = []
 
@@ -74,16 +75,16 @@ check("setup_seafile_podman: publishes port 80 directly via a plain docker/podma
 check("setup_seafile_podman: adds the real host.containers.internal add-host entry so the "
       "bridge-networked container can reach the native MariaDB/cache on the same host",
       "--add-host host.containers.internal:host-gateway" in run_cmd)
-check("setup_seafile_podman: does NOT use --network host (unlike install_nextcloud.py — no "
+check("setup_seafile_podman: does NOT use --network host (unlike install_nextcloud — no "
       "confirmed port-override env var exists for this image, so a fixed 'always port 80' "
       "posture was rejected in favor of an ordinary port-publish)",
       "--network host" not in run_cmd)
 check("setup_seafile_podman: delegates the companion database to setup_mariadb_os() — the SAME "
-      "code install_mariadb.py itself runs — instead of an ad-hoc container",
+      "code install_mariadb itself runs — instead of an ad-hoc container",
       m_db.called and not any(c.startswith("podman run") and "--name seafile-db" in c for c in cmds))
 db_cfg_arg = m_db.call_args[0][1]
 check("setup_seafile_podman: opens the companion MariaDB's bind-address to 0.0.0.0, unlike "
-      "install_nextcloud.py's loopback-only default — required because this container reaches "
+      "install_nextcloud's loopback-only default — required because this container reaches "
       "it over the bridge network, not a shared host network namespace",
       db_cfg_arg.get("mariadb_bind_address") == "0.0.0.0")
 check("setup_seafile_podman: does NOT pre-create a mariadb_db/mariadb_user — Seafile's own image "

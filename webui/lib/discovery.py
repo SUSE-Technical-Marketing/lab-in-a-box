@@ -43,7 +43,7 @@ _REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
 def scripts_dir():
     """Directory holding every install_<addon> definition + lab_schema — a
     single deployed /usr/local/bin in production, scripts/ in a repo
-    checkout (every addon, including install_ds389.py, lives in the
+    checkout (every addon, including install_ds389, lives in the
     same directory)."""
     d = os.environ.get("LABBUILDER_SCRIPTS_DIR")
     if d:
@@ -192,10 +192,9 @@ def _apps_lib():
 
 def _def_path(name):
     """
-    Resolve add-on `name` (install_<addon>) to its executable's path, with or
-    without a file extension: a repo checkout keeps install_<addon>.py,
-    production (install_automation_node_scripts.sh) strips the extension on
-    deploy.
+    Resolve add-on `name` (install_<addon>) to its executable's path, whatever
+    its file extension: an add-on may carry one (install_<addon>.sh), and
+    install_automation_node_scripts.sh strips it on deploy.
     """
     if not SCRIPT_RE.match(name or ""):
         raise ValueError("invalid component name: %r" % name)

@@ -1,5 +1,5 @@
 """
-addon_common.py — shared CLI scaffolding for install_<addon>.py scripts.
+addon_common.py — shared CLI scaffolding for install_<addon> scripts.
 
 Every install_<addon> script (bash and now python) follows the same pattern:
 --version/-v, --validate <json>, --help (prints the script's own "JSON
@@ -115,7 +115,7 @@ def require_k8s_name(cfg, field, default):
     namespace/resource name, and validate it at RUNTIME against the same
     lowercase-alphanumeric-plus-hyphens shape Validator.vns() checks.
 
-    Many install_<addon>.py scripts read a
+    Many install_<addon> scripts read a
     "*_ns" (or similarly-shaped resource-name) config value and interpolate
     it, unquoted, directly into remote kubectl/shell commands run over
     ssh_run() — and Validator.vns()'s own format check is never actually

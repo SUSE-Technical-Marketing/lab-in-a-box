@@ -175,7 +175,7 @@ def setup_postgresql_k8s(hostname: str, cfg: dict) -> None:
 # ─── OS mode ────────────────────────────────────────────────────────────────────
 # The actual installation logic lives in libs/db_common.py's setup_postgresql_os()
 # (imported above) — shared so any other addon that needs a companion PostgreSQL
-# on the same host (install_nextcloud.py, ...) can call it directly instead of
+# on the same host (install_nextcloud, ...) can call it directly instead of
 # bootstrapping its own ad-hoc database container.
 
 
