@@ -86,7 +86,7 @@ def load(path: Path, kind: str):
 
 
 def main(argv: list) -> int:
-    if not argv or "--help" in argv:
+    if not argv or primary.wants_help(argv):
         print(__doc__.strip())
         return 0 if argv else 2
     check = "--check" in argv

@@ -242,6 +242,8 @@ def discover():
             "field_count": len(sc.get("fields", [])),
             "layers": caps.get("layers") or [],
             "targets": caps.get("targets") or [],
+            "status": caps.get("status") or "stable",
+            "status_note": caps.get("status_note") or "",
         })
     return sorted(items, key=lambda it: it["name"])
 
@@ -252,7 +254,7 @@ CORE_SECTIONS = ("common", "nodes", "kclusters")
 
 def catalogue():
     """
-    Everything a lab can use, as items with name, kind, title, description, field_count, layers and targets. kind is
+    Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, status and status_note. kind is
     "addon" (the add-ons of discover()), "infrastructure" (the base schema's optional sections, e.g. pxe) or
     "kcluster" (each Kubernetes cluster type, the kclusters clu_type values).
     """

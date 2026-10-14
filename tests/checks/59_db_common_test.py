@@ -6,8 +6,8 @@
 # real password handling (MYSQL_PWD env var, never a "-p<password>" CLI
 # argument that would leak into `ps aux`), SQL-literal escaping for a
 # password containing a single quote, and the per-family package-install
-# dispatch. setup_postgresql_os()'s own pg_configure_os() is already covered
-# by 45_addon_shell_quoting_test.py. Run from 59_db_common.sh, in its own
+# dispatch, and the same for setup_postgresql_os(); pg_configure_os()'s quoting
+# is also covered by 45_addon_shell_quoting_test.py. Run from 59_db_common.sh, in its own
 # container — see tests/run_tests.sh.
 import shlex
 import sys
@@ -112,6 +112,75 @@ except SystemExit:
 check("setup_mariadb_os: dies rather than interpolating a shell metacharacter in mariadb_port "
       "into a remote command", died)
 
+
+
+# ── OS-native PostgreSQL: per-family install, then the shared configuration ─────────────────────────────────────────
+def run_pg(os_info, cfg, ssh_rc=None):
+    """setup_postgresql_os() on a host detected as `os_info`, every remote command recorded: (result, commands)."""
+    cmds = []
+
+    def fake_ssh(host, cmd, **kw):
+        cmds.append((cmd, kw.get("input_text", "")))
+        rc = (ssh_rc or {}).get(cmd.split(" 2>&1")[0], 0)
+        return mock.Mock(returncode=rc, stdout="", stderr="")
+
+    with mock.patch.object(db_common, "detect_os", return_value=os_info), \
+            mock.patch.object(db_common, "ssh_run", side_effect=fake_ssh), \
+            mock.patch.object(db_common, "ssh_output", return_value="/var/lib/pgsql/data"), \
+            mock.patch.object(db_common, "reboot_vm") as reboot, \
+            mock.patch.object(db_common, "check_ssh_conn"), \
+            mock.patch.object(db_common.time, "sleep"):
+        result = db_common.setup_postgresql_os("db1", cfg, virt_srv="qemu+ssh://hv/system")
+    return result, [c for c, _ in cmds], [i for _, i in cmds if i], reboot
+
+
+SLES = {"id": "sles", "like": "suse", "ver_major": "15"}
+result, cmds, sql, _ = run_pg(SLES, {"postgresql_pg_version": "15", "postgresql_db": "app", "postgresql_user": "u",
+                                     "postgresql_password": "p'w", "postgresql_port": "5433"})
+check("setup_postgresql_os: SLES installs the requested version with zypper",
+      any(c.startswith("zypper install -y --no-confirm postgresql15-server postgresql15") for c in cmds))
+check("setup_postgresql_os: returns the passwords and port", result == {"root_password": "p'w", "password": "p'w", "port": "5433"})
+check("pg_configure_os: sets the superuser password, creates the database and user, grants, all SQL-escaped",
+      sql[:4] == ["ALTER USER postgres PASSWORD 'p''w';\n", 'CREATE DATABASE "app";\n',
+                  "CREATE USER \"u\" WITH PASSWORD 'p''w';\n", 'GRANT ALL PRIVILEGES ON DATABASE "app" TO "u";\n'])
+check("pg_configure_os: sets listen_addresses and the port, allows md5 logins, restarts",
+      any("listen_addresses = '*'" in c and "port = 5433" in c and "host all all 0.0.0.0/0 md5" in c for c in cmds)
+      and any(c.startswith("systemctl restart postgresql.service") for c in cmds))
+_, cmds, _, _ = run_pg(SLES, {}, ssh_rc={"zypper install -y --no-confirm postgresql16-server postgresql16": 1})
+check("setup_postgresql_os: falls back to the unversioned SUSE packages",
+      any(c.startswith("zypper install -y --no-confirm postgresql-server postgresql") for c in cmds))
+_, cmds, _, reboot = run_pg({"id": "sle-micro", "like": "suse", "ver_major": "6"}, {})
+check("setup_postgresql_os: SL Micro installs with transactional-update and reboots",
+      any(c.startswith("transactional-update --quiet pkg install -y postgresql16-server") for c in cmds)
+      and reboot.call_args[0] == ("qemu+ssh://hv/system", "db1"))
+_, cmds, _, _ = run_pg({"id": "rocky", "like": "rhel centos fedora", "ver_major": "9"}, {"postgresql_port": "5432"})
+check("setup_postgresql_os: RHEL family adds PGDG, disables the module, installs, opens the firewall",
+      any("EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm" in c for c in cmds)
+      and any("module disable postgresql" in c for c in cmds)
+      and any(c.startswith("dnf install -y postgresql16-server") for c in cmds)
+      and any("--add-port=5432/tcp" in c for c in cmds))
+_, cmds, _, _ = run_pg({"id": "ubuntu", "like": "debian", "ver_major": "24"}, {})
+check("setup_postgresql_os: Debian family adds the PGDG apt repository and installs",
+      any("apt.postgresql.org/pub/repos/apt" in c for c in cmds)
+      and any("apt-get install -y postgresql-16" in c for c in cmds))
+_, cmds, _, _ = run_pg({"id": "mystery", "like": "debian", "ver_major": "1"}, {})
+check("setup_postgresql_os: an unknown ID falls back on ID_LIKE", any("apt-get install -y postgresql-16" in c for c in cmds))
+with mock.patch.object(db_common, "die", side_effect=SystemExit("unsupported")) as died:
+    try:
+        run_pg({"id": "plan9", "like": "", "ver_major": "4"}, {})
+    except SystemExit:
+        pass
+check("setup_postgresql_os: dies on an unsupported OS", died.called and "unsupported OS 'plan9'" in died.call_args[0][0])
+
+# ── OS-native MariaDB on SL Micro: transactional install, reboot, enable ──────────────────────────────────────────
+cmds = []
+with mock.patch.object(db_common, "ssh_run", side_effect=lambda h, c, **k: cmds.append(c) or mock.Mock(returncode=0)), \
+        mock.patch.object(db_common, "reboot_vm") as reboot, mock.patch.object(db_common, "check_ssh_conn") as back, \
+        mock.patch.object(db_common.time, "sleep"):
+    db_common.mariadb_install_slemicro("db1", "qemu+ssh://hv/system")
+check("mariadb_install_slemicro: installs with transactional-update, reboots, waits for SSH, enables the service",
+      cmds[0].startswith("transactional-update --quiet pkg install -y mariadb mariadb-client")
+      and reboot.called and back.call_args[0] == ("db1",) and cmds[-1] == "systemctl enable --now mariadb.service")
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

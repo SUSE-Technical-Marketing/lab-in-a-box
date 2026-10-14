@@ -63,6 +63,7 @@ def setup_argocd(hostname, clu_name, mydomain, argocd_rel=None, argocd_ns=None,
     print("ArgoCD available at: http://{}".format(fqdn))
     print("Initial admin password: kubectl -n {} get secret argocd-initial-admin-secret "
           "-o jsonpath='{{.data.password}}' | base64 -d".format(ns))
+    return fqdn
 
 
 def main():
@@ -86,11 +87,12 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_argocd_repo(vm_name, argocd_rel=argocd_cfg.get("argocd_rel"), argocd_repo_url=argocd_cfg.get("argocd_repo_url"))
-    setup_argocd(
+    fqdn = setup_argocd(
         vm_name, clu_name, clu_cfg.get("mydomain", ""),
         argocd_rel=argocd_cfg.get("argocd_rel"), argocd_ns=argocd_cfg.get("argocd_ns"),
         argocd_version=argocd_cfg.get("argocd_version"), argocd_shorthn=argocd_cfg.get("argocd_shorthn"),
     )
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

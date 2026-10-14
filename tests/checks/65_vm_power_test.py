@@ -210,6 +210,42 @@ check("aws open_vm_ports reuses ensure_ports_open", opened == [["443"]])
 # libvirt: nothing to open, no error
 backends.VMBackend.open_vm_ports(backends.LibvirtBackend.__new__(backends.LibvirtBackend), "x", ["443"])
 
+
+# ── main(): argument handling, default VM list, exit code ──────────────────────────────────────────────────────────
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import json  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+def run_main(*args, result=None):
+    """vm_power.main() with argv `args` and power() returning `result`: (exit code, stdout, power() calls)."""
+    out = io.StringIO()
+    with mock.patch.object(sys, "argv", ["vm_power.py"] + list(args)), \
+            mock.patch.object(vm_power.primary, "load_definition", return_value={"nodes": {"a": {}, "b": {}}}), \
+            mock.patch.object(vm_power.primary, "load_config", return_value={}), \
+            mock.patch.object(vm_power, "power", return_value=result or {}) as pw, \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            vm_power.main()
+            code = None
+        except SystemExit as e:
+            code = e.code
+    return code, out.getvalue(), pw.call_args_list
+
+
+code, out, calls = run_main("--version")
+check("main: --version prints the version and exits 0", code == 0 and vm_power.__version__ in out and not calls)
+check("main: a missing action exits 2", run_main("lab.json")[0] == 2)
+check("main: an unknown action exits 2", run_main("lab.json", "reboot")[0] == 2)
+code, out, calls = run_main("lab.json", "status", result={"a": "running", "b": "shut off"})
+check("main: no VM names means every node of the lab", calls[0][0][2:] == ("status", ["a", "b"]))
+check("main: prints the result as JSON and exits 0",
+      code == 0 and json.loads(out) == {"a": "running", "b": "shut off"})
+code, out, calls = run_main("lab.json", "stop", "b", result={"b": "error: boom"})
+check("main: named VMs only", calls[0][0][2:] == ("stop", ["b"]))
+check("main: any error result exits 1", code == 1)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

@@ -20,9 +20,12 @@ this was their last consumer — were removed from the top level for the same re
 already byte-identical to its copy here in `legacy_bash/libs/`, and nothing else in the live
 tree sources them, verified by grep before removal).
 
+`scripts/download_latest_helm.sh` is here as well: it was never installed, since
+`setup_demo_server/automation-node-lib.sh` writes the automation node's own copy.
+
 Not moved here, and still live: `scripts/lab_schema`, `scripts/pushDockerImage.sh`,
 `scripts/refresh_hypervisor_status.py`, `scripts/dev_sync_nucs.sh`,
-`scripts/download_latest_helm.sh`, `libs/extensions.sh` (empty, referenced by nothing —
+`libs/extensions.sh` (empty, referenced by nothing —
 pre-existing, unrelated to `install_ds389`, left alone), and `libs/__init__.py` (describes the
 live `libs/` package itself, not a bash helper).
 

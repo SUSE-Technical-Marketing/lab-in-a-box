@@ -170,6 +170,54 @@ check("PXE Quadlet unit grants NET_RAW", "AddCapability=NET_RAW" in unit)
 check("PXE Quadlet unit still uses host networking", "Network=host" in unit)
 
 
+
+# ── PXEService.install/enable and services.get ─────────────────────────────────────────────────────────────────────
+import subprocess  # noqa: E402
+from unittest import mock  # noqa: E402
+
+pxe = services.get("pxe", lab_setup_path="/srv/www/htdocs/lab_creation")
+check("services.get: returns the named service", isinstance(pxe, services.PXEService))
+with mock.patch.object(services, "die", side_effect=SystemExit("unknown")) as died:
+    try:
+        services.get("telnet")
+    except SystemExit:
+        pass
+check("services.get: dies on an unknown service, listing the valid ones", died.called and "pxe" in died.call_args[0][0])
+
+calls = []
+
+
+def fake_run(cmd, **kw):
+    calls.append(cmd)
+    rc = 1 if cmd[:3] == ["podman", "image", "exists"] else 0
+    return subprocess.CompletedProcess(cmd, rc)
+
+
+with mock.patch.object(services.subprocess, "run", side_effect=fake_run), \
+        mock.patch.object(services.shutil, "which", return_value="/usr/bin/podman"):
+    pxe.install()
+check("PXEService.install: builds the dnsmasq image when it is missing",
+      calls[1][:4] == ["podman", "build", "-t", services._PXE_IMAGE])
+calls[:] = []
+with mock.patch.object(services.subprocess, "run", side_effect=lambda cmd, **kw: calls.append(cmd) or
+                       subprocess.CompletedProcess(cmd, 0)):
+    pxe.install()
+check("PXEService.install: does nothing when the image exists", calls == [["podman", "image", "exists", services._PXE_IMAGE]])
+with mock.patch.object(services.subprocess, "run", side_effect=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1)), \
+        mock.patch.object(services.shutil, "which", return_value=None), \
+        mock.patch.object(services, "die", side_effect=SystemExit("podman")) as died:
+    try:
+        pxe.install()
+    except SystemExit:
+        pass
+check("PXEService.install: dies without podman", died.called)
+calls[:] = []
+with mock.patch.object(services.subprocess, "run", side_effect=lambda cmd, **kw: calls.append(cmd) or
+                       subprocess.CompletedProcess(cmd, 0)):
+    pxe.enable()
+check("PXEService.enable: reloads systemd and restarts the Quadlet unit",
+      calls == [["systemctl", "daemon-reload"], ["systemctl", "restart", services._PXE_UNIT_NAME]])
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

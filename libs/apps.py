@@ -25,7 +25,12 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
         "aux_services": [],                     # names from the services registry
         "versions": {...},                      # optional version matrix per version field (libs/versions.py)
+        "status": "under-construction",         # optional; STATUSES; absent means "stable"
+        "status_note": "...",                   # required with "under-construction": what does not work yet
     }
+
+An add-on under construction is listed and runs like any other, but announces itself: a warning when it runs, at the lab
+preflight and in --help, and a badge with the note in the web UI.
 
 describe() runs `--schema json` and caches the output per file signature; load_plugin() returns the capabilities from it.
 An add-on whose output is missing or invalid falls back to a conservative default, which still validates it as before the
@@ -37,7 +42,9 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from lab_creation import die
@@ -49,6 +56,10 @@ DEFAULT_PLUGIN = {
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }
+
+STATUS_STABLE = "stable"
+STATUS_UNDER_CONSTRUCTION = "under-construction"
+STATUSES = (STATUS_STABLE, STATUS_UNDER_CONSTRUCTION)
 
 _cache = {}
 
@@ -176,20 +187,28 @@ def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> di
     return plugin
 
 
+def addon_installer(name: str) -> Optional[str]:
+    """
+    Path of add-on `name`'s install script: the executable install_<name> that addon_files() picks in the running
+    program's own directory (a repository checkout's scripts/, or the deployed bin directory), else install_<name> on PATH;
+    None when there is none. Running from a checkout therefore uses that checkout's add-ons, not the deployed ones.
+    """
+    path = addon_files(str(Path(sys.argv[0]).resolve().parent)).get("install_{}".format(name))
+    if path and os.access(path, os.X_OK):
+        return path
+    return shutil.which("install_{}".format(name))
+
+
 def load_plugin(name):
     """
-    Return the PLUGIN dict for addon `name` (looks up install_<name> in
-    PATH, same resolution setup_lab.py already uses via shutil.which). Thin
-    wrapper around load_plugin_from_path() — every CLI/orchestration call
-    site (validate_lab_definition, setup_lab.py) resolves addons via PATH,
-    so this is what they use; discovery.py uses load_plugin_from_path()
-    directly instead, since it already has the addon's real file path from
-    its own directory-scanning discovery.
+    Return the PLUGIN dict for addon `name`, whose script addon_installer() finds. Thin wrapper around
+    load_plugin_from_path() for the CLI/orchestration call sites (validate_lab_definition, setup_lab.py); discovery.py
+    uses load_plugin_from_path() directly, since its own directory scan already has the file path.
     """
     if name in _cache:
         return _cache[name]
 
-    exe = shutil.which("install_{}".format(name))
+    exe = addon_installer(name)
     plugin = load_plugin_from_path(exe, name=name)
     _cache[name] = plugin
     return plugin
@@ -255,8 +274,18 @@ def attach_capabilities(schema_dict, plugin_dict):
         "requires_kubernetes": plugin_dict.get("requires_kubernetes"),
         "aux_services": plugin_dict.get("aux_services") or [],
         "versions": plugin_dict.get("versions") or {},
+        "status": plugin_dict.get("status") or STATUS_STABLE,
+        "status_note": plugin_dict.get("status_note") or "",
     }
     return schema_dict
+
+
+def status_warning(plugin_dict: dict) -> str:
+    """The warning an add-on under construction shows ("" for a stable one)."""
+    if (plugin_dict.get("status") or STATUS_STABLE) != STATUS_UNDER_CONSTRUCTION:
+        return ""
+    return "addon '{}' is UNDER CONSTRUCTION and may not work: {}".format(
+        plugin_dict.get("name") or "?", plugin_dict.get("status_note") or "no details given")
 
 
 def supports(plugin, target_kind):

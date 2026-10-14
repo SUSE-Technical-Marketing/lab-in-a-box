@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Configuração do Kubernetes</h3>
-<p>Com as VMs no ar, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. RKE2 e K3s são suportados. Quando um cluster fica pronto, seus complementos rodam em sequência; os complementos de VM (ligados a um nó em vez de um cluster) rodam depois que esse nó é provisionado.</p>
+<p>Com as VMs no ar, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. RKE2 e K3s são suportados. Quando um cluster fica pronto, seus complementos rodam em sequência; os complementos de VM (ligados a um nó em vez de um cluster) rodam depois que esse nó é provisionado. Cada nó RKE2 e cada nó servidor K3s recebe <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, que define <code>KUBECONFIG</code>, para que <code>kubectl</code> e <code>helm</code> funcionem em qualquer shell de root do nó, inclusive em comandos via SSH. Complementos que expõem um nome de host web (por exemplo <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) o registram no DNS do laboratório, apontando para os nós do kcluster; destruir um nó remove os registros que apontam para ele.</p>
 <h3 id="multi-host-labs">Laboratórios com vários hosts</h3>
 <p>Um laboratório não está limitado a um hipervisor. Defina <code>KVM_HOSTS</code> (separados por espaço) em <code>/etc/lab_creation.cfg</code> na VM de automação para disponibilizar mais de um hipervisor:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -582,7 +582,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Interface web (lab-builder)</h2>
-<p>Um editor de arquivos <code>lab.json</code> no navegador que <strong>inspeciona em tempo de execução as próprias bibliotecas Python do projeto</strong>: ele não tem conhecimento fixo de nenhum complemento. Escolha um componente e ele exibe um formulário gerado diretamente do esquema desse componente; adicione um campo a um script e a interface o mostra sem nenhuma mudança no frontend.</p>
+<p>Um editor de arquivos <code>lab.json</code> no navegador que <strong>inspeciona em tempo de execução as próprias bibliotecas Python do projeto</strong>: ele não tem conhecimento fixo de nenhum complemento. Escolha um componente e ele exibe um formulário gerado diretamente do esquema desse componente; adicione um campo a um script e a interface o mostra sem nenhuma mudança no frontend. Um complemento marcado como em construção (<code>status</code> no seu <code>PLUGIN</code>, veja o <a href="addons.html">Guia de complementos</a>) exibe um selo "under construction"; passe o mouse sobre ele para ver o que ainda não funciona. Ele ainda pode ser adicionado e executado, com um aviso.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -761,6 +761,10 @@ compartilhada pela qual passa todo consumidor de uma lista <code>addons[]</code>
 <tr>
 <td><code>mgm_node</code></td>
 <td>Nome de host do nó que executa os instaladores de complementos do cluster; por padrão, o primeiro nó servidor</td>
+</tr>
+<tr>
+<td><code>clu_token</code></td>
+<td>Token de adesão definido no primeiro servidor RKE2/K3s (pelo menos 16 letras, dígitos, <code>.</code>, <code>_</code> ou <code>-</code>); por padrão, o token que o primeiro servidor gera. Defina-o quando máquinas fora da definição do laboratório entrarem no cluster, por exemplo a partir de um perfil kickstart ou de um estado Salt</td>
 </tr>
 </tbody>
 </table>
@@ -1124,10 +1128,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>DNS do cluster</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Rotação de certificados do cluster Kubernetes</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>Orquestração e cache de dados para cargas cloud-native</td>
 </tr>
@@ -1168,8 +1168,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>Cargas de demonstração do NeuVector baseadas em Helm</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>Operador OpenSCAP/ComplianceAsCode</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Operador de conformidade do Rancher: varreduras CIS Benchmark do cluster RKE2/K3s</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1177,7 +1177,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>Assistente de segurança do Kubernetes com IA agêntica</td>
+<td>Framework de agentes de IA no Kubernetes, com interface web; modelo da OpenAI, Anthropic, Gemini, Azure OpenAI ou Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1209,7 +1209,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>Servidor SUSE Multi-Linux Manager: os mesmos recursos do <code>uyuni</code>, implantado com Helm no Kubernetes ou, com <code>smlm_deployment: "podman"</code>, pelo <code>mgradm</code> diretamente em um host ou VM</td>
+<td>Servidor SUSE Multi-Linux Manager: os mesmos recursos do <code>uyuni</code>, implantado com Helm no Kubernetes ou, com <code>smlm_deployment: "podman"</code>, pelo <code>mgradm</code> diretamente em um host ou VM. Também instala automaticamente o SUSE Linux 16 e o openSUSE Leap 16: entradas de <code>smlm_kickstart_profiles</code> com <code>agama_profile</code> servem um perfil JSON do Agama, e entradas de <code>smlm_distributions</code> com <code>iso_url</code> importam a árvore de instalação de uma ISO</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1411,10 +1411,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>Modelo StarCoder2, servido pelo Ollama</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>(veja <code>install_phoebe --schema</code>)</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1434,10 +1430,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>Provisionamento de nós do SUSE Virtualization (Harvester/KubeVirt)</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>Construtor de appliances KIWI</td>
 </tr>
 </tbody>
 </table>
@@ -1603,7 +1595,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>Um arquivo de credenciais por tipo serve para todos os complementos que precisam desse tipo (por exemplo, um único arquivo <code>scc</code> cobre as credenciais SCC de qualquer complemento), independentemente do prefixo dos campos JSON de cada um; veja <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> em <code>libs/addon_common.py</code> e as funções <code>*_service_credential*</code> de <code>libs/primary.py</code> para o mecanismo por trás.</p>
 <p><strong>Backends de nuvem (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) e <code>myip</code>:</strong> deixe vazio o <code>myip</code> de um nó de nuvem no JSON do laboratório: o IP real só é conhecido quando o provedor o atribui na criação, não é algo que se decide de antemão como um IP estático de libvirt/Harvester. O <code>setup_vm.py</code> pega o IP real do valor retornado por <code>create_vm()</code> e o registra no DNS <em>depois</em> que o nó existe de fato, não antes (um bug real encontrado nos testes ao vivo do AWSBackend, 2026-09-06; veja TODO). <code>mymac</code> também não faz sentido em um backend de nuvem: deixe-o sem definir; ele é ignorado em vez de gerado ou verificado.</p>
-<p><strong>VM de DNS na nuvem:</strong> na primeira vez que um nó do laboratório usa determinado backend de nuvem, o <code>setup_vm.py</code> também provisiona (ou reutiliza, se já existir) uma VM pequena e barata que serve DNS dentro dessa mesma rede de nuvem, <code>lab-dns-&lt;backend&gt;</code>, por exemplo <code>lab-dns-aws</code>, rodando BIND. Ela existe porque os nós de nuvem em geral não conseguem alcançar o servidor BIND do <code>automation.mydemo.lab</code> (ele fica atrás do NAT/roteador do laboratório doméstico, inacessível pela Internet); um cluster real de vários nós na nuvem precisa do próprio servidor DNS dentro dessa rede para que seus nós se resolvam entre si. A entrada DNS de cada nó de nuvem é registrada <em>tanto</em> nessa VM de DNS quanto na zona central do <code>automation.mydemo.lab</code>. <strong>Limitações conhecidas:</strong> (1) um nó de nuvem recém-criado ainda não passa a usar automaticamente essa VM de DNS para a própria resolução, então um segundo nó de nuvem do mesmo laboratório ainda não consegue resolver o primeiro pelo nome sem mais configuração; (2) os nós consultam essa VM de DNS pelo IP privado; consultas DNS ao IP público dela a partir de fora da nuvem podem ser interceptadas pelas redes no caminho, pois alguns provedores de Internet e roteadores respondem eles mesmos a todo o tráfego DNS. Veja a docstring de <code>ensure_cloud_dns_vm()</code> em <code>libs/backends.py</code>.</p>
+<p><strong>VM de DNS na nuvem:</strong> na primeira vez que um nó do laboratório usa determinado backend de nuvem, o <code>setup_vm.py</code> também provisiona (ou reutiliza, se já existir) uma VM pequena e barata que serve DNS dentro dessa mesma rede de nuvem, <code>lab-dns-&lt;backend&gt;</code>, por exemplo <code>lab-dns-aws</code>, rodando BIND. Ela inicia a partir da imagem openSUSE Leap mais recente publicada pelo provedor (na AWS, obtida da lista pública de imagens de nuvem da SUSE), ou da imagem do próprio laboratório em um provedor que não a tenha; são compatíveis imagens Debian/Ubuntu, SUSE e da família Fedora (RHEL, Amazon Linux). Defina <code>CLOUD_DNS_IMAGE</code> na conta de nuvem (ou em <code>lab_creation.cfg</code>) para iniciá-la a partir de uma imagem específica. Ela existe porque os nós de nuvem em geral não conseguem alcançar o servidor BIND do <code>automation.mydemo.lab</code> (ele fica atrás do NAT/roteador do laboratório doméstico, inacessível pela Internet); um cluster real de vários nós na nuvem precisa do próprio servidor DNS dentro dessa rede para que seus nós se resolvam entre si. A entrada DNS de cada nó de nuvem é registrada <em>tanto</em> nessa VM de DNS quanto na zona central do <code>automation.mydemo.lab</code>. <strong>Limitações conhecidas:</strong> (1) um nó de nuvem recém-criado ainda não passa a usar automaticamente essa VM de DNS para a própria resolução, então um segundo nó de nuvem do mesmo laboratório ainda não consegue resolver o primeiro pelo nome sem mais configuração; (2) os nós consultam essa VM de DNS pelo IP privado; consultas DNS ao IP público dela a partir de fora da nuvem podem ser interceptadas pelas redes no caminho, pois alguns provedores de Internet e roteadores respondem eles mesmos a todo o tráfego DNS. Veja a docstring de <code>ensure_cloud_dns_vm()</code> em <code>libs/backends.py</code>.</p>
 <p><strong>Dimensionamento de instâncias na nuvem:</strong> cada backend de nuvem converte <code>VM_CPU</code>/<code>VM_MEM</code> no menor tipo de instância, tipo de servidor, plano ou flavor suficiente do provedor, a partir de uma pequena tabela embutida (a coluna "Notas" de cada um indica qual); essa tabela nunca foi pensada como limite. Há duas formas de substituí-la, em ordem de prioridade:
 1. <strong><code>cloud_instance_type</code></strong> (em common ou por nó; o do nó prevalece): o nome exato de um tipo de instância, tipo de servidor, plano ou flavor, usado como está, sem escolha automática. Funciona igual em todos os backends de nuvem, inclusive no OVHcloud (que pula sua chamada ao vivo à API de flavors) e no GCP (que não cria um tipo personalizado <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>; informe um tipo predefinido real como <code>n2-standard-4</code>).
 2. <strong>Uma chave de configuração <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (veja a linha de cada provedor abaixo): substitui por completo a tabela embutida, de modo que a escolha automática por <code>VM_CPU</code>/<code>VM_MEM</code> continua funcionando, mas com a sua lista. Formato: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, por exemplo <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. Isso substitui a tabela inteira, sem mesclar: repita as entradas embutidas que ainda quiser. GCP e OVHcloud não têm essa chave: o GCP cria um tipo de máquina personalizado real diretamente a partir de <code>VM_CPU</code>/<code>VM_MEM</code> (não há catálogo a substituir) e o OVHcloud já consulta ao vivo sua lista real de flavors na criação (veja a linha dele).</p>

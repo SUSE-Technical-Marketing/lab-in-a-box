@@ -288,7 +288,7 @@ def run(args: list) -> dict:
 
 
 def main() -> None:
-    if sys.argv[1:] in (["--help"], ["-h"]):
+    if primary.wants_help(sys.argv[1:]):
         print(__doc__)
         return
     if sys.argv[1:] in (["--version"], ["-v"]):

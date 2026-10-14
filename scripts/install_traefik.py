@@ -3,13 +3,20 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
 # JSON section: "traefik" — configurable keys:
 #   traefik_version     : Helm chart version (empty = latest, e.g. "28.3.0")
 #   traefik_ns          : namespace (default: traefik)
 #   traefik_rel         : Helm repo alias (default: traefik)
 #   traefik_repo_url    : Helm repo URL (default: https://traefik.github.io/charts)
+#   traefik_ingress_class : [OPTIONAL] IngressClass this release creates and serves; it is not the cluster default, so
+#                         ingresses select it with ingressClassName (default: traefik-standalone)
+#   traefik_service_type  : [OPTIONAL] Service type of its entry points; LoadBalancer needs a load balancer whose ports
+#                         80/443 are not taken by the cluster's own ingress (default: NodePort) (options: NodePort, LoadBalancer)
+#
+# A Traefik the cluster already runs (K3s bundles one) serves every Traefik IngressClass unless it is limited to its own,
+# so ingresses of traefik_ingress_class may be served by both.
 
 __version__ = "__LABVERSION__"
 
@@ -21,6 +28,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -38,6 +46,9 @@ def _validate(v):
     v.vns("traefik")
     v.vver("traefik")
     v.vurl("traefik")
+    service_type = v._get("traefik", "traefik_service_type")
+    if service_type and service_type not in ("NodePort", "LoadBalancer"):
+        v.errors.append("[ERROR] traefik.traefik_service_type='{}': must be NodePort or LoadBalancer".format(service_type))
 
 
 def setup_traefik_repo(hostname, traefik_rel=None, traefik_repo_url=None):
@@ -45,20 +56,25 @@ def setup_traefik_repo(hostname, traefik_rel=None, traefik_repo_url=None):
     helm_repo_add(hostname, traefik_rel or "traefik", traefik_repo_url or "https://traefik.github.io/charts")
 
 
-def setup_traefik(hostname, traefik_rel=None, traefik_ns=None, traefik_version=None):
+def setup_traefik(hostname: str, traefik_rel: str = None, traefik_ns: str = None, traefik_version: str = None,
+                  traefik_ingress_class: str = None, traefik_service_type: str = None) -> None:
     """
-    Install a standalone Traefik Helm release. Mirrors setup_traefik (bash).
-
-    Distinct from k8s.setup_traefik_rke2/_k3s, which reconfigure a cluster's
-    BUNDLED Traefik ingress — this addon installs a separate Traefik release
-    in its own namespace via the upstream chart.
+    Install a standalone Traefik release next to any ingress controller the cluster already has (k8s.setup_traefik_rke2/_k3s
+    configure the bundled one). It creates and serves only its own IngressClass, which is not the cluster default.
     """
     rel = traefik_rel or "traefik"
     ns = traefik_ns or "traefik"
-    ver_arg = "--version {}".format(traefik_version) if traefik_version else ""
+    ver_arg = " --version {}".format(shlex.quote(traefik_version)) if traefik_version else ""
+    ingress_class = traefik_ingress_class or "traefik-standalone"
+    service_type = traefik_service_type or "NodePort"
     ssh_run(hostname,
-            "helm upgrade -i traefik {}/traefik --namespace {} --create-namespace {}".format(rel, ns, ver_arg))
-    print("Traefik installed. Namespace: {}".format(ns))
+            "helm upgrade --install traefik {}/traefik --namespace {} --create-namespace{} --wait --timeout 10m "
+            "--set ingressClass.name={} --set ingressClass.isDefaultClass=false "
+            "--set providers.kubernetesIngress.ingressClass={} --set service.spec.type={}".format(
+                shlex.quote(rel), shlex.quote(ns), ver_arg, shlex.quote(ingress_class), shlex.quote(ingress_class),
+                shlex.quote(service_type)))
+    print("Traefik installed. Namespace: {}. IngressClass: {}".format(ns, ingress_class))
+    ssh_run(hostname, "kubectl -n {} get service traefik".format(shlex.quote(ns)), check=False)
 
 
 def main():
@@ -82,6 +98,8 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_traefik_repo(vm_name, traefik_rel=cfg.get("traefik_rel"), traefik_repo_url=cfg.get("traefik_repo_url"))
     setup_traefik(vm_name, traefik_rel=cfg.get("traefik_rel"), traefik_ns=cfg.get("traefik_ns"),
+                  traefik_ingress_class=cfg.get("traefik_ingress_class"),
+                  traefik_service_type=cfg.get("traefik_service_type"),
                   traefik_version=cfg.get("traefik_version"))
 
 

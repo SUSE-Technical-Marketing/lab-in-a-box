@@ -9,4 +9,4 @@
 #   import sys; sys.path.insert(0, "/usr/local/lib/lab_creation")
 #   from primary import load_definition, load_config
 #   from lab_creation import ssh_run, load_vm_vars, add_to_dns
-#   from k8s import setup_k3s, setup_rke2, first_server_node
+#   from k8s import get_distro, first_server_node

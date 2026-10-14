@@ -34,7 +34,7 @@ import ipaddress
 import shlex
 from pathlib import Path
 
-from lab_creation import ssh_run, ssh_output, log, warn, die
+from lab_creation import ssh_run, ssh_output, log, die, wait_for_ssh_command
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -107,8 +107,9 @@ def _gateway_vm_user_data(root_ssh_key):
 def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
                         root_ssh_key, open_ports=None):
     """
-    Create a gateway VM and return its IP. create_vm() requires the cloud-init user-data file, so the file is written first. The
-    same is done for the DNS VM in backends.ensure_cloud_dns_vm().
+    Create a gateway VM and return its IP once cloud-init has finished on it, so callers can SSH in as root right away.
+    create_vm() requires the cloud-init user-data file, so the file is written first. The same is done for the DNS VM in
+    backends.ensure_cloud_dns_vm().
     """
     log("- No gateway VM found for backend \"{}\" — creating \"{}\"".format(backend_name, vm_name))
     base = Path(lab_setup_path) / "cloud-init"
@@ -122,6 +123,10 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
     if not ip:
         die("gateway VM '{}' was created on backend '{}' but create_vm() reported "
             "no IP".format(vm_name, backend_name))
+    log("- Waiting for \"{}\" to finish cloud-init".format(vm_name))
+    if not wait_for_ssh_command(ip, "test -f /var/lib/cloud/instance/boot-finished", timeout=600):
+        die("gateway VM '{}' ({}) did not finish cloud-init within 600s — check it manually "
+            "(/var/log/cloud-init-output.log)".format(vm_name, ip))
     return ip
 
 
@@ -278,34 +283,6 @@ def add_peer_to_hub(hub_host, peer_name, peer_pubkey, allowed_cidrs):
         ssh_run(hub_host, "ip route replace {} dev wg0".format(shlex.quote(cidr)))
     log("- Registered site gateway '{}' as a peer on the overlay hub, routing {}".format(
         peer_name, allowed_csv))
-
-
-def remove_peer_from_hub(hub_host, peer_name):
-    """
-    Best-effort removal of `peer_name`'s peer entry from the hub — both the
-    LIVE wg0 interface state (`wg set ... remove`) and the persisted
-    wg0.conf block. Looked up entirely from the hub's own recorded state
-    (the marker comment + its own PublicKey line), never from the peer
-    itself. Never dies (mirrors ensure_cloud_dns_vm()'s own best-effort
-    teardown-time cleanup convention elsewhere in this project) — a hub
-    that's unreachable, or a peer that was never registered, is a silent
-    no-op. Nothing calls this automatically today — see module docstring
-    ("the hub itself is never auto-destroyed") — site gateways are shared,
-    persistent infrastructure, not torn down per-node.
-    """
-    marker = "# peer: {}".format(peer_name)
-    script = (
-        "ln=$(grep -nxF {marker} {conf} 2>/dev/null | head -1 | cut -d: -f1); "
-        "if [ -n \"$ln\" ]; then "
-        "pubkey=$(sed -n \"$((ln+2))p\" {conf} | awk '{{print $3}}'); "
-        "[ -n \"$pubkey\" ] && wg set wg0 peer \"$pubkey\" remove 2>/dev/null; "
-        "end=$(awk -v start=\"$ln\" 'NR>start && /^$/{{print NR; exit}}' {conf}); "
-        "[ -z \"$end\" ] && end=$(wc -l < {conf}); "
-        "sed -i \"${{ln}},${{end}}d\" {conf}; "
-        "fi"
-    ).format(marker=shlex.quote(marker), conf=shlex.quote(_WG_CONF_PATH))
-    ssh_run(hub_host, script, check=False)
-    log("- Removed site gateway '{}' from the overlay hub (best-effort)".format(peer_name))
 
 
 def ensure_overlay_hub_ready(hub_host, wg_port=DEFAULT_WG_PORT, overlay_cidr=DEFAULT_OVERLAY_CIDR,

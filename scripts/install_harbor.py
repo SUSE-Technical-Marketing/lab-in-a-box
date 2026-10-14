@@ -65,6 +65,7 @@ def setup_harbor(hostname, clu_name, mydomain, harbor_rel=None, harbor_ns=None, 
             "--set harborAdminPassword={} "
             "{}".format(rel, ns, fqdn, fqdn, admin_pwd, ver_arg))
     print("Harbor available at: http://{}  (admin / {})".format(fqdn, admin_pwd))
+    return fqdn
 
 
 def main():
@@ -88,11 +89,12 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_harbor_repo(vm_name, harbor_rel=cfg.get("harbor_rel"), harbor_repo_url=cfg.get("harbor_repo_url"))
-    setup_harbor(
+    fqdn = setup_harbor(
         vm_name, clu_name, clu_cfg.get("mydomain", ""),
         harbor_rel=cfg.get("harbor_rel"), harbor_ns=cfg.get("harbor_ns"), harbor_version=cfg.get("harbor_version"),
         harbor_shorthn=cfg.get("harbor_shorthn"), harbor_admin_password=cfg.get("harbor_admin_password"),
     )
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

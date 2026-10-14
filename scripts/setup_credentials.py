@@ -154,7 +154,7 @@ def _looks_sensitive(key):
     return any(h in up for h in SENSITIVE_HINTS)
 
 
-def _prompt_field(key, required, sensitive):
+def _prompt_field(key: str, required: bool, sensitive: bool) -> str:
     """One field prompt — masked (no echo) if sensitive, plain input() otherwise.
     Loops until a required field gets a non-empty answer."""
     suffix = "" if required else " (optional, Enter to skip)"
@@ -166,39 +166,47 @@ def _prompt_field(key, required, sensitive):
         print("    {} is required.".format(key))
 
 
-def _choose_provider():
-    providers = sorted(PROVIDER_FIELDS)
-    print("Provider type:")
-    for i, name in enumerate(providers, 1):
+def _choose(title: str, names: list) -> str:
+    """Print `names` numbered under `title` and return the one the user picks; die on an invalid choice."""
+    print(title)
+    for i, name in enumerate(names, 1):
         print("  {}) {}".format(i, name))
     choice = input("Choice: ").strip()
     try:
-        return providers[int(choice) - 1]
+        return names[int(choice) - 1]
     except (ValueError, IndexError):
         die("Invalid choice '{}'".format(choice))
 
 
-def build_account_fields(provider):
-    """Prompt for every field PROVIDER_FIELDS[provider] lists. Returns a dict
-    of only the fields that were actually filled in (an unanswered optional
-    field is simply absent, same as never having set it)."""
-    print("\nEnter credentials for '{}':".format(provider))
+def _prompt_fields(name: str, rows: list) -> dict:
+    """Prompt for every (key, required, sensitive) row of `name`; only the fields filled in."""
+    print("\nEnter credentials for '{}':".format(name))
     fields = {}
-    for key, required, sensitive in PROVIDER_FIELDS[provider]:
+    for key, required, sensitive in rows:
         val = _prompt_field(key, required, sensitive)
         if val:
             fields[key] = val
     return fields
 
 
-def write_account_file(out_path, provider, fields, encrypt, passphrase=None):
-    """The one place that actually assembles + writes a credentials YAML —
-    used by both interactive_build() and (indirectly, via crypto_store)
-    anything else that ever needs to produce one. With encrypt and no
-    passphrase, the passphrase is prompted for."""
+def build_account_fields(provider: str) -> dict:
+    """Prompt for every field PROVIDER_FIELDS[provider] lists; only the fields filled in."""
+    return _prompt_fields(provider, PROVIDER_FIELDS[provider])
+
+
+def build_service_fields(kind: str) -> dict:
+    """Prompt for every field SERVICE_CREDENTIAL_FIELDS[kind] lists; only the fields filled in."""
+    return _prompt_fields(kind, SERVICE_CREDENTIAL_FIELDS[kind])
+
+
+def _write_file(out_path: Path, marker: dict, fields: dict, encrypt: bool, passphrase: str = None) -> Path:
+    """
+    Write a credentials YAML at `out_path` (mode 0600): `marker` (the cloudtype or credential_kind) and the schema
+    version, then `fields`, whole-file encrypted when `encrypt` (the passphrase is prompted for when not given).
+    """
     import yaml
 
-    payload = {"cloudtype": provider, "schema_version": CREDENTIALS_SCHEMA_VERSION}
+    payload = dict(marker, schema_version=CREDENTIALS_SCHEMA_VERSION)
     if encrypt:
         if passphrase is None:
             passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
@@ -214,105 +222,50 @@ def write_account_file(out_path, provider, fields, encrypt, passphrase=None):
     return out_path
 
 
-def _choose_kind():
-    kinds = sorted(SERVICE_CREDENTIAL_FIELDS)
-    print("Service credential kind:")
-    for i, name in enumerate(kinds, 1):
-        print("  {}) {}".format(i, name))
-    choice = input("Choice: ").strip()
-    try:
-        return kinds[int(choice) - 1]
-    except (ValueError, IndexError):
-        die("Invalid choice '{}'".format(choice))
+def write_account_file(out_path: Path, provider: str, fields: dict, encrypt: bool, passphrase: str = None) -> Path:
+    """Write a cloud-account credentials file for `provider`; see _write_file()."""
+    return _write_file(out_path, {"cloudtype": provider}, fields, encrypt, passphrase)
 
 
-def build_service_fields(kind):
-    """Like build_account_fields(), for SERVICE_CREDENTIAL_FIELDS[kind]."""
-    print("\nEnter credentials for '{}':".format(kind))
-    fields = {}
-    for key, required, sensitive in SERVICE_CREDENTIAL_FIELDS[kind]:
-        val = _prompt_field(key, required, sensitive)
-        if val:
-            fields[key] = val
-    return fields
+def write_credential_file(out_path: Path, kind: str, fields: dict, encrypt: bool, passphrase: str = None) -> Path:
+    """Write an external-service credentials file of `kind`; see _write_file()."""
+    return _write_file(out_path, {"credential_kind": kind}, fields, encrypt, passphrase)
 
 
-def write_credential_file(out_path, kind, fields, encrypt, passphrase=None):
-    """Like write_account_file(), but marks the file with 'credential_kind'
-    instead of 'cloudtype' — see SERVICE_CREDENTIAL_FIELDS's own comment."""
-    import yaml
-
-    payload = {"credential_kind": kind, "schema_version": CREDENTIALS_SCHEMA_VERSION}
-    if encrypt:
-        if passphrase is None:
-            passphrase = crypto_store.prompt_passphrase("Set a passphrase for this file: ", confirm=True)
-        plaintext = yaml.safe_dump(fields, sort_keys=False).encode("utf-8")
-        payload.update(crypto_store.encrypt_cascade(passphrase, plaintext))
-    else:
-        payload["unencrypted"] = True
-        payload.update(fields)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(yaml.safe_dump(payload, sort_keys=False))
-    out_path.chmod(0o600)
-    return out_path
-
-
-def interactive_build_service(credentials_dir):
-    """Mode C: prompt for credential kind + account name + every field, then
-    write <kind>-<account>.yaml (encrypted unless declined)."""
-    kind = _choose_kind()
-
-    account_name = input("Account name (the file will be named "
-                         "<kind>-<name>.yaml — that whole name is what "
-                         "you'll put in, e.g., smlm_scc_account): ").strip()
+def _interactive(credentials_dir: str, title: str, noun: str, table: dict, write, reference: str) -> Path:
+    """
+    Prompt for an entry of `table` (picked under `title`), an account name and every field, then write
+    <entry>-<account>.yaml in `credentials_dir` with `write` (encrypted unless declined). `noun` names the entry in the
+    file-name hint; `reference` is the hint printed after writing, formatted with the file's stem and the entry.
+    """
+    name = _choose(title, sorted(table))
+    account_name = input("Account name (the file will be named <{}>-<name>.yaml — that whole name is what "
+                         "you'll reference in the lab JSON): ".format(noun)).strip()
     if not account_name:
         die("An account name is required")
-
-    stem = "{}-{}".format(kind, account_name)
+    stem = "{}-{}".format(name, account_name)
     out_path = Path(credentials_dir) / "{}.yaml".format(stem)
-    if out_path.exists():
-        if input("{} already exists — overwrite? [y/N] ".format(out_path)).strip().lower() != "y":
-            die("Aborted — not overwriting {}".format(out_path))
-
-    fields = build_service_fields(kind)
+    if out_path.exists() and input("{} already exists — overwrite? [y/N] ".format(out_path)).strip().lower() != "y":
+        die("Aborted — not overwriting {}".format(out_path))
+    fields = _prompt_fields(name, table[name])
     encrypt = input("\nEncrypt this file? [Y/n] ").strip().lower() != "n"
-
-    write_credential_file(out_path, kind, fields, encrypt)
+    write(out_path, name, fields, encrypt)
     print("\nWrote {} ({}).".format(out_path, "encrypted" if encrypt else "UNENCRYPTED"))
-    print("Reference it in your lab JSON as, e.g.:  \"smlm_scc_account\": \"{}\"  (or leave unset "
-          "to auto-discover it, since it's the only '{}' credential file)".format(stem, kind))
+    print(reference.format(stem=stem, name=name))
     return out_path
 
 
-def interactive_build(credentials_dir):
-    """Mode A: prompt for provider + account name + every field, then write
-    <provider>-<account>.yaml (encrypted unless declined)."""
-    provider = _choose_provider()
+def interactive_build(credentials_dir: str) -> Path:
+    """Mode A: a cloud-provider credentials file, <provider>-<account>.yaml, referenced as cloud_account."""
+    return _interactive(credentials_dir, "Provider type:", "provider", PROVIDER_FIELDS, write_account_file,
+                        'Reference it in your lab JSON as:  "cloud_account": "{stem}"')
 
-    # The filename is "<provider>-<account_name>.yaml", and it's that WHOLE
-    # stem — not just what's typed here — that a lab JSON's cloud_account
-    # must reference. The prompt and the confirmation after writing both state this, because it is
-    # easy to write "cloud_account": "myaccount" in the lab JSON, which does not exist.
-    account_name = input("Account name (the file will be named "
-                         "<provider>-<name>.yaml — that whole name is what "
-                         "you'll put in cloud_account): ").strip()
-    if not account_name:
-        die("An account name is required")
 
-    stem = "{}-{}".format(provider, account_name)
-    out_path = Path(credentials_dir) / "{}.yaml".format(stem)
-    if out_path.exists():
-        if input("{} already exists — overwrite? [y/N] ".format(out_path)).strip().lower() != "y":
-            die("Aborted — not overwriting {}".format(out_path))
-
-    fields = build_account_fields(provider)
-    encrypt = input("\nEncrypt this file? [Y/n] ").strip().lower() != "n"
-
-    write_account_file(out_path, provider, fields, encrypt)
-    print("\nWrote {} ({}).".format(out_path, "encrypted" if encrypt else "UNENCRYPTED"))
-    print('Reference it in your lab JSON as:  "cloud_account": "{}"'.format(stem))
-    return out_path
+def interactive_build_service(credentials_dir: str) -> Path:
+    """Mode C: an external-service credentials file, <kind>-<account>.yaml, referenced e.g. as smlm_scc_account."""
+    return _interactive(credentials_dir, "Service credential kind:", "kind", SERVICE_CREDENTIAL_FIELDS, write_credential_file,
+                        "Reference it in your lab JSON as, e.g.:  \"smlm_scc_account\": \"{stem}\"  (or leave unset "
+                        "to auto-discover it when it is the only '{name}' credential file)")
 
 
 def encrypt_existing(path):
@@ -380,7 +333,7 @@ def write_encrypted_copy(path, data, keys, passphrase):
 def main():
     args = sys.argv[1:]
 
-    if args and args[0] in ("--help", "-h"):
+    if primary.wants_help(args):
         print(_HELP_TEXT)
         sys.exit(0)
     if args and args[0] in ("--version", "-v"):

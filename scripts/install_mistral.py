@@ -74,6 +74,7 @@ def setup_mistral(hostname, clu_name, mydomain, mistral_rel=None, mistral_ns=Non
     print("Mistral deployed via Ollama. Namespace: {}".format(ns))
     print("API available at: http://{}".format(fqdn))
     print("Model pre-pulled: {}".format(model))
+    return fqdn
 
 
 def main():
@@ -97,10 +98,11 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_mistral_repo(vm_name, mistral_rel=cfg.get("mistral_rel"), mistral_repo_url=cfg.get("mistral_repo_url"))
-    setup_mistral(vm_name, clu_name, clu_cfg.get("mydomain"),
-                  mistral_rel=cfg.get("mistral_rel"), mistral_ns=cfg.get("mistral_ns"),
-                  mistral_version=cfg.get("mistral_version"), mistral_shorthn=cfg.get("mistral_shorthn"),
-                  mistral_model=cfg.get("mistral_model"))
+    fqdn = setup_mistral(vm_name, clu_name, clu_cfg.get("mydomain"),
+                         mistral_rel=cfg.get("mistral_rel"), mistral_ns=cfg.get("mistral_ns"),
+                         mistral_version=cfg.get("mistral_version"), mistral_shorthn=cfg.get("mistral_shorthn"),
+                         mistral_model=cfg.get("mistral_model"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

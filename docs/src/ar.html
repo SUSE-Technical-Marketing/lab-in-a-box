@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة.</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -395,7 +395,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
-<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية.</p>
+<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -582,6 +582,10 @@ rancher:
 <tr>
 <td><code>mgm_node</code></td>
 <td>اسم مضيف العقدة التي تشغّل مثبّتات إضافات العنقود؛ الافتراضي هو أول عقدة خادم</td>
+</tr>
+<tr>
+<td><code>clu_token</code></td>
+<td>رمز الانضمام الذي يُضبط على أول خادم RKE2/K3s (16 حرفًا أو رقمًا أو <code>.</code> أو <code>_</code> أو <code>-</code> على الأقل)؛ الافتراضي هو الرمز الذي يولّده أول خادم. اضبطه عندما تنضم إلى العنقود أجهزة من خارج تعريف المختبر، مثلًا من ملف تعريف kickstart أو من حالة Salt</td>
 </tr>
 </tbody>
 </table>
@@ -945,10 +949,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>DNS العنقود</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>تدوير شهادات عنقود Kubernetes</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>تنسيق البيانات وتخزينها المؤقت لأحمال العمل السحابية الأصلية</td>
 </tr>
@@ -989,8 +989,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>أحمال عمل تجريبية لـ NeuVector قائمة على Helm</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>مشغّل OpenSCAP/ComplianceAsCode</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>مشغّل الامتثال من Rancher: فحوصات CIS Benchmark لعنقود RKE2/K3s</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -998,7 +998,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>مساعد أمني لـ Kubernetes بالذكاء الاصطناعي الوكيلي</td>
+<td>إطار لتشغيل وكلاء الذكاء الاصطناعي على Kubernetes مع واجهة ويب؛ النموذج من OpenAI أو Anthropic أو Gemini أو Azure OpenAI أو Ollama</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1030,7 +1030,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي</td>
+<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي. ويثبّت تلقائياً أيضاً SUSE Linux 16 وopenSUSE Leap 16: تقدّم مدخلات <code>smlm_kickstart_profiles</code> التي تحتوي <code>agama_profile</code> ملف تعريف Agama بصيغة JSON، وتستورد مدخلات <code>smlm_distributions</code> التي تحتوي <code>iso_url</code> شجرة التثبيت من ملف ISO</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1232,10 +1232,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>نموذج StarCoder2، يُقدَّم عبر Ollama</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>(راجع <code>install_phoebe --schema</code>)</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1255,10 +1251,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>تجهيز عقد SUSE Virtualization ‏(Harvester/KubeVirt)</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>أداة بناء أجهزة KIWI</td>
 </tr>
 </tbody>
 </table>
@@ -1424,7 +1416,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>يمكن إعادة استخدام ملف بيانات اعتماد واحد لكل نوع في كل إضافة تحتاج إلى ذلك النوع (مثلًا يغطي ملف <code>scc</code> واحد بيانات اعتماد SCC لأي إضافة)، أيًا كانت بادئة حقول JSON في كل إضافة؛ راجع <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> في <code>libs/addon_common.py</code> ودوال <code>*_service_credential*</code> في <code>libs/primary.py</code> للآلية الأساسية.</p>
 <p><strong>الخلفيات السحابية (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) و<code>myip</code>:</strong> اترك <code>myip</code> فارغًا لعقدة الخلفية السحابية في ملف JSON للمختبر: فعنوان IP الحقيقي لا يُعرف إلا حين يعيّنه المزوّد عند الإنشاء، وليس شيئًا يُقرر مسبقًا كعنوان IP ثابت في libvirt/Harvester. يأخذ <code>setup_vm.py</code> عنوان IP الحقيقي من القيمة التي تعيدها <code>create_vm()</code> ويسجّله في DNS <em>بعد</em> وجود العقدة فعلًا لا قبله (خلل حقيقي اكتُشف أثناء الاختبار الفعلي لـ AWSBackend في 2026-09-06؛ راجع TODO). كذلك لا معنى لـ <code>mymac</code> مع خلفية سحابية: اتركه دون ضبط؛ إذ يُتجاهل بدلًا من توليده أو فحص تعارضه.</p>
-<p><strong>آلة DNS السحابية:</strong> في أول مرة تستخدم فيها عقدة من المختبر خلفية سحابية معينة، يجهّز <code>setup_vm.py</code> أيضًا (أو يعيد استخدام الموجودة إن وُجدت) آلة افتراضية صغيرة رخيصة تقدّم DNS داخل الشبكة السحابية نفسها، <code>lab-dns-&lt;backend&gt;</code>، مثل <code>lab-dns-aws</code>، وتشغّل BIND. وجودها ضروري لأن العقد السحابية لا تستطيع عادةً الوصول إطلاقًا إلى خادم BIND في <code>automation.mydemo.lab</code> (فهو خلف NAT/موجّه المختبر المنزلي ولا يمكن الوصول إليه من الإنترنت)؛ ويحتاج عنقود سحابي حقيقي متعدد العقد إلى خادم DNS خاص به داخل الشبكة نفسها كي تحل عقده أسماء بعضها. يُسجَّل سجل DNS لكل عقدة سحابية في آلة DNS هذه <em>وفي</em> المنطقة المركزية لـ <code>automation.mydemo.lab</code> معًا. <strong>قيود معروفة:</strong> (1) لا تستخدم العقدة السحابية المنشأة حديثًا آلة DNS هذه تلقائيًا بعد لحل الأسماء، فلا تستطيع عقدة سحابية ثانية في المختبر نفسه حل اسم الأولى دون إعداد إضافي؛ (2) تستعلم العقد عن آلة DNS هذه عبر عنوانها الخاص؛ وقد تعترض الشبكات الموجودة على المسار استعلامات DNS الموجّهة إلى عنوانها العام من خارج السحابة، لأن بعض مزوّدي الإنترنت والموجّهات يجيبون بأنفسهم عن كل حركة DNS. راجع سلسلة توثيق <code>ensure_cloud_dns_vm()</code> في <code>libs/backends.py</code>.</p>
+<p><strong>آلة DNS السحابية:</strong> في أول مرة تستخدم فيها عقدة من المختبر خلفية سحابية معينة، يجهّز <code>setup_vm.py</code> أيضًا (أو يعيد استخدام الموجودة إن وُجدت) آلة افتراضية صغيرة رخيصة تقدّم DNS داخل الشبكة السحابية نفسها، <code>lab-dns-&lt;backend&gt;</code>، مثل <code>lab-dns-aws</code>، وتشغّل BIND. تُقلع من أحدث صورة openSUSE Leap ينشرها المزوّد (على AWS تُؤخذ من قائمة صور SUSE العامة للسحابة)، أو من صورة المختبر نفسه لدى مزوّد لا يوفّرها؛ وهي تدعم صور Debian/Ubuntu وSUSE وعائلة Fedora (RHEL وAmazon Linux). اضبط <code>CLOUD_DNS_IMAGE</code> في الحساب السحابي (أو في <code>lab_creation.cfg</code>) لإقلاعها من صورة محددة بدلًا من ذلك. وجودها ضروري لأن العقد السحابية لا تستطيع عادةً الوصول إطلاقًا إلى خادم BIND في <code>automation.mydemo.lab</code> (فهو خلف NAT/موجّه المختبر المنزلي ولا يمكن الوصول إليه من الإنترنت)؛ ويحتاج عنقود سحابي حقيقي متعدد العقد إلى خادم DNS خاص به داخل الشبكة نفسها كي تحل عقده أسماء بعضها. يُسجَّل سجل DNS لكل عقدة سحابية في آلة DNS هذه <em>وفي</em> المنطقة المركزية لـ <code>automation.mydemo.lab</code> معًا. <strong>قيود معروفة:</strong> (1) لا تستخدم العقدة السحابية المنشأة حديثًا آلة DNS هذه تلقائيًا بعد لحل الأسماء، فلا تستطيع عقدة سحابية ثانية في المختبر نفسه حل اسم الأولى دون إعداد إضافي؛ (2) تستعلم العقد عن آلة DNS هذه عبر عنوانها الخاص؛ وقد تعترض الشبكات الموجودة على المسار استعلامات DNS الموجّهة إلى عنوانها العام من خارج السحابة، لأن بعض مزوّدي الإنترنت والموجّهات يجيبون بأنفسهم عن كل حركة DNS. راجع سلسلة توثيق <code>ensure_cloud_dns_vm()</code> في <code>libs/backends.py</code>.</p>
 <p><strong>أحجام المثيلات السحابية:</strong> تحوّل كل خلفية سحابية <code>VM_CPU</code>/<code>VM_MEM</code> إلى أصغر نوع مثيل أو نوع خادم أو خطة أو فئة كافية لدى المزوّد، من جدول صغير مدمج (يذكر عمود "ملاحظات" لكل منها أيها)؛ ولم يُقصد بهذا الجدول أن يكون حدًا أعلى. هناك طريقتان لتجاوزه، بترتيب الأولوية:
 1. <strong><code>cloud_instance_type</code></strong> (في common أو لكل عقدة، وتغلب قيمة العقدة): الاسم الدقيق لنوع مثيل أو نوع خادم أو خطة أو فئة، يُستخدم كما هو دون أي اختيار تلقائي. يعمل بالطريقة نفسها في كل الخلفيات السحابية، بما فيها OVHcloud (يتخطى استدعاء API الفوري لقائمة الفئات) وGCP (لا ينشئ نوعًا مخصصًا <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>؛ أعطه بدلًا من ذلك نوعًا محددًا مسبقًا حقيقيًا مثل <code>n2-standard-4</code>).
 2. <strong>مفتاح إعداد <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (راجع صف كل مزوّد أدناه): يستبدل الجدول المدمج بالكامل، فيبقى الاختيار التلقائي حسب <code>VM_CPU</code>/<code>VM_MEM</code> عاملًا لكن على قائمتك. الصيغة: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>، مثل <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. يستبدل هذا الجدول كله ولا يدمجه: كرر أي مدخلات مدمجة ما زلت تريدها. لا يوجد هذا المفتاح لدى GCP وOVHcloud: إذ ينشئ GCP نوع جهاز مخصصًا حقيقيًا مباشرة من <code>VM_CPU</code>/<code>VM_MEM</code> (لا يوجد كتالوج لاستبداله)، ويستعلم OVHcloud أصلًا قائمة فئاته الحقيقية مباشرة عند الإنشاء (راجع صفه).</p>

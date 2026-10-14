@@ -24,7 +24,6 @@ __version__ = "__LABVERSION__"
 import concurrent.futures
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -45,14 +44,6 @@ import backends  # noqa: E402
 import harvester  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
-from source_utils import get_source_type, is_url  # noqa: E402
-
-# Helper to get SOURCE_* with ISO_* fallback for backward compatibility
-def get_source_value(config, field_name):
-    """Get SOURCE_* field with ISO_* fallback (for backward compatibility)."""
-    source_field = f"SOURCE_{field_name}"
-    iso_field = f"ISO_{field_name}"
-    return config.get(source_field) or config.get(iso_field)
 
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
@@ -61,6 +52,8 @@ Provisions all VMs defined in the lab JSON, sets up Kubernetes clusters, and
 installs cluster-level and VM-level addons in order.
 
 Options:
+  --help, -h
+            Print this help and exit, wherever the option appears.
   --keep    Skip VMs that already exist, are running, match the defined IP and
             MAC address, and are accessible via SSH with default credentials.
             Without this flag (default) every VM is destroyed and recreated.
@@ -83,6 +76,8 @@ The lab definition JSON must contain:
   kclusters  — map of cluster name → cluster config (clu_type, addons, …)
   <addon>    — one section per addon listed in kclusters[x].addons or nodes[x].addons
 
+Add-on scripts (install_<addon>) are taken from this program's own directory
+first, so a repository checkout runs its own add-ons, then from PATH.
 Run 'install_<addon> --help' for the options accepted by each addon section.
 Run 'setup_lab.py --input-definition [json|yaml]' for the machine-readable schema.
 """
@@ -273,11 +268,14 @@ def validate_addon_configs(definition, json_file, issues_out=None):
 
     issues = []
     for addon in addon_names:
-        installer = shutil.which("install_{}".format(addon))
+        installer = apps.addon_installer(addon)
         if not installer:
-            issues.append("  {}[ERROR]{} addon '{}': install_{} not found on PATH".format(
+            issues.append("  {}[ERROR]{} addon '{}': install_{} not found".format(
                 lc._RED, lc._RESET, addon, addon))
             continue
+        status = apps.status_warning(apps.load_plugin(addon))
+        if status:
+            lc.warn(status)
         r = subprocess.run([installer, "--validate", json_file],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         if r.returncode != 0:
@@ -547,7 +545,7 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     for addon in addons:
         if addon in installed:
             continue
-        installer = shutil.which("install_{}".format(addon))
+        installer = apps.addon_installer(addon)
         if not installer:
             lc.die("FAILED! Addon script \"install_{}\" not found".format(addon))
         apps.check_requirements(apps.load_plugin(addon), targets.TARGET_CONTAINER, clu_type=clu_type)
@@ -627,7 +625,7 @@ def phase_vm_addons(definition, json_file):
             # that addon's config (read by the addon script itself, via
             # k8s.addon_node_config() — this loop only needs the name).
             addon = apps.addon_entry_name(addon_entry)
-            installer = shutil.which("install_{}".format(addon))
+            installer = apps.addon_installer(addon)
             if not installer:
                 lc.die("Addon script \"install_{}\" not found".format(addon))
             apps.check_requirements(apps.load_plugin(addon), node_target)
@@ -710,7 +708,7 @@ def main():
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
 
-    if args and args[0] == "--help":
+    if primary.wants_help(args):
         print(_HELP_TEXT)
         sys.exit(0)
 
@@ -738,8 +736,12 @@ def main():
             if parallel < 1:
                 lc.die("--parallel=N: N must be at least 1 (got {})".format(parallel))
 
-    positional = [a for a in args if a != "--keep" and a != "--debug" and a != "--parallel"
-                  and not a.startswith("--parallel=")]
+    unknown = [a for a in args if a.startswith("-") and a not in ("--keep", "--debug", "--parallel")
+               and not a.startswith("--parallel=")]
+    if unknown:
+        lc.die("unknown option(s): {}. Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>".format(
+            " ".join(unknown)))
+    positional = [a for a in args if not a.startswith("-")]
     if not positional:
         lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>")
     json_file = positional[0]

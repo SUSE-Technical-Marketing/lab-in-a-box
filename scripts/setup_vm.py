@@ -214,11 +214,10 @@ def provision_vm(definition, config, defaults, vm_name):
         # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring for
         # exactly what this does and does not yet cover (nodes don't yet point their own
         # resolution at it — a known, separately tracked follow-up, not silently glossed over).
-        dns_image = (backends.cloud_dns_image(definition, config, vm_name)
-                     or env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""))
         dns_vm_ip = backends.ensure_cloud_dns_vm(
             backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
-            env.get("mydomain", ""), dns_image, lab_setup_path,
+            env.get("mydomain", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path,
+            preferred_image=backends.cloud_dns_image(definition, config, vm_name),
         )
         remote_dns_servers.append(dns_vm_ip)
 
@@ -281,6 +280,7 @@ def provision_vm(definition, config, defaults, vm_name):
                                                   site_name=hub_site, site_cidr=site_cidr)
                 hub_vm_name = overlay.hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
                 hub_backend.disable_source_dest_check(hub_vm_name)
+                hub_backend.allow_internal_traffic()
                 gateway_lan_ip = hub_backend.get_private_ip(hub_vm_name)
             else:
                 warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "
@@ -308,6 +308,7 @@ def provision_vm(definition, config, defaults, vm_name):
                 overlay.ensure_overlay_site_gateway(this_site, gw_public_ip, hub_host, hub_pubkey,
                                                      wg_port, site_cidr, overlay_cidr=overlay_cidr)
                 backend.disable_source_dest_check(gw_vm_name)
+                backend.allow_internal_traffic()
                 gateway_lan_ip = backend.get_private_ip(gw_vm_name)
             else:
                 warn("- backend '{}' has no known subnet CIDR — '{}' will not be routable "
@@ -322,7 +323,7 @@ def provision_vm(definition, config, defaults, vm_name):
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--help":
+    if primary.wants_help(sys.argv[1:]):
         print(
             "Usage: setup_vm.py <lab.json> <vm_hostname>\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"

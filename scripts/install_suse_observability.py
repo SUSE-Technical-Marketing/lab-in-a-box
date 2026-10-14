@@ -96,6 +96,7 @@ def setup_suse_observability(hostname, clu_name, mydomain, suse_observability_li
 
     print("SUSE Observability installed. Namespace: {}. Sizing profile: {}".format(ns, profile))
     print("UI available at: http://{}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -120,13 +121,14 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_suse_observability_repo(vm_name, suse_observability_rel=cfg.get("suse_observability_rel"),
                                    suse_observability_repo_url=cfg.get("suse_observability_repo_url"))
-    setup_suse_observability(vm_name, clu_name, clu_cfg.get("mydomain"),
-                              suse_observability_license=cfg.get("suse_observability_license"),
-                              suse_observability_rel=cfg.get("suse_observability_rel"),
-                              suse_observability_ns=cfg.get("suse_observability_ns"),
-                              suse_observability_version=cfg.get("suse_observability_version"),
-                              suse_observability_shorthn=cfg.get("suse_observability_shorthn"),
-                              suse_observability_profile=cfg.get("suse_observability_profile"))
+    fqdn = setup_suse_observability(vm_name, clu_name, clu_cfg.get("mydomain"),
+                                     suse_observability_license=cfg.get("suse_observability_license"),
+                                     suse_observability_rel=cfg.get("suse_observability_rel"),
+                                     suse_observability_ns=cfg.get("suse_observability_ns"),
+                                     suse_observability_version=cfg.get("suse_observability_version"),
+                                     suse_observability_shorthn=cfg.get("suse_observability_shorthn"),
+                                     suse_observability_profile=cfg.get("suse_observability_profile"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ def setup_deepseek(hostname, clu_name, mydomain, deepseek_rel=None, deepseek_ns=
     print("DeepSeek model '{}' scheduled for pull via Ollama.".format(model))
     print("API available at: http://{}".format(fqdn))
     print("Note: first-time model pull may take several minutes depending on model size.")
+    return fqdn
 
 
 def main():
@@ -94,12 +95,13 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_deepseek_repo(vm_name, deepseek_rel=cfg.get("deepseek_rel"), deepseek_repo_url=cfg.get("deepseek_repo_url"))
-    setup_deepseek(
+    fqdn = setup_deepseek(
         vm_name, clu_name, clu_cfg.get("mydomain", ""),
         deepseek_rel=cfg.get("deepseek_rel"), deepseek_ns=cfg.get("deepseek_ns"),
         deepseek_version=cfg.get("deepseek_version"), deepseek_shorthn=cfg.get("deepseek_shorthn"),
         deepseek_model=cfg.get("deepseek_model"),
     )
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

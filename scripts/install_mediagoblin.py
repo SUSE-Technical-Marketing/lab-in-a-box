@@ -59,7 +59,9 @@ def setup_mediagoblin(hostname, templ_addons_loc, cfg):
     ns = cfg.get("mediagoblin_ns") or "mediagoblin"
     shorthn = cfg.get("mediagoblin_shorthn") or "mediagoblin"
     print("MediaGoblin deployed. Namespace: {}".format(ns))
-    print("Available at: http://{}.{}.{}".format(shorthn, cfg.get("clu_name"), cfg.get("mydomain")))
+    fqdn = "{}.{}.{}".format(shorthn, cfg.get("clu_name"), cfg.get("mydomain"))
+    print("Available at: http://{}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -84,7 +86,8 @@ def main():
     cfg["mydomain"] = clu_cfg.get("mydomain")
 
     templ_addons_loc = defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/")
-    setup_mediagoblin(vm_name, templ_addons_loc, cfg)
+    fqdn = setup_mediagoblin(vm_name, templ_addons_loc, cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

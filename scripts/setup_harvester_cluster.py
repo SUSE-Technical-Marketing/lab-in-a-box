@@ -277,7 +277,21 @@ def _apply_post_install_settings(cluster_cfg, kubeconfig_path):
     harvester.apply_settings(kubeconfig_path, cluster_cfg.get("post_install_settings"))
 
 
+_HELP_TEXT = """\
+Usage: setup_harvester_cluster.py <cluster.json>
+
+Stands up a Harvester HCI cluster through PXE netboot. <cluster.json> is a standalone configuration file, not a lab
+definition; templates/harvester-cluster.json.example lists every key.
+
+Options:
+  --help, -h  Print this help and exit.
+"""
+
+
 def main():
+    if primary.wants_help(sys.argv[1:]):
+        print(_HELP_TEXT, end="")
+        sys.exit(0)
     if len(sys.argv) < 2:
         print("Usage: {} <cluster.json>".format(Path(sys.argv[0]).name))
         sys.exit(1)

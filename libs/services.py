@@ -145,6 +145,14 @@ class DNSService(AuxService):
             lines = [l for l in zone_file.read_text().splitlines() if l != record]
             zone_file.write_text("\n".join(lines) + "\n")
 
+    def _dns_remove_service_lines(self, zone_file, ip):
+        """Remove every service record (`<entry>\tIN A  <ip>`, as add_service_dns writes it) that points at `ip`."""
+        zone_file = Path(zone_file)
+        if ip and zone_file.exists():
+            suffix = "\tIN A  {}".format(ip)
+            lines = [l for l in zone_file.read_text().splitlines() if not l.endswith(suffix)]
+            zone_file.write_text("\n".join(lines) + "\n")
+
     def _dns_append_line(self, zone_file, record):
         zone_file = Path(zone_file)
         zone_file.touch()
@@ -208,7 +216,7 @@ class DNSService(AuxService):
         path.write_text("\n".join(lines) + "\n")
 
     def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Add forward (A) and reverse (PTR) DNS records for a VM."""
+        """Add forward (A) and reverse (PTR) DNS records for a VM. Without `mynet_reverse` only the A record is added."""
         log("Adding DNS entry for '{}' → {}".format(vm_name, myip))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
@@ -220,20 +228,25 @@ class DNSService(AuxService):
 
         with _dns_lock:
             for server in (remote_dns_servers or []):
-                self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
+                if mynet_reverse:
+                    self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
                 self._remote_dns_add(server, lan_file, a_record)
-                self._remote_dns_add(server, rev_file, ptr_record)
+                if mynet_reverse:
+                    self._remote_dns_add(server, rev_file, ptr_record)
                 self._remote(server, "systemctl restart named", check=False)
 
             # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
-            self._dns_remove_ptr_for_octet(rev_file, last_octet)
+            if mynet_reverse:
+                self._dns_remove_ptr_for_octet(rev_file, last_octet)
             self._dns_add_line(lan_file, a_record)
-            self._dns_add_line(rev_file, ptr_record)
+            if mynet_reverse:
+                self._dns_add_line(rev_file, ptr_record)
             self._update_hosts_file(vm_name, myip)
             self.restart_named()
 
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Remove forward and reverse DNS records for a VM."""
+        """Remove a VM's forward and reverse DNS records and every service record pointing at its IP. Without `mynet_reverse`
+        the PTR record is left alone."""
         log("Removing DNS entry for '{}'".format(vm_name))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
@@ -247,12 +260,16 @@ class DNSService(AuxService):
             for server in (remote_dns_servers or []):
                 # check=False: same non-fatal-secondary-server rationale as
                 # _remote_dns_add above.
-                self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
+                if mynet_reverse:
+                    self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, rev_file), check=False)
                 self._remote(server, "sed '/{}/d' -i {}".format(a_record, lan_file), check=False)
+                self._remote(server, "sed '/\\tIN A  {}$/d' -i {}".format(myip.replace(".", "\\."), lan_file), check=False)
                 self._remote(server, "systemctl restart named", check=False)
 
-            self._dns_remove_line(rev_file, ptr_record)
+            if mynet_reverse:
+                self._dns_remove_line(rev_file, ptr_record)
             self._dns_remove_line(lan_file, a_record)
+            self._dns_remove_service_lines(lan_file, myip)
             self._update_hosts_file(vm_name)
             self.restart_named()
 

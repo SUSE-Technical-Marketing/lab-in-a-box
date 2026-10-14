@@ -69,6 +69,8 @@ import k8s  # noqa: E402
 import primary  # noqa: E402
 from lab_creation import ssh_run, helm_repo_add, die  # noqa: E402
 
+_CHART_HOSTS = ("gitlab", "registry", "minio", "kas")
+
 _DEFAULT_IMAGE = "gitlab/gitlab-ce"
 
 
@@ -203,6 +205,8 @@ def setup_gitlab_podman(hostname, cfg):
 
 def setup_gitlab_kubernetes(hostname, cfg):
     """
+    Returns the hostnames the chart's ingresses serve (_CHART_HOSTS under global.hosts.domain).
+
     Installs GitLab via its own real, official Helm chart (charts.gitlab.io)
     — see this file's own top-of-file reference for the exact values keys,
     which match the chart's current values.yaml. Deployed ONCE
@@ -259,6 +263,7 @@ def setup_gitlab_kubernetes(hostname, cfg):
               "plain http:// only. This is correct for this project's own non-public *.mydemo.lab "
               "domain convention; set gitlab_https: \"true\" with a real public domain + "
               "gitlab_cert_manager_email for real Let's Encrypt certs.")
+    return ["{}.{}".format(sub, domain) for sub in _CHART_HOSTS]
 
 
 def main():
@@ -276,7 +281,9 @@ def main():
         if not target:
             sys.exit(1)
         vm_name, _ssh_cmd = target
-        setup_gitlab_kubernetes(vm_name, cfg)
+        clu_name = k8s.get_vm_kcluster(definition, vm_name)
+        for fqdn in setup_gitlab_kubernetes(vm_name, cfg):
+            ac.register_service_dns(definition, clu_name, fqdn)
         return
 
     env_vm_name = os.environ.get("_vm_name") or None

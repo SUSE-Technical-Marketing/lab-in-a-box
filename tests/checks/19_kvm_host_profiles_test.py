@@ -164,6 +164,41 @@ check("register_repos passes --email/--url through when set",
       and "--url" in base_call and "https://scc.suse.com" in base_call)
 
 
+
+# ── /etc/os-release and configure_dns ──────────────────────────────────────────────────────────────────────────────
+import tempfile  # noqa: E402
+
+root = Path(tempfile.mkdtemp())
+real_path = khp.Path
+
+
+def rooted(p, *a):
+    """khp.Path with /etc redirected into the temporary root."""
+    return real_path(str(root) + str(p)) if str(p).startswith("/etc") else real_path(p, *a)
+
+
+(root / "etc" / "sysconfig" / "network").mkdir(parents=True)
+(root / "etc" / "os-release").write_text('NAME="SLES"\nID="sles"\nVERSION_ID="15.7"\nID_LIKE="suse"\n')
+with mock.patch.object(khp, "Path", side_effect=rooted):
+    check("_read_os_release: the key/value pairs, quotes removed",
+          khp._read_os_release() == {"NAME": "SLES", "ID": "sles", "VERSION_ID": "15.7", "ID_LIKE": "suse"})
+    (root / "etc" / "resolv.conf").write_text("# generated\nsearch old.lab\nnameserver 1.1.1.1\noptions edns0\n")
+    khp.HostOSProfile({}).configure_dns("192.168.8.71", "mydemo.lab")
+    check("configure_dns: resolv.conf points at the automation host, other lines kept",
+          (root / "etc" / "resolv.conf").read_text() ==
+          "search mydemo.lab\nnameserver 192.168.8.71\n# generated\noptions edns0\n")
+    (root / "etc" / "sysconfig" / "network" / "config").write_text(
+        'NETCONFIG_DNS_POLICY="auto"\nNETCONFIG_DNS_STATIC_SEARCHLIST=""\nNETCONFIG_DNS_STATIC_SERVERS=""\n')
+    with mock.patch.object(khp.subprocess, "run") as run:
+        khp._SuseZypperProfile({}).configure_dns("192.168.8.71", "mydemo.lab")
+    text = (root / "etc" / "sysconfig" / "network" / "config").read_text()
+    check("SUSE configure_dns: sets netconfig's static server and search list, then runs netconfig update",
+          'NETCONFIG_DNS_STATIC_SERVERS="192.168.8.71"' in text and 'NETCONFIG_DNS_STATIC_SEARCHLIST="mydemo.lab"' in text
+          and run.call_args[0][0] == ["netconfig", "update", "-f"])
+(root / "etc" / "os-release").unlink()
+with mock.patch.object(khp, "Path", side_effect=rooted):
+    check("_read_os_release: empty without /etc/os-release", khp._read_os_release() == {})
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

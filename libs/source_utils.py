@@ -43,16 +43,6 @@ def is_url(value):
     return get_source_type(value) == "url"
 
 
-def is_checksum(value):
-    """Check if value is a hex checksum."""
-    return get_source_type(value) == "checksum"
-
-
-def is_local_file(value):
-    """Check if value is a local file path."""
-    return get_source_type(value) == "local_file"
-
-
 def download_and_validate_source(source_url, dest_path, checksum_value=None, checksum_url=None):
     """Download source image from URL and optionally validate checksum.
 

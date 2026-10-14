@@ -84,6 +84,7 @@ def setup_apertus(hostname, clu_name, mydomain, apertus_rel=None, apertus_ns=Non
     print("Model pre-pulled: {}".format(model))
     print("Community GGUF package (not Ollama's own curated library, not the Apertus team) — "
           "verify licensing/provenance before relying on it beyond a lab demo.")
+    return fqdn
 
 
 def main():
@@ -107,12 +108,13 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_apertus_repo(vm_name, apertus_rel=cfg.get("apertus_rel"), apertus_repo_url=cfg.get("apertus_repo_url"))
-    setup_apertus(vm_name, clu_name, clu_cfg.get("mydomain"),
-                  apertus_rel=cfg.get("apertus_rel"),
-                  apertus_ns=cfg.get("apertus_ns"),
-                  apertus_version=cfg.get("apertus_version"),
-                  apertus_shorthn=cfg.get("apertus_shorthn"),
-                  apertus_tag=cfg.get("apertus_tag"))
+    fqdn = setup_apertus(vm_name, clu_name, clu_cfg.get("mydomain"),
+                         apertus_rel=cfg.get("apertus_rel"),
+                         apertus_ns=cfg.get("apertus_ns"),
+                         apertus_version=cfg.get("apertus_version"),
+                         apertus_shorthn=cfg.get("apertus_shorthn"),
+                         apertus_tag=cfg.get("apertus_tag"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

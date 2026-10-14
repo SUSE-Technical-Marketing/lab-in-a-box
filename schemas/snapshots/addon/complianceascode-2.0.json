@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "complianceascode_profile": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "complianceascode_rel": {
+   "default": "rancher-charts",
+   "required": false,
+   "type": "string"
+  },
+  "complianceascode_repo_url": {
+   "default": "https://charts.rancher.io",
+   "required": false,
+   "type": "url"
+  },
+  "complianceascode_scan": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "complianceascode_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:complianceascode",
+ "version": "2.0"
+}

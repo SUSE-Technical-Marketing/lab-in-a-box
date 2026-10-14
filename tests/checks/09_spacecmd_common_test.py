@@ -112,6 +112,18 @@ sc._api_call("host1", "mgrctl exec --", "saltkey.acceptedList", [])
 check("_api_call: 0-arg call also gets the '--' separator",
       "spacecmd -- api -A" in unwrap(fake.calls[0][1]) and "saltkey.acceptedList" in unwrap(fake.calls[0][1]))
 
+# spacecmd re-wraps whitespace-containing arguments in unescaped single quotes, so the JSON carries none.
+fake = FakeSSH()
+sc.ssh_run = fake
+sc._api_call("host1", "mgrctl exec --", "kickstart.profile.addScript", ["ks", "s", "echo 'a b'", "", "post", True])
+cmd = unwrap(fake.calls[0][1])
+match = re.search(r"spacecmd -- api -A '([^']*)' kickstart\.profile\.addScript", cmd)
+json_arg = match.group(1) if match else ""
+check("_api_call: a single quote in an argument is sent as the JSON escape \\u0027",
+      match is not None and "\\u0027" in json_arg)
+check("_api_call: the escaped JSON decodes back to the original arguments",
+      json.loads(json_arg or "null") == ["ks", "s", "echo 'a b'", "", "post", True])
+
 # -- _fault_check: a server-side fault gives a nonzero return code ------------------------
 # spacecmd can exit 0 when the server returns a Fault. _api_call and _spacecmd turn that into a nonzero return code,
 # so callers' returncode checks see the failure.
@@ -1116,16 +1128,6 @@ except SystemExit:
     died = True
 check("schedule_ansible_playbook: server-side failure dies", died)
 
-# -- ansible_playbook_status: reuses native schedule_* commands --------------
-fake = FakeSSH(responses=[
-    ("schedule_details", FakeResult(returncode=0, stdout="Action: foo")),
-    ("schedule_getoutput", FakeResult(returncode=0, stdout="output text")),
-])
-sc.ssh_run = fake
-details, output = sc.ansible_playbook_status("host1", "mgrctl exec --", 42)
-check("ansible_playbook_status: returns (details, output) via schedule_details/schedule_getoutput",
-      details == "Action: foo" and output == "output text")
-
 # -- content_project_exists / ensure_content_project -------------------------
 fake = FakeSSH(responses=[("contentmanagement.listProjects", FakeResult(returncode=0, stdout="web-lifecycle\n"))])
 sc.ssh_run = fake
@@ -1522,22 +1524,6 @@ except SystemExit:
     died = True
 check("ensure_scap_scan: schedule failure dies", died)
 
-# -- list_scap_scans / scap_scan_details / scap_scan_rule_results -----------
-fake = FakeSSH(responses=[("scap_listxccdfscans", FakeResult(returncode=0, stdout="scan list text"))])
-sc.ssh_run = fake
-check("list_scap_scans: returns raw text",
-      sc.list_scap_scans("host1", "mgrctl exec --", "web1") == "scan list text")
-
-fake = FakeSSH(responses=[("scap_getxccdfscandetails", FakeResult(returncode=0, stdout="details text"))])
-sc.ssh_run = fake
-check("scap_scan_details: returns raw text",
-      sc.scap_scan_details("host1", "mgrctl exec --", 42) == "details text")
-
-fake = FakeSSH(responses=[("scap_getxccdfscanruleresults", FakeResult(returncode=0, stdout="rule results text"))])
-sc.ssh_run = fake
-check("scap_scan_rule_results: returns raw text",
-      sc.scap_scan_rule_results("host1", "mgrctl exec --", 42) == "rule results text")
-
 # -- run_scap_scans: orchestration, no-op, validation ------------------------
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -1778,15 +1764,11 @@ except SystemExit:
     died = True
 check("ensure_system_group: create failure dies", died)
 
-# -- list_group_systems / group_has_system / ensure_group_systems -----------
+# -- list_group_systems / ensure_group_systems --------------------------------
 fake = FakeSSH(responses=[("group_listsystems", FakeResult(returncode=0, stdout="dev1.lab\ndev2.lab\n"))])
 sc.ssh_run = fake
 check("list_group_systems: returns raw text",
       sc.list_group_systems("host1", "mgrctl exec --", "dev-systems") == "dev1.lab\ndev2.lab\n")
-check("group_has_system: found",
-      sc.group_has_system("host1", "mgrctl exec --", "dev-systems", "dev1.lab") is True)
-check("group_has_system: not found",
-      sc.group_has_system("host1", "mgrctl exec --", "dev-systems", "prod1.lab") is False)
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -2156,6 +2138,9 @@ sc.socket.gethostbyname = _real_gethostbyname
 
 # -- ensure_client_registered -------------------------------------------------
 sc.time.sleep = lambda s: None  # never actually wait in tests
+_reboot_waits = []
+sc.boot_id = lambda hostname: "boot-1"
+sc.wait_for_reboot = lambda hostname, old: _reboot_waits.append((hostname, old)) or True
 
 # Already accepted: pure no-op, no bootstrap curl issued — confirms
 # _ensure_client_can_resolve_server() isn't even attempted for a client
@@ -2233,6 +2218,37 @@ try:
 except SystemExit:
     died = True
 check("ensure_client_registered: dies immediately if the bootstrap script itself fails", died)
+
+# The bootstrap on a transactional-update client reboots it, so SSH returns 255. A new boot ID means it worked.
+def _bootstrap_reboots(hostname, cmd, **kwargs):
+    if "curl -Sks" in cmd:
+        return FakeResult(returncode=255)
+    return _responder(hostname, cmd, **kwargs)
+
+
+_poll_count["n"] = 0
+sc.ssh_run = _bootstrap_reboots
+sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                             retry_limit=5, retry_interval=0)
+check("ensure_client_registered: rc 255 from a rebooting client waits for the new boot and carries on to the key",
+      _reboot_waits == [("client1.mydemo.lab", "boot-1")] and _poll_count["n"] >= 2)
+
+sc.wait_for_reboot = lambda hostname, old: False
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+except SystemExit:
+    died = True
+check("ensure_client_registered: rc 255 without a new boot dies", died)
+sc.wait_for_reboot = lambda hostname, old: True
+sc.boot_id = lambda hostname: ""
+died = False
+try:
+    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+except SystemExit:
+    died = True
+check("ensure_client_registered: rc 255 dies when the boot ID could not be read before the bootstrap", died)
+sc.boot_id = lambda hostname: "boot-1"
 
 # Key never goes pending -> dies with a clear message after exhausting retries.
 def _never_pending(hostname, cmd, **kwargs):
@@ -2579,6 +2595,42 @@ check("ensure_kickstart_profile: sets a variable not already present",
       any("kickstart_addvariable test-ks lab solar-system" in c for c in cmds))
 check("ensure_kickstart_profile: links an activation key not already present",
       any("kickstart_addactivationkeys test-ks 1-key" in c for c in cmds))
+
+# -- ensure_kickstart_scripts: add, keep unchanged, replace changed, skip invalid ----
+_ks_script = {"name": "k8s-node", "contents": "echo hi\n", "template": True}
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [_ks_script])
+_add = [c[1] for c in fake.calls if "kickstart.profile.addScript" in c[1]]
+check("ensure_kickstart_scripts: adds a new script with addScript's 8 positional arguments and its defaults",
+      len(_add) == 1 and json.dumps(["test-ks", "k8s-node", "echo hi\n", "", "post", True, True, False]) in _add[0])
+
+_same = json.dumps([{"id": 7, "name": "k8s-node", "contents": "echo hi\n", "script_type": "post", "interpreter": "",
+                     "chroot": True, "template": True, "erroronfail": False}])
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout=_same))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [_ks_script])
+check("ensure_kickstart_scripts: leaves an identical script alone",
+      not any("addScript" in c[1] or "removeScript" in c[1] for c in fake.calls))
+
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout=_same))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks", [dict(_ks_script, contents="echo changed\n")])
+_order = [("remove" if "removeScript" in c[1] else "add") for c in fake.calls
+          if "removeScript" in c[1] or "addScript" in c[1]]
+check("ensure_kickstart_scripts: replaces a changed script: removeScript of its id, then addScript",
+      _order == ["remove", "add"] and any("removeScript" in c[1] and "7" in c[1] for c in fake.calls))
+
+_warned = []
+_real_warn = sc.warn
+sc.warn = _warned.append
+fake = FakeSSH(responses=[("kickstart.profile.listScripts", FakeResult(returncode=0, stdout="[]"))])
+sc.ssh_run = fake
+sc.ensure_kickstart_scripts("host1", "mgrctl exec --", "test-ks",
+                            [{"name": "bad", "contents": "x", "type": "during"}, {"name": "", "contents": "x"}])
+sc.warn = _real_warn
+check("ensure_kickstart_scripts: skips entries without name/contents or with a type other than pre/post, with a warning",
+      len(_warned) == 2 and not any("addScript" in c[1] for c in fake.calls))
 
 fake = FakeSSH(responses=[
     ("kickstart_listvariables", FakeResult(returncode=0, stdout="org = 1\nlab = solar-system\n")),
@@ -4143,100 +4195,12 @@ except SystemExit:
     died = True
 check("provision_virtual_guests: an entry missing 'name'/'kickstart_profile' dies", died)
 
-# -- SCAP Beta policy-based scanning (system.scap.*) ---------------------
-fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 5, "name": "SLES15 DataStream",
-                                       "dataStreamFileName": "ssg-sle15-ds.xml"}])))])
-sc.ssh_run = fake
-out = sc.list_scap_content("host1", "mgrctl exec --")
-check("list_scap_content: returns the parsed real response shape", out[0]["id"] == 5)
-
-fake = FakeSSH(responses=[("system.scap.listScapContent", FakeResult(returncode=1, stderr="no beta"))])
-sc.ssh_run = fake
-died = False
-try:
-    sc.list_scap_content("host1", "mgrctl exec --")
-except SystemExit:
-    died = True
-check("list_scap_content: server-side failure dies", died)
-
+# -- list_scap_policies (system.scap.*, Beta) ---------------------------
 fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
     returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline", "scapContentId": 5}])))])
 sc.ssh_run = fake
 out = sc.list_scap_policies("host1", "mgrctl exec --")
 check("list_scap_policies: returns the parsed real response shape", out[0]["policyName"] == "sles15-baseline")
-
-fake = FakeSSH(responses=[("system.scap.listTailoringFiles", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 3, "name": "strict-tailoring", "orgId": 1}])))])
-sc.ssh_run = fake
-out = sc.list_scap_tailoring_files("host1", "mgrctl exec --")
-check("list_scap_tailoring_files: returns the parsed real response shape", out[0]["id"] == 3)
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanWithPolicy", FakeResult(returncode=0, stdout="42")),
-])
-sc.ssh_run = fake
-action_id = sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["sol.mydemo.lab"], 7,
-                                                     date="2000-01-01T00:00:00")
-check("schedule_beta_xccdf_scan_with_policy: returns the real numeric action id", action_id == "42")
-schedule_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanWithPolicy" in c[1])
-check("schedule_beta_xccdf_scan_with_policy: resolves the hostname to its real numeric sid first, "
-      "not passed as a raw hostname string", "1000010042" in unwrap(schedule_cmd) and
-      "sol.mydemo.lab" not in unwrap(schedule_cmd))
-check("schedule_beta_xccdf_scan_with_policy: policy id and ISO-8601 date reach the real call",
-      "2000-01-01T00:00:00" in unwrap(schedule_cmd) and re.search(r'\[\[1000010042\],\s*7,', unwrap(schedule_cmd)))
-
-fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
-sc.ssh_run = fake
-died = False
-try:
-    sc.schedule_beta_xccdf_scan_with_policy("host1", "mgrctl exec --", ["nosuch.lab"], 7)
-except SystemExit:
-    died = True
-check("schedule_beta_xccdf_scan_with_policy: an unresolvable system dies (via _system_id)", died)
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="43")),
-])
-sc.ssh_run = fake
-action_id = sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_org.ssgproject.content_profile_standard",
-                                                tailoring_file_id=3, fetch_remote_resources=True,
-                                                date="2000-01-01T00:00:00")
-check("schedule_beta_xccdf_scan_custom: returns the real numeric action id", action_id == "43")
-custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
-check("schedule_beta_xccdf_scan_custom: required scapContentId/xccdfProfileId reach the real "
-      "params struct", '"scapContentId": 5' in unwrap(custom_cmd) and
-      '"xccdfProfileId": "xccdf_org.ssgproject.content_profile_standard"' in unwrap(custom_cmd))
-check("schedule_beta_xccdf_scan_custom: optional tailoringFileId/fetchRemoteResources are "
-      "included when given", '"tailoringFileId": 3' in unwrap(custom_cmd) and
-      '"fetchRemoteResources": true' in unwrap(custom_cmd))
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=0, stdout="44")),
-])
-sc.ssh_run = fake
-sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5,
-                                    "xccdf_org.ssgproject.content_profile_standard",
-                                    date="2000-01-01T00:00:00")
-custom_cmd = next(c[1] for c in fake.calls if "scheduleBetaXccdfScanCustom" in c[1])
-check("schedule_beta_xccdf_scan_custom: optional keys are OMITTED entirely when not given, not "
-      "sent as null/empty", "tailoringFileId" not in unwrap(custom_cmd) and
-      "fetchRemoteResources" not in unwrap(custom_cmd))
-
-fake = FakeSSH(responses=[
-    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}]))),
-    ("system.scap.scheduleBetaXccdfScanCustom", FakeResult(returncode=1, stderr="beta features not enabled")),
-])
-sc.ssh_run = fake
-died = False
-try:
-    sc.schedule_beta_xccdf_scan_custom("host1", "mgrctl exec --", ["sol.mydemo.lab"], 5, "xccdf_profile")
-except SystemExit:
-    died = True
-check("schedule_beta_xccdf_scan_custom: server-side failure (e.g. beta features not enabled) dies", died)
 
 # -- SCAP policy creation via the Web UI REST route -----------------------
 fake = FakeSSH(responses=[("rhn/manager/api/login", FakeResult(returncode=0, stdout="200"))])
@@ -4300,14 +4264,6 @@ except SystemExit:
 check("create_scap_policy: unparseable output (e.g. an HTML redirect from an expired/missing "
       "session) dies with a clear message instead of crashing on json.loads", died)
 
-fake = FakeSSH(responses=[("system.scap.listPolicies", FakeResult(
-    returncode=0, stdout=json.dumps([{"id": 7, "policyName": "sles15-baseline"}])))])
-sc.ssh_run = fake
-check("scap_policy_exists: true when a policy with that name is already in list_scap_policies()",
-      sc.scap_policy_exists("host1", "mgrctl exec --", "sles15-baseline"))
-check("scap_policy_exists: false for a name not present",
-      not sc.scap_policy_exists("host1", "mgrctl exec --", "nosuchpolicy"))
-
 fake = FakeSSH()
 sc.ssh_run = fake
 sc.ensure_scap_policies("host1", "mgrctl exec --", {}, "uyuni", "admin", "pw")
@@ -4343,6 +4299,103 @@ try:
 except SystemExit:
     died = True
 check("ensure_scap_policies: an entry missing scap_content_id/xccdf_profile_id dies", died)
+
+
+# -- distributions: install tree from an ISO, kernel options -----------------------------
+check("distribution_path: an explicit path wins", sc.distribution_path({"name": "d", "path": "/x", "iso_url": "http://h/i.iso"}) == "/x")
+check("distribution_path: iso_url defaults to /srv/www/distributions/<name>",
+      sc.distribution_path({"name": "d", "iso_url": "http://h/i.iso"}) == "/srv/www/distributions/d")
+check("distribution_path: empty without path or iso_url", sc.distribution_path({"name": "d"}) == "")
+
+_real = {k: getattr(sc, k) for k in ("_run", "ssh_run", "_api_call", "kickstart_exists", "distribution_exists", "warn")}
+_warns = []
+sc.warn = lambda msg: _warns.append(msg)
+sc._run = lambda h, e, cmd, **kw: FakeResult(returncode=0)
+fake = FakeSSH()
+sc.ssh_run = fake
+check("ensure_distribution_tree: a present tree needs no import",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "iso_url": "http://h/i.iso"}) and not fake.calls)
+sc._run = lambda h, e, cmd, **kw: FakeResult(returncode=1)
+check("ensure_distribution_tree: a missing tree without iso_url is not imported",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "path": "/x"}) is False and not fake.calls)
+ok = sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "leap16", "iso_url": "http://h/dir/leap.iso",
+                                                            "iso_checksum_url": "http://h/dir/leap.iso.sha512"})
+_cmd = fake.calls[-1][1] if fake.calls else ""
+check("ensure_distribution_tree: downloads the ISO on the server host, checks it, then runs mgradm distribution copy",
+      ok and fake.calls[-1][0] == "srv" and "curl -sSfL -C - -o /root/isos/leap.iso http://h/dir/leap.iso" in _cmd
+      and "128) sum=sha512sum" in _cmd and _cmd.endswith("mgradm distribution copy /root/isos/leap.iso leap16"))
+check("ensure_distribution_tree: the checksum comparison comes before the copy",
+      _cmd.index("http://h/dir/leap.iso.sha512") < _cmd.index("mgradm distribution copy"))
+fake = FakeSSH()
+sc.ssh_run = fake
+check("ensure_distribution_tree: iso_url with another path warns and imports nothing",
+      sc.ensure_distribution_tree("srv", "mgrctl exec --", {"name": "d", "path": "/x", "iso_url": "http://h/i.iso"}) is False
+      and not fake.calls and _warns)
+
+_api = []
+
+
+def _tree_api(h, e, method, args):
+    _api.append((method, args))
+    if method == "kickstart.tree.getDetails":
+        return FakeResult(stdout=json.dumps([{"abs_path": "/srv/www/distributions/leap16", "kernel_options": " install=x self_update=0",
+                                              "post_kernel_options": "", "install_type": {"label": "suse"}}]))
+    return FakeResult()
+
+
+sc._api_call = _tree_api
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16", "base_channel": "leap-16", "kernel_options": ""})
+check("ensure_distribution_kernel_options: clears kernel options that differ, keeping path, channel and install type",
+      ("kickstart.tree.update", ["leap16", "/srv/www/distributions/leap16", "leap-16", "suse", "", ""]) in _api)
+_api.clear()
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16", "kernel_options": "install=x self_update=0"})
+check("ensure_distribution_kernel_options: no update when the options already match",
+      [m for m, a in _api] == ["kickstart.tree.getDetails"])
+_api.clear()
+sc.ensure_distribution_kernel_options("srv", "mgrctl exec --", {"name": "leap16"})
+check("ensure_distribution_kernel_options: nothing to do without kernel_options/post_kernel_options", not _api)
+
+# -- Agama profiles ------------------------------------------------------------------------
+_src = {"product": {"id": "openSUSE_Leap"}, "root": {"password": "pw"}, "user": {"userName": "u", "fullName": "U",
+                                                                                     "password": "$6$given", "hashedPassword": True}}
+_doc = sc.agama_profile_document("leap-ks", _src)
+check("agama_profile_document: a plain root password becomes a SHA-512 hash",
+      _doc["root"]["password"].startswith("$6$") and _doc["root"]["hashedPassword"] is True)
+check("agama_profile_document: an already hashed password is kept", _doc["user"]["password"] == "$6$given")
+check("agama_profile_document: the same input gives the same document", sc.agama_profile_document("leap-ks", _src) == _doc)
+check("agama_profile_document: the input is not modified", _src["root"] == {"password": "pw"})
+
+_exists = {"v": False}
+_served = {"v": None}
+
+
+def _agama_api(h, e, method, args):
+    _api.append((method, args))
+    if method == "kickstart.profile.downloadRenderedKickstart":
+        return FakeResult(stdout=json.dumps([json.dumps(_served["v"])]))
+    return FakeResult()
+
+
+sc._api_call = _agama_api
+sc.kickstart_exists = lambda h, e, n: _exists["v"]
+sc.distribution_exists = lambda h, e, n: True
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+_imp = [a for m, a in _api if m == "kickstart.importRawFile"]
+check("ensure_kickstart_profile: an agama_profile entry is imported as a raw file wrapped in #raw",
+      len(_imp) == 1 and _imp[0][:3] == ["leap-ks", "none", "leap16"] and _imp[0][3].startswith("#raw\n")
+      and _imp[0][3].endswith("#end raw\n") and json.loads(_imp[0][3][5:-9]) == _doc)
+_exists["v"], _served["v"] = True, _doc
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+check("ensure_agama_profile: an up-to-date profile is left alone", [m for m, a in _api] == ["kickstart.profile.downloadRenderedKickstart"])
+_served["v"] = dict(_doc, localization={"keyboard": "de"})
+_api.clear()
+sc.ensure_kickstart_profile("srv", "mgrctl exec --", {"name": "leap-ks", "distribution": "leap16", "agama_profile": _src})
+check("ensure_agama_profile: a changed profile is deleted and imported again",
+      [m for m, a in _api] == ["kickstart.profile.downloadRenderedKickstart", "kickstart.deleteProfile", "kickstart.importRawFile"])
+for _k, _v in _real.items():
+    setattr(sc, _k, _v)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

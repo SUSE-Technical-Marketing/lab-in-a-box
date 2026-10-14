@@ -42,6 +42,32 @@ def _rancher_configs(definition: dict) -> list:
     return out
 
 
+def linkerd_2_0(definition: dict) -> list:
+    """
+    addon:linkerd 2.0: the charts come from the edge channel (alias linkerd-edge, https://helm.linkerd.io/edge). Removes
+    linkerd_repo_url and linkerd_rel where they name the stable channel, and a linkerd_version that is no edge chart
+    version (YYYY.MM.N).
+    """
+    changes = []
+    for cfg in _section_configs(definition, "linkerd"):
+        if "helm.linkerd.io/stable" in str(cfg.get("linkerd_repo_url", "")):
+            changes.append("linkerd_repo_url removed (stable channel; linkerd now installs from the edge channel)")
+            del cfg["linkerd_repo_url"]
+        if cfg.get("linkerd_rel") == "linkerd":
+            changes.append("linkerd_rel removed (the edge repo is added as linkerd-edge)")
+            del cfg["linkerd_rel"]
+        if cfg.get("linkerd_version") and not re.match(r"^20[0-9]{2}\.", str(cfg["linkerd_version"])):
+            changes.append("linkerd_version '{}' removed (not an edge chart version)".format(cfg.pop("linkerd_version")))
+    return changes
+
+
+def postgresql_2_0(definition: dict) -> list:
+    """addon:postgresql 2.0: Kubernetes mode runs the SUSE postgres image instead of the Bitnami chart; removes
+    postgresql_rel, postgresql_repo_url and postgresql_version (a Bitnami chart version)."""
+    return _drop_keys(definition, "postgresql", ("postgresql_rel", "postgresql_repo_url", "postgresql_version"),
+                      "Kubernetes mode runs registry.suse.com/suse/postgres:<postgresql_pg_version>")
+
+
 def rancher_2_0(definition: dict) -> list:
     """
     addon:rancher 2.0: an unset rancher_repo_url selects Rancher Prime instead of the stable repo, and an unset
@@ -62,8 +88,111 @@ def rancher_2_0(definition: dict) -> list:
     return changes
 
 
+def _section_configs(definition: dict, name: str) -> list:
+    """The "<name>" section and each addons[] override of it."""
+    out = [definition[name]] if isinstance(definition.get(name), dict) else []
+    for owner in list((definition.get("kclusters") or {}).values()) + list((definition.get("nodes") or {}).values()):
+        for entry in (owner or {}).get("addons") or []:
+            if isinstance(entry, dict) and isinstance(entry.get(name), dict):
+                out.append(entry[name])
+    return out
+
+
+def _drop_keys(definition: dict, name: str, keys: tuple, reason: str) -> list:
+    """Remove `keys` from the "<name>" section and its addons[] overrides; one change line per removed key."""
+    changes = []
+    for cfg in _section_configs(definition, name):
+        for key in keys:
+            if key in cfg:
+                del cfg[key]
+                changes.append("{} removed ({})".format(key, reason))
+    return changes
+
+
+def appcollection_2_0(definition: dict) -> list:
+    """addon:appcollection 2.0: charts come from the OCI registry appcollection_registry; removes appcollection_rel and
+    appcollection_repo_url."""
+    return _drop_keys(definition, "appcollection", ("appcollection_rel", "appcollection_repo_url"),
+                      "charts come from appcollection_registry")
+
+
+def keycloak_2_0(definition: dict) -> list:
+    """
+    addon:keycloak 2.0: the chart is codecentric/keycloakx instead of bitnami/keycloak. Removes keycloak_rel and
+    keycloak_repo_url where they name Bitnami, and keycloak_version there (a Bitnami chart version).
+    """
+    changes = []
+    for cfg in _section_configs(definition, "keycloak"):
+        if cfg.get("keycloak_rel") == "bitnami" or "bitnami" in str(cfg.get("keycloak_repo_url", "")):
+            for key in ("keycloak_rel", "keycloak_repo_url", "keycloak_version"):
+                if key in cfg:
+                    del cfg[key]
+                    changes.append("{} removed (Bitnami chart; keycloak now installs codecentric/keycloakx)".format(key))
+    return changes
+
+
+def complianceascode_2_0(definition: dict) -> list:
+    """
+    addon:complianceascode 2.0: installs Rancher's compliance operator (rancher-compliance / rancher-cis-benchmark) from
+    https://charts.rancher.io instead of the ComplianceAsCode operator. Removes complianceascode_ns (the namespace is the
+    chart's own), the old repo keys and version, and a complianceascode_profile that is no ClusterScanProfile name.
+    """
+    changes = _drop_keys(definition, "complianceascode", ("complianceascode_ns",), "the namespace is the chart's own")
+    for cfg in _section_configs(definition, "complianceascode"):
+        if cfg.get("complianceascode_rel") == "compliance-operator":
+            changes.append("complianceascode_rel removed (Rancher's repo is added as rancher-charts)")
+            del cfg["complianceascode_rel"]
+        if "openshift.github.io" in str(cfg.get("complianceascode_repo_url", "")):
+            changes.append("complianceascode_repo_url removed (charts come from https://charts.rancher.io)")
+            del cfg["complianceascode_repo_url"]
+        if cfg.get("complianceascode_version") and "+up" not in str(cfg["complianceascode_version"]):
+            changes.append("complianceascode_version '{}' removed (not a Rancher chart version)".format(
+                cfg.pop("complianceascode_version")))
+        if cfg.get("complianceascode_profile") and not str(cfg["complianceascode_profile"]).endswith("-profile"):
+            changes.append("complianceascode_profile '{}' removed (the operator's default profile is used)".format(
+                cfg.pop("complianceascode_profile")))
+    return changes
+
+
+def kagent_2_0(definition: dict) -> list:
+    """addon:kagent 2.0: the charts come from the OCI registry kagent_registry; removes kagent_rel and kagent_repo_url."""
+    return _drop_keys(definition, "kagent", ("kagent_rel", "kagent_repo_url"), "kagent installs from kagent_registry")
+
+
+def _litellm_2_0(name: str):
+    def step(definition: dict) -> list:
+        return _drop_keys(definition, name, ("{}_rel".format(name), "{}_repo_url".format(name)),
+                          "the proxy installs from {}_chart".format(name))
+    step.__doc__ = ("addon:{0} 2.0: the LiteLLM proxy installs from the OCI chart {0}_chart; removes {0}_rel and "
+                    "{0}_repo_url.".format(name))
+    return step
+
+
+def trento_2_0(definition: dict) -> list:
+    """
+    addon:trento 2.0: installs from the OCI chart trento_chart, removing trento_rel and trento_repo_url. trento_admin is
+    the admin user name; an e-mail address there (the 1.x default was admin@lab.local) is removed.
+    """
+    changes = _drop_keys(definition, "trento", ("trento_rel", "trento_repo_url"), "Trento installs from trento_chart")
+    for cfg in _section_configs(definition, "trento"):
+        if "@" in str(cfg.get("trento_admin", "")):
+            changes.append("trento_admin '{}' removed (it is now the admin user name, default admin)".format(cfg.pop("trento_admin")))
+    return changes
+
+
 MIGRATIONS = {
+    "anthropic_2_0": _litellm_2_0("anthropic"),
+    "appcollection_2_0": appcollection_2_0,
+    "complianceascode_2_0": complianceascode_2_0,
+    "gemini_2_0": _litellm_2_0("gemini"),
+    "kagent_2_0": kagent_2_0,
+    "keycloak_2_0": keycloak_2_0,
+    "kimi_2_0": _litellm_2_0("kimi"),
+    "linkerd_2_0": linkerd_2_0,
+    "openai_2_0": _litellm_2_0("openai"),
+    "postgresql_2_0": postgresql_2_0,
     "rancher_2_0": rancher_2_0,
+    "trento_2_0": trento_2_0,
 }
 
 

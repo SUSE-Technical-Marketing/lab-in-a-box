@@ -41,10 +41,24 @@ class FakeSSH:
         for substr, result in self.responses:
             if substr in cmd:
                 return result
+        if "selinuxenabled" in cmd:
+            return FakeResult(returncode=1)
         return FakeResult()
 
 
 k8s.prepare_local_as_kubeclient = lambda: None  # never touch the real ~/.kube
+
+
+def _record_reboot(hostname):
+    """Stands in for reboot_into_pending_snapshot: records the call in the active FakeSSH's call list."""
+    k8s.ssh_run.calls.append((hostname, "<reboot_into_pending_snapshot>", {}))
+    return True
+
+
+k8s.reboot_into_pending_snapshot = _record_reboot
+k8s.wait_for_transactional_update_lock = lambda hostname: k8s.ssh_run.calls.append((hostname, "<wait_for_lock>", {}))
+k8s.update_kernel = lambda hostname: k8s.ssh_run.calls.append((hostname, "<update_kernel>", {}))
+k8s.is_transactional = lambda hostname: False
 
 
 # ── get_distro dispatch ───────────────────────────────────────────────────────
@@ -69,6 +83,15 @@ check("K3sDistro first node: rancher1_ip is the node itself", addr == "vm1")
 install_cmd = next(c for h, c, kw in fake.calls if "get.k3s.io" in c)
 check("K3sDistro first node: no K3S_URL/K3S_TOKEN on the server install",
       "K3S_URL" not in install_cmd and "K3S_TOKEN" not in install_cmd)
+_tfake = FakeSSH(responses=[("node-token", FakeResult(stdout="K10x::server:lab-token-0123456789\n"))])
+k8s.ssh_run = _tfake
+k8s.K3sDistro().install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab",
+                                                   "clu_token": "lab-token-0123456789"})
+_tcmd = next(c for h, c, kw in _tfake.calls if "get.k3s.io" in c)
+check("K3sDistro first node: clu_token reaches the server install as K3S_TOKEN, without K3S_URL",
+      "K3S_TOKEN=lab-token-0123456789 " in _tcmd and "K3S_URL" not in _tcmd)
+k8s.ssh_run = fake
+
 check("K3sDistro first node: --tls-san includes the cluster FQDN",
       "--tls-san cluster1.mydemo.lab" in install_cmd)
 # K3sDistro starts the service explicitly. The k3s install script can leave the service enabled but not started, so both RKE2Distro
@@ -81,6 +104,8 @@ token_call_idx = next(i for i, (h, c, kw) in enumerate(fake.calls) if "node-toke
 check("K3sDistro first node: starts the service BEFORE reading the node-token "
       "(the actual bug — reading it first raced against a service that was never started)",
       enable_call_idx < token_call_idx)
+check("K3sDistro first node: /etc/profile.d/k3s.sh exports KUBECONFIG for helm",
+      any("export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" in c and "/etc/profile.d/k3s.sh" in c for h, c, kw in fake.calls))
 
 fake = FakeSSH()
 k8s.ssh_run = fake
@@ -93,6 +118,28 @@ check("K3sDistro join: K3S_URL points at the first server", "K3S_URL=https://vm1
 check("K3sDistro join: K3S_TOKEN carries the join token", "K3S_TOKEN=TOKEN123" in join_cmd)
 check("K3sDistro join: explicitly starts k3s-agent itself, same reasoning as the server case",
       any(c == "systemctl enable --now k3s-agent" for h, c, kw in fake.calls))
+check("K3sDistro join: no profile.d KUBECONFIG on an agent (it has no kubeconfig)",
+      not any("profile.d/k3s.sh" in c for h, c, kw in fake.calls))
+
+# ── K3sDistro: transactional-update nodes reboot into the installer's snapshot before K3s starts ──
+_cmds = [c for h, c, kw in fake.calls]
+_reboots = [i for i, c in enumerate(_cmds) if c == "<reboot_into_pending_snapshot>"]
+_installer = next(i for i, c in enumerate(_cmds) if "get.k3s.io" in c)
+check("K3sDistro join: reboots into a pending snapshot before the installer, so its transaction does not discard it",
+      any(i < _installer for i in _reboots))
+check("K3sDistro join: waits for the transactional-update lock before the installer",
+      "<wait_for_lock>" in _cmds and _cmds.index("<wait_for_lock>") < _installer)
+check("K3sDistro join: reboots into the installer's snapshot after it and before starting k3s-agent",
+      any(_installer < i < _cmds.index("systemctl enable --now k3s-agent") for i in _reboots))
+fake = FakeSSH(responses=[("selinuxenabled", FakeResult(returncode=0)), ("node-token", FakeResult(stdout="T\n"))])
+k8s.ssh_run = fake
+died = False
+try:
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+except SystemExit:
+    died = True
+check("K3sDistro: dies without starting k3s when SELinux is enabled and the k3s policy is missing",
+      died and not any(c.startswith("systemctl enable --now") for h, c, kw in fake.calls))
 
 # ── K3sDistro: clu_rel, clu_name and mydomain are shell-quoted ───────────────
 # These values are free text from the lab JSON. They are quoted, so no value can break or inject into the remote command.
@@ -156,6 +203,18 @@ try:
           any("systemctl enable --now rke2-server.service" in c for h, c, kw in fake_ssh.calls))
     check("RKE2Distro: rsyncs the rendered config to the remote host",
           any(a[0] == "rsync" for a, kw in fake_subproc.calls))
+    check("RKE2Distro first node: no token line without clu_token",
+          not any("token: " in c for h, c, kw in fake_ssh.calls))
+
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab",
+                                              "clu_token": "lab-token-0123456789"})
+    _cmds = [c for h, c, kw in fake_ssh.calls]
+    _token_at = next((i for i, c in enumerate(_cmds) if "'token: lab-token-0123456789' >> /etc/rancher/rke2/config.yaml" in c), -1)
+    _start_at = next((i for i, c in enumerate(_cmds) if "systemctl enable --now rke2-server.service" in c), -1)
+    check("RKE2Distro first node: clu_token is written to config.yaml before rke2-server starts",
+          0 <= _token_at < _start_at)
 
     # ── clu_rel and install_method are shell-quoted ──────────────────────────
     # These are free text from the lab JSON, so they are quoted before they reach the remote install command.
@@ -179,6 +238,40 @@ try:
     check("RKE2Distro join: appends server/token to config.yaml",
           any("server: https://vm1:9345" in c for h, c, kw in fake_ssh.calls)
           and any("token: RKE2TOKEN" in c for h, c, kw in fake_ssh.calls))
+
+    # ── transactional-update nodes: RPM method, reboot into its snapshot, SELinux on ──
+    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional node without install_method",
+          "INSTALL_RKE2_METHOD='' " in install_cmd)
+    k8s.is_transactional = lambda hostname: True
+    fake_ssh = FakeSSH()
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"}, "RKE2TOKEN", "vm1")
+    _cmds = [c for h, c, kw in fake_ssh.calls]
+    _installer = next(i for i, c in enumerate(_cmds) if "get.rke2.io" in c)
+    _reboots = [i for i, c in enumerate(_cmds) if c == "<reboot_into_pending_snapshot>"]
+    _selinux = next(i for i, c in enumerate(_cmds) if "selinux: true" in c)
+    _start = next(i for i, c in enumerate(_cmds) if "systemctl enable --now rke2-agent.service" in c)
+    check("RKE2Distro: a transactional-update node without install_method uses the RPM method",
+          "INSTALL_RKE2_METHOD=rpm " in _cmds[_installer])
+    check("RKE2Distro: waits for the transactional-update lock and boots a pending snapshot before the installer",
+          _cmds.index("<wait_for_lock>") < _installer and any(i < _installer for i in _reboots))
+    _kernel = _cmds.index("<update_kernel>") if "<update_kernel>" in _cmds else None
+    check("RKE2Distro: the RPM method on a transactional-update node updates the kernel and boots it before the installer",
+          _kernel is not None and _cmds.index("<wait_for_lock>") < _kernel < _installer
+          and any(_kernel < i < _installer for i in _reboots))
+    check("RKE2Distro: reboots into the installer's snapshot, then enables SELinux support, before starting RKE2",
+          any(_installer < i < _selinux for i in _reboots) and _selinux < _start)
+    check("RKE2Distro: selinux: true only when SELinux is enabled and rke2-selinux is installed",
+          "selinuxenabled && rpm -q --quiet rke2-selinux" in _cmds[_selinux])
+    fake_ssh = FakeSSH()
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab", "install_method": "tar"},
+                         "RKE2TOKEN", "vm1")
+    check("RKE2Distro: an explicit install_method wins on a transactional-update node",
+          "INSTALL_RKE2_METHOD=tar " in next(c for h, c, kw in fake_ssh.calls if "get.rke2.io" in c))
+    check("RKE2Distro: the tarball method leaves the kernel alone",
+          "<update_kernel>" not in [c for h, c, kw in fake_ssh.calls])
+    k8s.is_transactional = lambda hostname: False
 finally:
     os.chdir(_orig_cwd)
 
@@ -202,7 +295,7 @@ except SystemExit:
 check("load_kclu_vars: dies for an undefined kcluster", died)
 
 
-# ── first_server_node / addon_nodes / iter_cluster_nodes ─────────────────────
+# ── first_server_node / addon_nodes ──────────────────────────────────────────
 definition2 = {
     "nodes": {
         "srv1": {"INSTALL_RKE2_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
@@ -223,10 +316,6 @@ check("addon_nodes: given an explicit vm_name, returns just that one without sca
       [n for n, _ in k8s.addon_nodes(definition2, "rancher", vm_name="agt1")] == ["agt1"])
 check("addon_nodes: empty list when nothing has the addon",
       k8s.addon_nodes(definition2, "nope") == [])
-
-c1_nodes = [n for n, _, _ in k8s.iter_cluster_nodes(definition2, "c1")]
-check("iter_cluster_nodes: yields only nodes in the given cluster, in order",
-      c1_nodes == ["srv1", "agt1"])
 
 
 # ── create_basic_auth_secret / set_longhorn_overprovisioning ─────────────────
@@ -310,6 +399,81 @@ except SystemExit:
     ok = False
 check("setup_traefik_k3s: happy path (no extra ports) completes without dying", ok)
 
+
+
+# ── K8sDistro.install_cluster: each node of the kcluster in order, server or agent, passing the token on ─────────────
+from unittest import mock  # noqa: E402
+
+
+class RecordingDistro(k8s.K8sDistro):
+    def __init__(self):
+        self.calls = []
+
+    def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
+        self.calls.append(("server", hostname, token, rancher1_ip))
+        return (token or "tok-1"), (rancher1_ip or "10.0.0.1")
+
+    def install_agent(self, hostname, clu_name, clu_ctx, token, rancher1_ip):
+        self.calls.append(("agent", hostname, token, rancher1_ip))
+        return token, rancher1_ip
+
+    def kubectl_command(self):
+        return "kubectl"
+
+
+cluster_lab = {"nodes": {
+    "s1": {"kcluster": "c1"},
+    "a1": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
+    "s2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "server"},
+    "other": {"kcluster": "c2"},
+    "a2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "agent"},
+}}
+distro = RecordingDistro()
+ready_waits = []
+with mock.patch.object(k8s, "wait_for_ssh_command",
+                       side_effect=lambda host, cmd, **kw: ready_waits.append((host, cmd, kw)) or True):
+    distro.install_cluster(cluster_lab, "c1", {})
+check("install_cluster: installs only the kcluster's nodes, in the lab definition's order",
+      [c[1] for c in distro.calls] == ["s1", "a1", "s2", "a2"])
+check("install_cluster: KUBERNETES_NODE_TYPE and INSTALL_RKE2_TYPE pick agent or server (default server)",
+      [c[0] for c in distro.calls] == ["server", "agent", "server", "agent"])
+check("install_cluster: the first server's token and address go to every later node",
+      distro.calls[0][2:] == (None, None) and all(c[2:] == ("tok-1", "10.0.0.1") for c in distro.calls[1:]))
+check("install_cluster: then waits on the first server until all 4 nodes of the kcluster are Ready",
+      len(ready_waits) == 1 and ready_waits[0][0] == "10.0.0.1" and "kubectl get nodes" in ready_waits[0][1]
+      and "-ge 4" in ready_waits[0][1] and ready_waits[0][2].get("timeout") == distro.ready_timeout)
+with mock.patch.object(k8s, "wait_for_ssh_command", return_value=False):
+    try:
+        RecordingDistro().install_cluster(cluster_lab, "c1", {})
+        raised = False
+    except RuntimeError as e:
+        raised = "not all Ready" in str(e)
+check("install_cluster: nodes not Ready in time raise RuntimeError, so setup_lab marks the kcluster FAILED", raised)
+check("kubectl_command: RKE2 uses its bundled kubectl with the admin kubeconfig",
+      k8s.RKE2Distro().kubectl_command() == "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml")
+check("kubectl_command: K3s uses k3s kubectl, found in /usr/local/bin or /opt/bin",
+      k8s.K3sDistro().kubectl_command().endswith("k3s kubectl"))
+
+# ── HarvesterDistro.install_cluster: waits on HTTPS, fetches the kubeconfig, waits for Ready nodes, applies settings ─
+import harvester  # noqa: E402
+
+hv_lab = {"kclusters": {"hv": {"clu_type": "harvester", "harvester_settings": {"ntp-servers": "x"}}},
+          "nodes": {"h1": {"kcluster": "hv"}, "h2": {"kcluster": "hv"}}}
+with mock.patch.object(harvester, "cluster_nodes", return_value=["h1", "h2"]), \
+        mock.patch("socket.gethostbyname", return_value="10.0.0.5"), \
+        mock.patch.object(harvester, "wait_https") as wait_https, \
+        mock.patch.object(harvester, "kubeconfig_path", return_value="/etc/lab_creation/hv.kubeconfig"), \
+        mock.patch.object(harvester, "fetch_kubeconfig", return_value="/etc/lab_creation/hv.kubeconfig") as fetch, \
+        mock.patch.object(harvester, "wait_nodes_ready") as ready, \
+        mock.patch.object(harvester, "apply_settings") as settings:
+    k8s.HarvesterDistro().install_cluster(hv_lab, "hv", {})
+check("HarvesterDistro: waits for the create node's HTTPS", wait_https.call_args[0] == ("10.0.0.5",))
+check("HarvesterDistro: fetches the kubeconfig from the create node, API on :6443, TLS name localhost",
+      fetch.call_args[0] == ("10.0.0.5", "/etc/lab_creation/hv.kubeconfig", "https://10.0.0.5:6443")
+      and fetch.call_args[1] == {"tls_server_name": "localhost"})
+check("HarvesterDistro: waits for every node to be Ready", ready.call_args[0] == ("/etc/lab_creation/hv.kubeconfig", 2))
+check("HarvesterDistro: applies the kcluster's harvester_settings",
+      settings.call_args[0] == ("/etc/lab_creation/hv.kubeconfig", {"ntp-servers": "x"}))
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
