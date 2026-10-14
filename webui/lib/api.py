@@ -21,7 +21,7 @@ def _one(v, default=""):
 
 def dispatch(action, method, params, body, user=None, https=False):
     """
-    action  : str            e.g. "components", "schema", "validate", "save"
+    action  : str            e.g. "components", "schema", "credential-types", "validate", "save"
     method  : "GET"|"POST"
     params  : dict[str, list] parsed query string
     body    : bytes          request body (POST)
@@ -60,6 +60,9 @@ def dispatch(action, method, params, body, user=None, https=False):
 
         if action == "status" and method == "GET":
             return 200, discovery.status()
+
+        if action == "credential-types" and method == "GET":
+            return 200, discovery.credential_types()
 
         if method == "POST":
             data = json.loads(body.decode("utf-8") or "{}") if body else {}

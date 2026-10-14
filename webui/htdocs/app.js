@@ -32,7 +32,7 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 // their *effective* default instead of the schema's hardcoded one. Reset on
 // every fresh schema load (selectBase/selectComponent).
 const state = {
-  components: [], lab: {}, commonDefaults: {},
+  components: [], lab: {}, commonDefaults: {}, credTypes: {},
   // block model behind the canvas (see compileLab); state.lab is compiled from it
   // extra: top-level lab keys the canvas does not model, kept as they are
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
@@ -1832,6 +1832,14 @@ async function openCredentials() {
 async function loadCredentials() {
   const tbody = $("#credList");
   tbody.innerHTML = "";
+  // What a credential consists of needs no login (names and flags only), so the Provider/Service list is filled first
+  // and independently: a failing or unauthorised admin call must not leave the form with nothing to choose from.
+  try {
+    state.credTypes = await apiGet("credential-types");
+  } catch (e) {
+    state.credTypes = state.credTypes || {};
+  }
+  renderCredTypes();
   try {
     state.cred = await adminCall("credentials");
   } catch (e) {
@@ -1868,7 +1876,7 @@ function renderCredTypes() {
   const sel = $("#credType");
   const prev = sel.value;
   sel.innerHTML = "";
-  Object.keys(state.cred[kind] || {}).sort().forEach((t) => sel.appendChild(new Option(t, t)));
+  Object.keys((state.credTypes || {})[kind] || {}).sort().forEach((t) => sel.appendChild(new Option(t, t)));
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   renderCredFields();
 }
@@ -1876,7 +1884,7 @@ function renderCredTypes() {
 function renderCredFields() {
   const box = $("#credFields");
   box.innerHTML = "";
-  (state.cred[$("#credKind").value][$("#credType").value] || []).forEach((f) => {
+  ((((state.credTypes || {})[$("#credKind").value]) || {})[$("#credType").value] || []).forEach((f) => {
     const lab = el("label", "field");
     lab.appendChild(el("span", "f-name", f.name + (f.required ? " *" : "")));
     const inp = el("input");

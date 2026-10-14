@@ -125,6 +125,36 @@ def _schema_lib():
     return _lab_schema
 
 
+_setup_credentials = None
+
+
+def _credentials_lib():
+    """scripts/setup_credentials.py, for its credential-field registries only — same loader as _schema_lib()."""
+    global _setup_credentials
+    if _setup_credentials is None:
+        path = os.path.join(scripts_dir(), "setup_credentials.py")
+        if not os.path.isfile(path):
+            path = os.path.join(scripts_dir(), "setup_credentials")
+        loader = SourceFileLoader("setup_credentials", path)
+        spec = importlib.util.spec_from_loader("setup_credentials", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        _setup_credentials = mod
+    return _setup_credentials
+
+
+def credential_types():
+    """
+    The fields each cloud provider and each service credential takes: {"cloud": {type: [{name, required, secret}]},
+    "service": {...}}. Names and flags only, never a stored value, so this needs no login: the credentials dialog can
+    show what a credential consists of before anyone authenticates. The stored files themselves stay behind the login,
+    in the admin credentials action.
+    """
+    sc = _credentials_lib()
+    table = lambda reg: {k: [{"name": n, "required": r, "secret": s} for n, r, s in v] for k, v in reg.items()}
+    return {"cloud": table(sc.PROVIDER_FIELDS), "service": table(sc.SERVICE_CREDENTIAL_FIELDS)}
+
+
 def _primary_lib():
     global _primary
     if _primary is None:

@@ -287,9 +287,18 @@ then
     _lb_scheme="http"
     [[ -n "${_lb_tls_cert}" ]] && _lb_scheme="https"
 
-    # refresh the app dirs (idempotent — keeps existing labs/ intact)
-    rm -rf "${_lb_root:?}/htdocs" "${_lb_root:?}/cgi-bin" "${_lb_root:?}/lib"
-    cp -r webui/htdocs webui/cgi-bin webui/lib "${_lb_root}/"
+    # Refresh the app dirs in place, keeping existing labs/ intact: copy over them, then drop whatever the source no
+    # longer has. Deleting each tree first (rm -rf + cp -r) left a window of the whole copy in which Apache had no
+    # cgi-bin/labbuilder.py, so every /lab-builder/api and /lab-builder/admin call answered 404 mid-deploy.
+    for _d in htdocs cgi-bin lib
+    do
+        mkdir -p "${_lb_root}/${_d}"
+        cp -r "webui/${_d}/." "${_lb_root}/${_d}/"
+        while read -r _rel
+        do
+            [[ -e "webui/${_d}/${_rel}" ]] || rm -rf "${_lb_root:?}/${_d}/${_rel}"
+        done < <(cd "${_lb_root}/${_d}" && find . -mindepth 1 -printf '%P\n')
+    done
     cp webui/run-local.py "${_lb_root}/"
     cp webui/README.md "${_lb_root}/" 2>/dev/null || true
     chmod 0755 "${_lb_root}/cgi-bin/labbuilder.py" "${_lb_root}/run-local.py"

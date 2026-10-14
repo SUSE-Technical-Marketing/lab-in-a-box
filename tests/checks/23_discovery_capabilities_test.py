@@ -122,6 +122,22 @@ check("validate_lab: the add-on --validate step still runs through the lab file 
 check("validate_lab: the temporary lab file is removed",
       [f for f in os.listdir(_outdir) if f.startswith("lab-builder-validate-")] == [])
 
+# ── credential_types(): what a credential consists of, without a login ──────
+ct = discovery.credential_types()
+check("credential_types: both kinds, keyed as the UI's kind values", sorted(ct) == ["cloud", "service"])
+check("credential_types: aws is a cloud provider with AWS_REGION required",
+      any(f["name"] == "AWS_REGION" and f["required"] for f in ct["cloud"].get("aws", [])))
+check("credential_types: scc is a service credential whose password is secret",
+      any(f["name"] == "scc_password" and f["secret"] for f in ct["service"].get("scc", [])))
+check("credential_types: every field carries name, required and secret only",
+      all(sorted(f) == ["name", "required", "secret"]
+          for kind in ct.values() for fields in kind.values() for f in fields))
+
+import api as webui_api  # noqa: E402
+
+st, body = webui_api.dispatch("credential-types", "GET", {}, b"", user=None, https=False)
+check("api: credential-types answers without a user and without HTTPS", st == 200 and sorted(body) == ["cloud", "service"])
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
