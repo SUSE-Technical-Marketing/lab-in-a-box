@@ -114,6 +114,12 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   background:var(--code);border-radius:6px;padding:.1rem .5rem;font-size:.68rem;
   font-weight:600;color:var(--muted);white-space:nowrap;
 }
+.status-badge{
+  display:inline-block;margin-left:.4rem;vertical-align:middle;border:1px solid var(--gold);
+  border-radius:6px;padding:0 .4rem;font-size:.64rem;font-weight:600;color:var(--ink);
+  background:transparent;white-space:nowrap;cursor:help;
+}
+.status-badge:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .src-note{color:var(--muted);font-size:.72rem;padding:.5rem 1rem;border-top:1px solid var(--line);margin:0}
 
 /* form */

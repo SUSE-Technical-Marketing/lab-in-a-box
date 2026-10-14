@@ -34,6 +34,8 @@ replace_users() {
     mv -f "${_tmp}" "${_users}"
 }
 
+for _arg in "$@"; do [[ "${_arg}" == "-h" || "${_arg}" == "--help" ]] && usage 0; done
+
 case "${1:-}" in
     --list) [[ -f "${_users}" ]] && cut -d: -f1 "${_users}"; exit 0 ;;
     --delete) [[ -n "${2:-}" ]] || usage; without_user "$2" | replace_users; echo "removed $2" ;;

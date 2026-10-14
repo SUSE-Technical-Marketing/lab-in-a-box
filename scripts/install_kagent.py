@@ -1,19 +1,23 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install kagent (Kubernetes AI Agent framework)
+# Part of lab-in-a-box, it will install kagent (https://kagent.dev), a framework for running AI agents on Kubernetes, with its
+# web UI behind an ingress
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 2.0
 #
 # JSON section: "kagent" — configurable keys:
-#   kagent_version      : [OPTIONAL] Helm chart version (empty = latest)
+#   kagent_version      : [OPTIONAL] chart version of both kagent-crds and kagent (empty = latest)
 #   kagent_ns           : [OPTIONAL] namespace (default: kagent-system)
-#   kagent_shorthn      : [OPTIONAL] hostname prefix (default: kagent)
-#   kagent_rel          : [OPTIONAL] Helm repo alias (default: kagent)
-#   kagent_repo_url     : [OPTIONAL] Helm repo URL (default: https://kagent-ai.github.io/helm-charts)
-#
-# NOTE: kagent is a new CNCF project. The Helm chart URL may change as the project
-# matures. Check https://github.com/kagent-ai/kagent for the latest install instructions.
+#   kagent_shorthn      : [OPTIONAL] hostname prefix of the web UI (default: kagent)
+#   kagent_registry     : [OPTIONAL] OCI location of the kagent-crds and kagent charts (default: oci://ghcr.io/kagent-dev/kagent/helm)
+#   kagent_provider     : [OPTIONAL] model provider of the default model configuration (default: openAI) (options: openAI, anthropic, gemini, azureOpenAI, ollama)
+#   kagent_model        : [OPTIONAL] model name (empty = the chart's default for that provider, e.g. gpt-4.1-mini, llama3.2).
+#                         Agents call tools, so the model must support tool calling (with ollama e.g. qwen2.5 or llama3.2, not gemma)
+#   kagent_api_key      : [OPTIONAL] API key of the provider; stored in the namespace's kagent-<provider> secret. Without it, agents
+#                         cannot answer until the secret is filled. Not used by ollama
+#   kagent_ollama_host  : [OPTIONAL] host:port of an Ollama server, for kagent_provider ollama
+#                         (default: ollama.ollama.svc.cluster.local:11434, where the ollama addon installs it)
 
 __version__ = "__LABVERSION__"
 
@@ -25,6 +29,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -35,30 +40,83 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, ssh_run  # noqa: E402
+
+
+_DEFAULT_REGISTRY = "oci://ghcr.io/kagent-dev/kagent/helm"
+_DEFAULT_OLLAMA_HOST = "ollama.ollama.svc.cluster.local:11434"
+_UI_SERVICE = "kagent-ui:8080"
+# provider: (secret the chart's ModelConfig reads the API key from, key inside it); ollama needs none.
+_PROVIDER_SECRETS = {
+    "openAI": ("kagent-openai", "OPENAI_API_KEY"),
+    "anthropic": ("kagent-anthropic", "ANTHROPIC_API_KEY"),
+    "gemini": ("kagent-gemini", "GOOGLE_API_KEY"),
+    "azureOpenAI": ("kagent-azure-openai", "AZUREOPENAI_API_KEY"),
+    "ollama": None,
+}
 
 
 def _validate(v):
     v.vns("kagent")
     v.vver("kagent")
-    v.vurl("kagent")
+    provider = v._get("kagent", "kagent_provider")
+    if provider and provider not in _PROVIDER_SECRETS:
+        v.errors.append("[ERROR] kagent.kagent_provider='{}': must be one of {}".format(provider, ", ".join(_PROVIDER_SECRETS)))
 
 
-def setup_kagent_repo(hostname, kagent_rel=None, kagent_repo_url=None):
-    """Add the kagent Helm repo. Mirrors setup_kagent_repo (bash)."""
-    helm_repo_add(hostname, kagent_rel or "kagent", kagent_repo_url or "https://kagent-ai.github.io/helm-charts")
+def provider_values(cfg: dict) -> list:
+    """--set flags selecting the default model provider, its model and, for ollama, the server address."""
+    provider = cfg.get("kagent_provider") or "openAI"
+    flags = ["--set providers.default={}".format(provider)]
+    if cfg.get("kagent_model"):
+        flags.append("--set providers.{}.model={}".format(provider, shlex.quote(cfg["kagent_model"])))
+    if provider == "ollama":
+        flags.append("--set providers.ollama.config.host={}".format(
+            shlex.quote(cfg.get("kagent_ollama_host") or _DEFAULT_OLLAMA_HOST)))
+    return flags
 
 
-def setup_kagent(hostname, clu_name, mydomain, kagent_rel=None, kagent_ns=None,
-                  kagent_version=None, kagent_shorthn=None):
-    """Install kagent. Mirrors setup_kagent (bash)."""
-    rel = kagent_rel or "kagent"
-    ns = kagent_ns or "kagent-system"
-    ver_arg = "--version {}".format(kagent_version) if kagent_version else ""
-    ssh_run(hostname,
-            "helm upgrade -i kagent {}/kagent --namespace {} --create-namespace {}".format(rel, ns, ver_arg))
+def api_key_secret(hostname: str, ns: str, cfg: dict) -> bool:
+    """Write kagent_api_key to the provider's secret (the key travels in an environment variable, never on a command line);
+    returns False when the provider needs a key and none is set."""
+    secret = _PROVIDER_SECRETS[cfg.get("kagent_provider") or "openAI"]
+    if secret is None:
+        return True
+    if not cfg.get("kagent_api_key"):
+        return False
+    name, key = secret
+    cmd = ("kubectl create secret generic {} -n {} --from-literal={}=\"$KAGENT_API_KEY\" --dry-run=client -o yaml "
+           "| kubectl apply -f -").format(name, shlex.quote(ns), key)
+    ssh_run(hostname, "KAGENT_API_KEY={} bash -c {}".format(shlex.quote(cfg["kagent_api_key"]), shlex.quote(cmd)))
+    return True
+
+
+def setup_kagent(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
+    """Install the kagent CRDs and kagent, and expose the web UI through an ingress; returns the UI hostname."""
+    ns = cfg.get("kagent_ns") or "kagent-system"
+    registry = (cfg.get("kagent_registry") or _DEFAULT_REGISTRY).rstrip("/")
+    ver_arg = " --version {}".format(shlex.quote(cfg["kagent_version"])) if cfg.get("kagent_version") else ""
+    fqdn = "{}.{}.{}".format(cfg.get("kagent_shorthn") or "kagent", clu_name, mydomain)
+
+    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    has_key = api_key_secret(hostname, ns, cfg)
+    ssh_run(hostname, "helm upgrade --install kagent-crds {}/kagent-crds --namespace {}{}".format(
+        registry, shlex.quote(ns), ver_arg))
+    ssh_run(hostname, "helm upgrade --install kagent {}/kagent --namespace {}{} --wait --timeout 10m "
+                      "--set ui.externalUrl=http://{} {}".format(
+                          registry, shlex.quote(ns), ver_arg, fqdn, " ".join(provider_values(cfg))))
+    ssh_run(hostname, "kubectl create ingress kagent-ui -n {} --rule={}/*={} --dry-run=client -o yaml "
+                      "| kubectl apply -f -".format(shlex.quote(ns), fqdn, _UI_SERVICE))
+
     print("kagent installed. Namespace: {}".format(ns))
-    print("UI available at: http://{}.{}.{}".format(kagent_shorthn or "kagent", clu_name, mydomain))
+    print("UI available at: http://{}".format(fqdn))
+    if not has_key:
+        provider = cfg.get("kagent_provider") or "openAI"
+        name, key = _PROVIDER_SECRETS[provider]
+        print("No kagent_api_key for provider {}: agents cannot answer until secret '{}' (key {}) in namespace '{}' holds "
+              "one. Set kagent_api_key and re-run, or: kubectl create secret generic {} -n {} --from-literal={}=<key>".format(
+                  provider, name, key, ns, name, ns, key))
+    return fqdn
 
 
 def main():
@@ -81,12 +139,8 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_kagent_repo(vm_name, kagent_rel=kagent_cfg.get("kagent_rel"), kagent_repo_url=kagent_cfg.get("kagent_repo_url"))
-    setup_kagent(
-        vm_name, clu_name, clu_cfg.get("mydomain", ""),
-        kagent_rel=kagent_cfg.get("kagent_rel"), kagent_ns=kagent_cfg.get("kagent_ns"),
-        kagent_version=kagent_cfg.get("kagent_version"), kagent_shorthn=kagent_cfg.get("kagent_shorthn"),
-    )
+    fqdn = setup_kagent(vm_name, clu_name, clu_cfg.get("mydomain", ""), kagent_cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

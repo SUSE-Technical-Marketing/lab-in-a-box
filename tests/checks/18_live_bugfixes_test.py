@@ -166,6 +166,23 @@ check("DNSService.add_to_dns: removing a stale PTR for octet '1' never touches "
       and any("node10.mydemo.lab" in l for l in rev_lines2))
 
 
+# ── No mynet_reverse: only the A record, no "<empty>.db" reverse zone file ──
+services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
+fake = FakeSSH()
+services.ssh_run = fake
+ptr_svc.add_to_dns("cloud1.mydemo.lab", "18.0.0.5", "mydemo.lab", "", remote_dns_servers=["1.2.3.4"])
+check("DNSService.add_to_dns: without mynet_reverse the A record is still added",
+      "cloud1" in (services.NAMED_ZONE_DIR / "mydemo.lab.lan").read_text())
+check("DNSService.add_to_dns: without mynet_reverse no reverse zone file is written",
+      sorted(p.name for p in services.NAMED_ZONE_DIR.iterdir()) == ["mydemo.lab.lan"])
+check("DNSService.add_to_dns: without mynet_reverse no remote call touches a .db file",
+      not any(".db" in c for h, c, kw in fake.calls))
+ptr_svc.del_from_dns("cloud1.mydemo.lab", "18.0.0.5", "mydemo.lab", "", remote_dns_servers=["1.2.3.4"])
+check("DNSService.del_from_dns: without mynet_reverse the A record is removed and no .db file appears",
+      "cloud1" not in (services.NAMED_ZONE_DIR / "mydemo.lab.lan").read_text()
+      and not any(p.suffix == ".db" for p in services.NAMED_ZONE_DIR.iterdir())
+      and not any(".db" in c for h, c, kw in fake.calls))
+
 # ── --qemu-commandline is passed as one argv element ──────────────────────
 # The value starts with "-". Passed as separate arguments, argparse reads it as a flag, so it is one token: --qemu-commandline="...".
 subproc_calls = []
@@ -1021,20 +1038,19 @@ check("copy_vm_image: every backend accepts source_sha256 ({} backends)".format(
       len(_backends) > 1 and all("source_sha256" in inspect.signature(c.copy_vm_image).parameters for c in _backends))
 
 # ── the cloud DNS VM's image comes from CLOUD_DNS_IMAGE when set ─────────
-# The DNS VM's cloud-init expects Ubuntu/Debian; booting it from a lab's SLES BYOS AMI left BIND uninstalled and the
-# deploy timed out waiting for named.
+# A lab whose own image cannot install BIND (e.g. an unregistered SLES BYOS AMI) gives its DNS VM another image.
 _real_resolve = backends.resolve_cloud_account
 backends.resolve_cloud_account = lambda d, c, v: ("bake", dict(c, CLOUD_DNS_IMAGE="ami-ubuntu"), "aws")
 check("cloud_dns_image: the account's CLOUD_DNS_IMAGE wins",
       backends.cloud_dns_image({}, {}, "smlm.rodeo.lab") == "ami-ubuntu")
 backends.resolve_cloud_account = lambda d, c, v: ("bake", dict(c), "aws")
-check("cloud_dns_image: unset gives \"\" (setup_vm.py falls back to the lab's ISO_IMAGE)",
+check("cloud_dns_image: unset gives \"\" (ensure_cloud_dns_vm() then tries openSUSE, then the lab's image)",
       backends.cloud_dns_image({}, {}, "smlm.rodeo.lab") == "")
 backends.resolve_cloud_account = _real_resolve
 _setup_vm_src = (_REPO / "scripts" / "setup_vm.py").read_text()
-check("setup_vm.py: the cloud DNS VM is created from cloud_dns_image() before the lab's own image",
-      "backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
-      and "env.get(\"mydomain\", \"\"), dns_image, lab_setup_path" in _setup_vm_src)
+check("setup_vm.py: cloud_dns_image() reaches ensure_cloud_dns_vm() as preferred_image, the lab's image as iso_image",
+      "preferred_image=backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
+      and "env.get(\"SOURCE_IMAGE\") or env.get(\"ISO_IMAGE\", \"\"), lab_setup_path" in _setup_vm_src)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

@@ -36,6 +36,7 @@ def run(profile_name):
     sc._ensure_client_can_resolve_server = lambda *args: None
     sc.resolve_activation_key_name = lambda h, e, k: k
     sc.time.sleep = lambda s: None
+    sc.boot_id = lambda host: "boot-1"
     sc.ensure_client_registered("smlm.lab", "mgrctl exec --", "zzsles15a.lab", "smlm.lab", "1-sles15sp6",
                                 profile_name=profile_name)
     return ssh, accepted

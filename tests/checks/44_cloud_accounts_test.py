@@ -247,6 +247,9 @@ class _FakeCloudBackend:
     def push_provisioning_files(self, *a, **kw):
         pass
 
+    def opensuse_image(self):
+        return ""
+
     def create_vm(self, name, *a, **kw):
         self.created.append(name)
         return "203.0.113.9"

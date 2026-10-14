@@ -157,6 +157,38 @@ with tempfile.TemporaryDirectory() as td:
 
 del os.environ["LABBUILDER_STATUS_FILE"]
 
+
+# ── main(): output path, atomic write, broken configuration ────────────────────────────────────────────────────────
+from unittest import mock  # noqa: E402
+
+_out_dir = tempfile.mkdtemp()
+_out = os.path.join(_out_dir, "sub", "status.json")
+with mock.patch.object(sys, "argv", ["refresh_hypervisor_status.py", _out]), \
+        mock.patch.object(rhs, "build_status", return_value={"hosts": [], "config": {}, "images": ["x.qcow2"]}):
+    rhs.main()
+check("main: writes build_status() to the path argument, creating its directory",
+      json.load(open(_out))["images"] == ["x.qcow2"])
+check("main: the status file is world-readable and no .tmp is left",
+      os.stat(_out).st_mode & 0o777 == 0o644 and not os.path.exists(_out + ".tmp"))
+
+
+def _no_config():
+    raise SystemExit(1)
+
+
+with mock.patch.object(sys, "argv", ["refresh_hypervisor_status.py", _out]), \
+        mock.patch.object(rhs, "build_status", side_effect=_no_config):
+    rhs.main()
+_status = json.load(open(_out))
+check("main: an unreadable lab_creation.cfg still writes a status with an error and no hosts",
+      "lab_creation.cfg" in _status.get("error", "") and _status["hosts"] == [] and "generated_at" in _status)
+_env_out = os.path.join(_out_dir, "env.json")
+with mock.patch.object(sys, "argv", ["refresh_hypervisor_status.py"]), \
+        mock.patch.dict(os.environ, {"LABBUILDER_STATUS_FILE": _env_out}), \
+        mock.patch.object(rhs, "build_status", return_value={"hosts": []}):
+    rhs.main()
+check("main: without an argument, writes to $LABBUILDER_STATUS_FILE", os.path.isfile(_env_out))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

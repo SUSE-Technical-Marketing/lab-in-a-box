@@ -6,7 +6,7 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/server-kubernetes-deployment.html
 #
-# Schema version: 1.1
+# Schema version: 1.3
 #
 # ─── JSON section: "smlm" ───────────────────────────────────────────────────────
 #
@@ -193,18 +193,32 @@
 #                            $SNIPPET('spacewalk/<org>/<name>') macro. It is idempotent, and new content overwrites it.
 #
 # Autoinstall trees ("Kickstart Distributions") and kickstart profiles
-#   smlm_distributions     : [{"name", "path", "base_channel", "install_type"}]
-#                            path must already exist on the server, with an extracted installer tree under it.
-#                            Mount the ISO out of band, for example with "mount -o loop", and copy the contents there.
-#                            distribution_create fails with "initrd could not be found" otherwise. install_type is
-#                            one of the labels "distribution_create --help" lists on that server, such as sles15generic,
-#                            sles16generic, rhel_9 or generic_rpm.
+#   smlm_distributions     : [{"name", "path", "base_channel", "install_type", "iso_url", "iso_checksum_url",
+#                            "kernel_options", "post_kernel_options"}]
+#                            path must hold an extracted installer tree on the server; distribution_create fails with
+#                            "initrd could not be found" otherwise. With iso_url, a missing tree is imported from that
+#                            ISO (downloaded on the server host, checked against iso_checksum_url when given, then
+#                            "mgradm distribution copy") into /srv/www/distributions/<name>, which is then the path.
+#                            install_type is one of the labels "distribution_create --help" lists on that server, such
+#                            as suse (also for SUSE Linux 16 and Leap 16), sles15generic, rhel_9 or generic_rpm.
+#                            kernel_options and post_kernel_options are set on every run; "" clears them, as Agama
+#                            installs need.
 #   smlm_kickstart_profiles: [{"name", "distribution" (name of an smlm_distributions entry), "root_password",
 #                            "virt_type": "none" (default) | "para_host" | "qemu" | "xenfv" | "xenpv",
-#                            "variables": {"key": "value"}, "activation_keys": [...], "child_channels": [...]}]
+#                            "variables": {"key": "value"}, "activation_keys": [...], "child_channels": [...],
+#                            "scripts": [{"name", "contents", "type": "post" (default) | "pre", "interpreter" ("" for
+#                            the kickstart shell), "chroot" (true), "template" (false), "erroronfail" (false)}]}]
 #                            root_password is used only at creation, because the server stores only a hash. To change
 #                            it, delete and recreate the profile. variables, activation_keys and child_channels are
-#                            applied on every run, diffed against the server's current lists.
+#                            applied on every run, diffed against the server's current lists. scripts are matched by
+#                            name: a changed script is replaced, scripts the list does not name are kept. With
+#                            "template": true, Cobbler expands $variables from the profile's variables in the script.
+#                            An entry with "agama_profile": {...} (an Agama JSON profile, for SUSE Linux 16 and
+#                            openSUSE Leap 16) is served as a raw autoinstall file instead; only name, distribution and
+#                            virt_type apply. Plain root and user passwords in it are served as SHA-512 hashes. A
+#                            changed profile is replaced. Boot the installer with root=live:<tree URL>/LiveOS/
+#                            squashfs.img and inst.auto=http://<server>/cblr/svc/op/autoinstall/profile/<name>:<org
+#                            id>:<org name without spaces>.
 #
 # Server self-monitoring (Admin -> Manager Configuration -> Monitoring)
 #   smlm_monitoring_enabled: "true" enables the bundled exporters for node, tomcat, postgres, taskomatic and
@@ -569,6 +583,26 @@ def _validate(v):
         if not isinstance(entry, dict) or not entry.get("url") or not _BOOTSTRAP_NAME_RE.match(str(entry.get("name", ""))):
             v.errors.append("[ERROR] smlm.smlm_bootstrap_scripts: every entry needs a plain file "
                             "'name' (letters, digits, '.', '_', '-') and a 'url'")
+    for dist in cfg.get("smlm_distributions") or []:
+        for key in ("iso_url", "iso_checksum_url"):
+            if isinstance(dist, dict) and dist.get(key) and not str(dist[key]).startswith(("http://", "https://")):
+                v.errors.append("[ERROR] smlm.smlm_distributions[{}].{}: must be an http(s) URL".format(
+                    dist.get("name", "?"), key))
+    for ks in cfg.get("smlm_kickstart_profiles") or []:
+        agama = ks.get("agama_profile") if isinstance(ks, dict) else None
+        if agama is not None:
+            if not isinstance(agama, dict) or not isinstance(agama.get("product"), dict) or not agama["product"].get("id"):
+                v.errors.append("[ERROR] smlm.smlm_kickstart_profiles[{}].agama_profile: must be an Agama profile "
+                                "object with product.id".format(ks.get("name", "?")))
+            extra = [k for k in ("root_password", "variables", "activation_keys", "child_channels", "scripts") if ks.get(k)]
+            if extra:
+                v.errors.append("[ERROR] smlm.smlm_kickstart_profiles[{}]: {} do not apply to an agama_profile entry; "
+                                "put them in the Agama profile".format(ks.get("name", "?"), ", ".join(extra)))
+        for script in (ks.get("scripts") or []) if isinstance(ks, dict) else []:
+            if (not isinstance(script, dict) or not script.get("name") or not script.get("contents")
+                    or (script.get("type") or "post") not in ("pre", "post")):
+                v.errors.append("[ERROR] smlm.smlm_kickstart_profiles[{}].scripts: every script needs 'name', "
+                                "'contents' and a 'type' of pre or post".format(ks.get("name", "?")))
     v.vport("smlm", "smlm_db_ha_replicas")
 
 

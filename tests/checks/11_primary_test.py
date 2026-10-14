@@ -233,6 +233,13 @@ except SystemExit:
 check("validate_definition: a valid nodes/kclusters definition does not die", ok)
 
 
+# ── wants_help: --help / -h anywhere in the arguments ────────────────────────
+check("wants_help: --help after a positional argument", primary.wants_help(["lab.json", "--help"]))
+check("wants_help: -h before a positional argument", primary.wants_help(["-h", "lab.json"]))
+check("wants_help: no help option", not primary.wants_help(["lab.json", "--keep"]))
+check("wants_help: a value containing --help is not the option", not primary.wants_help(["--help-me", "x-h"]))
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

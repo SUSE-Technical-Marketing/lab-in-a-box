@@ -6,9 +6,8 @@ Python equivalent of k8s_functions.bash.
 Typical usage:
     from k8s import (
         list_kclusters, get_vm_kcluster, load_kclu_vars,
-        setup_k3s, setup_rke2,
         add_kclu_dns,
-        first_server_node, addon_nodes, iter_cluster_nodes,
+        first_server_node, addon_nodes,
         setup_traefik_rke2, setup_traefik_k3s,
         create_basic_auth_secret, set_longhorn_overprovisioning,
         setup_cnpg_operator,
@@ -20,7 +19,6 @@ Typical usage:
 
 import shlex
 import subprocess
-import sys
 import textwrap
 import time
 from pathlib import Path
@@ -28,7 +26,8 @@ from pathlib import Path
 from lab_creation import (
     die, log, warn, _RED, _RESET,
     ssh_run, ssh_output,
-    prepare_local_as_kubeclient,
+    prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock, is_transactional,
+    wait_for_ssh_command, update_kernel,
 )
 from services import DNSService
 import apps
@@ -97,28 +96,55 @@ def add_kclu_dns(definition, clu_name, clu_type, mydomain, remote_dns_servers=No
 # K8sDistro is the interface for each Kubernetes distribution. get_distro() returns the implementation by name, so a new
 # distribution needs no change in the orchestrator. clu_ctx is the dict that load_kclu_vars() returns.
 #
-# setup_k3s() and setup_rke2() remain as thin wrappers with their original signatures. The RKE2 node config is written by
-# RKE2Distro.write_node_config().
+# The RKE2 node config is written by RKE2Distro.write_node_config().
 
 class K8sDistro(object):
     """Interface a Kubernetes distribution implements."""
 
     name = None
 
+    ready_timeout = 1200
+
     def install_cluster(self, definition, clu_name, clu_ctx):
         """Install the cluster on its nodes: install_server() or install_agent() on each, in the lab definition's
-        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server."""
+        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server. Then wait until the
+        first server reports every node Ready; raises RuntimeError when that takes longer than ready_timeout seconds."""
         token = None
         rancher1_ip = None
+        node_count = 0
         for vm_name, node_cfg in (definition.get("nodes") or {}).items():
             if node_cfg.get("kcluster") != clu_name:
                 continue
+            node_count += 1
             node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
             if node_type == "agent":
                 token, rancher1_ip = self.install_agent(vm_name, clu_name, clu_ctx, token, rancher1_ip)
             else:
                 token, rancher1_ip = self.install_server(vm_name, clu_name, clu_ctx, token=token,
                                                          rancher1_ip=rancher1_ip)
+        if rancher1_ip:
+            self.wait_nodes_ready(rancher1_ip, clu_name, node_count)
+
+    def wait_nodes_ready(self, server, clu_name, count):
+        """Wait until kubectl on `server` lists at least `count` Ready nodes; raises RuntimeError after ready_timeout
+        seconds."""
+        log("  Waiting for the {} node(s) of '{}' to be Ready".format(count, clu_name))
+        check = "[ \"$({} get nodes --no-headers 2>/dev/null | awk '$2 ~ /^Ready/' | wc -l)\" -ge {} ]".format(
+            self.kubectl_command(), count)
+        if not wait_for_ssh_command(server, check, timeout=self.ready_timeout, interval=15):
+            raise RuntimeError("the nodes of '{}' were not all Ready after {}s; check the {} service on '{}'".format(
+                clu_name, self.ready_timeout, self.name, server))
+
+    def kubectl_command(self):
+        """Shell command that runs kubectl with the cluster's admin kubeconfig on a server node."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _before_installer(hostname):
+        """Run before a vendor installer: its transaction starts from the running snapshot, so a pending one is booted
+        first, and it fails while another transactional-update holds the lock. No-op outside transactional-update."""
+        reboot_into_pending_snapshot(hostname)
+        wait_for_transactional_update_lock(hostname)
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         raise NotImplementedError
@@ -142,6 +168,9 @@ class K3sDistro(K8sDistro):
     def token_path(self):
         return "/var/lib/rancher/k3s/server/node-token"
 
+    def kubectl_command(self):
+        return "PATH=$PATH:/usr/local/bin:/opt/bin k3s kubectl"
+
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         return self._install(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
 
@@ -154,9 +183,7 @@ class K3sDistro(K8sDistro):
         node. Pass the returned token to each subsequent node to join the
         cluster. K3s has no separate "agent install" step — providing
         K3S_URL/K3S_TOKEN is what makes a node an agent — so install_server
-        and install_agent both funnel into this one path, exactly as the
-        original setup_k3s() did (dispatching on token is None vs not, with
-        no node_type parameter at all).
+        and install_agent both use this path, and a token makes the node join.
 
         Returns (token, rancher1_ip) — pass these to subsequent node calls.
         """
@@ -165,22 +192,24 @@ class K3sDistro(K8sDistro):
 
         prepare_local_as_kubeclient()
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
+        self._before_installer(hostname)
 
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
-            # clu_rel, clu_name and mydomain are free text from the lab JSON, with no validation. They are shell-quoted before they
-            # reach the remote command.
+            # clu_rel, clu_name, mydomain and clu_token are free text from the lab JSON. They are shell-quoted before they reach
+            # the remote command. K3S_TOKEN sets the cluster token when clu_token is given.
+            clu_token = clu_ctx.get("clu_token") or ""
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} "
+                "INSTALL_K3S_CHANNEL={} {}"
                 "sh -s - server --tls-san {}.{}".format(
-                    shlex.quote(clu_rel), shlex.quote(clu_name), shlex.quote(mydomain))
+                    shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
+                    shlex.quote(clu_name), shlex.quote(mydomain))
             )
-            # The k3s install script can leave the service enabled but not started, on an immutable-root image with a pending reboot
-            # flag. The service starts without a reboot. The distribution therefore runs an explicit systemctl enable --now afterwards,
-            # as RKE2Distro does, and does not rely on the vendor script to start it.
-            ssh_run(hostname, "systemctl enable --now k3s")
+            self._start(hostname, "k3s")
+            ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/k3s.sh; chmod 0644 /etc/profile.d/k3s.sh".format(
+                self.kubeconfig_path()))
             token = ssh_output(hostname, "cat /var/lib/rancher/k3s/server/node-token")
             return token, hostname
         else:
@@ -193,8 +222,21 @@ class K3sDistro(K8sDistro):
                 "K3S_TOKEN={} "
                 "sh -".format(shlex.quote(clu_rel), shlex.quote(rancher1_ip), shlex.quote(token))
             )
-            ssh_run(hostname, "systemctl enable --now k3s-agent")
+            self._start(hostname, "k3s-agent")
             return token, rancher1_ip
+
+    def _start(self, hostname, service):
+        """
+        Start `service` after the K3s installer has run. On a transactional-update system the installer puts k3s-selinux in a
+        new snapshot, does not start K3s and asks for a reboot, so the node first reboots into that snapshot. Dies when SELinux is
+        enabled and the k3s SELinux policy is still missing.
+        """
+        reboot_into_pending_snapshot(hostname)
+        missing_policy = ssh_run(hostname, "selinuxenabled && [ ! -f /usr/share/selinux/packages/k3s.pp ]",
+                                 check=False, capture=True)
+        if missing_policy.returncode == 0:
+            die("'{}': SELinux is enabled but the k3s-selinux policy is not installed".format(hostname))
+        ssh_run(hostname, "systemctl enable --now {}".format(service))
 
 
 # These base64 blobs encode small config snippets (NetworkManager, sysctl, PATH)
@@ -212,6 +254,9 @@ class RKE2Distro(K8sDistro):
 
     def token_path(self):
         return "/var/lib/rancher/rke2/server/node-token"
+
+    def kubectl_command(self):
+        return "/var/lib/rancher/rke2/bin/kubectl --kubeconfig {}".format(self.kubeconfig_path())
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         return self._install(hostname, clu_name, clu_ctx, "server", token=token, rancher1_ip=rancher1_ip)
@@ -258,7 +303,12 @@ class RKE2Distro(K8sDistro):
         clu_type = self.name
         clu_rel = clu_ctx.get("clu_rel") or "stable"
         install_method = clu_ctx.get("install_method", "")
-        mydomain = clu_ctx.get("mydomain", "")
+        # The tarball method installs no rke2-selinux policy. On transactional-update systems the RPM method installs it,
+        # through transactional-update, and needs a reboot. Under that policy the SL Micro 6.1 GM kernel (6.4.0-19) denies
+        # RKE2 its MPTCP connections and 6.4.0-52 does not, so the kernel is updated first.
+        transactional = is_transactional(hostname)
+        if not install_method and transactional:
+            install_method = "rpm"
 
         prepare_local_as_kubeclient()
 
@@ -268,6 +318,11 @@ class RKE2Distro(K8sDistro):
         ssh_run(hostname, "echo '{}' | base64 -d > /etc/profile.d/rke2.sh; chmod 0420 /etc/profile.d/rke2.sh".format(_RKE2_PATH))
         ssh_run(hostname, "mkdir -p /var/lib/rancher/{0} /etc/rancher/{0}".format(clu_type))
 
+        self._before_installer(hostname)
+        if install_method == "rpm" and transactional:
+            log("  Updating the kernel on '{}'".format(hostname))
+            update_kernel(hostname)
+            reboot_into_pending_snapshot(hostname)
         log("  Installing RKE2 on '{}'".format(hostname))
         # install_method and clu_rel are free text from the lab JSON, so they are shell-quoted. clu_type and node_type are fixed
         # literals, so they are not quoted.
@@ -290,9 +345,15 @@ class RKE2Distro(K8sDistro):
              "root@{}:/etc/rancher/{}/config.yaml".format(hostname, clu_type)],
             check=True,
         )
+        reboot_into_pending_snapshot(hostname)
+        ssh_run(hostname, "if selinuxenabled && rpm -q --quiet {0}-selinux; then echo 'selinux: true' >> "
+                          "/etc/rancher/{0}/config.yaml; fi".format(clu_type))
 
         if token is None:
             log("  Starting RKE2 server on '{}' (first node of '{}')".format(hostname, clu_name))
+            if clu_ctx.get("clu_token"):
+                ssh_run(hostname, "echo {} >> /etc/rancher/{}/config.yaml".format(
+                    shlex.quote("token: {}".format(clu_ctx["clu_token"])), clu_type))
             ssh_run(hostname, "systemctl enable --now {}-{}.service".format(clu_type, node_type))
             token = ssh_output(hostname, "cat /var/lib/rancher/{}/server/node-token".format(clu_type))
             return token, hostname
@@ -353,38 +414,6 @@ def get_distro(clu_type):
         die("Unknown Kubernetes distribution '{}' — supported: {}".format(
             clu_type, ", ".join(sorted(DISTROS))))
     return cls()
-
-
-# ── K3s / RKE2 back-compat wrappers ─────────────────────────────────────────
-
-def setup_k3s(hostname, clu_name, clu_rel, mydomain, token=None, rancher1_ip=None):
-    """
-    Install K3s on a node. Thin wrapper — body moved to K3sDistro.
-    """
-    clu_ctx = {"clu_rel": clu_rel, "mydomain": mydomain}
-    distro = K3sDistro()
-    if token is None:
-        return distro.install_server(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
-    return distro.install_agent(hostname, clu_name, clu_ctx, token, rancher1_ip)
-
-
-def setup_rke2(
-    hostname, vm_name, clu_name, clu_type, clu_rel, mydomain,
-    node_type="server", token=None, rancher1_ip=None, install_method="",
-):
-    """
-    Install RKE2 on a node. Thin wrapper — body moved to RKE2Distro.
-
-    vm_name/clu_type are accepted for signature back-compat but unused:
-    vm_name was already dead in the original (never referenced in its body);
-    clu_type is now implied by RKE2Distro itself (this codebase only ever
-    called setup_rke2 with clu_type="rke2").
-    """
-    clu_ctx = {"clu_rel": clu_rel, "mydomain": mydomain, "install_method": install_method}
-    distro = RKE2Distro()
-    if node_type == "agent":
-        return distro.install_agent(hostname, clu_name, clu_ctx, token, rancher1_ip)
-    return distro.install_server(hostname, clu_name, clu_ctx, token=token, rancher1_ip=rancher1_ip)
 
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────
@@ -456,17 +485,6 @@ def addon_node_config(definition, addon, vm_name):
             if overrides:
                 return dict(shared, **overrides)
     return shared
-
-
-def iter_cluster_nodes(definition, clu_name):
-    """
-    Yield (vm_name, node_cfg, ssh_cmd) for every node that belongs to clu_name,
-    in definition order.
-    """
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("kcluster") == clu_name:
-            ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
-            yield vm_name, node_cfg, ssh_cmd
 
 
 # ── Traefik on RKE2 ────────────────────────────────────────────────────────────

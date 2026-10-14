@@ -25,6 +25,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def setup_stackpack_repo(hostname, stackpack_rel=None, stackpack_repo_url=None):
 
 def setup_stackpack(hostname, clu_name, stackpack_api_key=None, stackpack_url=None, stackpack_rel=None,
                      stackpack_ns=None, stackpack_version=None, stackpack_cluster_name=None):
-    """Install the StackState Kubernetes Agent. Mirrors setup_stackpack (bash)."""
+    """Install the StackState Kubernetes Agent."""
     if not stackpack_api_key:
         print("ERROR: stackpack_api_key is mandatory. Set it in the JSON 'stackpack' section.", file=sys.stderr)
         sys.exit(1)
@@ -62,15 +63,14 @@ def setup_stackpack(hostname, clu_name, stackpack_api_key=None, stackpack_url=No
 
     rel = stackpack_rel or "stackstate"
     ns = stackpack_ns or "stackstate"
-    ver_arg = "--version {}".format(stackpack_version) if stackpack_version else ""
+    ver_arg = " --version {}".format(shlex.quote(stackpack_version)) if stackpack_version else ""
     cluster = stackpack_cluster_name or clu_name
 
     ssh_run(hostname,
-            "helm upgrade -i stackstate-k8s-agent {}/stackstate-k8s-agent --namespace {} --create-namespace "
-            "--set-string global.receiverApiKey={} "
-            "--set-string global.stackstate.url={} "
-            "--set-string global.cluster.name={} "
-            "{}".format(rel, ns, stackpack_api_key, stackpack_url, cluster, ver_arg))
+            "helm upgrade --install stackstate-k8s-agent {}/stackstate-k8s-agent --namespace {} --create-namespace "
+            "--set-string stackstate.apiKey={} --set-string stackstate.url={} --set-string stackstate.cluster.name={}{}".format(
+                shlex.quote(rel), shlex.quote(ns), shlex.quote(stackpack_api_key), shlex.quote(stackpack_url),
+                shlex.quote(cluster), ver_arg))
     print("StackState K8s Agent installed. Namespace: {}".format(ns))
     print("Reporting cluster '{}' to: {}".format(cluster, stackpack_url))
 

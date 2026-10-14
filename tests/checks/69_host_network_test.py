@@ -196,6 +196,99 @@ with mock.patch.object(hn, "is_bridge", side_effect=lambda dev: dev == "br0"), \
     hn.make_bridge("br0")
 check("make_bridge leaves an existing bridge alone", cs.call_args[0] == ("br0",) and ds.call_count == 0)
 
+
+# ── reading the host's state: DNS, current settings, the managing stack ───────────────────────────────────────────
+
+root = Path(tempfile.mkdtemp())
+real_path = hn.Path
+
+
+def rooted(p, *a):
+    """hn.Path with /etc redirected into the temporary root."""
+    p = str(p)
+    return real_path(str(root) + p) if p.startswith("/etc") else real_path(p, *a)
+
+
+def done(stdout="", rc=0):
+    return subprocess.CompletedProcess([], rc, stdout, "")
+
+
+(root / "etc").mkdir()
+(root / "etc" / "resolv.conf").write_text("nameserver 127.0.0.53\nnameserver 10.0.0.53\nsearch lab corp\n")
+with mock.patch.object(hn, "Path", side_effect=rooted), mock.patch.object(hn.shutil, "which", return_value=None):
+    check("_dns_for: resolv.conf's servers (loopback stubs left out) and search domains",
+          hn._dns_for("eth0") == (["10.0.0.53"], ["lab", "corp"]))
+resolved = {"dns": "Link 2 (eth0): 10.0.0.1 10.0.0.2\n", "domain": "Link 2 (eth0): lab ~.\n"}
+with mock.patch.object(hn.shutil, "which", return_value="/usr/bin/resolvectl"), \
+        mock.patch.object(hn, "_service_active", return_value=True), \
+        mock.patch.object(hn.subprocess, "run", side_effect=lambda cmd, **k: done(resolved[cmd[1]])):
+    check("_dns_for: systemd-resolved's per-link servers and domains, without the ~. route-only domain",
+          hn._dns_for("eth0") == (["10.0.0.1", "10.0.0.2"], ["lab"]))
+
+IP = {("-4", "route", "show", "default"): [{"dst": "default", "gateway": "10.0.0.1", "dev": "eth0"}],
+      ("link", "show", "dev", "eth0"): [{"ifname": "eth0", "address": "52:54:00:00:00:01"}],
+      ("-4", "addr", "show", "dev", "eth0"): [{"addr_info": [
+          {"family": "inet", "scope": "host", "local": "127.0.0.1", "prefixlen": 8},
+          {"family": "inet", "scope": "global", "local": "10.0.0.5", "prefixlen": 24, "dynamic": True}]}]}
+with mock.patch.object(hn, "_ip_json", side_effect=lambda *a: IP[a]), \
+        mock.patch.object(hn, "_dns_for", return_value=(["10.0.0.53"], ["lab"])), \
+        mock.patch.object(hn, "_networkd_iaid", return_value="0x1"):
+    net = hn.current_settings()
+check("current_settings: the default route's NIC with its MAC, global address, gateway, DHCP flag and DNS",
+      (net.nic, net.mac, net.address, net.gateway, net.dhcp, net.dns, net.search, net.dhcp_iaid)
+      == ("eth0", "52:54:00:00:00:01", "10.0.0.5/24", "10.0.0.1", True, ["10.0.0.53"], ["lab"], "0x1"))
+with mock.patch.object(hn, "_ip_json", return_value=[]):
+    try:
+        hn.current_settings()
+        check("current_settings: fails without a default route", False)
+    except hn.BridgeError:
+        pass
+
+(root / "etc" / "netplan").mkdir()
+(root / "etc" / "netplan" / "50-cloud-init.yaml").write_text("network: {}\n")
+with mock.patch.object(hn, "Path", side_effect=rooted), mock.patch.object(hn.shutil, "which", return_value="/usr/sbin/netplan"), \
+        mock.patch.object(hn.subprocess, "run", return_value=done("eth0:\n  dhcp4: true\nens5:\n")):
+    check("_netplan_defines: true when netplan configures the NIC", hn._netplan_defines("eth0") and hn._netplan_defines("ens5"))
+    check("_netplan_defines: false for another NIC", not hn._netplan_defines("eth1"))
+for active, expected in ((["NetworkManager"], "networkmanager"), (["wickedd"], "wicked"),
+                         (["systemd-networkd"], "systemd-networkd"), ([], None)):
+    with mock.patch.object(hn, "_netplan_defines", return_value=False), mock.patch.object(hn, "Path", side_effect=rooted), \
+            mock.patch.object(hn, "_service_active", side_effect=lambda name: name in active):
+        check("detect_stack: {} when only {} runs".format(expected, active or "nothing"), hn.detect_stack("eth0") == expected)
+with mock.patch.object(hn, "_netplan_defines", return_value=True), mock.patch.object(hn, "_service_active", return_value=True):
+    check("detect_stack: netplan wins over the renderer it drives", hn.detect_stack("eth0") == "netplan")
+
+(root / "etc" / "network" / "interfaces.d").mkdir(parents=True)
+(root / "etc" / "network" / "interfaces").write_text("source /etc/network/interfaces.d/*\nauto lo\niface lo inet loopback\n")
+(root / "etc" / "network" / "interfaces.d" / "eth0").write_text("auto eth0\niface eth0 inet dhcp\n")
+with mock.patch.object(hn, "Path", side_effect=rooted):
+    check("_ifupdown_file: the file holding the NIC's iface stanza", hn._ifupdown_file("eth0") == rooted("/etc/network/interfaces.d/eth0"))
+    check("_ifupdown_file: the main file when no file defines the NIC", hn._ifupdown_file("eth9") == rooted("/etc/network/interfaces"))
+    with mock.patch.object(hn, "_netplan_defines", return_value=False), mock.patch.object(hn, "_service_active", return_value=False), \
+            mock.patch.object(hn.shutil, "which", return_value="/sbin/ifup"):
+        check("detect_stack: ifupdown when /etc/network/interfaces and ifup exist", hn.detect_stack("eth0") == "ifupdown")
+
+check("_nm_restore: removes the bridge and its port, brings the old connection back",
+      hn._nm_restore(STATIC, "br0", "Wired 1") == ["nmcli con delete br0 br0-port-eth0 || true",
+                                                    "nmcli con mod 'Wired 1' connection.autoconnect yes", "nmcli con up 'Wired 1'"])
+check("_nm_restore: only removes the bridge without an old connection", hn._nm_restore(STATIC, "br0", "") ==
+      ["nmcli con delete br0 br0-port-eth0 || true"])
+out = root / "w"
+hn._write_files({str(out / "a" / "b.conf"): "x=1\n", str(out / "c.conf"): "y\n"})
+check("_write_files: writes every file, creating its directory",
+      (out / "a" / "b.conf").read_text() == "x=1\n" and (out / "c.conf").read_text() == "y\n")
+
+pings = [1, 0]
+with mock.patch.object(hn, "_ip_json", return_value=[{"dev": "br0", "gateway": "10.0.0.1"}]), \
+        mock.patch.object(hn.subprocess, "run", side_effect=lambda cmd, **k: done(rc=pings.pop(0))) as ping, \
+        mock.patch.object(hn.time, "sleep"):
+    check("_gateway_reachable: true once the bridge's gateway answers a ping",
+          hn._gateway_reachable("br0", 60) and ping.call_args[0][0] == ["ping", "-c", "1", "-W", "2", "10.0.0.1"])
+clock = iter([0, 0, 10, 20])
+with mock.patch.object(hn, "_ip_json", return_value=[]), mock.patch.object(hn.time, "monotonic", side_effect=lambda: next(clock)), \
+        mock.patch.object(hn.time, "sleep"):
+    check("_gateway_reachable: false when the bridge has no default route before the timeout", not hn._gateway_reachable("br0", 15))
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

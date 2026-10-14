@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-# Confirms tests/examples/*.json stays byte-for-byte in sync (modulo JSONC
-# comments) with the example embedded in README.md — see
-# tests/examples/README.md for why these two copies exist at all (the
-# README's own copy is what a reader sees; tests/examples/'s copy is what
-# actually gets deployed+checked against real hardware by
-# tests/examples/run_example.sh, which needs a real .json file to hand to
-# setup_lab.py, not a markdown fence). No hardware needed for THIS check —
-# it's pure text comparison, so it runs in the normal containerized sweep.
+# Confirms each tests/examples/*.json matches (JSONC comments aside) the example of the same name embedded in
+# docs/src/index.html; tests/examples/run_example.sh deploys those files on real hardware. Pure text comparison.
 # Run from 33_examples_sync.sh, in its own container — see tests/run_tests.sh.
 import html
 import json
@@ -61,31 +55,27 @@ def strip_jsonc_comments(text):
     return "".join(out)
 
 
-def extract_jsonc_after(readme_text, anchor):
+def extract_jsonc_after(docs_text, anchor):
     """
     Returns the parsed JSON object from the first ```jsonc fence appearing
     after `anchor` (a literal substring, e.g. a section heading) in
-    readme_text. Dies loudly (via check() failure + returning None) if
+    docs_text. Dies loudly (via check() failure + returning None) if
     either isn't found, rather than silently comparing nothing to nothing.
     """
-    anchor_pos = readme_text.find(anchor)
+    anchor_pos = docs_text.find(anchor)
     if anchor_pos == -1:
-        check("README.md still contains the anchor {!r}".format(anchor), False)
+        check("docs/src/index.html still contains the anchor {!r}".format(anchor), False)
         return None
-    m = re.search(r'<pre><code class="language-jsonc">(.*?)</code></pre>', readme_text[anchor_pos:], re.S)
+    m = re.search(r'<pre><code class="language-jsonc">(.*?)</code></pre>', docs_text[anchor_pos:], re.S)
     if not m:
-        check("a language-jsonc code block follows {!r} in README.md".format(anchor), False)
+        check("a language-jsonc code block follows {!r} in docs/src/index.html".format(anchor), False)
         return None
     return json.loads(strip_jsonc_comments(html.unescape(m.group(1))))
 
 
-readme_text = (_REPO / "docs" / "src" / "index.html").read_text()
+docs_text = (_REPO / "docs" / "src" / "index.html").read_text()
 
-# name -> the README anchor whose NEXT ```jsonc fence is that example's
-# source of truth. rancher-cluster's own "### RKE2 + Rancher + Longhorn"
-# section deliberately has no JSON of its own — it points back at the full
-# example under "## Lab definition format" instead (see the README's own
-# "see the full ... example above").
+# name -> the docs/src/index.html heading whose next language-jsonc block is that example.
 _ANCHORS = {
     "standalone": '<h3 id="minimal-single-vm-lab">',
     "rancher-cluster": '<h2 id="lab-definition-format">',
@@ -100,12 +90,12 @@ for name, anchor in _ANCHORS.items():
         check("tests/examples/{}.json exists".format(name), False)
         continue
     fixture = json.loads(fixture_path.read_text())
-    from_readme = extract_jsonc_after(readme_text, anchor)
-    if from_readme is None:
+    from_docs = extract_jsonc_after(docs_text, anchor)
+    if from_docs is None:
         continue
-    check("tests/examples/{}.json matches the example under {!r} in README.md "
+    check("tests/examples/{}.json matches the example under {!r} in docs/src/index.html "
           "(if this fails because you intentionally changed one, update the other)".format(name, anchor),
-          fixture == from_readme)
+          fixture == from_docs)
 
 
 if failures:

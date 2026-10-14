@@ -43,13 +43,14 @@ class _Rec:
 import install_keycloak  # noqa: E402
 rec = _Rec()
 install_keycloak.ssh_run = rec
-install_keycloak.setup_keycloak("vm1", "c1", "mydemo.lab",
-                                keycloak_admin="ad'min", keycloak_password=NASTY)
+install_keycloak.setup_keycloak("vm1", "c1", "mydemo.lab", {"keycloak_admin": "ad'min", "keycloak_password": NASTY})
 kc = rec.joined()
-check("keycloak: adminPassword is shlex-quoted in the helm command",
-      "--set auth.adminPassword={}".format(shlex.quote(NASTY)) in kc)
-check("keycloak: adminUser is shlex-quoted too",
-      "--set auth.adminUser={}".format(shlex.quote("ad'min")) in kc)
+check("keycloak: the admin password travels shlex-quoted in an environment variable",
+      "KC_PASSWORD={} bash -c ".format(shlex.quote(NASTY)) in kc)
+secret_cmd = shlex.split(next(c for c in rec.cmds if c.startswith("KC_PASSWORD=")))[-1]
+check("keycloak: the admin user is shlex-quoted in the secret command",
+      "--from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=" + shlex.quote("ad'min") in secret_cmd)
+check("keycloak: the password is on no helm command line", not any(NASTY in c for c in rec.cmds if c.startswith("helm ")))
 check("keycloak: the raw nasty payload never appears unquoted",
       "; rm -rf / $(id)" not in kc.replace(shlex.quote(NASTY), "<Q>"))
 

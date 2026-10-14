@@ -302,6 +302,7 @@ def setup_hermes(hostname, clu_name, mydomain, cfg):
     if not telegram_token:
         print("No messaging platform configured yet — set hermes_telegram_token (or configure one "
               "via the dashboard) to actually reach the agent from anywhere.")
+    return host
 
 
 def main():
@@ -322,7 +323,8 @@ def main():
     clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
     cfg = definition.get("hermes", {}) or {}
 
-    setup_hermes(vm_name, clu_name, clu_cfg.get("mydomain"), cfg)
+    host = setup_hermes(vm_name, clu_name, clu_cfg.get("mydomain"), cfg)
+    ac.register_service_dns(definition, clu_name, host)
 
 
 if __name__ == "__main__":

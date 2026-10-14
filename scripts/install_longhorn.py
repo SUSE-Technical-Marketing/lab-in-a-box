@@ -78,6 +78,7 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
             "--set persistence.migratable=true --set longhornUI.replicas=1".format(
                 rel, versions.helm_version_flag(lh_version), fqdn))
     print("Longhorn should be available in a few minutes in: {}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -103,8 +104,9 @@ def main():
     # setup_lh_repo (neither references any rancher_* variable); not ported.
     setup_helm(vm_name, clu_name, online=online)
     setup_lh_repo(vm_name, lh_rel=cfg.get("lh_rel"), lh_repo_url=cfg.get("lh_repo_url"))
-    setup_lh(vm_name, clu_name, clu_cfg.get("mydomain", ""), lh_rel=cfg.get("lh_rel"),
-             lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"))
+    fqdn = setup_lh(vm_name, clu_name, clu_cfg.get("mydomain", ""), lh_rel=cfg.get("lh_rel"),
+                    lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
     time.sleep(60)
 

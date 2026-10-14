@@ -96,7 +96,9 @@ def setup_mailman(hostname, templ_addons_loc, cfg):
 
     shorthn = cfg.get("mailman_shorthn") or "mailman"
     print("Mailman 3 deployed. Namespace: {}".format(ns))
-    print("Web UI available at: http://{}.{}.{}".format(shorthn, cfg.get("clu_name"), cfg.get("mydomain")))
+    fqdn = "{}.{}.{}".format(shorthn, cfg.get("clu_name"), cfg.get("mydomain"))
+    print("Web UI available at: http://{}".format(fqdn))
+    return fqdn
 
 
 def main():
@@ -121,7 +123,8 @@ def main():
     cfg["mydomain"] = clu_cfg.get("mydomain")
 
     templ_addons_loc = defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/")
-    setup_mailman(vm_name, templ_addons_loc, cfg)
+    fqdn = setup_mailman(vm_name, templ_addons_loc, cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

@@ -75,6 +75,7 @@ def setup_codellama(hostname, clu_name, mydomain, codellama_rel=None, codellama_
     print("Code Llama deployed via Ollama. Namespace: {}".format(ns))
     print("API available at: http://{}".format(fqdn))
     print("Model pre-pulled: {}".format(model))
+    return fqdn
 
 
 def main():
@@ -99,11 +100,12 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     setup_codellama_repo(vm_name, codellama_rel=cfg.get("codellama_rel"),
                           codellama_repo_url=cfg.get("codellama_repo_url"))
-    setup_codellama(vm_name, clu_name, clu_cfg.get("mydomain"),
-                     codellama_rel=cfg.get("codellama_rel"), codellama_ns=cfg.get("codellama_ns"),
-                     codellama_version=cfg.get("codellama_version"),
-                     codellama_shorthn=cfg.get("codellama_shorthn"),
-                     codellama_model=cfg.get("codellama_model"))
+    fqdn = setup_codellama(vm_name, clu_name, clu_cfg.get("mydomain"),
+                            codellama_rel=cfg.get("codellama_rel"), codellama_ns=cfg.get("codellama_ns"),
+                            codellama_version=cfg.get("codellama_version"),
+                            codellama_shorthn=cfg.get("codellama_shorthn"),
+                            codellama_model=cfg.get("codellama_model"))
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

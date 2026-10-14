@@ -49,6 +49,13 @@ EXTRA_CONFIG = {
 # Canned replies for commands an add-on reads or polls: add-on file name -> [(regex on the command, stdout)].
 # COMMON_RESPONSES apply to every add-on, after its own.
 RESPONSES = {
+    "install_complianceascode.py": [
+        (r"kubectl version -o json", '{"serverVersion": {"gitVersion": "v1.36.5+k3s1"}}'),
+        (r"helm search repo rancher-charts/rancher-compliance ",
+         '[{"name": "rancher-charts/rancher-compliance", "version": "110.2.0+up1.5.3"}]'),
+        (r"helm show chart rancher-charts/rancher-compliance ",
+         "@@110.2.0+up1.5.3\n  catalog.cattle.io/kube-version: '>= 1.34.0-0 < 1.37.0-0'\nname: rancher-compliance"),
+    ],
     "install_rancher.py": [(r"bootstrapPassword", "bootstrap-pw")],
     "install_uyuni.py": [(r"cat /tmp/mgradm_install\.rc", "0")],
 }

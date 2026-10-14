@@ -4,8 +4,20 @@
 inputFile="$1"
 
 
-_VERSION="b8ac777"
+_VERSION="__LABVERSION__"
 [[ "${1}" == "--version" || "${1}" == "-v" ]] && echo "${0##*/} ${_VERSION}" && exit 0
+for _arg in "$@"
+do
+        if [[ "${_arg}" == "-h" || "${_arg}" == "--help" ]]
+        then
+                echo "Usage: ${0##*/} <image>"
+                echo "Pulls <image>, tags it as \${MYREG}/<image> (MYREG from lab_creation.cfg) and pushes it."
+                echo "Options:"
+                echo "  --version, -v  Print the version and exit."
+                echo "  --help, -h     Print this help and exit."
+                exit 0
+        fi
+done
 
 # load lab_creation defaults
 if [[ -f /etc/lab_creation.defaults ]]

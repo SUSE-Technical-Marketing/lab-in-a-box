@@ -8,7 +8,7 @@
 #   OS mode         : script is called as a nodes addon     → clu_name env var is empty
 #   Override either mode by setting postgresql_mode = "kubernetes" or "os" in the JSON.
 #
-# Schema version: 1.0
+# Schema version: 2.0
 #
 # ─── JSON section: "postgresql" ────────────────────────────────────────────────
 #
@@ -18,15 +18,16 @@
 #   postgresql_db         : [OPTIONAL] default database name    (default: postgres)
 #   postgresql_user       : [OPTIONAL] default username         (default: postgres)
 #
-# KUBERNETES MODE
-#   postgresql_version    : [OPTIONAL] Helm chart version       (empty = latest, e.g. "15.5.17")
+#   postgresql_pg_version : [OPTIONAL] PostgreSQL major version, e.g. "15", "16", "17" (default: 16). In OS mode, a lower
+#                           version than the distro default achieves a downgrade.
+#
+# KUBERNETES MODE — a single-instance StatefulSet "postgresql" of the SUSE image <postgresql_image>:<postgresql_pg_version>,
+# Service postgresql.<postgresql_ns>.svc:5432; postgresql_user is created as superuser with postgresql_password.
 #   postgresql_ns         : [OPTIONAL] namespace                (default: postgresql)
-#   postgresql_rel        : [OPTIONAL] Helm repo alias          (default: bitnami)
-#   postgresql_repo_url   : [OPTIONAL] Helm repo URL            (default: https://charts.bitnami.com/bitnami)
+#   postgresql_image      : [OPTIONAL] image without tag        (default: registry.suse.com/suse/postgres)
+#   postgresql_storage    : [OPTIONAL] data volume size         (default: 8Gi)
 #
 # OS MODE  — the target node must list "postgresql" in its nodes[x].addons[] array
-#   postgresql_pg_version : [OPTIONAL] PostgreSQL major version, e.g. "14", "15", "16" (default: 16)
-#                           Setting a lower version than the distro default achieves a downgrade.
 #   postgresql_port       : [OPTIONAL] listening port           (default: 5432)
 #   postgresql_listen     : [OPTIONAL] listen_addresses value   (default: *)
 #
@@ -52,7 +53,9 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -63,7 +66,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import die, ssh_run  # noqa: E402
 from db_common import setup_postgresql_os  # noqa: E402
 
 
@@ -78,30 +81,94 @@ def _validate(v):
             "[ERROR] postgresql.postgresql_pg_version='{}': must be a major version number (e.g. 16)".format(pgver))
     v.vport("postgresql", "postgresql_port")
     v.vns("postgresql")
-    v.vver("postgresql")
 
 
-# ─── Kubernetes (Helm) mode ─────────────────────────────────────────────────────
+# ─── Kubernetes mode ────────────────────────────────────────────────────────────
 
-def setup_postgresql_repo(hostname, postgresql_rel=None, postgresql_repo_url=None):
-    """Add the PostgreSQL (bitnami) Helm repo. Mirrors setup_postgresql_repo (bash)."""
-    helm_repo_add(hostname, postgresql_rel or "bitnami", postgresql_repo_url or "https://charts.bitnami.com/bitnami")
+_MANIFEST = """apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: {ns}
+spec:
+  selector:
+    app: postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: {ns}
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: {image}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {user}
+            - name: POSTGRES_DB
+              value: {db}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql
+                  key: password
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {user}]
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {storage}
+"""
 
 
-def setup_postgresql_k8s(hostname, cfg):
-    """Install PostgreSQL via Helm. Mirrors setup_postgresql_k8s (bash)."""
-    rel = cfg.get("postgresql_rel") or "bitnami"
+def k8s_manifest(cfg: dict) -> str:
+    """Service and StatefulSet "postgresql"; values are JSON-quoted, which YAML reads as plain strings."""
+    q = json.dumps
+    image = "{}:{}".format(cfg.get("postgresql_image") or "registry.suse.com/suse/postgres", cfg.get("postgresql_pg_version") or "16")
+    return _MANIFEST.format(ns=q(cfg.get("postgresql_ns") or "postgresql"), image=q(image),
+                            user=q(cfg.get("postgresql_user") or "postgres"), db=q(cfg.get("postgresql_db") or "postgres"),
+                            storage=q(cfg.get("postgresql_storage") or "8Gi"))
+
+
+def setup_postgresql_k8s(hostname: str, cfg: dict) -> None:
+    """Run PostgreSQL as a StatefulSet; the password goes to the "postgresql" secret through an environment variable."""
     ns = cfg.get("postgresql_ns") or "postgresql"
-    ver_arg = "--version {}".format(cfg["postgresql_version"]) if cfg.get("postgresql_version") else ""
-    pwd = cfg.get("postgresql_password") or "postgres123"
-    db = cfg.get("postgresql_db") or "postgres"
     user = cfg.get("postgresql_user") or "postgres"
-
-    ssh_run(hostname,
-            "helm upgrade -i postgresql {}/postgresql --namespace {} --create-namespace "
-            "--set auth.postgresPassword={} --set auth.database={} --set auth.username={} "
-            "{}".format(rel, ns, pwd, db, user, ver_arg))
-    print("PostgreSQL installed in Kubernetes. Namespace: {}".format(ns))
+    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    cmd = ("kubectl create secret generic postgresql -n {} --from-literal=password=\"$PG_PASSWORD\" --dry-run=client -o yaml "
+           "| kubectl apply -f -").format(shlex.quote(ns))
+    ssh_run(hostname, "PG_PASSWORD={} bash -c {}".format(shlex.quote(cfg.get("postgresql_password") or "postgres123"),
+                                                         shlex.quote(cmd)))
+    ssh_run(hostname, "kubectl apply -f -", input_text=k8s_manifest(cfg))
+    if ssh_run(hostname, "kubectl -n {} rollout status statefulset/postgresql --timeout=300s".format(shlex.quote(ns)),
+               check=False).returncode != 0:
+        die("PostgreSQL did not become ready in namespace '{}': kubectl -n {} describe pod postgresql-0".format(ns, ns))
+    print("PostgreSQL installed in Kubernetes. Namespace: {}. Service: postgresql.{}.svc:5432".format(ns, ns))
     print("Connect: kubectl -n {} exec -it postgresql-0 -- psql -U {}".format(ns, user))
 
 
@@ -139,12 +206,6 @@ def main():
         if not target:
             sys.exit(1)
         vm_name, _ssh_cmd = target
-        clu_name = k8s.get_vm_kcluster(definition, vm_name)
-        online = definition.get("common", {}).get("online") == "1"
-
-        setup_helm(vm_name, clu_name, online=online)
-        setup_postgresql_repo(vm_name, postgresql_rel=cfg.get("postgresql_rel"),
-                               postgresql_repo_url=cfg.get("postgresql_repo_url"))
         setup_postgresql_k8s(vm_name, cfg)
     else:
         virt_srv = config.get("VIRT_SRV", "")

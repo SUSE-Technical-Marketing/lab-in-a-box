@@ -49,6 +49,11 @@ class LabDefinition(dict):
         self.fmt = fmt
 
 
+def wants_help(argv: list) -> bool:
+    """Whether --help or -h appears anywhere in argv, the arguments after the program name."""
+    return "--help" in argv or "-h" in argv
+
+
 def load_definition(path):
     """
     Load a lab definition from a JSON or YAML file. Dies (SystemExit) on any

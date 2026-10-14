@@ -21,6 +21,7 @@ PLUGIN = {
     "aux_services": [],
 }
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -45,13 +46,19 @@ def setup_fluid_repo(hostname, fluid_rel=None, fluid_repo_url=None):
     helm_repo_add(hostname, fluid_rel or "fluid", fluid_repo_url or "https://fluid-cloudnative.github.io/charts")
 
 
-def setup_fluid(hostname, fluid_rel=None, fluid_ns=None, fluid_version=None):
-    """Install Fluid. Mirrors setup_fluid (bash)."""
+def setup_fluid(hostname: str, clu_type: str, fluid_rel: str = None, fluid_ns: str = None, fluid_version: str = None) -> None:
+    """Install Fluid; its CSI plugin uses the kubelet kubeconfig and certificates of `clu_type` (rke2 or k3s) and mounts
+    datasets under /var/lib/fluid/runtime-mnt, which is writable on read-only-root systems."""
     rel = fluid_rel or "fluid"
     ns = fluid_ns or "fluid-system"
-    ver_arg = "--version {}".format(fluid_version) if fluid_version else ""
+    ver_arg = " --version {}".format(shlex.quote(fluid_version)) if fluid_version else ""
+    agent = "/var/lib/rancher/{}/agent".format("rke2" if clu_type == "rke2" else "k3s")
     ssh_run(hostname,
-            "helm upgrade -i fluid {}/fluid --namespace {} --create-namespace {}".format(rel, ns, ver_arg))
+            "helm upgrade --install fluid {}/fluid --namespace {} --create-namespace{} --wait --timeout 10m "
+            "--set csi.kubelet.kubeConfigFile={}/kubelet.kubeconfig --set csi.kubelet.certDir={} "
+            "--set runtime.mountRoot=/var/lib/fluid/runtime-mnt".format(
+                shlex.quote(rel), shlex.quote(ns), ver_arg, agent, agent))
+    ssh_run(hostname, "kubectl -n {} rollout status ds/csi-nodeplugin-fluid --timeout=300s".format(shlex.quote(ns)))
     print("Fluid installed. Namespace: {}".format(ns))
 
 
@@ -75,7 +82,8 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     setup_fluid_repo(vm_name, fluid_rel=cfg.get("fluid_rel"), fluid_repo_url=cfg.get("fluid_repo_url"))
-    setup_fluid(vm_name, fluid_rel=cfg.get("fluid_rel"), fluid_ns=cfg.get("fluid_ns"),
+    clu_type = k8s.load_kclu_vars(definition, clu_name).get("clu_type", "") if clu_name else ""
+    setup_fluid(vm_name, clu_type, fluid_rel=cfg.get("fluid_rel"), fluid_ns=cfg.get("fluid_ns"),
                 fluid_version=cfg.get("fluid_version"))
 
 

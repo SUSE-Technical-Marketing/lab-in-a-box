@@ -1,19 +1,20 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will install Trento SAP landscape monitoring
+# Part of lab-in-a-box, it will install Trento SAP landscape monitoring (Trento Server)
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 2.0
 #
 # JSON section: "trento" — configurable keys:
-#   trento_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.4.0")
-#   trento_ns           : [OPTIONAL] namespace (default: trento)
-#   trento_shorthn      : [OPTIONAL] hostname prefix (default: trento)
-#   trento_rel          : [OPTIONAL] Helm repo alias (default: trento)
-#   trento_repo_url     : [OPTIONAL] Helm repo URL (default: https://trento-project.io/helm)
-#   trento_admin        : [OPTIONAL] admin email (default: admin@lab.local)
-#   trento_password     : [OPTIONAL] admin password (default: Trento12345)
-#   trento_secret_key   : [OPTIONAL] secret key base for sessions; when unset, generated
+#   trento_version       : [OPTIONAL] trento-server chart version (empty = latest, e.g. "3.1.5")
+#   trento_chart         : [OPTIONAL] trento-server chart (default: oci://registry.suse.com/trento/trento-server)
+#   trento_ns            : [OPTIONAL] namespace (default: trento)
+#   trento_shorthn       : [OPTIONAL] hostname prefix (default: trento)
+#   trento_ingress_class : [OPTIONAL] ingress class of the web UI; with traefik the chart also blocks the session
+#                          introspection endpoint (default: traefik)
+#   trento_admin         : [OPTIONAL] admin user name (default: admin)
+#   trento_password      : [OPTIONAL] admin password; when unset, the chart generates one and keeps it
+#   trento_secret_key    : [OPTIONAL] secret key base for sessions; when unset, the chart generates one and keeps it
 
 __version__ = "__LABVERSION__"
 
@@ -25,7 +26,8 @@ PLUGIN = {
     "aux_services": [],
 }
 
-import subprocess
+import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -36,47 +38,49 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, ssh_run  # noqa: E402
+
+
+_DEFAULT_CHART = "oci://registry.suse.com/trento/trento-server"
 
 
 def _validate(v):
     v.vns("trento")
     v.vver("trento")
-    v.vurl("trento")
 
 
-def setup_trento_repo(hostname, trento_rel=None, trento_repo_url=None):
-    """Add the Trento Helm repo. Mirrors setup_trento_repo (bash)."""
-    helm_repo_add(hostname, trento_rel or "trento", trento_repo_url or "https://trento-project.io/helm")
+def secret_values(cfg: dict) -> str:
+    """Helm values (JSON, a YAML subset) with the admin password and session secret that are set; sent on stdin."""
+    web = {}
+    if cfg.get("trento_password"):
+        web.setdefault("adminUser", {})["password"] = cfg["trento_password"]
+    if cfg.get("trento_secret_key"):
+        web["secretKeyBase"] = cfg["trento_secret_key"]
+    return json.dumps({"trento-web": web})
 
 
-def setup_trento(hostname, clu_name, mydomain, trento_rel=None, trento_ns=None, trento_version=None,
-                  trento_shorthn=None, trento_admin=None, trento_password=None, trento_secret_key=None):
-    """Install Trento. Mirrors setup_trento (bash)."""
-    rel = trento_rel or "trento"
-    ns = trento_ns or "trento"
-    ver_arg = "--version {}".format(trento_version) if trento_version else ""
-    fqdn = "{}.{}.{}".format(trento_shorthn or "trento", clu_name, mydomain)
-    admin = trento_admin or "admin@lab.local"
-    password = trento_password or "Trento12345"
-
-    if trento_secret_key:
-        secret = trento_secret_key
-    else:
-        # bash runs `openssl rand -hex 32` LOCALLY (not over ssh) with a
-        # hardcoded fallback string if openssl fails.
-        r = subprocess.run(["openssl", "rand", "-hex", "32"], capture_output=True, text=True, check=False)
-        secret = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "changeme-generate-a-real-secret"
-
-    ssh_run(hostname,
-            "helm upgrade -i trento {}/trento-server --namespace {} --create-namespace "
-            "--set trento-web.adminUser.email={} "
-            "--set trento-web.adminUser.password={} "
-            "--set trento-web.secretKeyBase={} "
-            "--set trento-web.ingress.enabled=true "
-            "--set trento-web.ingress.host={} "
-            "{}".format(rel, ns, admin, password, secret, fqdn, ver_arg))
-    print("Trento available at: http://{}  ({} / {})".format(fqdn, admin, password))
+def setup_trento(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
+    """Install Trento Server with its web UI behind an ingress; returns the web UI hostname."""
+    ns = cfg.get("trento_ns") or "trento"
+    ver_arg = " --version {}".format(shlex.quote(cfg["trento_version"])) if cfg.get("trento_version") else ""
+    fqdn = "{}.{}.{}".format(cfg.get("trento_shorthn") or "trento", clu_name, mydomain)
+    admin = cfg.get("trento_admin") or "admin"
+    sets = [
+        ("trento-web.adminUser.username", admin),
+        ("trento-web.ingress.className", cfg.get("trento_ingress_class") or "traefik"),
+        ("trento-web.ingress.hosts[0].host", fqdn),
+        ("trento-web.ingress.hosts[0].paths[0].path", "/"),
+        ("trento-web.ingress.hosts[0].paths[0].pathType", "Prefix"),
+        ("global.trentoWeb.origin", fqdn),
+        ("prometheus.server.auth.type", "none"),
+    ]
+    ssh_run(hostname, "helm upgrade --install trento {} --namespace {} --create-namespace{} --wait --timeout 15m -f - {}".format(
+        shlex.quote(cfg.get("trento_chart") or _DEFAULT_CHART), shlex.quote(ns), ver_arg,
+        " ".join("--set {}".format(shlex.quote("{}={}".format(k, v))) for k, v in sets)),
+        input_text=secret_values(cfg))
+    print("Trento available at: http://{}  (user: {})".format(fqdn, admin))
+    print("Admin password: kubectl -n {} get secret trento-web-secret -o jsonpath='{{.data.ADMIN_PASSWORD}}' | base64 -d".format(ns))
+    return fqdn
 
 
 def main():
@@ -99,13 +103,8 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_trento_repo(vm_name, trento_rel=cfg.get("trento_rel"), trento_repo_url=cfg.get("trento_repo_url"))
-    setup_trento(
-        vm_name, clu_name, clu_cfg.get("mydomain", ""),
-        trento_rel=cfg.get("trento_rel"), trento_ns=cfg.get("trento_ns"), trento_version=cfg.get("trento_version"),
-        trento_shorthn=cfg.get("trento_shorthn"), trento_admin=cfg.get("trento_admin"),
-        trento_password=cfg.get("trento_password"), trento_secret_key=cfg.get("trento_secret_key"),
-    )
+    fqdn = setup_trento(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
 
 
 if __name__ == "__main__":

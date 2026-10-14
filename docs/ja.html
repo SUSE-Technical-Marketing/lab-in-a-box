@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
-<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。</p>
+<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
 <p>ラボは 1 台のハイパーバイザーに限定されません。オートメーション VM の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを使えます。</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -582,7 +582,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web UI（lab-builder）</h2>
-<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。</p>
+<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -759,6 +759,10 @@ rancher:
 <tr>
 <td><code>mgm_node</code></td>
 <td>クラスターのアドオンインストーラーを実行するノードのホスト名。デフォルトは最初のサーバーノード</td>
+</tr>
+<tr>
+<td><code>clu_token</code></td>
+<td>最初の RKE2/K3s サーバーに設定する参加トークン（16 文字以上の英数字、<code>.</code>、<code>_</code>、<code>-</code>）。既定では最初のサーバーが生成するトークンを使います。ラボ定義の外にあるマシンがクラスターに参加する場合（kickstart プロファイルや Salt ステートから参加する場合など）に設定します</td>
 </tr>
 </tbody>
 </table>
@@ -1122,10 +1126,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td>クラスター DNS</td>
 </tr>
 <tr>
-<td><a href="https://github.com/SUSE/kucero"><code>kucero</code></a></td>
-<td>Kubernetes クラスターの証明書ローテーション</td>
-</tr>
-<tr>
 <td><a href="https://fluid-cloudnative.github.io/"><code>fluid</code></a></td>
 <td>クラウドネイティブなワークロード向けのデータオーケストレーションとキャッシュ</td>
 </tr>
@@ -1166,8 +1166,8 @@ install_longhorn --schema yaml      # ...or YAML
 <td>Helm ベースの NeuVector デモワークロード</td>
 </tr>
 <tr>
-<td><a href="https://complianceascode.github.io/"><code>complianceascode</code></a></td>
-<td>OpenSCAP/ComplianceAsCode オペレーター</td>
+<td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
+<td>Rancher のコンプライアンスオペレーター: RKE2/K3s クラスターの CIS ベンチマークスキャン</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1175,7 +1175,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://kagent.dev/"><code>kagent</code></a></td>
-<td>エージェント型 AI による Kubernetes セキュリティアシスタント</td>
+<td>Kubernetes 上で AI エージェントを動かすフレームワーク（Web UI 付き）。モデルは OpenAI、Anthropic、Gemini、Azure OpenAI、Ollama から選択</td>
 </tr>
 <tr>
 <td><code>insecure_app</code></td>
@@ -1207,7 +1207,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします</td>
+<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします。SUSE Linux 16 と openSUSE Leap 16 の自動インストールにも対応し、<code>agama_profile</code> を持つ <code>smlm_kickstart_profiles</code> のエントリーは Agama の JSON プロファイルを配信し、<code>iso_url</code> を持つ <code>smlm_distributions</code> のエントリーは ISO からインストールツリーを取り込みます</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1409,10 +1409,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://github.com/bigcode-project/starcoder2"><code>starcoder2</code></a></td>
 <td>StarCoder2 モデル（Ollama で提供）</td>
 </tr>
-<tr>
-<td><a href="https://github.com/SUSE/phoebe"><code>phoebe</code></a></td>
-<td>（<code>install_phoebe --schema</code> を参照）</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1432,10 +1428,6 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>SUSE Virtualization（Harvester/KubeVirt）のノードのプロビジョニング</td>
-</tr>
-<tr>
-<td><a href="https://osinside.github.io/kiwi/"><code>kiwi</code></a></td>
-<td>KIWI アプライアンスビルダー</td>
 </tr>
 </tbody>
 </table>
@@ -1601,7 +1593,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>種類ごとの認証情報ファイル 1 つを、その種類を必要とするすべてのアドオンで再利用できます（例：1 つの <code>scc</code> ファイルで、どのアドオンの SCC 認証情報もまかなえます）。各アドオンの JSON フィールドの接頭辞には関係ありません。仕組みについては <code>libs/addon_common.py</code> の <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> と、<code>libs/primary.py</code> の <code>*_service_credential*</code> 関数を参照してください。</p>
 <p><strong>クラウドバックエンド（Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale）と <code>myip</code>：</strong>クラウドバックエンドのノードでは、ラボ JSON の <code>myip</code> を空にしておきます。実際の IP は作成時にプロバイダーが割り当てて初めてわかるもので、libvirt/Harvester の固定 IP のように事前に決められるものではありません。<code>setup_vm.py</code> は <code>create_vm()</code> の戻り値から実際の IP を受け取り、ノードが実際に存在するようになった<em>後で</em> DNS に登録します（AWSBackend の実機テストで見つかった実際のバグ、2026-09-06。TODO を参照）。<code>mymac</code> もクラウドバックエンドでは意味がないので未設定のままにします。生成や重複チェックはされず、無視されます。</p>
-<p><strong>クラウド DNS VM：</strong>ラボのノードが特定のクラウドバックエンドを初めて使うとき、<code>setup_vm.py</code> は同じクラウドネットワーク内に、BIND を実行する小さく安価な DNS 用 VM（<code>lab-dns-&lt;backend&gt;</code>、例：<code>lab-dns-aws</code>）もプロビジョニングします（既にあれば再利用します）。クラウドのノードは通常 <code>automation.mydemo.lab</code> の BIND サーバーにまったく到達できない（自宅ラボの NAT/ルーターの内側にあり、インターネットから到達できない）ためです。複数ノードからなる実際のクラウドクラスターでは、ノード同士が名前解決できるよう、同じクラウドネットワーク内に独自の DNS サーバーが必要です。各クラウドノードの DNS エントリーは、この DNS VM と中央の <code>automation.mydemo.lab</code> のゾーンの<em>両方</em>に登録されます。<strong>既知の制限：</strong>(1) 新しく作成したクラウドノードは、まだ自動ではこの DNS VM を名前解決に使わないため、同じラボの 2 台目のクラウドノードは追加の設定なしでは 1 台目をホスト名で解決できません。(2) ノードはこの DNS VM にプライベート IP 経由で問い合わせます。クラウドの外からパブリック IP への DNS 問い合わせは、経路上のネットワークに横取りされることがあります。一部の ISP やルーターはすべての DNS 通信に自ら応答するためです。<code>libs/backends.py</code> の <code>ensure_cloud_dns_vm()</code> の docstring を参照してください。</p>
+<p><strong>クラウド DNS VM：</strong>ラボのノードが特定のクラウドバックエンドを初めて使うとき、<code>setup_vm.py</code> は同じクラウドネットワーク内に、BIND を実行する小さく安価な DNS 用 VM（<code>lab-dns-&lt;backend&gt;</code>、例：<code>lab-dns-aws</code>）もプロビジョニングします（既にあれば再利用します）。この VM はプロバイダーが公開している最新の openSUSE Leap イメージ（AWS では SUSE の公開クラウドイメージ一覧から取得）から起動し、それがないプロバイダーではラボ自身のイメージから起動します。Debian/Ubuntu、SUSE、Fedora 系（RHEL、Amazon Linux）のイメージに対応しています。代わりに特定のイメージから起動するには、クラウドアカウント（または <code>lab_creation.cfg</code>）で <code>CLOUD_DNS_IMAGE</code> を設定します。クラウドのノードは通常 <code>automation.mydemo.lab</code> の BIND サーバーにまったく到達できない（自宅ラボの NAT/ルーターの内側にあり、インターネットから到達できない）ためです。複数ノードからなる実際のクラウドクラスターでは、ノード同士が名前解決できるよう、同じクラウドネットワーク内に独自の DNS サーバーが必要です。各クラウドノードの DNS エントリーは、この DNS VM と中央の <code>automation.mydemo.lab</code> のゾーンの<em>両方</em>に登録されます。<strong>既知の制限：</strong>(1) 新しく作成したクラウドノードは、まだ自動ではこの DNS VM を名前解決に使わないため、同じラボの 2 台目のクラウドノードは追加の設定なしでは 1 台目をホスト名で解決できません。(2) ノードはこの DNS VM にプライベート IP 経由で問い合わせます。クラウドの外からパブリック IP への DNS 問い合わせは、経路上のネットワークに横取りされることがあります。一部の ISP やルーターはすべての DNS 通信に自ら応答するためです。<code>libs/backends.py</code> の <code>ensure_cloud_dns_vm()</code> の docstring を参照してください。</p>
 <p><strong>クラウドインスタンスのサイズ：</strong>各クラウドバックエンドは、小さな組み込みテーブル（各行の「備考」列に記載）から、<code>VM_CPU</code>/<code>VM_MEM</code> を満たすプロバイダーの最小のインスタンスタイプ、サーバータイプ、プラン、フレーバーを選びます。このテーブルは上限として意図されたものではありません。優先順位の順に、2 つの方法で上書きできます。
 1. <strong><code>cloud_instance_type</code></strong>（common またはノードごと。ノードの値が優先）：インスタンスタイプ、サーバータイプ、プラン、フレーバーの正確な名前で、自動選択は行わずそのまま使われます。OVHcloud（フレーバー一覧 API のその場での呼び出しを省略）や GCP（カスタムタイプ <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> を作らない。代わりに <code>n2-standard-4</code> のような実在の事前定義タイプを指定）を含め、すべてのクラウドバックエンドで同じように機能します。
 2. <strong><code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> 設定キー</strong>（下の各プロバイダーの行を参照）：組み込みテーブル自体を完全に置き換えます。<code>VM_CPU</code>/<code>VM_MEM</code> による自動選択は引き続き機能しますが、対象は独自のリストになります。形式：<code>name:cores:mem_gb,name:cores:mem_gb,...</code>（例：<code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>）。テーブルはマージされず丸ごと置き換わるので、残したい組み込みエントリーも書き直してください。GCP と OVHcloud にはこのキーがありません。GCP は <code>VM_CPU</code>/<code>VM_MEM</code> から実際のカスタムマシンタイプを直接作り（置き換えるカタログがない）、OVHcloud は作成時に実際のフレーバー一覧をその場で問い合わせるためです（各行を参照）。</p>

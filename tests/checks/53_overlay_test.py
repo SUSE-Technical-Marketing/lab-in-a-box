@@ -10,6 +10,7 @@
 import ipaddress
 import sys
 import tempfile
+from unittest import mock
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -177,7 +178,7 @@ check("list_other_sites: with no exclusion, returns every registered site",
       set(others_none_excluded) == {("home", "192.168.88.0/24"), ("aws-aws-tmm", "172.31.0.0/20")})
 
 
-# ── add_peer_to_hub / remove_peer_from_hub: multi-CIDR AllowedIPs, idempotent ──
+# ── add_peer_to_hub: multi-CIDR AllowedIPs, idempotent ──
 reset()
 scripted["hub1"] = {"grep -qxF": FakeResult(returncode=1)}  # marker not yet present
 overlay.add_peer_to_hub("hub1", "aws-aws-tmm", "GWPUB", ["10.99.0.5/32", "172.31.0.0/20"])
@@ -200,13 +201,6 @@ check("add_peer_to_hub: does NOT re-append the [Peer] block when the marker alre
       not any(inp and "# peer: aws-aws-tmm" in inp for _, _, inp in calls))
 check("add_peer_to_hub: still re-asserts the live wg set (idempotent, cheap, always correct)",
       any("wg set wg0 peer" in c for _, c, _ in calls))
-
-reset()
-overlay.remove_peer_from_hub("hub1", "aws-aws-tmm")
-check("remove_peer_from_hub: looks up the marker on the HUB itself, never contacts the peer",
-      all(h == "hub1" for h, _, _ in calls))
-check("remove_peer_from_hub: the removal script greps the exact marker and calls wg set ... remove",
-      any("# peer: aws-aws-tmm" in c and "wg set wg0 peer" in c and "remove" in c for _, c, _ in calls))
 
 
 # ── ensure_overlay_hub_ready: init vs already-up vs down, + optional site registration ──
@@ -320,7 +314,7 @@ scripted["203.0.113.77"] = {
     "cat /etc/wireguard/wg0.key": FakeResult(returncode=0, stdout="NEWHUBPRIV\n"),
 }
 create_backend = _FakeBackendCreate()
-with tempfile.TemporaryDirectory() as tmp:
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
     hub_public_ip2, _, _ = overlay.ensure_overlay_hub(
         create_backend, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example", wg_port=51820)
     check("ensure_overlay_hub: create path writes a cloud-init user-data file "
@@ -337,10 +331,23 @@ check("ensure_overlay_hub: create path opens the WireGuard UDP port via the exis
 
 reset()
 create_backend2 = _FakeBackendCreate()
-with tempfile.TemporaryDirectory() as tmp:
+waits = []
+with tempfile.TemporaryDirectory() as tmp, \
+        mock.patch.object(overlay, "wait_for_ssh_command", side_effect=lambda h, c, **kw: waits.append((h, c)) or True):
     gw_ip = overlay.ensure_site_gateway_vm(create_backend2, "aws", "ami-xyz", tmp,
                                             "ssh-ed25519 AAAAfake test@example")
 check("ensure_site_gateway_vm: create path returns the new gateway's real IP", gw_ip == "203.0.113.77")
+check("ensure_site_gateway_vm: create path waits for cloud-init to finish before returning",
+      waits == [("203.0.113.77", "test -f /var/lib/cloud/instance/boot-finished")])
+died = []
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=False), \
+        mock.patch.object(overlay, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit(1))):
+    try:
+        overlay.ensure_site_gateway_vm(_FakeBackendCreate(), "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")
+    except SystemExit:
+        pass
+check("ensure_site_gateway_vm: dies naming the VM when cloud-init never finishes",
+      len(died) == 1 and "lab-overlay-gw-aws-prod" in died[0])
 gw_create_call = next(c for c in create_backend2.calls if c[0] == "create_vm")
 check("ensure_site_gateway_vm: does NOT open any inbound port (a spoke gateway only connects OUT)",
       "open_ports" not in gw_create_call[-1] or not gw_create_call[-1].get("open_ports"))

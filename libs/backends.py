@@ -34,6 +34,7 @@ from pathlib import Path
 
 import primary
 import provisioning
+import suse_catalogue
 from lab_creation import (
     _RED, _YELLOW, _RESET,
     _empty,
@@ -130,6 +131,30 @@ def _cloud_no_mac(mymac):
 # for the whole call, so the decision and any resulting definition update form one
 # critical section.
 _mac_lock = threading.Lock()
+
+
+def _reachable_for_keep(vm_name: str, myip: str) -> bool:
+    """
+    The part of every backend's vm_is_reusable() after its own state check: True when `vm_name` resolves to `myip` and
+    answers on SSH as root. Logs why not otherwise ("will recreate").
+    """
+    try:
+        resolved_ip = socket.gethostbyname(vm_name)
+    except OSError:
+        resolved_ip = None
+    if resolved_ip != myip:
+        log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
+            _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
+        return False
+    ssh_test = subprocess.run(
+        ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+         "root@{}".format(vm_name), "exit 0"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if ssh_test.returncode != 0:
+        log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(_YELLOW, _RESET, _RED, vm_name, _RESET))
+        return False
+    return True
 
 
 def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model):
@@ -360,6 +385,19 @@ class VMBackend(object):
         """
         pass
 
+    def allow_internal_traffic(self) -> None:
+        """
+        Allow all traffic between this backend's own VMs, so a node can reach its site gateway and its kcluster peers.
+        No-op by default; AWSBackend adds a security-group rule whose source is the group itself.
+        """
+
+    def opensuse_image(self) -> str:
+        """
+        The newest openSUSE Leap image this backend can boot, in the form its create_vm() takes as iso_image, or "" when
+        the provider publishes none or it cannot be looked up. "" by default; AWSBackend overrides it.
+        """
+        return ""
+
 
 class LibvirtBackend(VMBackend):
     """
@@ -425,7 +463,7 @@ class LibvirtBackend(VMBackend):
         return cls(virt_srv, remote_host=remote_host, iso_loc=iso_loc,
                    vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
-    # ── MAC / domain introspection (moved from _list_domain_macs) ──────────
+    # ── MAC / domain introspection ──────────
 
     def list_used_macs(self):
         """
@@ -496,27 +534,7 @@ class LibvirtBackend(VMBackend):
                 log("  {}KEEP CHECK{} \"{}{}{}\": MAC mismatch (want \"{}\", got \"{}\") — will recreate".format(
                     _YELLOW, _RESET, _RED, vm_name, _RESET, mymac, actual_mac or "none"))
                 return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         """
@@ -1183,27 +1201,7 @@ class HarvesterBackend(VMBackend):
                 log("  {}KEEP CHECK{} \"{}{}{}\": MAC mismatch (want \"{}\", got \"{}\") — will recreate".format(
                     _YELLOW, _RESET, _RED, vm_name, _RESET, mymac, actual_mac or "none"))
                 return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         result = self._virtctl("restart", vm_name)
@@ -1528,27 +1526,7 @@ class HetznerBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Hetzner (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -1879,27 +1857,7 @@ class AWSBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on EC2 (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -2041,6 +1999,18 @@ class AWSBackend(VMBackend):
         result = self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id)
         subnets = (result or {}).get("Subnets") or []
         return subnets[0].get("CidrBlock") if subnets else None
+
+    def opensuse_image(self) -> str:
+        """
+        VMBackend.opensuse_image() override: the newest openSUSE Leap x86_64 AMI SUSE publishes in this region, from the
+        SUSE Public Cloud Information Tracker. "" with a warning when the tracker cannot be reached.
+        """
+        try:
+            image = suse_catalogue.newest_leap(suse_catalogue.active_images("amazon", self.region), "-x86_64")
+        except (OSError, ValueError) as exc:
+            _lc.warn("could not read SUSE's public cloud image list for AWS region '{}': {}".format(self.region, exc))
+            return ""
+        return image.get("id", "")
 
     def disable_source_dest_check(self, vm_name):
         """
@@ -2421,27 +2391,7 @@ class GCPBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not RUNNING on GCE (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         try:
@@ -2699,27 +2649,7 @@ class AlibabaBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not Running on Alibaba Cloud (status: {}) — will "
                 "recreate".format(_YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -2956,27 +2886,7 @@ class ScalewayBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Scaleway (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -3212,27 +3122,7 @@ class UpCloudBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not started on UpCloud (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -3496,27 +3386,7 @@ class OVHcloudBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not ACTIVE on OVHcloud (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -3727,27 +3597,7 @@ class ExoscaleBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Exoscale (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-
-        try:
-            resolved_ip = socket.gethostbyname(vm_name)
-        except OSError:
-            resolved_ip = None
-        if resolved_ip != myip:
-            log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
-            return False
-
-        ssh_test = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(vm_name), "exit 0"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if ssh_test.returncode != 0:
-            log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(
-                _YELLOW, _RESET, _RED, vm_name, _RESET))
-            return False
-
-        return True
+        return _reachable_for_keep(vm_name, myip)
 
     def reboot_vm(self, vm_name):
         if not self.vm_exists(vm_name):
@@ -3877,7 +3727,7 @@ BACKENDS = {
 CLOUD_BACKEND_NAMES = frozenset(BACKENDS) - {"libvirt", "harvester"}
 
 
-def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
+def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
     """
     Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(). It installs BIND and serves
     `mydomain` from the same on-disk path and convention DNSService (libs/services.py) uses for
@@ -3885,13 +3735,14 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
     This lets add_to_dns() append records through the existing remote_dns_servers mechanism, which SSH-appends a line
     to a zone file and restarts named on each listed server, with no new propagation code.
 
-    Cloud AMIs are usually Ubuntu or Debian, not SUSE. Debian and Ubuntu's bind9 package expects zone files under
-    /etc/bind or /var/cache/bind. The shim creates /var/lib/named and points named.conf.local at it, instead of
-    porting DNSService's hardcoded path.
-
-    Ubuntu 24.04's bind9 package ships a working named.service at /usr/lib/systemd/system/named.service. Enable,
-    start and restart `named` directly. Do not add a bind9.service alias in /etc/systemd/system, because that alias
-    shadows the packaged unit.
+    The DNS VM boots from the lab's own image, so runcmd detects the OS family from /etc/os-release:
+      - Debian/Ubuntu: package bind9, user bind, zone stanza in /etc/bind/named.conf.local. Ubuntu's AppArmor
+        profile only allows /var/lib/bind/**, so a local/ override adds /var/lib/named/**.
+      - SUSE: package bind, user named, zone stanza in /etc/named.lab.conf, included from /etc/named.conf.
+      - Fedora family (RHEL, Amazon Linux): as SUSE, plus /etc/named.conf's localhost-only listen-on and allow-query
+        are opened to any client, with recursion kept to local networks; on SELinux, /var/lib/named gets the
+        named_zone_t type.
+    runcmd entries run as one shell script, so the variables set by the first entry apply to the later ones.
 
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
@@ -3912,37 +3763,41 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
         'zone "{d}" {{ type master; file "/var/lib/named/{d}.lan"; allow-update {{ none; }}; }};'
     ).format(d=mydomain)
 
-    # Each entry is one shell command, run through runcmd. cloud-init runs runcmd last, after
-    # packages has installed bind9. write_files runs earlier, before packages install, so a
-    # bind:bind chown or a write into /var/lib/named would fail on a stock image.
-    #
-    # Ubuntu's bind9 package already ships a working named.service in /usr/lib/systemd/system.
-    # Do not symlink it from /etc/systemd/system: that shadows the packaged unit and points at a
-    # path that does not exist. Enable and restart named directly.
+    # Each entry is one shell command, run through runcmd after cloud-init's own modules.
     commands = [
+        '. /etc/os-release; case " $ID $ID_LIKE " in'
+        ' *" debian "*|*" ubuntu "*) BIND_INSTALL="apt-get update -q && apt-get install -y bind9"; BIND_USER=bind;'
+        ' BIND_CONF=/etc/bind/named.conf.local;;'
+        ' *" suse "*|*" sles "*|*" opensuse "*) BIND_INSTALL="zypper --non-interactive install bind"; BIND_USER=named;'
+        ' BIND_CONF=/etc/named.lab.conf;;'
+        ' *) BIND_INSTALL="dnf install -y bind"; BIND_USER=named; BIND_CONF=/etc/named.lab.conf;;'
+        ' esac',
+        'sh -c "$BIND_INSTALL"',
         "mkdir -p /var/lib/named",
         "printf '%s\\n' {args} > /var/lib/named/{d}.lan".format(args=zone_printf_args, d=mydomain),
-        "printf '%s\\n' {conf} > /etc/bind/named.conf.local".format(conf="'{}'".format(named_conf_line)),
-        "chown -R bind:bind /var/lib/named",
+        "printf '%s\\n' {conf} > \"$BIND_CONF\"".format(conf="'{}'".format(named_conf_line)),
+        'if [ "$BIND_CONF" = /etc/named.lab.conf ]; then grep -qF "$BIND_CONF" /etc/named.conf'
+        ' || echo \'include "/etc/named.lab.conf";\' >> /etc/named.conf; fi',
+        "if [ -f /etc/named.conf ]; then sed -i"
+        " -e 's/listen-on port 53 { 127.0.0.1; };/listen-on port 53 { any; };/'"
+        " -e 's/allow-query *{ localhost; };/allow-query { any; }; allow-recursion { localnets; localhost; };/'"
+        " /etc/named.conf; fi",
+        'chown -R "$BIND_USER:$BIND_USER" /var/lib/named',
         "chmod 0755 /var/lib/named",
-        # Ubuntu's usr.sbin.named AppArmor profile allows zone data only under /var/lib/bind/**, not
-        # under /var/lib/named/** (the NAMED_ZONE_DIR convention used elsewhere). Without an override,
-        # named fails to load the zone with permission denied despite correct UNIX ownership. The
-        # local/ drop-in is Ubuntu's supported override, so the profile stays enforced.
-        "printf '%s\\n' '/var/lib/named/** rw,' > /etc/apparmor.d/local/usr.sbin.named",
-        "apparmor_parser -r /etc/apparmor.d/usr.sbin.named",
+        "if command -v selinuxenabled >/dev/null && selinuxenabled; then chcon -R -t named_zone_t /var/lib/named; fi",
+        "if [ -f /etc/apparmor.d/usr.sbin.named ]; then"
+        " printf '%s\\n' '/var/lib/named/** rw,' > /etc/apparmor.d/local/usr.sbin.named; fi",
+        "if [ -f /etc/apparmor.d/usr.sbin.named ] && command -v apparmor_parser >/dev/null; then"
+        " apparmor_parser -r /etc/apparmor.d/usr.sbin.named; fi",
         "systemctl enable --now named",
     ]
     runcmd_block = "\n".join("  - {}".format(yq(cmd)) for cmd in commands)
 
-    # A top-level ssh_authorized_keys grants the key only to the distro default user (ubuntu), and
-    # the image's login wrapper keeps root SSH blocked. Every SSH call this project makes assumes
-    # root, so root is declared explicitly under users:, the same convention as template_user-data.
+    # A top-level ssh_authorized_keys grants the key only to the distro default user, and the image's login wrapper
+    # keeps root SSH blocked. Every SSH call this project makes assumes root, so root is declared explicitly under
+    # users:, the same convention as template_user-data.
     return (
         "#cloud-config\n"
-        "package_update: true\n"
-        "packages:\n"
-        "  - bind9\n"
         "users:\n"
         "  - default\n"
         "  - name: root\n"
@@ -3957,15 +3812,15 @@ def _cloud_dns_vm_user_data(root_ssh_key, mydomain):
 def cloud_dns_image(definition, config, vm_name):
     """
     The image for the cloud DNS VM of `vm_name`'s backend: CLOUD_DNS_IMAGE from its cloud account (or
-    lab_creation.cfg), "" when unset. The DNS VM's cloud-init (_cloud_dns_vm_user_data()) expects an Ubuntu or Debian
-    image, so a lab whose own image is something else (e.g. a SLES BYOS AMI) sets this to an Ubuntu image. When it is
-    unset, the caller falls back to the lab's own ISO_IMAGE.
+    lab_creation.cfg), "" when unset; ensure_cloud_dns_vm() then uses the backend's opensuse_image(), then the lab's
+    own image. The DNS VM's cloud-init (_cloud_dns_vm_user_data()) supports Debian/Ubuntu, SUSE and Fedora-family
+    images.
     """
     _account, eff_config, _cloudtype = resolve_cloud_account(definition, config, vm_name)
     return str(eff_config.get("CLOUD_DNS_IMAGE") or "")
 
 
-def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path):
+def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
     """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
     There is one DNS VM per backend, e.g. "lab-dns-aws", reused by every lab that uses that backend. It is not
@@ -3986,9 +3841,10 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
     If the VM does not exist, it is created with the same backend's create_vm(), at the smallest instance or plan size
-    (1 vCPU and 512 MiB, enough for BIND) and with `iso_image`: the account's CLOUD_DNS_IMAGE when set (see
-    cloud_dns_image()), else the ISO_IMAGE the calling lab already configured. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each cloud backend's
-    copy_vm_image() validation is a no-op.
+    (1 vCPU and 512 MiB, enough for BIND). Its image is the first of: `preferred_image` (the account's CLOUD_DNS_IMAGE,
+    see cloud_dns_image()), the backend's opensuse_image(), and `iso_image`, the image the calling lab configured. The
+    image is looked up only when the VM is created. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each
+    cloud backend's copy_vm_image() validation is a no-op.
 
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
@@ -4010,6 +3866,9 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     log("- No cloud DNS VM found for backend \"{}{}{}\" — creating \"{}{}{}\"".format(
         _RED, backend_name, _RESET, _RED, dns_vm_name, _RESET))
 
+    iso_image = preferred_image or backend.opensuse_image() or iso_image
+    log("- Cloud DNS VM image: {}".format(iso_image))
+
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)
     (base / "{}_user-data".format(dns_vm_name)).write_text(
@@ -4030,18 +3889,7 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     # does not race it. Because the DNS VM is a secondary server, check=False would otherwise hide
     # that race completely.
     log("- Waiting for \"{}{}{}\" to finish installing and starting BIND".format(_RED, dns_vm_name, _RESET))
-    waited = 0
-    while waited < 240:
-        check = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(ip), "systemctl is-active named"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if check.returncode == 0:
-            break
-        time.sleep(5)
-        waited += 5
-    else:
+    if not _lc.wait_for_ssh_command(ip, "systemctl is-active named", timeout=240):
         die("cloud DNS VM '{}' ({}) never reported 'named' active within 240s — check it "
             "manually (SSH in and inspect cloud-init's own log, /var/log/cloud-init-output.log)"
             .format(dns_vm_name, ip))

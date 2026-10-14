@@ -1,4 +1,4 @@
-# Schema version: 1.0
+# Schema version: 1.1
 #################################
 #### What you should change: ####
 #################################
@@ -116,6 +116,14 @@ mysource='automation.mydemo.lab'
 ## Where every MCP tool call (accepted or rejected) gets logged, one JSON
 ## object per line.
 #MCP_AUDIT_LOG=/var/log/lab-mcp/audit.log
+
+## Image the cloud DNS VM ("lab-dns-<backend>") boots from: an image name or
+## ID for that backend (e.g. an AMI ID on AWS). Unset: the newest openSUSE
+## Leap image the provider publishes (on AWS, from SUSE's public cloud image
+## list), or the lab's own ISO_IMAGE on a provider without one. Its cloud-init
+## supports Debian/Ubuntu, SUSE and Fedora-family images. Also valid in a
+## cloud account file, where it applies to that account only.
+#CLOUD_DNS_IMAGE=
 
 ## Cross-cloud WireGuard overlay (libs/overlay.py) — used only when a lab's
 ## JSON sets common.overlay=true. SITE-TO-SITE: only each site's own

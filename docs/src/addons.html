@@ -88,6 +88,8 @@
   <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it supports (<code>rke2</code>, <code>k3s</code>), or <code>null</code>.</li>
   <li><code>aux_services</code>: lab services it needs on the automation VM (e.g. <code>pxe</code>).</li>
   <li><code>versions</code>: optional version matrix; see <a href="index.html#add-on-version-matrix">Add-on version matrix</a>.</li>
+  <li><code>status</code>: <code>stable</code> (the default when absent) or <code>under-construction</code>, for an add-on that is known not to work fully yet. An under-construction add-on still runs: <code>--help</code> starts with a <code>STATUS:</code> line, every run and the <code>setup_lab.py</code> preflight print a warning, and the web UI marks it with an "under construction" badge.</li>
+  <li><code>status_note</code>: required when <code>status</code> is <code>under-construction</code>: what does not work yet. It is the text of the warning and of the badge's tooltip.</li>
   </ul></li>
 </ul>
 <h2 id="writing-it-in-python">Writing it in Python</h2>
@@ -150,6 +152,7 @@ scripts/schema_versions.py record addon:&lt;name&gt; "What changed, in one sente
 <li><strong>Wait on a condition, not a delay.</strong> <code>kubectl rollout status</code>, <code>kubectl wait</code>, or a polling loop with a timeout, not a fixed <code>sleep</code>.</li>
 <li><strong>Secrets</strong> are <code>password</code> fields or credential-store entries; never default values, never printed.</li>
 <li><strong>Placement</strong> is declared, not guessed: the preflight enforces <code>targets</code> and <code>requires_kubernetes</code>, so the install run can rely on them.</li>
+<li><strong>Register the hostnames it exposes.</strong> An add-on that sets an ingress host or prints a URL under the lab domain registers that name in DNS itself: <code>addon_common.register_service_dns(definition, clu_name, fqdn)</code> points it at the kcluster's nodes, on the automation VM's BIND and every <code>REMOTE_DNS_SERVERS</code> server. Destroying a node removes the records that point at it. Check 85 fails for an add-on that sets an ingress host without registering it.</li>
 <li><strong>Quote</strong> every lab value that goes into a shell command (<code>shlex.quote</code> in Python).</li>
 <li>Comments and help text say what the add-on does and needs, not its history.</li>
 </ul>

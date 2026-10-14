@@ -314,7 +314,6 @@ check("make_bridge is NOT called in nat mode even when _bridge_nic is set", fake
 
 
 # ── lab.cfg generation ────────────────────────────────────────────────────────
-import argparse  # noqa: E402
 import ipaddress  # noqa: E402
 import tempfile  # noqa: E402
 
@@ -496,6 +495,114 @@ with mock.patch.object(skn, "run_lab_automation", return_value=0):
     _run_do_it_all({"_automation_node": "container"}, _FakeProfile(), downloads=downloads)
     _run_do_it_all({"_QCOW_IMAGE": "leap.qcow2"}, _FakeProfile(), downloads=downloads)
 check("only VM mode downloads the VM image", downloads == ["leap.qcow2"])
+
+
+# ── host helpers: yq, reachability, shared storage, DNS, free IP, SSH key, time zone, remote run ───────────────────
+import ipaddress  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def done(stdout="", rc=0):
+    return subprocess.CompletedProcess([], rc, stdout, "")
+
+
+with mock.patch.object(skn.os, "uname", return_value=mock.Mock(machine="aarch64")), \
+        mock.patch.object(skn.urllib.request, "urlretrieve") as fetch, mock.patch.object(skn.os, "chmod") as chmod:
+    skn.install_yq()
+check("install_yq: downloads the release for this architecture and makes it executable",
+      fetch.call_args[0] == ("https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64", "/usr/local/bin/yq")
+      and chmod.call_args[0] == ("/usr/local/bin/yq", 0o755))
+with mock.patch.object(skn.os, "uname", return_value=mock.Mock(machine="x86_64")), \
+        mock.patch.object(skn.urllib.request, "urlretrieve", side_effect=OSError("offline")):
+    skn.install_yq()
+check("install_yq: a failed download only warns", True)
+
+with mock.patch.object(skn.subprocess, "run", return_value=done()) as run:
+    check("_automation_host_reachable: SSH port open on _myip", skn._automation_host_reachable("192.168.8.71")
+          and run.call_args[0][0] == ["nc", "-z", "-w", "3", "192.168.8.71", "22"])
+    check("_automation_host_reachable: false without _myip", not skn._automation_host_reachable(""))
+
+root = Path(tempfile.mkdtemp())
+real_path = skn.Path
+
+
+def rooted(p, *a):
+    """skn.Path with absolute system paths redirected into the temporary root."""
+    return real_path(str(root) + str(p)) if str(p).startswith(("/etc", "/var")) else real_path(p, *a)
+
+
+(root / "etc").mkdir()
+(root / "etc" / "fstab").write_text("/dev/vda1 / xfs defaults 0 0\n")
+with mock.patch.object(skn, "Path", side_effect=rooted), mock.patch.object(skn.subprocess, "run", return_value=done()) as run:
+    skn.setup_shared_storage("nuc1.lab", "")
+    skn.setup_shared_storage("nuc1.lab", "")
+    fstab = (root / "etc" / "fstab").read_text()
+    check("setup_shared_storage: adds the sshfs automount line once and mounts it",
+          fstab.count("nuc1.lab:/var/lib/libvirt/images /var/lib/libvirt/images fuse.sshfs") == 1
+          and ["mount", "/var/lib/libvirt/images"] in [c[0][0] for c in run.call_args_list])
+    run.reset_mock()
+    skn.setup_shared_storage("", "nuc2.lab")
+    check("setup_shared_storage: copies once with rsync",
+          run.call_args[0][0] == ["rsync", "-a", "nuc2.lab:/var/lib/libvirt/images/", "/var/lib/libvirt/images/"])
+    run.reset_mock()
+    skn.setup_shared_storage("", "")
+    check("setup_shared_storage: does nothing without a source", not run.called)
+
+profile = mock.Mock()
+with mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=profile):
+    skn.configure_automation_dns({"_myip": "192.168.8.71", "_mydomain": "mydemo.lab"})
+check("configure_automation_dns: the host's profile points DNS at the automation host",
+      profile.configure_dns.call_args[0] == ("192.168.8.71", "mydemo.lab"))
+with mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None):
+    skn.configure_automation_dns({"_myip": "x"})
+
+answered = {"192.168.8.249"}
+with mock.patch.object(skn.subprocess, "run", side_effect=lambda cmd, **k: done(rc=0 if cmd[-1] in answered else 1)):
+    check("suggest_free_ip: the highest address below .250 that is not excluded and does not answer",
+          skn.suggest_free_ip(ipaddress.ip_network("192.168.8.0/24"), {"192.168.8.248"}) == "192.168.8.247")
+
+keydir = Path(tempfile.mkdtemp())
+
+
+def keygen(cmd, **k):
+    Path(cmd[-1] + ".pub").write_text("ssh-ed25519 NEW root@host\n")
+    return done()
+
+
+with mock.patch.object(skn.subprocess, "run", side_effect=keygen) as run:
+    check("ensure_ssh_key: creates an ed25519 key pair when missing and returns the public key",
+          skn.ensure_ssh_key(str(keydir / "id_ed25519.pub")) == "ssh-ed25519 NEW root@host"
+          and run.call_args[0][0][:4] == ["ssh-keygen", "-q", "-t", "ed25519"])
+    check("ensure_ssh_key: reuses an existing key", skn.ensure_ssh_key(str(keydir / "id_ed25519.pub")) == "ssh-ed25519 NEW root@host"
+          and run.call_count == 1)
+
+with mock.patch.object(skn.subprocess, "run", return_value=done("Europe/Zurich\n")):
+    check("detect_timezone: timedatectl's time zone", skn.detect_timezone() == "Europe/Zurich")
+(root / "usr" / "share" / "zoneinfo" / "Europe").mkdir(parents=True)
+(root / "usr" / "share" / "zoneinfo" / "Europe" / "Madrid").write_text("")
+(root / "etc" / "localtime").symlink_to(root / "usr" / "share" / "zoneinfo" / "Europe" / "Madrid")
+with mock.patch.object(skn.subprocess, "run", return_value=done("")), mock.patch.object(skn, "Path", side_effect=rooted):
+    check("detect_timezone: else the /etc/localtime link's zone", skn.detect_timezone() == "Europe/Madrid")
+(root / "etc" / "localtime").unlink()
+with mock.patch.object(skn.subprocess, "run", return_value=done("")), mock.patch.object(skn, "Path", side_effect=rooted):
+    check("detect_timezone: else UTC", skn.detect_timezone() == "UTC")
+
+calls = []
+with mock.patch.object(skn.subprocess, "run", side_effect=lambda cmd, **k: calls.append(cmd) or done()), \
+        mock.patch.object(skn.subprocess, "Popen") as popen, mock.patch.object(skn.time, "time", return_value=1700000000):
+    skn.run_remote("nuc3.lab", ["nuc3.lab", "--automation-node", "container", "--name", "a b"])
+check("run_remote: checks SSH, copies the key, ships the tree and runs the installer with the other options",
+      calls[0] == ["nc", "-z", "-w", "5", "nuc3.lab", "22"] and calls[1] == ["ssh-copy-id", "root@nuc3.lab"]
+      and popen.call_args[0][0][:4] == ["tar", "-C", str(skn._SCRIPT_DIR.parent), "-cf"]
+      and calls[-1][-1] == "bash /var/tmp/lab-in-a-box-1700000000/install_demo_server_scripts.sh --source "
+                           "/var/tmp/lab-in-a-box-1700000000 --automation-node container --name 'a b'")
+with mock.patch.object(skn.subprocess, "run", return_value=done(rc=1)), \
+        mock.patch.object(skn, "die", side_effect=SystemExit("unreachable")) as died:
+    try:
+        skn.run_remote("nuc3.lab", [])
+    except SystemExit:
+        pass
+check("run_remote: dies when the host is unreachable", died.called)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
