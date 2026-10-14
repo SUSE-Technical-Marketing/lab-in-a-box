@@ -97,12 +97,12 @@ def status():
     """
     p = status_file()
     if not os.path.isfile(p):
-        return {"available": False, "hosts": [], "images": [], "config": {}}
+        return {"available": False, "hosts": [], "images": [], "images_by_host": {}, "config": {}}
     try:
         with open(p) as f:
             data = json.load(f)
     except (ValueError, OSError):
-        return {"available": False, "hosts": [], "images": [], "config": {}}
+        return {"available": False, "hosts": [], "images": [], "images_by_host": {}, "config": {}}
     data["available"] = True
     return data
 
@@ -180,28 +180,72 @@ def _is_field(node):
     return isinstance(node, dict) and isinstance(node.get("name"), str) and isinstance(node.get("type"), str)
 
 
-def _inject_dynamic_enums(node, images):
+def image_choices(snapshot=None):
+    """
+    The source images present on the KVM hosts right now, as the renderer's {value, label} enum entries: the value is
+    the image's file name, which is what a lab definition stores, and the label is "<host> - <file name>", because with
+    several hosts the same name is not necessarily present on all of them. Ordered by host, then by name.
+
+    Built from images_by_host in the status snapshot refresh_hypervisor_status.py writes. An older snapshot that only
+    has the flat "images" list still yields plain names, and no snapshot at all yields nothing, which leaves the field
+    as free text.
+    """
+    snap = status() if snapshot is None else snapshot
+    by_host = snap.get("images_by_host") or {}
+    if by_host:
+        return [{"value": name, "label": "{} - {}".format(host, name)}
+                for host in sorted(by_host) for name in sorted(by_host[host] or [])]
+    return list(snap.get("images") or [])
+
+
+def host_choices(snapshot=None):
+    """
+    The configured KVM hosts, as the renderer's {value, label} enum entries, led by the empty value that means what
+    omitting kvm_host means: let resolve_kvm_host() pick by free resources. A host the last refresh could not reach is
+    labelled so, but stays selectable — pinning a node to a host that is temporarily down is still a valid choice.
+
+    Empty when the status snapshot knows no host, which leaves the field as free text.
+    """
+    snap = status() if snapshot is None else snapshot
+    hosts = [h for h in (snap.get("hosts") or []) if isinstance(h, dict) and h.get("host")]
+    if not hosts:
+        return []
+    return [{"value": "", "label": "(default) auto — the host with the most free resources"}] + [
+        {"value": h["host"], "label": h["host"] + (" (unreachable)" if h.get("error") else "")} for h in hosts]
+
+
+def dynamic_enums(snapshot=None):
+    """
+    Live `enum` choices by field name, for the fields whose options are whatever the hypervisors currently have rather
+    than anything the schema can state: the source image and the KVM host.
+    """
+    snap = status() if snapshot is None else snapshot
+    images = image_choices(snap)
+    return {"SOURCE_IMAGE": images, "ISO_IMAGE": images, "kvm_host": host_choices(snap)}
+
+
+def _inject_dynamic_enums(node, choices):
     """
     Walk a schema tree (same Option-B convention app.js's renderer uses: any
-    dict with name+type is a field, wherever it lives) and give any field
-    literally named ISO_IMAGE a live `enum` of the images actually present on
-    the hypervisor right now, from the cached status snapshot. It then
-    renders exactly like any other enum field — no frontend changes needed.
-    A no-op when no snapshot is available yet (leaves the field as free text).
+    dict with name+type is a field, wherever it lives) and give each field named
+    in `choices` (see dynamic_enums()) a live `enum` from the cached status
+    snapshot. It then renders exactly like any other enum field. A field whose
+    choices are empty is left alone, so it stays free text.
     """
     if isinstance(node, list):
         for n in node:
-            _inject_dynamic_enums(n, images)
+            _inject_dynamic_enums(n, choices)
         return
     if not isinstance(node, dict):
         return
     if _is_field(node):
-        if node.get("name") == "ISO_IMAGE" and images:
-            node["enum"] = list(images)
+        live = choices.get(node.get("name"))
+        if live:
+            node["enum"] = list(live)
         return
     for v in node.values():
         if isinstance(v, (dict, list)):
-            _inject_dynamic_enums(v, images)
+            _inject_dynamic_enums(v, choices)
 
 
 def schema(name):
@@ -210,14 +254,14 @@ def schema(name):
     if not sc:
         raise FileNotFoundError(name)
     sc.setdefault("capabilities", _apps_lib().attach_capabilities({}, _apps_lib().DEFAULT_PLUGIN)["capabilities"])
-    _inject_dynamic_enums(sc, status().get("images", []))
+    _inject_dynamic_enums(sc, dynamic_enums())
     return sc
 
 
 def base_schema():
     """The base lab-definition schema (common/nodes/kclusters), via the library."""
     sc = _schema_lib().base_lab_schema()
-    _inject_dynamic_enums(sc, status().get("images", []))
+    _inject_dynamic_enums(sc, dynamic_enums())
     return sc
 
 

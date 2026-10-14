@@ -889,6 +889,7 @@ function renderCanvas() {
 function setWidgetValue(input, val) {
   if (val === undefined || val === null) return;
   const s = Array.isArray(val) ? val.join(",") : String(val);
+  if (typeof input._setFromValue === "function") input._setFromValue(s);
   if (input.tagName === "SELECT") {
     if (!Array.from(input.options).some((o) => o.value === s)) { const o = el("option", null, s); o.value = s; input.appendChild(o); }
     input.dataset.userTouched = "1";
@@ -1032,24 +1033,21 @@ function fieldRow(field, outPath, repeatMode) {
                 : null;
 
   let input;
-  // Special hybrid control for SOURCE_IMAGE: dropdown of common images + custom URL input
+  // Special hybrid control for SOURCE_IMAGE: the images really present on the KVM hosts (field.enum, injected by
+  // discovery.image_choices() as {value: file name, label: "<host> - <file name>"}) plus a free-text URL or path. The
+  // list is empty where no host can be read, such as the published static build, leaving only the free-text input.
   if (field.name === "SOURCE_IMAGE") {
     const container = el("div", "source-image-container");
 
-    // Select dropdown with common images
     const select = el("select");
     select.className = "source-image-select";
 
-    const commonImages = [
-      { label: "— Select or enter custom URL —", value: "" },
-      { label: "SL-Micro 6.1 (QCOW2)", value: "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2" },
-      { label: "SLES 15 SP6", value: "SLES-15-SP6-for-SAP-Applications.x86_64-cloud.qcow2" },
-      { label: "openSUSE Leap 15.6", value: "openSUSE-Leap-15.6.x86_64.qcow2" },
-      { label: "Ubuntu 24.04 LTS", value: "ubuntu-24.04-cloud-amd64.qcow2" },
-      { label: "— Enter custom URL —", value: "CUSTOM_URL" }
-    ];
+    const listed = Array.isArray(field.enum) ? field.enum : [];
+    const images = [{ label: listed.length ? "— Select an image or enter a URL —" : "— Enter a URL or file name —", value: "" }]
+      .concat(listed.map((o) => (o && typeof o === "object") ? { label: o.label, value: o.value } : { label: o, value: o }))
+      .concat([{ label: "— Enter custom URL —", value: "CUSTOM_URL" }]);
 
-    commonImages.forEach((img) => {
+    images.forEach((img) => {
       const opt = el("option", null, img.label);
       opt.value = img.value;
       select.appendChild(opt);
@@ -1099,6 +1097,19 @@ function fieldRow(field, outPath, repeatMode) {
 
     select.addEventListener("change", syncValue);
     textInput.addEventListener("input", syncValue);
+
+    // Show a value that was set from outside (loading a lab, a common default): select it when it is one of the
+    // listed images, otherwise put it in the free-text input, so the form always shows what the lab actually holds.
+    input._setFromValue = (v) => {
+      const inList = listed.some((o) => ((o && typeof o === "object") ? o.value : o) === v);
+      if (v && inList) {
+        select.value = v; textInput.value = v; textInput.style.display = "none";
+      } else if (v) {
+        select.value = "CUSTOM_URL"; textInput.value = v; textInput.style.display = "block";
+      } else {
+        select.value = ""; textInput.value = ""; textInput.style.display = "none";
+      }
+    };
 
     row.appendChild(container);
     // Don't append input here; let the normal flow handle it after initialization
@@ -1584,18 +1595,33 @@ function openLabFile(file) {
 // every other field's value untouched. The field's current value is kept
 // even if it no longer matches any listed image (added as a synthetic extra
 // option) rather than silently dropped.
+const IMAGE_FIELDS = new Set(["SOURCE_IMAGE", "ISO_IMAGE"]);
+
+// The images on each host, as the renderer's enum entries: value is the file name a lab stores, label is
+// "<host> - <file name>". Mirrors discovery.image_choices() for the live refresh below.
+function imageChoices(s) {
+  const byHost = s.images_by_host || {};
+  const hosts = Object.keys(byHost).sort();
+  if (hosts.length) {
+    return hosts.reduce((out, h) => out.concat(
+      (byHost[h] || []).slice().sort().map((n) => ({ value: n, label: h + " - " + n }))), []);
+  }
+  return (s.images || []).slice();
+}
+
 async function refreshImages() {
   try {
     const s = await apiGet("status");
-    const images = s.images || [];
+    const images = imageChoices(s);
     const targets = Array.from($("#schemaForm").querySelectorAll("[data-outpath],[data-field]"))
-      .filter((elm) => elm._field && elm._field.name === "ISO_IMAGE");
+      .filter((elm) => elm._field && IMAGE_FIELDS.has(elm._field.name));
     targets.forEach((old) => {
       const outPath = old.dataset.outpath ? JSON.parse(old.dataset.outpath).slice(0, -1) : [];
       const repeatMode = old.dataset.repeat === "1";
       const field = Object.assign({}, old._field, { enum: images.length ? images.slice() : undefined });
       const oldValue = old.value;
-      if (oldValue && !images.includes(oldValue)) field.enum = (field.enum || []).concat(oldValue);
+      const values = images.map((o) => (o && typeof o === "object") ? o.value : o);
+      if (oldValue && !values.includes(oldValue)) field.enum = (field.enum || []).concat(oldValue);
       const newRow = fieldRow(field, outPath, repeatMode);
       const newInput = newRow.querySelector("select,input");
       newInput.value = oldValue;
@@ -1605,7 +1631,7 @@ async function refreshImages() {
     loadStatus();
     toast(targets.length
       ? `Image list refreshed (${images.length} available).`
-      : "Image list refreshed — no ISO_IMAGE field on this form.");
+      : "Image list refreshed — no source-image field on this form.");
   } catch (e) { toast("Refresh error: " + e.message); }
 }
 

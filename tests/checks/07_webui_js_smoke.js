@@ -401,6 +401,23 @@ check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM 
   st.schemaCache = saved.cache; st.base = saved.base;
 }
 
+// -- imageChoices: per-host source images, labelled "<host> - <file name>" ----
+{
+  const c = sandbox.imageChoices({ images_by_host: { nuc2: ["b.iso"], nuc1: ["b.iso", "a.qcow2"] },
+                                   images: ["a.qcow2", "b.iso"] });
+  check("imageChoices: one entry per host and image, ordered by host then name",
+    JSON.stringify(c) === JSON.stringify([
+      { value: "a.qcow2", label: "nuc1 - a.qcow2" },
+      { value: "b.iso", label: "nuc1 - b.iso" },
+      { value: "b.iso", label: "nuc2 - b.iso" }]));
+  check("imageChoices: the value is the file name a lab stores, not the label",
+    c.every((o) => !o.value.includes(" - ")));
+  check("imageChoices: an older snapshot with only the flat list yields plain names",
+    JSON.stringify(sandbox.imageChoices({ images: ["x.qcow2"] })) === JSON.stringify(["x.qcow2"]));
+  check("imageChoices: no images anywhere yields an empty list",
+    JSON.stringify(sandbox.imageChoices({})) === "[]");
+}
+
 if (failures) {
   console.error(failures + " check(s) failed");
   process.exit(1);

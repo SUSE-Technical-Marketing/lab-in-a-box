@@ -79,6 +79,8 @@ def _fake_ok(host, cmd):
         return "4096"
     if cmd.startswith("df"):
         return "10240M"
+    if cmd.startswith("ls -1"):          # the per-host source-image listing
+        return "a.qcow2\nb.iso\nnotes.txt"
     raise AssertionError("unexpected command: " + cmd)
 
 
@@ -122,6 +124,15 @@ try:
           "ROOT_SSH_KEY" not in status["config"] and "VM_ROOT_PASS" not in status["config"])
     check("build_status: non-secret cfg keys pass through", status["config"].get("REMOTE_HOST") == "nuc1")
     check("build_status: one host entry for the single configured host", len(status["hosts"]) == 1)
+    check("build_status: images are listed per host and as their union",
+          status["images_by_host"] == {"nuc1": ["a.qcow2", "b.iso"]} and status["images"] == ["a.qcow2", "b.iso"])
+
+    # Several KVM hosts: each is probed for its own images, and the union holds every name once.
+    primary.load_config = lambda *a, **k: {"KVM_HOSTS": "nuc1 nuc2", "REMOTE_HOST": "nuc1"}
+    status = rhs.build_status()
+    check("build_status: every configured host is listed with its own images",
+          sorted(status["images_by_host"]) == ["nuc1", "nuc2"])
+    check("build_status: the union holds each name once", status["images"] == ["a.qcow2", "b.iso"])
 finally:
     primary.load_config = _orig_load_config
     primary.load_defaults = _orig_load_defaults
@@ -147,13 +158,53 @@ with tempfile.TemporaryDirectory() as td:
     schema_tree = {"common": {"fields": [
         {"name": "ISO_IMAGE", "type": "string", "required": True},
         {"name": "VM_MEM", "type": "integer", "required": False},
+        {"name": "SOURCE_IMAGE", "type": "string", "required": True},
     ]}}
-    discovery._inject_dynamic_enums(schema_tree, st["images"])
+    discovery._inject_dynamic_enums(schema_tree, discovery.dynamic_enums())
     iso_field = schema_tree["common"]["fields"][0]
     mem_field = schema_tree["common"]["fields"][1]
-    check("dynamic enum: ISO_IMAGE field gets the live image list",
+    src_field = schema_tree["common"]["fields"][2]
+    check("dynamic enum: SOURCE_IMAGE field gets the live image list",
+          src_field.get("enum") == ["a.qcow2", "b.iso"])
+    check("dynamic enum: the deprecated ISO_IMAGE field still gets it too",
           iso_field.get("enum") == ["a.qcow2", "b.iso"])
     check("dynamic enum: unrelated fields are untouched", "enum" not in mem_field)
+
+    # image_choices(): one entry per host and image, labelled "<host> - <file name>", ordered by host then name.
+    with open(status_path, "w") as f:
+        json.dump({"generated_at": "now", "config": {}, "hosts": [],
+                   "images": ["a.qcow2", "b.iso"],
+                   "images_by_host": {"nuc2": ["b.iso"], "nuc1": ["b.iso", "a.qcow2"]}}, f)
+    choices = discovery.image_choices()
+    check("image_choices: an entry per host and image, value is the file name, label is '<host> - <name>'",
+          choices == [{"value": "a.qcow2", "label": "nuc1 - a.qcow2"},
+                      {"value": "b.iso", "label": "nuc1 - b.iso"},
+                      {"value": "b.iso", "label": "nuc2 - b.iso"}])
+    check("image_choices: an older snapshot with only the flat list still yields plain names",
+          discovery.image_choices({"images": ["x.qcow2"]}) == ["x.qcow2"])
+    check("image_choices: no snapshot yields nothing, leaving the field free text",
+          discovery.image_choices({}) == [])
+
+    # kvm_host: the configured hosts, led by the empty value that means auto-select.
+    snap = {"hosts": [{"host": "nuc1", "error": None}, {"host": "nuc2", "error": "unreachable: timed out"}]}
+    hc = discovery.host_choices(snap)
+    check("host_choices: auto comes first with the empty value a lab stores when kvm_host is omitted",
+          hc[0]["value"] == "" and hc[0]["label"].startswith("(default) auto"))
+    check("host_choices: one entry per configured host, in snapshot order",
+          [h["value"] for h in hc[1:]] == ["nuc1", "nuc2"])
+    check("host_choices: a host the refresh could not reach is marked but still selectable",
+          hc[2]["label"] == "nuc2 (unreachable)" and hc[1]["label"] == "nuc1")
+    check("host_choices: no known host yields nothing, leaving the field free text",
+          discovery.host_choices({"hosts": []}) == [])
+
+    tree = {"nodes": {"fields": [{"name": "kvm_host", "type": "string", "required": False}]}}
+    discovery._inject_dynamic_enums(tree, discovery.dynamic_enums(snap))
+    check("dynamic enum: the kvm_host field gets the host list",
+          [h["value"] for h in tree["nodes"]["fields"][0]["enum"]] == ["", "nuc1", "nuc2"])
+    tree = {"nodes": {"fields": [{"name": "kvm_host", "type": "string", "required": False}]}}
+    discovery._inject_dynamic_enums(tree, discovery.dynamic_enums({"hosts": []}))
+    check("dynamic enum: kvm_host is left as free text when no host is known",
+          "enum" not in tree["nodes"]["fields"][0])
 
 del os.environ["LABBUILDER_STATUS_FILE"]
 

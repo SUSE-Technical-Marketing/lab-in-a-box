@@ -209,21 +209,30 @@ endpoint (`/lab-builder/admin` under Apache, `/admin` under `run-local.py`):
 
 ## Hypervisor status
 
-The top-of-page status panel and the live `ISO_IMAGE` dropdown are both fed
+The top-of-page status panel and the live source-image dropdown are both fed
 by one cached JSON snapshot at `LABBUILDER_STATUS_FILE`
 (`/srv/www/lab-builder/status.json` by default) — the CGI **never** SSHes to
 the hypervisor itself (it runs as the Apache user, and root's own SSH key
 isn't readable by that user anyway). `scripts/refresh_hypervisor_status.py`
 runs as root on a schedule (systemd timer, or `cron.d` without systemd —
 installed automatically) and writes it: free CPU/RAM/disk per configured KVM
-host, the `.iso`/`.qcow2` filenames at `ISO_LOC`, and a handful of non-secret
+host, the `.iso`/`.qcow2` filenames at `ISO_LOC` **per host** (`images_by_host`,
+plus `images` as their union), and a handful of non-secret
 config values (`REMOTE_HOST`/`KVM_HOSTS`/`VIRT_SRV`/`ISO_LOC`). Any value
 shaped like a secret by name (`*PASS*`/`*PWD*`/`*KEY*`/`*TOKEN*`/`*SECRET*`)
 is masked to a fixed `********` before the file is ever written — never
 partially revealed. `discovery.py`'s `schema()`/`base_schema()` read this
-same file to give any field literally named `ISO_IMAGE` a live `enum` of
-the discovered images, so it renders as a normal dropdown with zero
-frontend changes.
+same file to give each source-image field (`SOURCE_IMAGE`, and the deprecated
+`ISO_IMAGE`) a live `enum` of the discovered images: one entry per host and
+image, whose value is the file name a lab stores and whose label reads
+`<host> - <file name>`, since with several hosts the same image is not
+necessarily present on all of them. `Refresh images` rebuilds that list from a
+fresh snapshot without reloading the page. The same mechanism gives `kvm_host`
+the configured hosts, led by the empty value that means auto-select by free
+resources (a host the last refresh could not reach is labelled, but stays
+selectable). Where no host can be read — the published static build — these
+lists are empty and the fields stay free text, which also accepts a URL for the
+image.
 
 ## Scope
 
