@@ -418,8 +418,56 @@ check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM 
     JSON.stringify(sandbox.imageChoices({})) === "[]");
 }
 
-if (failures) {
-  console.error(failures + " check(s) failed");
-  process.exit(1);
+// -- prefillAddons / applyUrlParams: ?addons= puts the named add-ons on the canvas ----------------------------------
+// Async, so the summary below runs from its continuation: a top-level exit would report success before these resolve.
+async function urlParamChecks() {
+  const st = vm.runInContext("state", sandbox);
+  const saved = { comps: st.components, items: st.model.items, seq: st.model.seq, loc: sandbox.location };
+  const toasts = [];
+  st.components = [{ name: "install_longhorn" }, { name: "install_rancher" }];
+  st.model.items = [];
+  st.model.seq = 0;
+  sandbox.loadAddonSchema = async (comp) => ({ section: comp.replace("install_", "") });
+  sandbox.renderCanvas = () => {};
+  sandbox.refreshLab = () => {};
+  sandbox.toast = (m) => toasts.push(m);
+  sandbox.Option = function (text, value) { return { text, value, tagName: "OPTION" }; };
+
+  const unknown = await sandbox.prefillAddons(["longhorn", "install_rancher", "longhorn", "nope"]);
+  check("?addons=: a bare name and an install_ name both match, and each add-on is added once",
+    st.model.items.length === 2
+    && st.model.items.every((i) => i.type === "addon" && i.parent === null)
+    && st.model.items.map((i) => i.comp).join(",") === "install_longhorn,install_rancher");
+  check("?addons=: an add-on no component matches is reported, not added", unknown.join(",") === "nope");
+
+  st.model.items = [];
+  st.model.seq = 0;
+  sandbox.location = { search: "?addons=longhorn,nope" };
+  await sandbox.applyUrlParams();
+  check("applyUrlParams: reads ?addons= and names the unknown ones in a toast",
+    st.model.items.length === 1 && toasts.some((t) => t.includes("Unknown add-ons, not added: nope")));
+
+  const lab = { common: { VM_MEM: 2 }, nodes: {} };
+  const b64 = Buffer.from(JSON.stringify(lab)).toString("base64url");
+  const loaded = [];
+  sandbox.loadLab = (l) => loaded.push(l);
+  sandbox.location = { search: "?lab=" + b64 };
+  await sandbox.applyUrlParams();
+  check("applyUrlParams: reads ?lab= and opens that lab", loaded.length === 1 && loaded[0].common.VM_MEM === 2);
+
+  st.components = saved.comps;
+  st.model.items = saved.items;
+  st.model.seq = saved.seq;
+  sandbox.location = saved.loc;
 }
-console.log("all app.js smoke checks passed");
+
+urlParamChecks().then(() => {
+  if (failures) {
+    console.error(failures + " check(s) failed");
+    process.exit(1);
+  }
+  console.log("all app.js smoke checks passed");
+}, (e) => {
+  console.error("FAIL: the ?addons=/?lab= checks threw: " + e.message);
+  process.exit(1);
+});
