@@ -9,8 +9,10 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16191e" media="(prefers-color-scheme: dark)">
-  <script src="theme.js"></script>
-  <link rel="stylesheet" href="style.css">
+  <!-- ?v=__LABVERSION__ (the deployed version, substituted at install time) changes these URLs on every
+       redeploy, so a browser cannot pair a cached style.css or app.js with newer markup. -->
+  <script src="theme.js?v=__LABVERSION__"></script>
+  <link rel="stylesheet" href="style.css?v=__LABVERSION__">
 </head>
 <body>
   <header class="topbar">
@@ -192,7 +194,7 @@
   <script src="vendor/mermaid.min.js"></script>
   <!-- js-yaml 4.1.0, unmodified — see vendor/js-yaml.LICENSE.txt (MIT). -->
   <script src="vendor/js-yaml.min.js"></script>
-  <script src="app.js"></script>
-  <script src="cube-fx.js"></script>
+  <script src="app.js?v=__LABVERSION__"></script>
+  <script src="cube-fx.js?v=__LABVERSION__"></script>
 </body>
 </html>

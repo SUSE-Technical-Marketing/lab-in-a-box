@@ -447,9 +447,9 @@ UNITEOF
         if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
         then
             cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
-            # enable the modules this needs if they aren't already: cgid
-            # always, rewrite for the HTTPS redirect unless _webui_tls=0.
-            _needed_modules="cgid auth_basic authn_file authz_user"
+            # enable the modules this needs if they aren't already: cgid and
+            # expires always, rewrite for the HTTPS redirect unless _webui_tls=0.
+            _needed_modules="cgid auth_basic authn_file authz_user expires"
             if [[ -n "${_lb_tls_cert}" ]]
             then
                 cp webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
@@ -459,7 +459,10 @@ UNITEOF
             fi
             for _mod in ${_needed_modules}
             do
-                if ! grep -q "${_mod}" /etc/sysconfig/apache2 2>/dev/null
+                # Anchored on the APACHE_MODULES line and word-bounded: the file's own
+                # "## Default:" comment lists most of these names, so a plain match would
+                # skip a module that is commented about but not actually enabled.
+                if ! grep -q "^APACHE_MODULES=\".*\b${_mod}\b" /etc/sysconfig/apache2 2>/dev/null
                 then
                     sed -i "s/^APACHE_MODULES=\"\(.*\)\"/APACHE_MODULES=\"\1 ${_mod}\"/" /etc/sysconfig/apache2
                 fi

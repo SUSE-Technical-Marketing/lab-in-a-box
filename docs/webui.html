@@ -381,10 +381,10 @@ sudo chown wwwrun /srv/www/lab-builder/labs      # 'apache' on RHEL family
 sudo cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/    # SLES/openSUSE
 #   RHEL family:  sudo cp webui/apache/lab-builder.conf /etc/httpd/conf.d/
 
-# 4. Make sure CGI is enabled
-#   SLES/openSUSE: add 'cgid' to APACHE_MODULES in /etc/sysconfig/apache2, e.g.
-#     sudo sed -i 's/^APACHE_MODULES=&quot;\(.*\)&quot;/APACHE_MODULES=&quot;\1 cgid&quot;/' /etc/sysconfig/apache2
-#   RHEL family:   mod_cgid is on by default
+# 4. Make sure CGI and expiry headers are enabled
+#   SLES/openSUSE: add 'cgid' and 'expires' to APACHE_MODULES in /etc/sysconfig/apache2, e.g.
+#     sudo sed -i 's/^APACHE_MODULES=&quot;\(.*\)&quot;/APACHE_MODULES=&quot;\1 cgid expires&quot;/' /etc/sysconfig/apache2
+#   RHEL family:   mod_cgid and mod_expires are on by default
 sudo systemctl restart apache2                    # 'httpd' on RHEL family
 </code></pre>
 <p>Then browse to:</p>
@@ -654,6 +654,13 @@ plus every addon config section. Create lab runs a saved lab with <code>setup_la
 <tr>
 <td>Apache serves the page but <code>/lab-builder/api</code> 404/500</td>
 <td>CGI not enabled, or <code>cgi-bin/labbuilder.py</code> not executable. Enable <code>cgid</code> (see setup 2b) and <code>chmod +x webui/cgi-bin/labbuilder.py</code>.</td>
+</tr>
+<tr>
+<td>The page is unstyled, or looks nothing like the hosted static builder, after an update</td>
+<td>The browser is still using a cached <code>style.css</code> or <code>app.js</code> from before the update, which does
+not match the new markup. Reload with the cache bypassed (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). The shipped
+<code>apache/lab-builder.conf</code> prevents this by making browsers revalidate these files, which needs
+<code>mod_expires</code> (setup 4).</td>
 </tr>
 <tr>
 <td><code>Save</code> fails with a permissions error</td>
