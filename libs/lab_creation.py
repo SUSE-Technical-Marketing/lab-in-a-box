@@ -835,6 +835,49 @@ def _generate_unused_mac(used_macs):
 _SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
 
 
+def node_commands(definition: dict, vm_name: str, phase: str) -> list:
+    """
+    The commands a VM runs for `phase` ("pre" or "post"): its own pre_commands/post_commands, else common's. A node
+    that declares the field replaces common's list rather than adding to it, so a VM can also opt out with [].
+    """
+    key = "{}_commands".format(phase)
+    node_cfg = (definition.get("nodes") or {}).get(vm_name) or {}
+    commands = node_cfg[key] if key in node_cfg else (definition.get("common") or {}).get(key)
+    if _empty(commands):
+        return []
+    if isinstance(commands, str):
+        return [commands]
+    return [str(c) for c in commands if not _empty(c)]
+
+
+def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
+    """
+    Run `vm_name`'s commands for `phase` on the VM itself, over SSH as root, in the order they are declared. Each
+    command's own output is shown. Returns one message per command that failed; an empty list when all of them
+    succeeded or there are none. A failure does not stop the commands after it: a lab author sees every one that
+    needs fixing in a single run.
+    """
+    commands = node_commands(definition, vm_name, phase)
+    if not commands:
+        return []
+    log("Running {} \"{}{}_commands{}\" on \"{}{}{}\"".format(
+        len(commands), _RED, phase, _RESET, _RED, vm_name, _RESET))
+    failures = []
+    global _level
+    _level += 1
+    try:
+        for command in commands:
+            try:
+                ssh_run(vm_name, command)
+            except RuntimeError as exc:
+                message = "{}_commands on '{}': '{}' failed: {}".format(phase, vm_name, command, exc)
+                error(message)
+                failures.append(message)
+    finally:
+        _level -= 1
+    return failures
+
+
 def ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="root"):
     """
     Run a shell command on a remote host over SSH, as root by default.

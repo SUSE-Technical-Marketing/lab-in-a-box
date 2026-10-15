@@ -529,6 +529,10 @@ rancher:
 <td>在<a href="#multi-host-labs">多主机实验室</a>中将此虚拟机固定到特定虚拟化主机</td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>此 VM 以 root 身份自行运行的 shell 命令：<code>pre_commands</code> 在它启动并可连接之后、任何 Kubernetes 或插件工作之前运行，<code>post_commands</code> 在这些工作全部完成之后运行。也可以写在 <code>common</code> 中以适用于所有 VM；节点自己的列表会替换它，<code>[]</code> 则让该节点不运行任何命令</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>要挂载的额外磁盘：<code>"/dev/sdb"</code>，或用 <code>"/dev/sdb,bus=scsi"</code> 为单个磁盘覆盖默认总线</td>
 </tr>

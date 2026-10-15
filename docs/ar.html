@@ -708,6 +708,10 @@ rancher:
 <td>تثبيت هذا الجهاز الافتراضي على مضيف محدد في <a href="#multi-host-labs">مختبر متعدد المضيفات</a></td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>أوامر شِل تنفّذها هذه الآلة الافتراضية بنفسها بصلاحية root: <code>pre_commands</code> بمجرد أن تصبح جاهزة وقبل أي عمل يتعلق بـ Kubernetes أو الإضافات، و<code>post_commands</code> بعد كل ذلك. ويمكن تعيينهما في <code>common</code> لكل الآلات؛ وقائمة العقدة نفسها تحل محلهما، و<code>[]</code> تستثني تلك العقدة</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>أقراص إضافية تُرفق: <code>"/dev/sdb"</code>، أو <code>"/dev/sdb,bus=scsi"</code> لتغيير الناقل الافتراضي لقرص بعينه</td>
 </tr>

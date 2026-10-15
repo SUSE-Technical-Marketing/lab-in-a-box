@@ -265,7 +265,8 @@
   "lab": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Add optional kclusters.clu_token: the join token set on the first rke2/k3s server."},
-   {"version": "2.0", "breaking": true, "changes": "open_ports and aws_open_ports (common and per-node) are declared as the lists every backend reads them as, instead of strings", "migration": "open_ports_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "open_ports and aws_open_ports (common and per-node) are declared as the lists every backend reads them as, instead of strings", "migration": "open_ports_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "pre_commands and post_commands: shell commands a VM runs itself, before any other work and after all of it"}
   ]
  }
 }

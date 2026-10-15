@@ -461,6 +461,10 @@ rancher:
 <td>Diese VM an einen bestimmten Hypervisor binden, in einem <a href="#multi-host-labs">Multi-Host-Lab</a></td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>Shell-Befehle, die diese VM selbst als root ausführt: <code>pre_commands</code>, sobald sie läuft und bevor irgendeine Kubernetes- oder Add-on-Arbeit beginnt, <code>post_commands</code> nach all dem. Auch in <code>common</code> für jede VM setzbar; die eigene Liste eines Knotens ersetzt sie, und <code>[]</code> nimmt diesen Knoten aus</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>Zusätzliche Festplatte(n), die angehängt werden: <code>"/dev/sdb"</code> oder <code>"/dev/sdb,bus=scsi"</code>, um den Standardbus pro Festplatte zu überschreiben</td>
 </tr>

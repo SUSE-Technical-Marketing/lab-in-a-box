@@ -215,7 +215,8 @@ check("main --help: exits 0 and prints usage", code == 0 and "Usage" in buf.getv
 setup_vm.primary.load_defaults = lambda: defaults
 setup_vm.primary.load_config = lambda: config
 setup_vm.primary.load_definition = lambda json_file: definition
-setup_vm.provision_vm = _rec("provision_vm")
+# provision_vm() returns the pre_commands failures of the VM it provisioned; main() adds its post_commands to them.
+setup_vm.provision_vm = _rec("provision_vm", ret=[])
 
 order.clear()
 setup_vm.destroy_vm = _rec("destroy_vm")

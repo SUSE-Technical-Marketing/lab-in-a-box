@@ -708,6 +708,10 @@ rancher:
 <td>Pin this VM to a specific hypervisor in a <a href="#multi-host-labs">multi-host lab</a></td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>Shell commands this VM runs itself, as root: <code>pre_commands</code> once it is up and before any Kubernetes or add-on work, <code>post_commands</code> after all of it. Also settable in <code>common</code> for every VM; a node's own list replaces it, and <code>[]</code> opts that node out</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>Additional disk(s) to attach — <code>"/dev/sdb"</code>, or <code>"/dev/sdb,bus=scsi"</code> to override the default bus per disk</td>
 </tr>

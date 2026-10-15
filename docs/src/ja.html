@@ -529,6 +529,10 @@ rancher:
 <td><a href="#multi-host-labs">マルチホストラボ</a>で、この VM を特定のハイパーバイザーに固定</td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>この VM が root として自分で実行するシェルコマンド。<code>pre_commands</code> は起動して到達可能になった直後、Kubernetes やアドオンの作業より前に、<code>post_commands</code> はそのすべてのあとに実行されます。<code>common</code> に書けばすべての VM が対象になり、ノード自身のリストがそれを置き換え、<code>[]</code> はそのノードを除外します</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>追加で接続するディスク。<code>"/dev/sdb"</code>、またはディスクごとにデフォルトのバスを変える場合は <code>"/dev/sdb,bus=scsi"</code></td>
 </tr>

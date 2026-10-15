@@ -708,6 +708,10 @@ rancher:
 <td>Fija esta VM a un hipervisor concreto en un <a href="#multi-host-labs">laboratorio en varios hosts</a></td>
 </tr>
 <tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>Comandos de shell que esta VM ejecuta ella misma, como root: <code>pre_commands</code> en cuanto está arrancada y antes de cualquier trabajo de Kubernetes o de add-ons, <code>post_commands</code> después de todo ello. También se pueden definir en <code>common</code> para todas las VMs; la lista propia de un nodo la reemplaza, y <code>[]</code> excluye ese nodo</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>Discos adicionales que se conectan: <code>"/dev/sdb"</code>, o <code>"/dev/sdb,bus=scsi"</code> para cambiar el bus predeterminado de un disco</td>
 </tr>
