@@ -207,6 +207,21 @@ def check(exe: str, report: Callable[[bool, str], None], kinds: List[str]) -> No
     report(not other, "--validate prints only [ERROR]/[WARNING] lines" + "".join("\n      " + ln for ln in other[:3]))
     report(r.returncode == 0 or bool(errors), "--validate exits non-zero only with an [ERROR] line")
 
+    # --check looks at what is deployed (libs/addon_common.py's Checker). Against an empty lab, with no deployment
+    # to look at, it must still answer with one of the three contract codes rather than crash or hang.
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump({"common": {}, "nodes": {}, "kclusters": {}}, f)
+    try:
+        r = run(exe, "--check", f.name)
+    finally:
+        os.unlink(f.name)
+    report(r.returncode in (0, 1, 2),
+           "--check exits 0 (matches), 1 (does not) or 2 (not implemented), not {}".format(r.returncode))
+    if caps.get("check"):
+        report(r.returncode != 2, "capabilities say check, so --check is implemented")
+    else:
+        report(r.returncode == 2, "capabilities say no check, so --check answers 2 (not implemented)")
+
 
 def main() -> int:
     args = sys.argv[1:]

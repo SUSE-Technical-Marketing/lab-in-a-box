@@ -13,6 +13,10 @@ binary, ...), written in any language. Its contract:
                                         "aux_services": [...]}
     install_<addon> --capabilities     prints the same capabilities as JSON
     install_<addon> --validate <json>  exits non-zero, printing [ERROR] lines, when its config in the lab is invalid
+    install_<addon> --check <json>     compares what is DEPLOYED with that config, on the target the install used
+                                       ($_vm_name / $clu_name): 0 it matches, 1 it does not (printing [FAIL] lines),
+                                       2 this add-on implements no check. "check": true in its capabilities says it
+                                       does (libs/addon_common.py's Checker)
     install_<addon> --version | --help
     install_<addon> <lab.json>         installs it; the target VM is in $_vm_name, the cluster in $clu_name
 
@@ -297,6 +301,7 @@ def attach_capabilities(schema_dict, plugin_dict):
         "requires_kubernetes": plugin_dict.get("requires_kubernetes"),
         "aux_services": plugin_dict.get("aux_services") or [],
         "versions": plugin_dict.get("versions") or {},
+        "check": bool(plugin_dict.get("check")),
         "status": plugin_dict.get("status") or STATUS_STABLE,
         "status_note": plugin_dict.get("status_note") or "",
     }

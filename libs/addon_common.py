@@ -16,6 +16,7 @@ _vbool/_vport function bodies in every single script.
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sys
@@ -135,7 +136,104 @@ def require_k8s_name(cfg, field, default):
     return v
 
 
-def run_validate(json_path, check_fn, plugin=None):
+def schema_value_errors(script_path, definition):
+    """
+    The "[ERROR]"/"[WARNING]" lines for this add-on's own values in `definition` — its section and the per-node
+    overrides of it — against the types, enums, patterns and bounds its "JSON section:" block declares
+    (libs/schema_validate.py). Returns (errors, warnings); an add-on whose block declares no section gives neither.
+    """
+    import schema_validate
+
+    schema = _lab_schema(script_path).parse_script(script_path)
+    section = schema.get("section")
+    if not section:
+        return [], []
+    errors, warnings = [], []
+    for finding in schema_validate.addon_findings(definition, section, schema.get("fields")):
+        line = "{}: {}".format(finding.where, finding.message)
+        (errors if finding.severity == "error" else warnings).append(line)
+    return errors, warnings
+
+
+# ── --check: does the DEPLOYED add-on match the lab definition? ───────────────
+# --validate reads the lab file before a deploy; --check looks at what is actually running afterwards. The exit codes
+# are the contract: 0 it matches, 1 it does not (with [FAIL] lines), 2 this add-on implements no check.
+CHECK_OK, CHECK_MISMATCH, CHECK_UNSUPPORTED = 0, 1, 2
+
+
+class Checker:
+    """
+    Accumulates the differences between an add-on's configuration in the lab definition and what is deployed on the
+    target. An add-on's check_fn(Checker) does the looking — over SSH, kubectl, helm, an HTTP request, whatever it
+    installed with — and reports through these.
+
+    definition : the loaded lab definition.
+    vm_name    : the target VM ($_vm_name, as the install gets it), "" when the caller set none.
+    clu_name   : the target Kubernetes cluster ($clu_name), "" when there is none.
+    problems   : "[FAIL] ..." lines, printed by run_check(); each one is a difference that needs fixing.
+    notes      : "[OK] ..." lines, printed too, so a passing check says what it actually looked at.
+    """
+
+    def __init__(self, definition, vm_name="", clu_name=""):
+        self.definition = definition
+        self.vm_name = vm_name
+        self.clu_name = clu_name
+        self.problems = []
+        self.notes = []
+
+    def get(self, section, field, default=""):
+        """<section>.<field> from the lab definition, `default` when it is unset — the value the deployment should match."""
+        value = (self.definition.get(section, {}) or {}).get(field, "")
+        return value if value not in ("", None) else default
+
+    def ok(self, what):
+        """Record that `what` matches the definition."""
+        self.notes.append("[OK] {}".format(what))
+
+    def fail(self, what, expected=None, found=None):
+        """Record that `what` does not match. With `expected`/`found`, the line says both."""
+        if expected is None and found is None:
+            self.problems.append("[FAIL] {}".format(what))
+        else:
+            self.problems.append("[FAIL] {}: expected {!r}, found {!r}".format(what, expected, found))
+
+    def expect(self, what, expected, found):
+        """ok() when `found` equals `expected`, fail() otherwise. Values are compared as text, trimmed."""
+        if str(expected).strip() == str(found).strip():
+            self.ok("{} is {!r}".format(what, expected))
+        else:
+            self.fail(what, expected, found)
+        return not self.problems
+
+
+def run_check(json_path, check_fn, plugin=None):
+    """
+    Load json_path and run `check_fn(Checker)` against what is deployed, printing its [OK] and [FAIL] lines.
+
+    Returns CHECK_OK when everything it looked at matches, CHECK_MISMATCH when something does not (or the file does
+    not load), and CHECK_UNSUPPORTED when this add-on implements no check. The target comes from the environment the
+    install uses: $_vm_name and $clu_name.
+    """
+    if check_fn is None:
+        print("[SKIP] {}: no --check implemented".format((plugin or {}).get("name") or "this add-on"))
+        return CHECK_UNSUPPORTED
+    definition, parse_error = primary.try_load_definition(json_path)
+    if parse_error:
+        print("[FAIL] {}".format(parse_error))
+        return CHECK_MISMATCH
+    checker = Checker(definition, os.environ.get("_vm_name", ""), os.environ.get("clu_name", ""))
+    try:
+        check_fn(checker)
+    except Exception as exc:                      # a check must report, never crash the caller
+        checker.fail("the check itself failed: {}: {}".format(type(exc).__name__, exc))
+    for line in checker.notes:
+        print(line)
+    for line in checker.problems:
+        print(line)
+    return CHECK_MISMATCH if checker.problems else CHECK_OK
+
+
+def run_validate(json_path, check_fn, plugin=None, script_path=None):
     """
     Load json_path (JSON or YAML, auto-detected — see primary.try_load_definition),
     run check_fn(Validator) to populate errors, print them, and return the
@@ -242,9 +340,10 @@ def print_schema(script_path, fmt, plugin=None):
 
 # ── Top-level dispatch ────────────────────────────────────────────────────────
 
-def handle_common_args(script_path, version, validate_fn=None, usage=None, plugin=None):
+def handle_common_args(script_path, version, validate_fn=None, usage=None, plugin=None, check_fn=None):
     """
-    Handle --version/-v, --validate <json>, --input-definition/--schema and
+    Handle --version/-v, --validate <json>, --check <json>,
+    --input-definition/--schema and
     --capabilities when they are sys.argv[1], and --help/-h anywhere in the
     arguments (mirrors the identical
     dispatch block at the top of every install_<addon> script). Exits the
@@ -252,9 +351,14 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
     proceeds normally.
 
     validate_fn : callable(Validator) used for --validate; if None, --validate
-                  always exits 0 (mirrors a script whose block is just
-                  `exit ${_ve}` with no checks — several addons have exactly
-                  this, e.g. install_uyuni, install_wordpress).
+                  runs only the checks the add-on's own schema declares
+                  (schema_value_errors()) — several addons have no checks of
+                  their own, e.g. install_uyuni, install_wordpress.
+    check_fn    : callable(Checker) used for --check, which compares what is
+                  deployed with this add-on's configuration in the lab
+                  (run_check()). If None, --check exits CHECK_UNSUPPORTED
+                  saying so; an add-on that passes one declares "check": True
+                  in its PLUGIN so a caller knows to ask.
     plugin      : this script's PLUGIN dict (see apps.py), printed as JSON by
                   --capabilities. Pass explicitly rather than having this
                   module go looking for it on the caller's module — every
@@ -271,9 +375,13 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
         if len(argv) < 2:
             print("[ERROR] --validate requires a JSON file path")
             sys.exit(1)
-        if validate_fn is None and not (plugin or {}).get("versions"):
-            sys.exit(0)
-        sys.exit(run_validate(argv[1], validate_fn, plugin=plugin))
+        sys.exit(run_validate(argv[1], validate_fn, plugin=plugin, script_path=script_path))
+
+    if argv and argv[0] == "--check":
+        if len(argv) < 2:
+            print("[FAIL] --check requires a JSON file path")
+            sys.exit(CHECK_MISMATCH)
+        sys.exit(run_check(argv[1], check_fn, plugin=plugin))
 
     import apps  # deferred, as in print_schema()
     status = apps.status_warning(dict(plugin or {}, name=(plugin or {}).get("name") or Path(script_path).stem[8:]))

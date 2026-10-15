@@ -20,6 +20,7 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
+    "check": True,
     # Version matrix (libs/versions.py): the releases in SUSE's Longhorn support matrix
     # (https://www.suse.com/suse-longhorn/support-matrix/all-supported-versions/) and newer; minimum Kubernetes from
     # each chart's kubeVersion (https://charts.longhorn.io/index.yaml).
@@ -81,8 +82,44 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
     return fqdn
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "longhorn" section: the Helm release in longhorn-system, its chart version
+    against lh_version, and every Longhorn pod running. Looks at the Kubernetes cluster's own management node, the
+    one the install ran on.
+    """
+    if "longhorn" not in chk.definition:
+        chk.ok("this lab has no longhorn section, so there is nothing to check")
+        return
+    target = k8s.first_server_node(chk.definition)
+    if not target:
+        chk.fail("the Kubernetes cluster has no server node to ask")
+        return
+    hostname = chk.vm_name or target[0]
+    release = json.loads(ssh_run(
+        hostname, "helm -n longhorn-system list -o json --filter '^longhorn$'", capture=True).stdout or "[]")
+    if not release:
+        chk.fail("no longhorn Helm release in longhorn-system on {}".format(hostname))
+        return
+    chk.expect("the Helm release's status", "deployed", release[0].get("status"))
+    wanted = versions.normalize(str(chk.get("longhorn", "lh_version")))
+    if wanted:
+        chk.expect("the deployed chart version", wanted,
+                   versions.normalize(str(release[0].get("chart", "")).rsplit("-", 1)[-1]))
+    else:
+        chk.ok("lh_version is unset, so any deployed version matches ({})".format(release[0].get("chart")))
+    not_running = ssh_run(
+        hostname, "kubectl -n longhorn-system get pods --no-headers "
+                  "--field-selector=status.phase!=Running,status.phase!=Succeeded", capture=True).stdout.strip()
+    if not_running:
+        chk.fail("every Longhorn pod should be running, these are not:\n    "
+                 + "\n    ".join(not_running.splitlines()))
+    else:
+        chk.ok("every pod in longhorn-system is running")
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
