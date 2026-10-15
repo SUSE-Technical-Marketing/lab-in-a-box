@@ -1211,7 +1211,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします。SUSE Linux 16 と openSUSE Leap 16 の自動インストールにも対応し、<code>agama_profile</code> を持つ <code>smlm_kickstart_profiles</code> のエントリーは Agama の JSON プロファイルを配信し、<code>iso_url</code> を持つ <code>smlm_distributions</code> のエントリーは ISO からインストールツリーを取り込みます</td>
+<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします。SUSE Linux 16 と openSUSE Leap 16 の自動インストールにも対応し、<code>agama_profile</code> を持つ <code>smlm_kickstart_profiles</code> のエントリーは Agama の JSON プロファイルを配信し、<code>iso_url</code> を持つ <code>smlm_distributions</code> のエントリーは ISO からインストールツリーを取り込みます この製品と <code>uyuni</code> はいずれも独自の Salt ステートやフォーミュラも導入できます。<code>smlm_salt_states</code>/<code>uyuni_salt_states</code> のエントリは、tarball、単一の <code>.sls</code>、または Salt フォーミュラの RPM をサーバの永続的な <code>/srv/salt</code> に配置します（RPM は展開するだけでインストールはしません。<code>/usr/share/salt-formulas</code> はサーバのアップグレードで失われるためです）</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>

@@ -1213,7 +1213,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>Servidor SUSE Multi-Linux Manager: os mesmos recursos do <code>uyuni</code>, implantado com Helm no Kubernetes ou, com <code>smlm_deployment: "podman"</code>, pelo <code>mgradm</code> diretamente em um host ou VM. Também instala automaticamente o SUSE Linux 16 e o openSUSE Leap 16: entradas de <code>smlm_kickstart_profiles</code> com <code>agama_profile</code> servem um perfil JSON do Agama, e entradas de <code>smlm_distributions</code> com <code>iso_url</code> importam a árvore de instalação de uma ISO</td>
+<td>Servidor SUSE Multi-Linux Manager: os mesmos recursos do <code>uyuni</code>, implantado com Helm no Kubernetes ou, com <code>smlm_deployment: "podman"</code>, pelo <code>mgradm</code> diretamente em um host ou VM. Também instala automaticamente o SUSE Linux 16 e o openSUSE Leap 16: entradas de <code>smlm_kickstart_profiles</code> com <code>agama_profile</code> servem um perfil JSON do Agama, e entradas de <code>smlm_distributions</code> com <code>iso_url</code> importam a árvore de instalação de uma ISO Tanto ele quanto o <code>uyuni</code> também instalam os seus próprios estados e fórmulas Salt: as entradas de <code>smlm_salt_states</code>/<code>uyuni_salt_states</code> colocam um tarball, um único <code>.sls</code> ou um RPM de fórmula Salt no <code>/srv/salt</code> persistente do servidor (um RPM é desempacotado, nunca instalado, porque <code>/usr/share/salt-formulas</code> não sobrevive a uma atualização do servidor)</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>

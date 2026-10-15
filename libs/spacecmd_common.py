@@ -4241,6 +4241,114 @@ _PM_INSTALL = {
 _DOCKER_PKG = {"dnf": "docker", "zypper": "docker", "apt-get": "docker.io"}
 
 
+# ─── Custom Salt states and formulas on the server ──────────────────────────
+# Where they go, from the product's own documentation (Uyuni Salt File Locations, Custom Salt Formulas, MLM
+# Persistent Container Volumes): custom states only in /srv/salt, which is last in file_roots and a persistent
+# volume, so a server upgrade keeps them; a formula's form.yml in /srv/formula_metadata/<name> and its pillar data
+# in /srv/pillar, both persistent too. An RPM is deliberately NOT installed in the server container:
+# /usr/share/salt-formulas is not a volume, so an upgrade would drop it — the RPM is unpacked and its states and
+# metadata copied into those volumes instead.
+SALT_STATES_DIR = "/srv/salt"
+SALT_FORMULA_METADATA_DIR = "/srv/formula_metadata"
+# The checksum of what a state directory was built from, so a re-run that would install the same thing again does
+# nothing. It lives inside the directory, which makes it part of what is removed when the state is replaced.
+SALT_STATE_STAMP = ".lab-in-a-box.source"
+
+
+def _salt_state_stamp(hostname, exec_prefix, name):
+    """The source stamp of installed state `name`, "" when it carries none (so an unstamped one is replaced)."""
+    r = _run(hostname, exec_prefix, "cat {}/{}/{}".format(SALT_STATES_DIR, name, SALT_STATE_STAMP),
+             check=False, capture=True)
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
+def ensure_salt_state(hostname, exec_prefix, name, url="", rpm="", sha256="", formula=False):
+    """
+    Install custom Salt state (or formula) `name` on the server, from `url` or `rpm`, and return True when it was
+    installed, False when it was already there.
+
+    url  : a tarball (.tar.gz, .tgz, .tar.bz2, .tar.xz) unpacked into /srv/salt/<name>, or a single .sls file
+           written as /srv/salt/<name>/init.sls. A formula's tarball may carry a form.yml, which is moved to
+           /srv/formula_metadata/<name>/form.yml.
+    rpm  : a Salt-formula RPM, fetched and unpacked (never installed): salt-formulas/states/<name> becomes
+           /srv/salt/<name> and salt-formulas/metadata/<name> becomes /srv/formula_metadata/<name>. An RPM that
+           also ships Python modules or other files needs a custom server image and is out of scope.
+    sha256 : the expected checksum of the downloaded file, verified before anything is unpacked.
+    formula: also install the formula metadata (form.yml), so the server offers it under Formulas.
+
+    Idempotent: the source and its checksum are stamped in the installed directory, and a re-run with the same
+    source does nothing. A changed source replaces the directory.
+    """
+    source = rpm or url
+    if not source:
+        die("{}_salt_states: entry '{}' needs a 'url' or an 'rpm'".format(name, name))
+    stamp = "{} {}".format(source, sha256 or "no-checksum")
+    if _salt_state_stamp(hostname, exec_prefix, name) == stamp:
+        print("  Salt state '{}' is already installed from this source — leaving it alone".format(name))
+        return False
+
+    state_dir = "{}/{}".format(SALT_STATES_DIR, name)
+    meta_dir = "{}/{}".format(SALT_FORMULA_METADATA_DIR, name)
+    work = "/tmp/lab-in-a-box-salt-{}".format(name)
+    fetch = ("rm -rf {work} && mkdir -p {work} && cd {work} && "
+             "curl -fsSL -o source {src}").format(work=work, src=shlex.quote(source))
+    if sha256:
+        fetch += " && echo {} source | sha256sum -c -".format(shlex.quote(sha256))
+    _run(hostname, exec_prefix, fetch)
+
+    if rpm:
+        unpack = ("cd {work} && rpm2cpio source | cpio -idm --quiet && "
+                  "test -d usr/share/salt-formulas/states/{name} || "
+                  "{{ echo 'the RPM ships no salt-formulas/states/{name}' >&2; exit 1; }}").format(
+                      work=work, name=name)
+        install = ("rm -rf {state} && mkdir -p {state} && "
+                   "cp -a {work}/usr/share/salt-formulas/states/{name}/. {state}/").format(
+                       state=state_dir, work=work, name=name)
+        if formula:
+            install += (" && rm -rf {meta} && mkdir -p {meta} && "
+                        "cp -a {work}/usr/share/salt-formulas/metadata/{name}/. {meta}/").format(
+                            meta=meta_dir, work=work, name=name)
+        _run(hostname, exec_prefix, unpack)
+        _run(hostname, exec_prefix, install)
+    elif re.search(r"\.(tar\.gz|tgz|tar\.bz2|tar\.xz)$", url):
+        _run(hostname, exec_prefix,
+             "rm -rf {state} && mkdir -p {state} && tar -xf {work}/source -C {state}".format(
+                 state=state_dir, work=work))
+        if formula:
+            _run(hostname, exec_prefix,
+                 "if [ -f {state}/form.yml ]; then mkdir -p {meta} && mv {state}/form.yml {meta}/form.yml; fi".format(
+                     state=state_dir, meta=meta_dir))
+    else:
+        _run(hostname, exec_prefix,
+             "rm -rf {state} && mkdir -p {state} && cp {work}/source {state}/init.sls".format(
+                 state=state_dir, work=work))
+
+    _run(hostname, exec_prefix, "printf '%s\\n' {} > {}/{}".format(
+        shlex.quote(stamp), state_dir, SALT_STATE_STAMP))
+    _run(hostname, exec_prefix, "rm -rf {}".format(work))
+    print("  Salt state '{}' installed in {}{}".format(
+        name, state_dir, " (formula metadata in {})".format(meta_dir) if formula else ""))
+    return True
+
+
+def ensure_salt_states(hostname, exec_prefix, cfg, prefix):
+    """
+    Orchestrates <prefix>_salt_states: a list of {name, url | rpm, sha256, formula} dicts. Each state's own name is
+    the directory it lands in, so it is also how an init_sls, a recurring action's "states" or a formula assignment
+    refers to it. A name that would escape /srv/salt is refused.
+    """
+    for entry in cfg.get("{}_salt_states".format(prefix)) or []:
+        name = str(entry.get("name") or "").strip()
+        if not name or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", name):
+            die("{}_salt_states: an entry needs a 'name' of letters, digits, dot, dash and underscore, "
+                "got {!r}".format(prefix, entry.get("name")))
+        ensure_salt_state(hostname, exec_prefix, name,
+                          url=str(entry.get("url") or ""), rpm=str(entry.get("rpm") or ""),
+                          sha256=str(entry.get("sha256") or ""),
+                          formula=str(entry.get("formula") or "").lower() in ("1", "true", "yes")
+                          or entry.get("formula") is True)
+
+
 def ensure_podman_available(host):
     """
     Ensure a podman-compatible command is on PATH on `host`. The function checks which of dnf, zypper and apt-get exists on

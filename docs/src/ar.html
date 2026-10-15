@@ -1034,7 +1034,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي. ويثبّت تلقائياً أيضاً SUSE Linux 16 وopenSUSE Leap 16: تقدّم مدخلات <code>smlm_kickstart_profiles</code> التي تحتوي <code>agama_profile</code> ملف تعريف Agama بصيغة JSON، وتستورد مدخلات <code>smlm_distributions</code> التي تحتوي <code>iso_url</code> شجرة التثبيت من ملف ISO</td>
+<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي. ويثبّت تلقائياً أيضاً SUSE Linux 16 وopenSUSE Leap 16: تقدّم مدخلات <code>smlm_kickstart_profiles</code> التي تحتوي <code>agama_profile</code> ملف تعريف Agama بصيغة JSON، وتستورد مدخلات <code>smlm_distributions</code> التي تحتوي <code>iso_url</code> شجرة التثبيت من ملف ISO وهو و<code>uyuni</code> يثبّتان أيضًا حالات Salt وصيغه الخاصة بك: مدخلات <code>smlm_salt_states</code>/<code>uyuni_salt_states</code> تضع أرشيف tar أو ملف <code>.sls</code> واحدًا أو حزمة RPM لصيغة Salt في <code>/srv/salt</code> الدائم على الخادم (تُفك حزمة RPM ولا تُثبّت أبدًا، لأن <code>/usr/share/salt-formulas</code> لا يصمد أمام ترقية الخادم)</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
