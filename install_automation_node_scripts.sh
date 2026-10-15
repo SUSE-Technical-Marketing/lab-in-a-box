@@ -97,6 +97,14 @@ cp -r  templates/addons/* ${_templ_addons_loc}/
 mkdir -p /usr/share/lab_creation/schemas
 cp schemas/compatibility.json /usr/share/lab_creation/schemas/compatibility.json
 
+# The example lab definitions, offered as starting points by the lab-builder (webui/lib/discovery.py's examples()).
+# Only the definitions: examples/addons/ holds example add-on scripts, which are not installed.
+mkdir -p /usr/share/lab_creation/examples
+for i in examples/*.json examples/*.json.template examples/*.yaml examples/*.yml
+do
+    [[ -f "${i}" ]] && cp "${i}" /usr/share/lab_creation/examples/
+done
+
 
 # Add-ons: every install_<name> executable under scripts/, in any language,
 # with or without a file extension. The extension is stripped, so each lands

@@ -326,6 +326,74 @@ def discover():
 CORE_SECTIONS = ("common", "nodes", "kclusters")
 
 
+EXAMPLES_DIR_ENV = "LABBUILDER_EXAMPLES_DIR"
+
+
+def examples_dir():
+    """Directory holding the lab definitions offered as starting points: the repository's own examples/."""
+    d = os.environ.get(EXAMPLES_DIR_ENV)
+    if d:
+        return os.path.abspath(d)
+    for cand in ("/usr/share/lab_creation/examples", os.path.join(_REPO, "examples")):
+        if os.path.isdir(cand):
+            return os.path.abspath(cand)
+    return os.path.join(_REPO, "examples")
+
+
+def _example_title(name):
+    """A file name as a title: "harvester-aws.json.template" -> "harvester aws"."""
+    return re.sub(r"\.(json|yaml|yml)(\.template)?$", "", name).replace("-", " ").replace("_", " ")
+
+
+def examples():
+    """
+    The lab definitions offered as starting points, as [{"name", "title", "description", "nodes", "kclusters",
+    "addons"}], sorted by name. Each one is a file of examples_dir() that parses as a lab definition with a "nodes"
+    section; the counts let the UI say what a file holds without opening it. A file that does not parse is left out
+    rather than failing the list — one broken example must not take the others with it.
+    """
+    out = []
+    directory = examples_dir()
+    for name in sorted(os.listdir(directory) if os.path.isdir(directory) else []):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path) or not re.search(r"\.(json|yaml|yml)(\.template)?$", name):
+            continue
+        definition, parse_error = _primary_lib().try_load_definition(path)
+        if parse_error or not isinstance(definition, dict) or "nodes" not in definition:
+            continue
+        addons = set()
+        owners = list((definition.get("kclusters") or {}).values()) + list((definition.get("nodes") or {}).values())
+        if isinstance(definition.get("cluster"), dict):     # the older single-Kubernetes-cluster format
+            owners.append(definition["cluster"])
+        for owner in owners:
+            for entry in (owner or {}).get("addons") or []:
+                addons.add(_apps_lib().addon_entry_name(entry))
+        out.append({
+            "name": name,
+            "title": _example_title(name),
+            "description": (definition.get("common") or {}).get("lab_description", ""),
+            "nodes": len(definition.get("nodes") or {}),
+            "kclusters": len(definition.get("kclusters") or {}),
+            "addons": sorted(addons),
+        })
+    return out
+
+
+def example(name):
+    """
+    One example's lab definition, as a plain dict ready for the builder to open. `name` is a file name from
+    examples(), never a path: anything with a separator in it, or that is not in that list, is refused.
+    """
+    if not name or os.path.basename(name) != name:
+        raise ValueError("invalid example name: %r" % name)
+    if name not in [e["name"] for e in examples()]:
+        raise FileNotFoundError("no such example: %s" % name)
+    definition, parse_error = _primary_lib().try_load_definition(os.path.join(examples_dir(), name))
+    if parse_error:
+        raise ValueError("%s does not parse: %s" % (name, parse_error))
+    return dict(definition)
+
+
 def catalogue():
     """
     Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, status and status_note. kind is

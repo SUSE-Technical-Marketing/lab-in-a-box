@@ -1803,6 +1803,37 @@ function setupEmbed(origin) {
 }
 
 // ---- saved labs (login) ---------------------------------------------------------
+async function openExamplesDialog() {
+  const list = $("#examplesList");
+  list.innerHTML = "";
+  showDialog("#examplesDialog");
+  try {
+    const r = await apiGet("examples");
+    if (!r.examples.length) list.appendChild(el("li", "muted", "No example lab was found."));
+    r.examples.forEach((ex) => {
+      const li = el("li", "saved-row");
+      li.appendChild(el("span", "saved-name", ex.title || ex.name));
+      const parts = [ex.nodes + (ex.nodes === 1 ? " VM" : " VMs")];
+      if (ex.kclusters) parts.push(ex.kclusters + (ex.kclusters === 1 ? " Kubernetes cluster" : " Kubernetes clusters"));
+      if (ex.addons.length) parts.push(ex.addons.join(", "));
+      li.appendChild(el("span", "muted", ex.description || parts.join(" · ")));
+      const b = el("button", "btn", "Open");
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        try {
+          loadLab(await apiGet("example", { name: ex.name }));
+          $("#labName").value = (ex.title || ex.name).replace(/\s+/g, "-");
+          closeDialog("#examplesDialog");
+          toast("Opened the " + (ex.title || ex.name) + " example");
+        } catch (e) { toast("Cannot open " + ex.name + ": " + e.message); }
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+  } catch (e) { list.appendChild(el("li", "issue err", e.message)); }
+}
+
+
 async function openSavedDialog() {
   const list = $("#savedList");
   list.innerHTML = "";
@@ -2025,6 +2056,8 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);
+  $("#examplesBtn").addEventListener("click", openExamplesDialog);
+  $("#examplesClose").addEventListener("click", () => closeDialog("#examplesDialog"));
   $("#savedBtn").addEventListener("click", openSavedDialog);
   $("#savedClose").addEventListener("click", () => closeDialog("#savedDialog"));
   $("#credBtn").addEventListener("click", openCredentials);

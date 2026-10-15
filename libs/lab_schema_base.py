@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.1"
+LAB_SCHEMA_VERSION = "2.2"
 
 
 def base_lab_schema():
@@ -74,6 +74,7 @@ def base_lab_schema():
                     {"name": "ISO_SHA256", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_SHA256 instead"},
                     {"name": "ssh_pwauth", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "config_method=cloud-init only: \"true\" enables SSH password login (cloud-init ssh_pwauth) and root login — for labs whose exercises log in or bootstrap clients with the root password"},
                     {"name": "lab_name", "required": False, "type": "string", "description": "Human-readable lab name shown in log output"},
+                    {"name": "lab_description", "required": False, "type": "string", "description": "One line saying what this lab is for, shown where a lab is listed (the lab-builder's example and saved-lab lists)"},
                     {"name": "backend", "required": False, "type": "string", "default": "libvirt", "enum": ["libvirt", "harvester", "hetzner", "aws", "gcp", "alibaba", "scaleway", "upcloud", "ovhcloud", "exoscale"], "description": "Compute backend for every node in this lab, unless overridden per-node"},
                     {"name": "cloud_account", "required": False, "type": "string", "description": "Name of a cloud account file under /etc/lab_creation/credentials/<name>.{yaml,json,cfg} (path configurable via lab_creation.cfg's CREDENTIALS_PATH; multiple cloud accounts, the same way KVM_HOSTS gives multiple hypervisors) — see scripts/setup_credentials.py to create one. Encrypted by default; the file's `cloudtype` becomes the backend (so `backend` is then optional) and its keys (AWS_REGION, etc.) are layered over lab_creation.cfg. Omit for the single default account."},
                     {"name": "cloud_instance_type", "required": False, "type": "string", "description": "Cloud backends only: an explicit instance type/server type/plan/flavor name, used verbatim instead of auto-picking one from vm_cpu/vm_mem — see README's Compute backends table for each provider's own official list of valid values"},

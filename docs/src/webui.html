@@ -226,6 +226,11 @@ the Apache config):</p>
 <td>where generated labs are written</td>
 <td><code>~/.lab-builder/labs</code></td>
 </tr>
+<tr>
+<td><code>LABBUILDER_EXAMPLES_DIR</code></td>
+<td>dir with the example labs offered as starting points</td>
+<td><code>/usr/share/lab_creation/examples</code>, else <code>&lt;repo&gt;/examples</code></td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -248,6 +253,9 @@ the Apache config):</p>
      anywhere.</li>
    </ul>
    A place a block cannot go is not highlighted while you drag, and a click-to-add there says why.</li>
+<li><strong>Start from an example</strong> — <strong>Examples…</strong> lists the lab definitions the project ships
+   in <code>examples/</code>, with what each one holds (VMs, Kubernetes clusters, add-ons); opening one builds the
+   canvas from it, exactly as opening a file does. The static GitHub Pages build carries the same examples.</li>
 <li><strong>Open or edit lab.json</strong> — <strong>Open…</strong> loads a <code>.json</code> or <code>.yaml</code> lab
    definition from your computer, and the JSON view can be edited directly. Either way the canvas is rebuilt from
    the definition: VMs join the Kubernetes cluster their <code>kcluster</code> names, each <code>addons</code> entry

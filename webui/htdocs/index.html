@@ -85,13 +85,14 @@
         <input id="labName" type="text" value="lab" spellcheck="false" aria-label="lab file name">
         <button id="openBtn" class="btn" title="Open a lab definition (.json, .yaml) from this computer">Open…</button>
         <input id="openFile" type="file" accept=".json,.yaml,.yml,application/json" hidden>
+        <button id="examplesBtn" class="btn" title="Open one of the project's example labs as a starting point">Examples…</button>
         <button id="validateBtn" class="btn">Validate</button>
         <button id="downloadBtn" class="btn">Download</button>
         <button id="saveBtn" class="btn">Save to server</button>
         <button id="savedBtn" class="btn">Saved labs…</button>
         <button id="createBtn" class="btn primary">Create lab</button>
       </div>
-      <p class="hint">Edit lab.json directly or open a file: the canvas follows it. Validation runs through the project's own Python libraries on the server; Save to server, Saved labs and Create lab need a login.</p>
+      <p class="hint">Edit lab.json directly, open a file or start from an example: the canvas follows it. Validation runs through the project's own Python libraries on the server; Save to server, Saved labs and Create lab need a login.</p>
     </aside>
   </main>
 
@@ -124,6 +125,13 @@
     <div class="editor-head"><h3 id="savedTitle">Saved labs</h3></div>
     <ul id="savedList" class="saved-list"></ul>
     <div class="editor-foot"><span class="spacer"></span><button type="button" id="savedClose" class="btn">Close</button></div>
+  </dialog>
+
+  <!-- examples: the project's own lab definitions, opened as a starting point (no login needed) -->
+  <dialog id="examplesDialog" class="editor small-dialog" aria-labelledby="examplesTitle">
+    <div class="editor-head"><h3 id="examplesTitle">Example labs</h3></div>
+    <ul id="examplesList" class="saved-list"></ul>
+    <div class="editor-foot"><span class="spacer"></span><button type="button" id="examplesClose" class="btn">Close</button></div>
   </dialog>
 
   <!-- credentials (login, HTTPS): values are written, never read back -->
