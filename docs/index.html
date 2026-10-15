@@ -591,7 +591,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Lab definition format</h2>
-<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>).</p>
+<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> is a worked multi-product lab: one RKE2 cluster with SUSE Rancher Prime, SUSE Storage, SUSE AI from the SUSE Application Collection and SUSE Security, installed in the order SUSE documents. <code>suse-multiproduct-gpu.json.template</code> is the same lab with SUSE AI on an NVIDIA GPU, on an <code>existing</code> node, since the lab definition has no PCI passthrough.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>A <code>.yaml</code>/<code>.yml</code> file works too — the format is auto-detected from the extension (or by falling back to YAML if a file isn't valid JSON), the same way through <code>setup_lab.py</code>'s preflight check, <code>install_&lt;addon&gt; --validate</code>, and every addon's own load path. YAML input requires <code>pyyaml</code> (<code>pip install pyyaml</code>) on the automation VM; without it you get a clear error telling you to install it, not a silent JSON-only failure.</p></aside>
 <pre><code class="language-jsonc">{
@@ -1135,7 +1135,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn distributed block storage</td>
+<td>SUSE Longhorn distributed block storage — from its upstream chart by default, or as SUSE Storage from the SUSE Application Collection with <code>lh_source: "appcollection"</code> (which needs an Application Collection account)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

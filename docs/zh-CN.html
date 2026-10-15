@@ -591,7 +591,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">实验室定义格式</h2>
-<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。</p>
+<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。 <code>examples/suse-multiproduct.json.template</code> 是一个多产品的完整示例：在一个 RKE2 集群上，按 SUSE 文档给出的顺序部署 SUSE Rancher Prime、SUSE Storage、来自 SUSE Application Collection 的 SUSE AI 和 SUSE Security。<code>suse-multiproduct-gpu.json.template</code> 是同一个实验室，但 SUSE AI 运行在 NVIDIA GPU 上，使用 <code>existing</code> 节点，因为实验室定义不支持 PCI 直通。</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p><code>.yaml</code>/<code>.yml</code> 文件同样可用：格式根据扩展名识别（如果文件不是有效的 JSON，则尝试按 YAML 解析），在 <code>setup_lab.py</code> 的预检、<code>install_&lt;addon&gt; --validate</code> 以及每个附加组件自身的加载过程中都相同。YAML 输入需要在自动化虚拟机上安装 <code>pyyaml</code>（<code>pip install pyyaml</code>）；缺少它时会得到提示安装的明确错误，而不是只接受 JSON 的静默失败。</p></aside>
 <pre><code class="language-jsonc">{
@@ -1092,7 +1092,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn 分布式块存储</td>
+<td>SUSE Longhorn 分布式块存储 — 默认使用上游 chart，或通过 <code>lh_source: "appcollection"</code> 以 SUSE Storage 的形式从 SUSE Application Collection 安装（需要 Application Collection 账号）</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

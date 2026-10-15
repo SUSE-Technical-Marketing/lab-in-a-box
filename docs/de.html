@@ -523,7 +523,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Format der Lab-Definition</h2>
-<p>Labs werden als JSON- oder YAML-Dateien definiert (automatisch erkannt, siehe Hinweis unten). Das aktuelle Format unterstützt mehrere Kubernetes-Cluster pro Lab (<code>kclusters</code>). Das Format für einen einzelnen Cluster (<code>cluster</code>) finden Sie in <code>examples/cluster.json.template</code>.</p>
+<p>Labs werden als JSON- oder YAML-Dateien definiert (automatisch erkannt, siehe Hinweis unten). Das aktuelle Format unterstützt mehrere Kubernetes-Cluster pro Lab (<code>kclusters</code>). Das Format für einen einzelnen Cluster (<code>cluster</code>) finden Sie in <code>examples/cluster.json.template</code>. <code>examples/suse-multiproduct.json.template</code> ist ein ausgearbeitetes Lab mit mehreren Produkten: ein RKE2-Cluster mit SUSE Rancher Prime, SUSE Storage, SUSE AI aus der SUSE Application Collection und SUSE Security, installiert in der von SUSE dokumentierten Reihenfolge. <code>suse-multiproduct-gpu.json.template</code> ist dasselbe Lab mit SUSE AI auf einer NVIDIA-GPU, auf einem <code>existing</code>-Knoten, denn die Lab-Definition kennt keinen PCI-Passthrough.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>Auch eine Datei <code>.yaml</code>/<code>.yml</code> funktioniert. Das Format wird anhand der Dateiendung erkannt (oder, falls eine Datei kein gültiges JSON ist, durch Rückgriff auf YAML). Dasselbe gilt für die Prüfung durch den Preflight von <code>setup_lab.py</code>, für <code>install_&lt;addon&gt; --validate</code> und für den Ladepfad jedes Add-ons. YAML-Eingaben benötigen <code>pyyaml</code> (<code>pip install pyyaml</code>) auf der Automatisierungs-VM. Ohne dieses Paket erhalten Sie eine klare Fehlermeldung mit dem Hinweis, es zu installieren, und keinen stillen Ausfall, der nur JSON versteht.</p></aside>
 <pre><code class="language-jsonc">{
@@ -1005,7 +1005,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn, verteilter Block-Speicher</td>
+<td>SUSE Longhorn, verteilter Block-Speicher — standardmäßig aus dem Upstream-Chart oder als SUSE Storage aus der SUSE Application Collection mit <code>lh_source: "appcollection"</code> (dafür wird ein Application-Collection-Konto benötigt)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

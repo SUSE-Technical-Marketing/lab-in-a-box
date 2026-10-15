@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">صيغة تعريف المختبر</h2>
-<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>.</p>
+<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>. و<code>examples/suse-multiproduct.json.template</code> هو مختبر متكامل يجمع عدة منتجات: عنقود RKE2 واحد يضم SUSE Rancher Prime وSUSE Storage وSUSE AI من SUSE Application Collection وSUSE Security، مثبّتة بالترتيب الذي توثّقه SUSE. و<code>suse-multiproduct-gpu.json.template</code> هو المختبر نفسه مع SUSE AI على وحدة معالجة رسومات NVIDIA، على عقدة <code>existing</code>، لأن تعريف المختبر لا يدعم تمرير PCI.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -918,7 +918,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>تخزين كتلي موزّع SUSE Longhorn</td>
+<td>تخزين كتلي موزّع SUSE Longhorn — من مخطط upstream افتراضيًا، أو كـ SUSE Storage من SUSE Application Collection عبر <code>lh_source: "appcollection"</code> (يتطلب حسابًا في Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

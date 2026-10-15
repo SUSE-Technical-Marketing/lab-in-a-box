@@ -3,11 +3,22 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
 # JSON section: "milvus" — Milvus vector database (RAG/embedding search)
 #   milvus_version    : [OPTIONAL] Helm chart version (empty = latest)
 #   milvus_ns         : [OPTIONAL] namespace (default: milvus)
+#   milvus_source : [OPTIONAL] where the chart comes from:
+#                         "upstream" (the default: the project's own chart, no account
+#                         needed), or "appcollection" for milvus from
+#                         oci://dp.apps.rancher.io/charts/milvus.
+#                         "appcollection" needs an Application Collection user and token:
+#                         milvus_appcollection_user/milvus_appcollection_password, or
+#                         milvus_appcollection_account naming a credential file of kind
+#                         "appcollection" (one such file in the store is found on its own).
+#   milvus_appcollection_user     : [OPTIONAL] Application Collection user
+#   milvus_appcollection_password : [OPTIONAL] Application Collection access token
+#   milvus_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
 #   milvus_shorthn    : [OPTIONAL] hostname prefix (default: milvus)
 #   milvus_rel        : [OPTIONAL] Helm repo alias (default: milvus)
 #   milvus_repo_url   : [OPTIONAL] Helm repo URL (default: https://zilliztech.github.io/milvus-helm)
@@ -23,6 +34,8 @@
 # The milvus-io.github.io/milvus-helm repo is archived and is not used.
 
 __version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "milvus"
 
 PLUGIN = {
     "name": "milvus",
@@ -43,10 +56,21 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
 
 
 def _validate(v):
+    cfg = v.definition.get("milvus", {}) or {}
+    source = str(cfg.get("milvus_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] milvus.milvus_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("milvus", "milvus_appcollection_user", "appcollection",
+                             account_field="milvus_appcollection_account")
+        v.vreq_or_credential("milvus", "milvus_appcollection_password", "appcollection",
+                             account_field="milvus_appcollection_account")
     v.vns("milvus")
     v.vver("milvus")
     v.vbool("milvus", "milvus_cluster")
@@ -57,7 +81,7 @@ def setup_milvus_repo(hostname, milvus_rel=None, milvus_repo_url=None):
     helm_repo_add(hostname, milvus_rel or "milvus", milvus_repo_url or "https://zilliztech.github.io/milvus-helm")
 
 
-def setup_milvus(hostname, milvus_rel=None, milvus_ns=None, milvus_version=None, milvus_cluster=None):
+def setup_milvus(hostname, milvus_rel=None, milvus_ns=None, milvus_version=None, milvus_cluster=None, extra_set=""):
     """Install Milvus, standalone by default (single pod — the right lab-sized default)."""
     rel = milvus_rel or "milvus"
     ns = milvus_ns or "milvus"
@@ -76,7 +100,7 @@ def setup_milvus(hostname, milvus_rel=None, milvus_ns=None, milvus_version=None,
     ssh_run(hostname,
             "helm upgrade -i milvus {}/milvus --namespace {} --create-namespace "
             "--set cluster.enabled={}{} "
-            "{}".format(rel, ns, cluster_enabled, standalone_args, ver_arg))
+            "{}{}".format(rel, ns, cluster_enabled, standalone_args, ver_arg, extra_set))
 
     print("Milvus installed ({}). Namespace: {}".format("cluster" if cluster_enabled == "true" else "standalone", ns))
     print("In-cluster endpoint: milvus.{}.svc.cluster.local:19530".format(ns))
@@ -101,8 +125,25 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_milvus_repo(vm_name, milvus_rel=cfg.get("milvus_rel"), milvus_repo_url=cfg.get("milvus_repo_url"))
-    setup_milvus(vm_name, milvus_rel=cfg.get("milvus_rel"), milvus_ns=cfg.get("milvus_ns"),
+    repo, extra_set = "", ""
+    if appco.from_appcollection(cfg, "milvus"):
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "milvus_appcollection_user": "appcollection_user",
+            "milvus_appcollection_password": "appcollection_password",
+        }, account_key="milvus_appcollection_account")
+        user = creds["milvus_appcollection_user"]
+        password = creds["milvus_appcollection_password"]
+        if not user or not password:
+            die("milvus: milvus_source is \"appcollection\", so milvus_appcollection_user and "
+                "milvus_appcollection_password are needed — set them, set milvus_appcollection_account "
+                "to an \"appcollection\" credential file, or leave all three unset with exactly "
+                "one such file in the store (https://apps.rancher.io)")
+        repo, extra_set = appco.prepare_appcollection_repo(
+            vm_name, cfg.get("milvus_ns") or "milvus", user, password)
+    else:
+        setup_milvus_repo(vm_name, milvus_rel=cfg.get("milvus_rel"), milvus_repo_url=cfg.get("milvus_repo_url"))
+    setup_milvus(vm_name, milvus_rel=repo or cfg.get("milvus_rel"), milvus_ns=cfg.get("milvus_ns"),
+                 extra_set=extra_set,
                  milvus_version=cfg.get("milvus_version"), milvus_cluster=cfg.get("milvus_cluster"))
 
 

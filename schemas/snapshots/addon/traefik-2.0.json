@@ -1,0 +1,60 @@
+{
+ "fields": {
+  "traefik_appcollection_account": {
+   "default": "traefik-standalone",
+   "required": false,
+   "type": "string"
+  },
+  "traefik_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "traefik_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "traefik_ingress_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "traefik_ns": {
+   "default": "traefik",
+   "required": false,
+   "type": "namespace"
+  },
+  "traefik_rel": {
+   "default": "traefik",
+   "required": false,
+   "type": "string"
+  },
+  "traefik_repo_url": {
+   "default": "https://traefik.github.io/charts",
+   "required": false,
+   "type": "url"
+  },
+  "traefik_service_type": {
+   "default": "NodePort",
+   "enum": [
+    "NodePort",
+    "LoadBalancer"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "traefik_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "traefik_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:traefik",
+ "version": "2.0"
+}

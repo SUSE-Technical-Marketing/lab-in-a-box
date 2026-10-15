@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">ラボ定義の形式</h2>
-<p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。</p>
+<p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。 <code>examples/suse-multiproduct.json.template</code> は複数製品を組み合わせたラボの実例です。1 つの RKE2 クラスタに SUSE Rancher Prime、SUSE Storage、SUSE Application Collection からの SUSE AI、SUSE Security を、SUSE が示す順序で導入します。<code>suse-multiproduct-gpu.json.template</code> は同じラボを NVIDIA GPU 上の SUSE AI で構成したもので、ラボ定義に PCI パススルーがないため <code>existing</code> ノードを使います。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -916,7 +916,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn 分散ブロックストレージ</td>
+<td>SUSE Longhorn 分散ブロックストレージ — 既定ではアップストリームのチャートから、<code>lh_source: "appcollection"</code> を指定すると SUSE Application Collection の SUSE Storage から導入します（Application Collection のアカウントが必要です）</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

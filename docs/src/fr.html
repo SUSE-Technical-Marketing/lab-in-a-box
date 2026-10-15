@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Format de définition du laboratoire</h2>
-<p>Les laboratoires sont définis dans des fichiers JSON ou YAML (détection automatique ; voir la note ci-dessous). Le format actuel prend en charge plusieurs clusters Kubernetes par laboratoire (<code>kclusters</code>) ; voir <code>examples/cluster.json.template</code> pour l'ancien format à un seul cluster (<code>cluster</code>).</p>
+<p>Les laboratoires sont définis dans des fichiers JSON ou YAML (détection automatique ; voir la note ci-dessous). Le format actuel prend en charge plusieurs clusters Kubernetes par laboratoire (<code>kclusters</code>) ; voir <code>examples/cluster.json.template</code> pour l'ancien format à un seul cluster (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> est un lab multiproduit complet : un cluster RKE2 avec SUSE Rancher Prime, SUSE Storage, SUSE AI depuis la SUSE Application Collection et SUSE Security, installés dans l'ordre documenté par SUSE. <code>suse-multiproduct-gpu.json.template</code> est le même lab avec SUSE AI sur un GPU NVIDIA, sur un nœud <code>existing</code>, car la définition de lab n'a pas de passthrough PCI.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -918,7 +918,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>Stockage en mode bloc distribué SUSE Longhorn</td>
+<td>Stockage en mode bloc distribué SUSE Longhorn — depuis son chart upstream par défaut, ou en tant que SUSE Storage depuis la SUSE Application Collection avec <code>lh_source: "appcollection"</code> (nécessite un compte Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

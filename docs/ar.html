@@ -591,7 +591,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">صيغة تعريف المختبر</h2>
-<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>.</p>
+<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>. و<code>examples/suse-multiproduct.json.template</code> هو مختبر متكامل يجمع عدة منتجات: عنقود RKE2 واحد يضم SUSE Rancher Prime وSUSE Storage وSUSE AI من SUSE Application Collection وSUSE Security، مثبّتة بالترتيب الذي توثّقه SUSE. و<code>suse-multiproduct-gpu.json.template</code> هو المختبر نفسه مع SUSE AI على وحدة معالجة رسومات NVIDIA، على عقدة <code>existing</code>، لأن تعريف المختبر لا يدعم تمرير PCI.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>يعمل ملف <code>.yaml</code>/<code>.yml</code> أيضًا: تُكتشف الصيغة من الامتداد (أو تُجرَّب YAML إن لم يكن الملف JSON صالحًا)، بالطريقة نفسها في الفحص المسبق لـ <code>setup_lab.py</code> وفي <code>install_&lt;addon&gt; --validate</code> وفي مسار التحميل الخاص بكل إضافة. يتطلب إدخال YAML وجود <code>pyyaml</code> (<code>pip install pyyaml</code>) على آلة الأتمتة الافتراضية؛ ودونه تظهر رسالة خطأ واضحة تطلب تثبيته، لا فشل صامت يقبل JSON فقط.</p></aside>
 <pre><code class="language-jsonc">{
@@ -1097,7 +1097,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>تخزين كتلي موزّع SUSE Longhorn</td>
+<td>تخزين كتلي موزّع SUSE Longhorn — من مخطط upstream افتراضيًا، أو كـ SUSE Storage من SUSE Application Collection عبر <code>lh_source: "appcollection"</code> (يتطلب حسابًا في Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

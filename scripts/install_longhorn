@@ -3,16 +3,28 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
 # JSON section: "longhorn" — SUSE Longhorn distributed block storage
 #
 #   lh_shorthn   : [OPTIONAL] Short hostname for the UI ingress        (default: longhorn)
 #   lh_rel       : [OPTIONAL] Helm repo alias                          (default: longhorn)
+#   lh_source           : [OPTIONAL] where the chart comes from: "upstream" (default, charts.longhorn.io, no
+#                         account needed) or "appcollection" (SUSE Storage from the SUSE Application Collection,
+#                         oci://dp.apps.rancher.io/charts/suse-storage). "appcollection" needs an Application
+#                         Collection user and token: lh_appcollection_user/lh_appcollection_password, or
+#                         lh_appcollection_account naming a credential file of kind "appcollection" (one such file
+#                         in the store is found on its own).
+#   lh_appcollection_user     : [OPTIONAL] Application Collection user (lh_source "appcollection")
+#   lh_appcollection_password : [OPTIONAL] Application Collection access token (lh_source "appcollection")
+#   lh_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file to use instead
 #   lh_repo_url  : [OPTIONAL] Helm repo URL                           (default: https://charts.longhorn.io)
 #   lh_version   : [OPTIONAL] Helm chart version                       (empty = latest)
 
 __version__ = "__LABVERSION__"
+
+# SUSE Storage is this product in the SUSE Application Collection (its slug at https://apps.rancher.io).
+APPCOLLECTION_CHART = "suse-storage"
 
 PLUGIN = {
     "name": "longhorn",
@@ -34,6 +46,7 @@ PLUGIN = {
     },
 }
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -46,13 +59,24 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import versions  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
 
 
 def _validate(v):
     v.vns("longhorn")
     v.vver("longhorn")
     v.vurl("longhorn")
+    cfg = v.definition.get("longhorn", {}) or {}
+    source = str(cfg.get("lh_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] longhorn.lh_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("longhorn", "lh_appcollection_user", "appcollection",
+                             account_field="lh_appcollection_account")
+        v.vreq_or_credential("longhorn", "lh_appcollection_password", "appcollection",
+                             account_field="lh_appcollection_account")
 
 
 def setup_lh_repo(hostname, lh_rel=None, lh_repo_url=None):
@@ -60,12 +84,14 @@ def setup_lh_repo(hostname, lh_rel=None, lh_repo_url=None):
     helm_repo_add(hostname, lh_rel or "longhorn", lh_repo_url or "https://charts.longhorn.io")
 
 
-def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_version=None):
+def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_version=None,
+             chart="", extra_set=""):
     """
     Install SUSE Longhorn. Mirrors setup_lh (bash).
 
-    The chart comes from the repo added under lh_rel; lh_version pins its
-    version (empty = latest).
+    The chart comes from the repo added under lh_rel; lh_version pins its version (empty = latest). `chart`
+    overrides the chart reference, for the SUSE Application Collection's OCI chart, and `extra_set` carries the
+    --set flags that come with it (the image pull secret).
     """
     rel = lh_rel or "longhorn"
     fqdn = "{}.{}.{}".format(lh_shorthn or "longhorn", clu_name, mydomain)
@@ -74,10 +100,11 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
                        "systemctl enable --now iscsid.service ; modprobe iscsi_tcp")
     ssh_run(hostname, "kubectl create namespace longhorn-system")
     ssh_run(hostname,
-            "helm upgrade -i longhorn {}/longhorn {} --namespace longhorn-system "
+            "helm upgrade -i longhorn {} {} --namespace longhorn-system "
             "--set ingress.enabled=true --set ingress.host={} "
-            "--set persistence.migratable=true --set longhornUI.replicas=1".format(
-                rel, versions.helm_version_flag(lh_version), fqdn))
+            "--set persistence.migratable=true --set longhornUI.replicas=1{}".format(
+                chart or "{}/longhorn".format(rel), versions.helm_version_flag(lh_version), fqdn,
+                extra_set))
     print("Longhorn should be available in a few minutes in: {}".format(fqdn))
     return fqdn
 
@@ -140,9 +167,28 @@ def main():
     # bash also does `load_rancher_vars` here — confirmed unused by setup_lh/
     # setup_lh_repo (neither references any rancher_* variable); not ported.
     setup_helm(vm_name, clu_name, online=online)
-    setup_lh_repo(vm_name, lh_rel=cfg.get("lh_rel"), lh_repo_url=cfg.get("lh_repo_url"))
+    chart, extra_set = "", ""
+    if appco.from_appcollection(cfg, "lh"):
+        # SUSE Storage, the same product, from the SUSE Application Collection's OCI chart. It needs an account, so
+        # the credential is resolved the same way every other external-service credential is.
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "lh_appcollection_user": "appcollection_user",
+            "lh_appcollection_password": "appcollection_password",
+        }, account_key="lh_appcollection_account")
+        user = creds["lh_appcollection_user"]
+        password = creds["lh_appcollection_password"]
+        if not user or not password:
+            die("longhorn: lh_source is \"appcollection\", so lh_appcollection_user and "
+                "lh_appcollection_password are needed — set them, set lh_appcollection_account to an "
+                "\"appcollection\" credential file, or leave all three unset with exactly one such file in the "
+                "store (https://apps.rancher.io)")
+        chart, extra_set = appco.prepare_appcollection_chart(
+            vm_name, APPCOLLECTION_CHART, "longhorn-system", user, password)
+    else:
+        setup_lh_repo(vm_name, lh_rel=cfg.get("lh_rel"), lh_repo_url=cfg.get("lh_repo_url"))
     fqdn = setup_lh(vm_name, clu_name, clu_cfg.get("mydomain", ""), lh_rel=cfg.get("lh_rel"),
-                    lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"))
+                    lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"),
+                    chart=chart, extra_set=extra_set)
     ac.register_service_dns(definition, clu_name, fqdn)
 
     time.sleep(60)

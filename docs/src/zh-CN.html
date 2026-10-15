@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">实验室定义格式</h2>
-<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。</p>
+<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。 <code>examples/suse-multiproduct.json.template</code> 是一个多产品的完整示例：在一个 RKE2 集群上，按 SUSE 文档给出的顺序部署 SUSE Rancher Prime、SUSE Storage、来自 SUSE Application Collection 的 SUSE AI 和 SUSE Security。<code>suse-multiproduct-gpu.json.template</code> 是同一个实验室，但 SUSE AI 运行在 NVIDIA GPU 上，使用 <code>existing</code> 节点，因为实验室定义不支持 PCI 直通。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -913,7 +913,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn 分布式块存储</td>
+<td>SUSE Longhorn 分布式块存储 — 默认使用上游 chart，或通过 <code>lh_source: "appcollection"</code> 以 SUSE Storage 的形式从 SUSE Application Collection 安装（需要 Application Collection 账号）</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

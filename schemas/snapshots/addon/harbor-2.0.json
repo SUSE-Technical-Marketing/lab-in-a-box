@@ -1,0 +1,56 @@
+{
+ "fields": {
+  "harbor_admin_password": {
+   "default": "Harbor12345",
+   "required": false,
+   "type": "password"
+  },
+  "harbor_appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "harbor_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "harbor_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "harbor_ns": {
+   "default": "harbor",
+   "required": false,
+   "type": "namespace"
+  },
+  "harbor_rel": {
+   "default": "harbor",
+   "required": false,
+   "type": "string"
+  },
+  "harbor_repo_url": {
+   "default": "https://helm.goharbor.io",
+   "required": false,
+   "type": "url"
+  },
+  "harbor_shorthn": {
+   "default": "harbor",
+   "required": false,
+   "type": "string"
+  },
+  "harbor_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "harbor_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:harbor",
+ "version": "2.0"
+}

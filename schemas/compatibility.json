@@ -27,7 +27,8 @@
   ],
   "addon:argocd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
   ],
   "addon:client_registration": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -50,7 +51,8 @@
   ],
   "addon:coredns": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless coredns_source says otherwise, with coredns_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs coredns_source \"upstream\", which the migration writes.", "migration": "coredns_2_0"}
   ],
   "addon:deepseek": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -63,7 +65,8 @@
   ],
   "addon:fluentd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless fluentd_source says otherwise, with fluentd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs fluentd_source \"upstream\", which the migration writes.", "migration": "fluentd_2_0"}
   ],
   "addon:fluid": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -90,7 +93,8 @@
   ],
   "addon:harbor": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless harbor_source says otherwise, with harbor_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs harbor_source \"upstream\", which the migration writes.", "migration": "harbor_2_0"}
   ],
   "addon:harvester": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -142,7 +146,8 @@
    {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:longhorn": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "lh_source: install SUSE Storage from the SUSE Application Collection instead of the upstream chart, with lh_appcollection_user/password/account for it"}
   ],
   "addon:mailman": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -160,7 +165,8 @@
   ],
   "addon:milvus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "1.2", "breaking": false, "changes": "milvus_source: install from the SUSE Application Collection instead of the upstream chart. Opt in: the Collection's chart has no pulsarv3 key and its minio has no mode, so this add-on's standalone-mode flags do not apply to it yet."}
   ],
   "addon:mistral": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -187,7 +193,8 @@
   ],
   "addon:ollama": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless ollama_source says otherwise, with ollama_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs ollama_source \"upstream\", which the migration writes.", "migration": "ollama_2_0"}
   ],
   "addon:open_saber": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -195,7 +202,8 @@
   ],
   "addon:open_webui": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless open_webui_source says otherwise, with open_webui_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs open_webui_source \"upstream\", which the migration writes.", "migration": "open_webui_2_0"}
   ],
   "addon:openai": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -280,7 +288,8 @@
   "addon:traefik": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "New traefik_ingress_class (default traefik-standalone, not the cluster default; the release serves only that class) and traefik_service_type (default NodePort), so the release runs next to the cluster's own ingress controller."},
-   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless traefik_source says otherwise, with traefik_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs traefik_source \"upstream\", which the migration writes.", "migration": "traefik_2_0"}
   ],
   "addon:trento": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

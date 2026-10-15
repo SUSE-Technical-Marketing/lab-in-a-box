@@ -3,15 +3,28 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 2.0
 #
 # JSON section: "fluentd" — Log aggregation
 #   fluentd_version     : Helm chart version (empty = latest, e.g. "0.5.2")
 #   fluentd_ns          : namespace (default: fluentd)
+#   fluentd_source : [OPTIONAL] where the chart comes from:
+#                         "appcollection" (the default: fluentd from the SUSE Application
+#                         Collection, oci://dp.apps.rancher.io/charts/fluentd), or "upstream"
+#                         for the project's own chart, which needs no account.
+#                         "appcollection" needs an Application Collection user and token:
+#                         fluentd_appcollection_user/fluentd_appcollection_password, or
+#                         fluentd_appcollection_account naming a credential file of kind
+#                         "appcollection" (one such file in the store is found on its own).
+#   fluentd_appcollection_user     : [OPTIONAL] Application Collection user
+#   fluentd_appcollection_password : [OPTIONAL] Application Collection access token
+#   fluentd_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
 #   fluentd_rel         : Helm repo alias (default: fluent)
 #   fluentd_repo_url    : Helm repo URL (default: https://fluent.github.io/helm-charts)
 
 __version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "fluentd"
 
 PLUGIN = {
     "name": "fluentd",
@@ -31,10 +44,21 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
 
 
 def _validate(v):
+    cfg = v.definition.get("fluentd", {}) or {}
+    source = str(cfg.get("fluentd_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] fluentd.fluentd_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("fluentd", "fluentd_appcollection_user", "appcollection",
+                             account_field="fluentd_appcollection_account")
+        v.vreq_or_credential("fluentd", "fluentd_appcollection_password", "appcollection",
+                             account_field="fluentd_appcollection_account")
     v.vns("fluentd")
     v.vver("fluentd")
     v.vurl("fluentd")
@@ -45,13 +69,14 @@ def setup_fluentd_repo(hostname, fluentd_rel=None, fluentd_repo_url=None):
     helm_repo_add(hostname, fluentd_rel or "fluent", fluentd_repo_url or "https://fluent.github.io/helm-charts")
 
 
-def setup_fluentd(hostname, fluentd_rel=None, fluentd_ns=None, fluentd_version=None):
+def setup_fluentd(hostname, fluentd_rel=None, fluentd_ns=None, fluentd_version=None, extra_set=""):
     """Install Fluentd. Mirrors setup_fluentd (bash)."""
     rel = fluentd_rel or "fluent"
     ns = fluentd_ns or "fluentd"
     ver_arg = "--version {}".format(fluentd_version) if fluentd_version else ""
     ssh_run(hostname,
-            "helm upgrade -i fluentd {}/fluentd --namespace {} --create-namespace {}".format(rel, ns, ver_arg))
+            "helm upgrade -i fluentd {}/fluentd --namespace {} --create-namespace {}{}"
+                .format(rel, ns, ver_arg, extra_set))
     print("Fluentd installed. Namespace: {}".format(ns))
 
 
@@ -74,8 +99,25 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_fluentd_repo(vm_name, fluentd_rel=cfg.get("fluentd_rel"), fluentd_repo_url=cfg.get("fluentd_repo_url"))
-    setup_fluentd(vm_name, fluentd_rel=cfg.get("fluentd_rel"), fluentd_ns=cfg.get("fluentd_ns"),
+    repo, extra_set = "", ""
+    if appco.from_appcollection(cfg, "fluentd", appco.SOURCE_APPCOLLECTION):
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "fluentd_appcollection_user": "appcollection_user",
+            "fluentd_appcollection_password": "appcollection_password",
+        }, account_key="fluentd_appcollection_account")
+        user = creds["fluentd_appcollection_user"]
+        password = creds["fluentd_appcollection_password"]
+        if not user or not password:
+            die("fluentd: fluentd_source is \"appcollection\", so fluentd_appcollection_user and "
+                "fluentd_appcollection_password are needed — set them, set fluentd_appcollection_account "
+                "to an \"appcollection\" credential file, or leave all three unset with exactly "
+                "one such file in the store (https://apps.rancher.io)")
+        repo, extra_set = appco.prepare_appcollection_repo(
+            vm_name, cfg.get("fluentd_ns") or "fluentd", user, password)
+    else:
+        setup_fluentd_repo(vm_name, fluentd_rel=cfg.get("fluentd_rel"), fluentd_repo_url=cfg.get("fluentd_repo_url"))
+    setup_fluentd(vm_name, fluentd_rel=repo or cfg.get("fluentd_rel"), fluentd_ns=cfg.get("fluentd_ns"),
+                  extra_set=extra_set,
                   fluentd_version=cfg.get("fluentd_version"))
 
 

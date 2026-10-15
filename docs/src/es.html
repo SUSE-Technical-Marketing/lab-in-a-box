@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Formato de definición del laboratorio</h2>
-<p>Los laboratorios se definen en archivos JSON o YAML (se detecta automáticamente; consulte la nota más abajo). El formato actual admite varios clústeres de Kubernetes por laboratorio (<code>kclusters</code>); consulte <code>examples/cluster.json.template</code> para el formato antiguo de un solo clúster (<code>cluster</code>).</p>
+<p>Los laboratorios se definen en archivos JSON o YAML (se detecta automáticamente; consulte la nota más abajo). El formato actual admite varios clústeres de Kubernetes por laboratorio (<code>kclusters</code>); consulte <code>examples/cluster.json.template</code> para el formato antiguo de un solo clúster (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> es un laboratorio multiproducto ya resuelto: un clúster RKE2 con SUSE Rancher Prime, SUSE Storage, SUSE AI desde la SUSE Application Collection y SUSE Security, instalados en el orden que documenta SUSE. <code>suse-multiproduct-gpu.json.template</code> es el mismo laboratorio con SUSE AI sobre una GPU NVIDIA, en un nodo <code>existing</code>, porque la definición de laboratorio no tiene paso de dispositivos PCI.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -918,7 +918,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>Almacenamiento en bloques distribuido SUSE Longhorn</td>
+<td>Almacenamiento en bloques distribuido SUSE Longhorn — desde su chart upstream por omisión, o como SUSE Storage desde la SUSE Application Collection con <code>lh_source: "appcollection"</code> (requiere una cuenta de la Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "fluentd_appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fluentd_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "fluentd_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fluentd_ns": {
+   "default": "fluentd",
+   "required": false,
+   "type": "namespace"
+  },
+  "fluentd_rel": {
+   "default": "fluent",
+   "required": false,
+   "type": "string"
+  },
+  "fluentd_repo_url": {
+   "default": "https://fluent.github.io/helm-charts",
+   "required": false,
+   "type": "url"
+  },
+  "fluentd_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fluentd_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:fluentd",
+ "version": "2.0"
+}

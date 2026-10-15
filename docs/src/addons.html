@@ -126,6 +126,28 @@ def main():
 <li>The type comes from the name's suffix, for example: <code>_ns</code>/<code>_namespace</code> namespace, <code>_version</code>/<code>_ver</code> version, <code>_url</code> url, <code>_port</code> port, <code>_pass</code>/<code>_pwd</code>/<code>_password</code> password, <code>_enabled</code> boolean, <code>_replicas</code> integer; anything else is a string.</li>
 </ul>
 <p><code>validate_fn</code> receives an <code>addon_common.Validator</code>: <code>vreq(section, field)</code>, <code>vns(section)</code>, <code>vver(section)</code>, <code>vurl(section)</code>, <code>vbool(section, field)</code> add the matching <code>[ERROR]</code> lines, and you can append your own to <code>v.errors</code>. The version matrix's warnings are added for you.</p>
+<p><code>check_fn</code> receives an <code>addon_common.Checker</code>, for <code>--check</code>: <code>get(section, field, default)</code> is what the lab asked for, <code>expect(what, expected, found)</code> records a match or a difference, and <code>ok(what)</code>/<code>fail(what, expected, found)</code> do either on their own. <code>checker.vm_name</code> and <code>checker.clu_name</code> are the target. Declare <code>"check": True</code> in <code>PLUGIN</code> so a caller knows the add-on has one, and pass <code>check_fn=</code> to <code>handle_common_args()</code>. An exception inside the check is reported as a difference, never a crash. <code>scripts/install_longhorn</code> is a worked example: the Helm release's status, its chart version against <code>lh_version</code>, and every pod running.</p>
+<p><strong>Installing from the SUSE Application Collection.</strong> For a product the Collection carries
+(<a href="https://apps.rancher.io">apps.rancher.io</a>), an add-on can offer it as a second source: declare a
+<code>&lt;prefix&gt;_source</code> field with <code>"upstream"</code> (the default, so a lab without an account is
+unaffected) and <code>"appcollection"</code>, then ask <code>appco_common.from_appcollection(cfg, prefix)</code>
+and, when it is true, call <code>appco_common.prepare_appcollection_chart(host, slug, namespace, user, token)</code>
+— it creates the image pull secret, logs Helm in and returns the OCI chart reference plus the
+<code>--set global.imagePullSecrets[0]=</code> flag to pass to <code>helm upgrade -i</code>. The account is resolved
+like every other external-service credential (<code>&lt;prefix&gt;_appcollection_user</code>/<code>_password</code>,
+or <code>_account</code> naming a credential file of kind <code>appcollection</code>).
+<code>scripts/install_longhorn</code> is the worked example (SUSE Storage, slug <code>suse-storage</code>).</p>
+<p>Eight add-ons offer the Collection today. For <code>argocd</code>, <code>coredns</code>, <code>fluentd</code>,
+<code>harbor</code>, <code>ollama</code>, <code>open_webui</code> and <code>traefik</code> it is the
+<strong>default</strong>, so those labs need an Application Collection account unless they set
+<code>&lt;prefix&gt;_source: "upstream"</code>; each of those add-ons is at schema 2.0 with a migration that writes
+that setting into a lab that relied on the old default. For <code>longhorn</code> and <code>milvus</code> it is opt
+in: Longhorn's Collection chart has not been run yet, and the Collection's milvus chart has no <code>pulsarv3</code>
+key and its <code>minio</code> has no <code>mode</code>, so that add-on's standalone-mode flags do not apply to it.
+Before flipping an add-on's default, check the Collection's chart really accepts the <code>--set</code> paths the
+add-on passes: <code>helm show values oci://dp.apps.rancher.io/charts/&lt;slug&gt;</code> after a
+<code>helm registry login</code>. Neither chart carries a <code>values.schema.json</code>, so a flag that no longer
+matches is accepted in silence instead of failing.</p>
 <p>Use the helpers in <code>libs/lab_creation.py</code> to work on nodes: <code>ssh_run(host, cmd)</code>, <code>setup_helm(host, clu_name)</code>, <code>helm_repo_add(host, name, url)</code>, <code>die(msg)</code>; and <code>versions.helm_version_flag(value)</code> for a chart version field.</p>
 <h2 id="writing-it-in-another-language">Writing it in another language</h2>
 <p>Any executable works: it implements the commands of <a href="#the-contract">the contract</a> itself and prints the schema JSON. See <code>examples/addons/install_example_motd.sh</code>, which uses <code>jq</code> (a dependency of the automation VM) to read the lab definition.</p>

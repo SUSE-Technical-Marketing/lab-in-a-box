@@ -591,7 +591,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Formato de definición del laboratorio</h2>
-<p>Los laboratorios se definen en archivos JSON o YAML (se detecta automáticamente; consulte la nota más abajo). El formato actual admite varios clústeres de Kubernetes por laboratorio (<code>kclusters</code>); consulte <code>examples/cluster.json.template</code> para el formato antiguo de un solo clúster (<code>cluster</code>).</p>
+<p>Los laboratorios se definen en archivos JSON o YAML (se detecta automáticamente; consulte la nota más abajo). El formato actual admite varios clústeres de Kubernetes por laboratorio (<code>kclusters</code>); consulte <code>examples/cluster.json.template</code> para el formato antiguo de un solo clúster (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> es un laboratorio multiproducto ya resuelto: un clúster RKE2 con SUSE Rancher Prime, SUSE Storage, SUSE AI desde la SUSE Application Collection y SUSE Security, instalados en el orden que documenta SUSE. <code>suse-multiproduct-gpu.json.template</code> es el mismo laboratorio con SUSE AI sobre una GPU NVIDIA, en un nodo <code>existing</code>, porque la definición de laboratorio no tiene paso de dispositivos PCI.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>También sirve un archivo <code>.yaml</code>/<code>.yml</code>: el formato se detecta por la extensión (o, si un archivo no es JSON válido, se intenta como YAML), igual en la comprobación previa de <code>setup_lab.py</code>, en <code>install_&lt;addon&gt; --validate</code> y en la carga de cada complemento. La entrada YAML requiere <code>pyyaml</code> (<code>pip install pyyaml</code>) en la VM de automatización; sin él recibirá un error claro que le pide instalarlo, no un fallo silencioso que solo acepte JSON.</p></aside>
 <pre><code class="language-jsonc">{
@@ -1097,7 +1097,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>Almacenamiento en bloques distribuido SUSE Longhorn</td>
+<td>Almacenamiento en bloques distribuido SUSE Longhorn — desde su chart upstream por omisión, o como SUSE Storage desde la SUSE Application Collection con <code>lh_source: "appcollection"</code> (requiere una cuenta de la Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

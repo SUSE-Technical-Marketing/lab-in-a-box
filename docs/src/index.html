@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Lab definition format</h2>
-<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>).</p>
+<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> is a worked multi-product lab: one RKE2 cluster with SUSE Rancher Prime, SUSE Storage, SUSE AI from the SUSE Application Collection and SUSE Security, installed in the order SUSE documents. <code>suse-multiproduct-gpu.json.template</code> is the same lab with SUSE AI on an NVIDIA GPU, on an <code>existing</code> node, since the lab definition has no PCI passthrough.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -956,7 +956,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn distributed block storage</td>
+<td>SUSE Longhorn distributed block storage — from its upstream chart by default, or as SUSE Storage from the SUSE Application Collection with <code>lh_source: "appcollection"</code> (which needs an Application Collection account)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>

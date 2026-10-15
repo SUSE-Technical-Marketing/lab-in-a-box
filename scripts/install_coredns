@@ -3,11 +3,22 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 2.0
 #
 # JSON section: "coredns" — Cluster DNS
 #   coredns_version     : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.29.0")
 #   coredns_ns          : [OPTIONAL] namespace (default: coredns)
+#   coredns_source : [OPTIONAL] where the chart comes from:
+#                         "appcollection" (the default: coredns from the SUSE Application
+#                         Collection, oci://dp.apps.rancher.io/charts/coredns), or "upstream"
+#                         for the project's own chart, which needs no account.
+#                         "appcollection" needs an Application Collection user and token:
+#                         coredns_appcollection_user/coredns_appcollection_password, or
+#                         coredns_appcollection_account naming a credential file of kind
+#                         "appcollection" (one such file in the store is found on its own).
+#   coredns_appcollection_user     : [OPTIONAL] Application Collection user
+#   coredns_appcollection_password : [OPTIONAL] Application Collection access token
+#   coredns_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
 #   coredns_rel         : [OPTIONAL] Helm repo alias (default: coredns)
 #   coredns_repo_url    : [OPTIONAL] Helm repo URL (default: https://coredns.github.io/helm)
 #
@@ -16,6 +27,8 @@
 # split-horizon DNS, or forwarding experiments).
 
 __version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "coredns"
 
 PLUGIN = {
     "name": "coredns",
@@ -35,10 +48,21 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
 
 
 def _validate(v):
+    cfg = v.definition.get("coredns", {}) or {}
+    source = str(cfg.get("coredns_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] coredns.coredns_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("coredns", "coredns_appcollection_user", "appcollection",
+                             account_field="coredns_appcollection_account")
+        v.vreq_or_credential("coredns", "coredns_appcollection_password", "appcollection",
+                             account_field="coredns_appcollection_account")
     v.vns("coredns")
     v.vver("coredns")
     v.vurl("coredns")
@@ -49,14 +73,14 @@ def setup_coredns_repo(hostname, coredns_rel=None, coredns_repo_url=None):
     helm_repo_add(hostname, coredns_rel or "coredns", coredns_repo_url or "https://coredns.github.io/helm")
 
 
-def setup_coredns(hostname, coredns_rel=None, coredns_ns=None, coredns_version=None):
+def setup_coredns(hostname, coredns_rel=None, coredns_ns=None, coredns_version=None, extra_set=""):
     """Install standalone CoreDNS. Mirrors setup_coredns (bash)."""
     rel = coredns_rel or "coredns"
     ns = coredns_ns or "coredns"
     ver_arg = "--version {}".format(coredns_version) if coredns_version else ""
     ssh_run(hostname,
             "helm upgrade -i coredns {}/coredns --namespace {} --create-namespace "
-            "--set service.clusterIP='' {}".format(rel, ns, ver_arg))
+            "--set service.clusterIP='' {}{}".format(rel, ns, ver_arg, extra_set))
     print("CoreDNS standalone instance installed. Namespace: {}".format(ns))
 
 
@@ -80,9 +104,26 @@ def main():
     online = definition.get("common", {}).get("online") == "1"
 
     setup_helm(vm_name, clu_name, online=online)
-    setup_coredns_repo(vm_name, coredns_rel=coredns_cfg.get("coredns_rel"),
-                        coredns_repo_url=coredns_cfg.get("coredns_repo_url"))
-    setup_coredns(vm_name, coredns_rel=coredns_cfg.get("coredns_rel"),
+    repo, extra_set = "", ""
+    if appco.from_appcollection(cfg, "coredns", appco.SOURCE_APPCOLLECTION):
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "coredns_appcollection_user": "appcollection_user",
+            "coredns_appcollection_password": "appcollection_password",
+        }, account_key="coredns_appcollection_account")
+        user = creds["coredns_appcollection_user"]
+        password = creds["coredns_appcollection_password"]
+        if not user or not password:
+            die("coredns: coredns_source is \"appcollection\", so coredns_appcollection_user and "
+                "coredns_appcollection_password are needed — set them, set coredns_appcollection_account "
+                "to an \"appcollection\" credential file, or leave all three unset with exactly "
+                "one such file in the store (https://apps.rancher.io)")
+        repo, extra_set = appco.prepare_appcollection_repo(
+            vm_name, coredns_cfg.get("coredns_ns") or "coredns", user, password)
+    else:
+        setup_coredns_repo(vm_name, coredns_rel=coredns_cfg.get("coredns_rel"),
+                            coredns_repo_url=coredns_cfg.get("coredns_repo_url"))
+    setup_coredns(vm_name, coredns_rel=repo or coredns_cfg.get("coredns_rel"),
+                  extra_set=extra_set,
                   coredns_ns=coredns_cfg.get("coredns_ns"), coredns_version=coredns_cfg.get("coredns_version"))
 
 
