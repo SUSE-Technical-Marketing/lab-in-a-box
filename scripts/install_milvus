@@ -3,13 +3,13 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.2
+# Schema version: 2.0
 #
 # JSON section: "milvus" — Milvus vector database (RAG/embedding search)
 #   milvus_version    : [OPTIONAL] Helm chart version (empty = latest)
 #   milvus_ns         : [OPTIONAL] namespace (default: milvus)
 #   milvus_source : [OPTIONAL] where the chart comes from:
-#                         "upstream" (the default: the project's own chart, no account
+#                         "appcollection" (the default), or "upstream" for the project's own chart, no account
 #                         needed), or "appcollection" for milvus from
 #                         oci://dp.apps.rancher.io/charts/milvus.
 #                         "appcollection" needs an Application Collection user and token:
@@ -62,7 +62,7 @@ import appco_common as appco  # noqa: E402
 
 def _validate(v):
     cfg = v.definition.get("milvus", {}) or {}
-    source = str(cfg.get("milvus_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    source = str(cfg.get("milvus_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
     if source not in appco.SOURCES:
         v.errors.append("[ERROR] milvus.milvus_source '{}' is invalid — use one of: {}".format(
             source, ", ".join(appco.SOURCES)))
@@ -81,21 +81,32 @@ def setup_milvus_repo(hostname, milvus_rel=None, milvus_repo_url=None):
     helm_repo_add(hostname, milvus_rel or "milvus", milvus_repo_url or "https://zilliztech.github.io/milvus-helm")
 
 
-def setup_milvus(hostname, milvus_rel=None, milvus_ns=None, milvus_version=None, milvus_cluster=None, extra_set=""):
+def setup_milvus(hostname, milvus_rel=None, milvus_ns=None, milvus_version=None, milvus_cluster=None,
+                 extra_set="", from_appcollection=False):
     """Install Milvus, standalone by default (single pod — the right lab-sized default)."""
     rel = milvus_rel or "milvus"
     ns = milvus_ns or "milvus"
     ver_arg = "--version {}".format(shlex.quote(milvus_version)) if milvus_version else ""
     cluster_enabled = "true" if str(milvus_cluster) == "true" else "false"
 
+    # Standalone mode is configured differently by the two charts. zilliztech/milvus-helm puts MinIO in standalone
+    # mode and turns Pulsar off; the SUSE Application Collection's chart has neither key, because its standalone
+    # deployment carries its own message queue (standalone.messageQueue, woodpecker), so there the single-replica
+    # subcharts and Kafka are what to set.
     standalone_args = ""
     if cluster_enabled == "false":
-        standalone_args = (
-            " --set cluster.enabled=false"
-            " --set etcd.replicaCount=1"
-            " --set minio.mode=standalone"
-            " --set pulsarv3.enabled=false"
-        )
+        if from_appcollection:
+            standalone_args = (
+                " --set etcd.replicaCount=1"
+                " --set minio.replicas=1"
+                " --set kafka.enabled=false"
+            )
+        else:
+            standalone_args = (
+                " --set etcd.replicaCount=1"
+                " --set minio.mode=standalone"
+                " --set pulsarv3.enabled=false"
+            )
 
     ssh_run(hostname,
             "helm upgrade -i milvus {}/milvus --namespace {} --create-namespace "
@@ -126,7 +137,7 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
-    if appco.from_appcollection(cfg, "milvus"):
+    if appco.from_appcollection(cfg, "milvus", appco.SOURCE_APPCOLLECTION):
         creds = ac.resolve_credential(cfg, "appcollection", {
             "milvus_appcollection_user": "appcollection_user",
             "milvus_appcollection_password": "appcollection_password",
@@ -143,7 +154,7 @@ def main():
     else:
         setup_milvus_repo(vm_name, milvus_rel=cfg.get("milvus_rel"), milvus_repo_url=cfg.get("milvus_repo_url"))
     setup_milvus(vm_name, milvus_rel=repo or cfg.get("milvus_rel"), milvus_ns=cfg.get("milvus_ns"),
-                 extra_set=extra_set,
+                 extra_set=extra_set, from_appcollection=bool(repo),
                  milvus_version=cfg.get("milvus_version"), milvus_cluster=cfg.get("milvus_cluster"))
 
 

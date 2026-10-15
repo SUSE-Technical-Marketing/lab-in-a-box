@@ -366,17 +366,20 @@ and, when it is true, call <code>appco_common.prepare_appcollection_chart(host, 
 like every other external-service credential (<code>&lt;prefix&gt;_appcollection_user</code>/<code>_password</code>,
 or <code>_account</code> naming a credential file of kind <code>appcollection</code>).
 <code>scripts/install_longhorn</code> is the worked example (SUSE Storage, slug <code>suse-storage</code>).</p>
-<p>Eight add-ons offer the Collection today. For <code>argocd</code>, <code>coredns</code>, <code>fluentd</code>,
-<code>harbor</code>, <code>ollama</code>, <code>open_webui</code> and <code>traefik</code> it is the
-<strong>default</strong>, so those labs need an Application Collection account unless they set
-<code>&lt;prefix&gt;_source: "upstream"</code>; each of those add-ons is at schema 2.0 with a migration that writes
-that setting into a lab that relied on the old default. For <code>longhorn</code> and <code>milvus</code> it is opt
-in: Longhorn's Collection chart has not been run yet, and the Collection's milvus chart has no <code>pulsarv3</code>
-key and its <code>minio</code> has no <code>mode</code>, so that add-on's standalone-mode flags do not apply to it.
-Before flipping an add-on's default, check the Collection's chart really accepts the <code>--set</code> paths the
-add-on passes: <code>helm show values oci://dp.apps.rancher.io/charts/&lt;slug&gt;</code> after a
-<code>helm registry login</code>. Neither chart carries a <code>values.schema.json</code>, so a flag that no longer
-matches is accepted in silence instead of failing.</p>
+<p>Nine add-ons install from the Collection <strong>by default</strong>: <code>argocd</code>,
+<code>coredns</code>, <code>fluentd</code>, <code>harbor</code>, <code>longhorn</code>, <code>milvus</code>,
+<code>ollama</code>, <code>open_webui</code> and <code>traefik</code>. Those labs need an Application Collection
+account unless they set <code>&lt;prefix&gt;_source: "upstream"</code>, and each of those add-ons is at schema 2.0
+with a migration that writes that setting into a lab which relied on the old default. <code>install_milvus</code>
+shows what a second source can cost: standalone mode is configured differently by the two charts, since the
+Collection's carries its own message queue (<code>standalone.messageQueue</code>) and has neither
+<code>pulsarv3</code> nor <code>minio.mode</code>, so the add-on passes a different set of flags for each.</p>
+<p>Before flipping an add-on's default, check that the Collection's chart really accepts the <code>--set</code>
+paths the add-on passes: <code>helm show values oci://dp.apps.rancher.io/charts/&lt;slug&gt;</code> after a
+<code>helm registry login</code>. These charts carry no <code>values.schema.json</code>, so a flag that no longer
+matches is accepted in silence instead of failing. Two products were ruled out for shape rather than values:
+<code>istio</code> installs three charts upstream where the Collection has one, and the only observability entry
+there is the SUSE AI observability extension, not SUSE Observability itself.</p>
 <p>Use the helpers in <code>libs/lab_creation.py</code> to work on nodes: <code>ssh_run(host, cmd)</code>, <code>setup_helm(host, clu_name)</code>, <code>helm_repo_add(host, name, url)</code>, <code>die(msg)</code>; and <code>versions.helm_version_flag(value)</code> for a chart version field.</p>
 <h2 id="writing-it-in-another-language">Writing it in another language</h2>
 <p>Any executable works: it implements the commands of <a href="#the-contract">the contract</a> itself and prints the schema JSON. See <code>examples/addons/install_example_motd.sh</code>, which uses <code>jq</code> (a dependency of the automation VM) to read the lab definition.</p>

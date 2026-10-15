@@ -94,13 +94,16 @@ def _validate_out(section):
     return r.returncode, r.stdout
 
 
+# With the Collection as the default, a lab that says nothing needs an account: this container has no credential
+# store, so the add-on must say which fields it wants rather than pass silently.
 rc, out = _validate_out({})
-check("a lab that says nothing about the source is valid", rc == 0 and out.strip() == "")
+check("a lab that says nothing about the source asks for the account the default needs",
+      rc != 0 and "lh_appcollection_user" in out)
 rc, out = _validate_out({"lh_source": "nonsense"})
 check("an unknown source is an error naming the valid ones",
       rc != 0 and "lh_source 'nonsense' is invalid" in out and "upstream, appcollection" in out)
 rc, out = _validate_out({"lh_source": "upstream", "lh_version": "1.12.1"})
-check("the upstream source needs no account", rc == 0)
+check("the upstream source needs no account", rc == 0 and out.strip() == "")
 
 # ── the schema says so ──────────────────────────────────────────────────────
 schema = json.loads(subprocess.run([sys.executable, str(_REPO / "scripts" / "install_longhorn"),
@@ -120,10 +123,9 @@ check("lh_source is documented as optional", not source_field.get("required"))
 # ── the add-ons whose product the Collection carries ────────────────────────
 # Each one's chart was checked against the --set flags it passes (2026-10-15) before its default was flipped.
 FLIPPED = {"argocd": "argo-cd", "coredns": "coredns", "fluentd": "fluentd", "harbor": "harbor",
-           "ollama": "ollama", "open_webui": "open-webui", "traefik": "traefik-proxy"}
-# milvus can install from the Collection but keeps the upstream default: the Collection's chart has no pulsarv3
-# key and its minio has no mode, so this add-on's standalone-mode flags would silently not apply.
-OPT_IN = {"milvus": "milvus", "longhorn": "suse-storage"}
+           "ollama": "ollama", "open_webui": "open-webui", "traefik": "traefik-proxy",
+           "milvus": "milvus", "longhorn": "suse-storage"}
+OPT_IN = {}
 PREFIX = {"longhorn": "lh"}
 
 for addon, slug in sorted(list(FLIPPED.items()) + list(OPT_IN.items())):
@@ -157,8 +159,29 @@ for addon, slug in sorted(list(FLIPPED.items()) + list(OPT_IN.items())):
           out.returncode != 0 and "{}_source 'nope' is invalid".format(prefix) in out.stdout)
     Path(fh.name).unlink()
 
+
+# ── milvus configures standalone mode per chart ─────────────────────────────
+# zilliztech/milvus-helm puts MinIO in standalone mode and turns Pulsar off. The Collection's chart has neither
+# key: its standalone deployment carries its own message queue, so the single-replica subcharts are what to set.
+mv = apps.load_addon_module("install_milvus", str(_REPO / "scripts"))
+for from_collection, expected, absent in ((False, {"minio.mode=standalone", "pulsarv3.enabled=false"},
+                                           {"minio.replicas=1", "kafka.enabled=false"}),
+                                          (True, {"minio.replicas=1", "kafka.enabled=false"},
+                                           {"minio.mode=standalone", "pulsarv3.enabled=false"})):
+    seen = []
+    with mock.patch.object(mv, "ssh_run", side_effect=lambda h, c, **k: seen.append(c)):
+        mv.setup_milvus("n1", milvus_rel=appco.oci_charts() if from_collection else None,
+                        from_appcollection=from_collection)
+    helm = next(c for c in seen if "helm upgrade" in c)
+    flags = {f.split()[0] for f in helm.split("--set ")[1:]}
+    which = "the Collection's chart" if from_collection else "the upstream chart"
+    check("milvus: standalone mode is configured for {}".format(which), expected <= flags)
+    check("milvus: the other chart's keys are not passed to {}".format(which), not (absent & flags))
+    check("milvus: cluster.enabled is set once, not twice", len(helm.split("--set cluster.enabled")) == 2)
+
 # ── a flipped add-on is breaking, so its migration keeps an old lab working ──
 for addon in sorted(FLIPPED):
+    prefix = PREFIX.get(addon, addon)
     entries = [e for e in record.get("addon:" + addon, []) if e.get("version") == "2.0"]
     check("{}: 2.0 is recorded as breaking with its migration".format(addon),
           len(entries) == 1 and entries[0].get("breaking") is True
@@ -170,11 +193,11 @@ for addon in sorted(FLIPPED):
     lab = {"kclusters": {"c1": {"addons": [addon]}}, "nodes": {}}
     changes = step(lab)
     check("{}: the migration writes the source the lab meant".format(addon),
-          changes and lab[addon]["{}_source".format(addon)] == "upstream")
+          changes and lab[addon]["{}_source".format(prefix)] == "upstream")
     check("{}: running it again changes nothing".format(addon), step(lab) == [])
     # a lab that names a source keeps it, and one that does not use the add-on is untouched
     named = {"kclusters": {"c1": {"addons": [addon]}}, "nodes": {},
-             addon: {"{}_source".format(addon): "appcollection"}}
+             addon: {"{}_source".format(prefix): "appcollection"}}
     check("{}: a lab that already names a source is left alone".format(addon), step(named) == [])
     unused = {"kclusters": {"c1": {"addons": ["rancher"]}}, "nodes": {}}
     check("{}: a lab that does not use it is untouched".format(addon),

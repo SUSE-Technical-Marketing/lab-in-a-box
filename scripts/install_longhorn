@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 2.0
 #
 # JSON section: "longhorn" — SUSE Longhorn distributed block storage
 #
@@ -68,7 +68,7 @@ def _validate(v):
     v.vver("longhorn")
     v.vurl("longhorn")
     cfg = v.definition.get("longhorn", {}) or {}
-    source = str(cfg.get("lh_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    source = str(cfg.get("lh_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
     if source not in appco.SOURCES:
         v.errors.append("[ERROR] longhorn.lh_source '{}' is invalid — use one of: {}".format(
             source, ", ".join(appco.SOURCES)))
@@ -168,7 +168,7 @@ def main():
     # setup_lh_repo (neither references any rancher_* variable); not ported.
     setup_helm(vm_name, clu_name, online=online)
     chart, extra_set = "", ""
-    if appco.from_appcollection(cfg, "lh"):
+    if appco.from_appcollection(cfg, "lh", appco.SOURCE_APPCOLLECTION):
         # SUSE Storage, the same product, from the SUSE Application Collection's OCI chart. It needs an account, so
         # the credential is resolved the same way every other external-service credential is.
         creds = ac.resolve_credential(cfg, "appcollection", {

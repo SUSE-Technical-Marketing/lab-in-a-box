@@ -147,7 +147,8 @@
   ],
   "addon:longhorn": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "lh_source: install SUSE Storage from the SUSE Application Collection instead of the upstream chart, with lh_appcollection_user/password/account for it"}
+   {"version": "1.1", "breaking": false, "changes": "lh_source: install SUSE Storage from the SUSE Application Collection instead of the upstream chart, with lh_appcollection_user/password/account for it"},
+   {"version": "2.0", "breaking": true, "changes": "SUSE Storage comes from the SUSE Application Collection unless lh_source says otherwise, with lh_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs lh_source \"upstream\", which the migration writes.", "migration": "longhorn_2_0"}
   ],
   "addon:mailman": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -166,7 +167,8 @@
   "addon:milvus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
-   {"version": "1.2", "breaking": false, "changes": "milvus_source: install from the SUSE Application Collection instead of the upstream chart. Opt in: the Collection's chart has no pulsarv3 key and its minio has no mode, so this add-on's standalone-mode flags do not apply to it yet."}
+   {"version": "1.2", "breaking": false, "changes": "milvus_source: install from the SUSE Application Collection instead of the upstream chart. Opt in: the Collection's chart has no pulsarv3 key and its minio has no mode, so this add-on's standalone-mode flags do not apply to it yet."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless milvus_source says otherwise, and standalone mode is configured per chart: the Collection's has no pulsarv3 key and no minio.mode, so its single-replica subcharts and kafka.enabled are set instead. Breaking: a lab that relied on the upstream chart by saying nothing now needs milvus_source \"upstream\", which the migration writes.", "migration": "milvus_2_0"}
   ],
   "addon:mistral": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

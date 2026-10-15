@@ -201,7 +201,7 @@ def open_ports_2_0(definition: dict) -> list:
     return changes
 
 
-def _appcollection_default_2_0(name: str):
+def _appcollection_default_2_0(name: str, prefix: str = ""):
     """
     The step for an add-on whose chart now comes from the SUSE Application Collection by default. It writes
     "<name>_source": "upstream" into a lab that uses the add-on without saying where its chart comes from, which is
@@ -209,7 +209,7 @@ def _appcollection_default_2_0(name: str):
     names a source keeps it. The section is created when the lab uses the add-on with no section of its own,
     because leaving it absent is what would silently move it to the Collection.
     """
-    key = "{}_source".format(name)
+    key = "{}_source".format(prefix or name)
 
     def step(definition: dict) -> list:
         used = isinstance(definition.get(name), dict)
@@ -246,6 +246,8 @@ MIGRATIONS = {
     "keycloak_2_0": keycloak_2_0,
     "kimi_2_0": _litellm_2_0("kimi"),
     "linkerd_2_0": linkerd_2_0,
+    "longhorn_2_0": _appcollection_default_2_0("longhorn", "lh"),
+    "milvus_2_0": _appcollection_default_2_0("milvus"),
     "ollama_2_0": _appcollection_default_2_0("ollama"),
     "open_ports_2_0": open_ports_2_0,
     "open_webui_2_0": _appcollection_default_2_0("open_webui"),
