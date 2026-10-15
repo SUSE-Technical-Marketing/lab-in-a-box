@@ -16,6 +16,9 @@ const API = "api";
 
 // ---- schema vocabulary (the only fixed convention) -------------------------
 const STRUCTURAL = new Set(["fields", "sections"]);        // containers, not output keys
+// Keys of a schema that describe the add-on rather than configure it: they carry no fields, so rendering them as
+// form groups left a heading with nothing under it. The dialog shows the layers as badges instead.
+const SCHEMA_METADATA = new Set(["capabilities"]);
 const META_SCALAR = new Set(["schema_version", "addon", "section",
   "component", "description", "repeatable", "key_label", "name", "type",
   "required", "default"]);
@@ -1019,6 +1022,7 @@ function walk(node, parent, outPath) {
 
   for (const [key, val] of Object.entries(node)) {
     if (!val || typeof val !== "object") continue;      // skip scalar meta
+    if (SCHEMA_METADATA.has(key)) continue;            // describes the add-on, not a setting
     if (STRUCTURAL.has(key)) { walk(val, parent, outPath); continue; }  // wrapper: no output key
     if (val.repeatable === true) {                                      // keyed map of instances
       parent.appendChild(repeatGroup(key, val, outPath.concat(key)));
@@ -1033,6 +1037,8 @@ function walk(node, parent, outPath) {
     box.appendChild(body);
     parent.appendChild(box);
     walk(val, body, outPath.concat(key));
+    // A group that turned out to hold no field is not shown at all: a heading with nothing under it says nothing.
+    if (!body.childNodes.length) parent.removeChild(box);
   }
 }
 

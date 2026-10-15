@@ -7,8 +7,25 @@ const fs = require("fs");
 const vm = require("vm");
 
 const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
+// Enough of an element for the schema renderer to build a tree and for the test to read it back: walk() only
+// creates elements, sets a class or text, appends and (for an empty group) removes.
+function makeElement(tag) {
+  return {
+    tagName: String(tag).toUpperCase(), className: "", textContent: "", childNodes: [], dataset: {},
+    get childElementCount() { return this.childNodes.length; },
+    appendChild(child) { this.childNodes.push(child); return child; },
+    removeChild(child) { this.childNodes = this.childNodes.filter((c) => c !== child); return child; },
+    setAttribute() {}, addEventListener() {},
+    querySelectorAll: () => [], querySelector: () => null,
+  };
+}
+
 const sandbox = {
-  document: { querySelectorAll: () => [], addEventListener: () => {} },
+  document: {
+    querySelectorAll: () => [], addEventListener: () => {}, createElement: makeElement,
+    createTextNode: (text) => ({ nodeType: 3, textContent: String(text), childNodes: [] }),
+    createDocumentFragment: () => makeElement("fragment"),
+  },
   window: { addEventListener: () => {} },
   console, URL, URLSearchParams, TextDecoder, atob,
 };
@@ -496,6 +513,43 @@ async function urlParamChecks() {
   check("a VM outside a cluster is not offered the Kubernetes fields",
     sandbox.shownFields(fields, sandbox.structuralCfg(loose)).length === 1);
   st.model.items = saved;
+}
+
+// -- walk(): an add-on's schema rendered as a form ------------------------
+// A schema's "capabilities" object describes the add-on; it holds no fields, so rendering it left a group heading
+// with nothing under it for targets, layers, aux_services and versions.
+{
+  const headings = (node) => {
+    const out = [];
+    const visit = (e) => {
+      if (e.className === "group-head") out.push(e.childNodes.length ? e.textContent : e.textContent);
+      (e.childNodes || []).forEach(visit);
+    };
+    (node.childNodes || []).forEach(visit);
+    return out;
+  };
+  const schema = {
+    section: "demo", description: "A demo add-on",
+    fields: [{ name: "demo_port", type: "port" }],
+    capabilities: { targets: ["container"], layers: ["kubernetes"], requires_kubernetes: ["rke2"],
+                    aux_services: [], versions: { demo_version: [{ version: "1.0" }] }, check: true },
+  };
+  const form = makeElement("div");
+  sandbox.walk(schema, form, []);
+  check("the capabilities block renders no headings at all", headings(form).length === 0);
+  check("the add-on's own field is still rendered", form.childNodes.length === 1);
+
+  // A group that does hold a field keeps its heading.
+  const grouped = { fields: [], pxe: { description: "PXE", fields: [{ name: "pxe_bridge", type: "string" }] } };
+  const form2 = makeElement("div");
+  sandbox.walk(grouped, form2, []);
+  check("a group with a field keeps its heading", headings(form2).includes("pxe"));
+
+  // A group whose fields are all hidden renders nothing, so no bare heading is left behind.
+  const hiddenOnly = { fields: [], legacy: { description: "old", fields: [{ name: "old_key", type: "string", hidden: true }] } };
+  const form3 = makeElement("div");
+  sandbox.walk(hiddenOnly, form3, []);
+  check("a group whose only field is hidden is dropped, heading and all", form3.childNodes.length === 0);
 }
 
 urlParamChecks().then(() => {
