@@ -14,9 +14,9 @@
 # the conversation history, memory, skills and session database. The dashboard uses basic authentication by default, because the project
 # warns against an unauthenticated bind on a non-loopback address.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "hermes"
+# JSON section: "hermes" — Hermes Agent
 #   hermes_registry               : [MANDATORY] registry to push the built image to, for example registry.mydemo.lab or the registry of the
 #                                   harbor addon. The automation VM must reach it to push, and the cluster must reach it to pull.
 #   hermes_git_ref                : git ref of NousResearch/hermes-agent to build (default: main). The project has no tagged releases, so

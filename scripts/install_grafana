@@ -14,9 +14,9 @@
 #            using the datasource name it provisions and the job name from install_prometheus's
 #            scrape config.)
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "grafana" ─────────────────────────────────────────────────
+# ─── JSON section: "grafana" — Standalone Grafana server (podman container, no Kubernetes)
 #
 # OPTIONAL
 #   grafana_version            : container image tag                (default: "latest")

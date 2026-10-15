@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "kimi" — configurable keys:
+# JSON section: "kimi" — Moonshot AI Kimi API proxy (LiteLLM)
 #   kimi_api_key    : [MANDATORY] Moonshot AI API key (from https://platform.moonshot.ai)
 #   kimi_model      : [OPTIONAL] default model (default: moonshot/kimi-k3)
 #                      Examples: moonshot/kimi-k2.6 (cheaper), moonshot/kimi-k2.7-code (coding-focused),

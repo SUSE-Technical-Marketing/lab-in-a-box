@@ -14,9 +14,9 @@
 # (389) and LDAPS (636). No Ingress is used, because LDAP is not HTTP. The OpenShift-specific parts of the guide, the SCC grant and the
 # dedicated ServiceAccount, are omitted, because Security Context Constraints do not exist on plain Kubernetes.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "ds389"
+# JSON section: "ds389" — 389 Directory Server (LDAP)
 #   ds389_ns              : Kubernetes namespace (default: ds389)
 #   ds389_name            : StatefulSet and Service base name (default: dirsrv)
 #   ds389_image           : container image (default: quay.io/389ds/dirsrv:latest). The c9s tag is the CentOS Stream 9 based alternative.

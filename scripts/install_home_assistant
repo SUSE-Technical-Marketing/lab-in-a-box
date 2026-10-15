@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "home_assistant"
+# JSON section: "home_assistant" — Home Assistant home-automation platform
 #   home_assistant_version : Helm chart version (empty = latest, which follows Home Assistant's releases through the chart's CI)
 #   home_assistant_ns      : namespace (default: home-assistant)
 #   home_assistant_shorthn : hostname prefix (default: home-assistant)

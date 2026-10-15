@@ -131,13 +131,18 @@ with mock.patch.object(sc, "ensure_salt_state", side_effect=lambda h, e, name, *
 check("a lab with no salt states runs nothing", calls == [])
 
 # ── both add-ons expose it ──────────────────────────────────────────────────
-for addon, prefix, version in (("smlm", "smlm", "1.4"), ("uyuni", "uyuni", "1.2")):
+record = json.loads((_REPO / "schemas" / "compatibility.json").read_text())["schemas"]
+for addon, prefix in (("smlm", "smlm"), ("uyuni", "uyuni")):
     schema = json.loads(subprocess.run([sys.executable, str(_REPO / "scripts" / ("install_" + addon)),
                                         "--schema", "json"], stdout=subprocess.PIPE,
                                        universal_newlines=True).stdout)
     names = [f["name"] for f in schema["fields"]]
     check("{}: the field is in its schema".format(addon), "{}_salt_states".format(prefix) in names)
-    check("{}: its schema version was raised to {}".format(addon, version), schema["schema_version"] == version)
+    # The exact version is not pinned here: any later change to the add-on raises it again. What must hold is that
+    # the schema change was RECORDED, which is what schemas/compatibility.json is for.
+    check("{}: the schema change is recorded".format(addon),
+          any("{}_salt_states".format(prefix) in e.get("changes", "")
+              for e in record.get("addon:" + addon, [])))
     source = (_REPO / "scripts" / ("install_" + addon)).read_text()
     check("{}: the provisioning step runs it".format(addon),
           'rps("salt states", sc.ensure_salt_states, hostname, exec_prefix, cfg, "{}")'.format(prefix) in source)

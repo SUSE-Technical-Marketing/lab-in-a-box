@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "deepseek" — configurable keys:
+# JSON section: "deepseek" — DeepSeek model, served via Ollama
 #   deepseek_model      : [OPTIONAL] DeepSeek model tag (default: deepseek-r1:7b)
 #                         Examples: deepseek-r1:7b, deepseek-r1:14b, deepseek-coder-v2
 #   deepseek_ns         : [OPTIONAL] Ollama namespace to pull into (default: ollama)

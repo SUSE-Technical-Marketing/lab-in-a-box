@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "qwen" — configurable keys:
+# JSON section: "qwen" — Qwen2.5 model, served via Ollama
 #   qwen_model      : [OPTIONAL] Qwen model tag (default: qwen2.5:7b)
 #                     Examples: qwen2.5:0.5b, qwen2.5:14b, qwen2.5:32b, qwen2.5:72b,
 #                     qwen2.5-coder:7b (coding-focused variant)

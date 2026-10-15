@@ -8,9 +8,9 @@
 #   OS mode         : script is called as a nodes addon     → clu_name env var is empty
 #   Override either mode by setting postgresql_mode = "kubernetes" or "os" in the JSON.
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# ─── JSON section: "postgresql" ────────────────────────────────────────────────
+# ─── JSON section: "postgresql" — PostgreSQL database
 #
 # SHARED (both modes)
 #   postgresql_mode       : [OPTIONAL] Where to run Postgres (default: auto) (options: auto, kubernetes, os)

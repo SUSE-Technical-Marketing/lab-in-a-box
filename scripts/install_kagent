@@ -4,9 +4,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "kagent" — configurable keys:
+# JSON section: "kagent" — Framework for AI agents on Kubernetes, with a web UI
 #   kagent_version      : [OPTIONAL] chart version of both kagent-crds and kagent (empty = latest)
 #   kagent_ns           : [OPTIONAL] namespace (default: kagent-system)
 #   kagent_shorthn      : [OPTIONAL] hostname prefix of the web UI (default: kagent)

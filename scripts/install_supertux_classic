@@ -6,9 +6,9 @@
 # Project: https://github.com/Alzter/SuperTux-Classic (a from-scratch Godot remake of SuperTux
 # Milestone 1), also listed at https://alzter-s.itch.io/supertux-classic
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "supertux_classic" — configurable keys:
+# JSON section: "supertux_classic" — SuperTux Classic, a self-hosted open-source Godot platformer
 #   supertux_classic_ns      : [OPTIONAL] namespace (default: supertux-classic)
 #   supertux_classic_shorthn : [OPTIONAL] hostname prefix for ingress (default: supertux-classic)
 #   supertux_classic_version : [OPTIONAL] release tag to fetch (default: v0.4.2)

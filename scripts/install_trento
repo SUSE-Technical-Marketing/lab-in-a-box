@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "trento" — configurable keys:
+# JSON section: "trento" — SAP infrastructure monitoring
 #   trento_version       : [OPTIONAL] trento-server chart version (empty = latest, e.g. "3.1.5")
 #   trento_chart         : [OPTIONAL] trento-server chart (default: oci://registry.suse.com/trento/trento-server)
 #   trento_ns            : [OPTIONAL] namespace (default: trento)

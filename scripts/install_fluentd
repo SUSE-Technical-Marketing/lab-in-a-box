@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "fluentd" — configurable keys:
+# JSON section: "fluentd" — Log aggregation
 #   fluentd_version     : Helm chart version (empty = latest, e.g. "0.5.2")
 #   fluentd_ns          : namespace (default: fluentd)
 #   fluentd_rel         : Helm repo alias (default: fluent)

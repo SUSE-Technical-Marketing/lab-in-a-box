@@ -6,9 +6,9 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/server-kubernetes-deployment.html
 #
-# Schema version: 1.4
+# Schema version: 1.5
 #
-# ─── JSON section: "smlm" ───────────────────────────────────────────────────────
+# ─── JSON section: "smlm" — SUSE Multi-Linux Manager server
 #
 # Deployment mode
 #   smlm_deployment        : "kubernetes" installs the Helm chart on the first server node of a
@@ -166,6 +166,19 @@
 #                            "name", "kickstart_profile" (name of a smlm_kickstart_profiles entry),
 #                            "memory_mb" (2048), "vcpus" (2), "disk_gb" (20)}]
 #
+#
+# Custom Salt states and formulas (installed into the server's own persistent volumes)
+#   smlm_salt_states       : [{"name", "url" | "rpm", "sha256", "formula"}]
+#                            Custom Salt states put in /srv/salt/<name>, the one location a server upgrade keeps.
+#                            "url" is a tarball (.tar.gz, .tgz, .tar.bz2, .tar.xz) unpacked there, or a single .sls
+#                            written as its init.sls; "rpm" is a Salt-formula RPM, fetched and unpacked (never
+#                            installed, since /usr/share/salt-formulas is not a volume) with its
+#                            salt-formulas/states/<name> and, for a formula, salt-formulas/metadata/<name>.
+#                            "sha256" is checked before anything is unpacked. "formula": true also installs the
+#                            form.yml metadata in /srv/formula_metadata/<name>, so the server offers it under
+#                            Formulas. Idempotent: the source is stamped in the installed directory and a re-run
+#                            with the same source changes nothing. Use a state through a state config channel's
+#                            init_sls, a recurring action's "states" or a formula assignment.
 # Organizations (created after the above; each has its own admin session for scoped provisioning)
 #   smlm_orgs              : [{"name", "admin_user", "admin_pass", "admin_email", "admin_first_name",
 #                            "admin_last_name", "prefix", "pam" (false), "trust_with": ["other-org", ...],
@@ -435,6 +448,7 @@ import spacecmd_common as sc  # noqa: E402
 from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log  # noqa: E402
 
 
+_SALT_STATE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _BOOTSTRAP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -579,6 +593,21 @@ def _validate(v):
     v.vbool("smlm", "smlm_preinstalled")
     v.vbool("smlm", "smlm_byos")
     v.vbool("smlm", "smlm_salt_auto_accept")
+    for entry in cfg.get("smlm_salt_states") or []:
+        if not isinstance(entry, dict) or not _SALT_STATE_NAME_RE.match(str(entry.get("name", ""))):
+            v.errors.append("[ERROR] smlm.smlm_salt_states: every entry needs a 'name' of letters, digits, "
+                            "'.', '_' and '-' (it is the directory under /srv/salt)")
+            continue
+        if bool(entry.get("url")) == bool(entry.get("rpm")):
+            v.errors.append("[ERROR] smlm.smlm_salt_states[{}]: set exactly one of 'url' and "
+                            "'rpm'".format(entry.get("name")))
+        for key in ("url", "rpm"):
+            if entry.get(key) and not str(entry[key]).startswith(("http://", "https://")):
+                v.errors.append("[ERROR] smlm.smlm_salt_states[{}].{}: must be an http(s) URL".format(
+                    entry.get("name"), key))
+        if entry.get("sha256") and not re.match(r"^[0-9a-fA-F]{64}$", str(entry["sha256"])):
+            v.errors.append("[ERROR] smlm.smlm_salt_states[{}].sha256: must be 64 hex characters".format(
+                entry.get("name")))
     for entry in cfg.get("smlm_bootstrap_scripts") or []:
         if not isinstance(entry, dict) or not entry.get("url") or not _BOOTSTRAP_NAME_RE.match(str(entry.get("name", ""))):
             v.errors.append("[ERROR] smlm.smlm_bootstrap_scripts: every entry needs a plain file "
@@ -888,6 +917,7 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             rps("vhm credentials", _resolve_and_fill_vhm_credentials, cfg, virtual_host_managers)
         rps("channels sync", sc.ensure_channels_synced, hostname, exec_prefix, sync_channels)
         rps("config channels", sc.ensure_config_channels, hostname, exec_prefix, cfg, "smlm")
+        rps("salt states", sc.ensure_salt_states, hostname, exec_prefix, cfg, "smlm")
         # System groups are created before any activation key. The key's groups are linked with activationkey_addgroups,
         # which fails when a named group does not exist on the server yet.
         rps("monitoring", sc.ensure_monitoring, hostname, exec_prefix, cfg, "smlm")

@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "mailman"
+# JSON section: "mailman" — GNU Mailman 3 mailing-list management + web interface
 #   mailman_ns          : namespace (default: mailman)
 #   mailman_shorthn     : hostname prefix for the mailman-web ingress (default: mailman)
 #   mailman_version     : tag of the maxking/mailman-core and mailman-web images (default: 0.5)

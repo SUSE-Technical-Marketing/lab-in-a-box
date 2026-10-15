@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "keycloak" — configurable keys:
+# JSON section: "keycloak" — Identity and access management
 #   keycloak_version    : [OPTIONAL] keycloakx chart version (empty = latest, e.g. "7.3.2")
 #   keycloak_ns         : [OPTIONAL] namespace (default: keycloak)
 #   keycloak_shorthn    : [OPTIONAL] hostname prefix (default: keycloak)

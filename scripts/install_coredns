@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "coredns" — configurable keys:
+# JSON section: "coredns" — Cluster DNS
 #   coredns_version     : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.29.0")
 #   coredns_ns          : [OPTIONAL] namespace (default: coredns)
 #   coredns_rel         : [OPTIONAL] Helm repo alias (default: coredns)

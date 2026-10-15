@@ -15,9 +15,9 @@
 #   secret. Euro-Office (ibeacon-projekt/eurooffice-nextcloud, app id eurooffice) is a separate fork with the same integration shape.
 #   Nextcloud AIO is not used. The podman mode deploys the official nextcloud, mariadb and redis images directly.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "nextcloud"
+# JSON section: "nextcloud" — Nextcloud
 #   nextcloud_deployment : "podman" runs standalone containers on a host, and it is the only mode that supports nextcloud_airgap.
 #                          "kubernetes" installs the Helm chart. (default: podman)
 #

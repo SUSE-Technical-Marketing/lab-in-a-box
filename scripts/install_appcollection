@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "appcollection" — configurable keys:
+# JSON section: "appcollection" — SUSE Application Collection
 #   appcollection_user      : [MANDATORY] SUSE Application Collection user (https://apps.rancher.io, profile), or a service
 #                             account's user; may come from appcollection_account instead
 #   appcollection_password  : [MANDATORY] its access token; may come from appcollection_account instead

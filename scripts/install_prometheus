@@ -7,9 +7,9 @@
 # References: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
 #            https://documentation.suse.com/multi-linux-manager/5.2/en/docs/administration/monitoring.html
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "prometheus" ─────────────────────────────────────────────
+# ─── JSON section: "prometheus" — Standalone Prometheus server (podman container, no Kubernetes)
 #
 # OPTIONAL
 #   prometheus_version         : container image tag (default: "latest")

@@ -1,0 +1,61 @@
+{
+ "fields": {
+  "postgresql_db": {
+   "default": "postgres",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_image": {
+   "default": "registry.suse.com/suse/postgres",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_listen": {
+   "default": "*",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_mode": {
+   "default": "auto",
+   "enum": [
+    "auto",
+    "kubernetes",
+    "os"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_ns": {
+   "default": "postgresql",
+   "required": false,
+   "type": "namespace"
+  },
+  "postgresql_password": {
+   "default": "postgres123",
+   "required": false,
+   "type": "password"
+  },
+  "postgresql_pg_version": {
+   "default": "16",
+   "required": false,
+   "type": "version"
+  },
+  "postgresql_port": {
+   "default": "5432",
+   "required": false,
+   "type": "port"
+  },
+  "postgresql_storage": {
+   "default": "8Gi",
+   "required": false,
+   "type": "string"
+  },
+  "postgresql_user": {
+   "default": "postgres",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:postgresql",
+ "version": "2.1"
+}

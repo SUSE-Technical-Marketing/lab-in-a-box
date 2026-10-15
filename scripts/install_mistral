@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "mistral" — configurable keys:
+# JSON section: "mistral" — Mistral model, served via Ollama
 #   mistral_model   : [OPTIONAL] Mistral model tag, the Apache-2.0 licensed 7B v0.3 model by default
 #                     (default: mistral)
 #                     Examples: mistral:7b-instruct, mixtral (the larger MoE variant)

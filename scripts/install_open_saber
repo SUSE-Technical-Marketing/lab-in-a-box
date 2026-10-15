@@ -6,9 +6,9 @@
 # Project: https://github.com/leandrodreamer/BeepSaber, also listed at
 # https://leandrodreamer.itch.io/open-saber
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "open_saber" — configurable keys:
+# JSON section: "open_saber" — Open Saber, a self-hosted open-source rhythm/block-cutting game
 #   open_saber_ns      : [OPTIONAL] namespace (default: open-saber)
 #   open_saber_shorthn : [OPTIONAL] hostname prefix for ingress (default: open-saber)
 #   open_saber_version : [OPTIONAL] release tag to fetch (default: v0.5.0)

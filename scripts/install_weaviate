@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "weaviate" — configurable keys:
+# JSON section: "weaviate" — Weaviate vector database (RAG/embedding search)
 #   weaviate_version  : [OPTIONAL] Helm chart version (empty = latest)
 #   weaviate_ns       : [OPTIONAL] namespace (default: weaviate)
 #   weaviate_rel      : [OPTIONAL] Helm repo alias (default: weaviate)

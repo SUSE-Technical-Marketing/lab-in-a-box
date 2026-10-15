@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "mediagoblin" — configurable keys:
+# JSON section: "mediagoblin" — GNU MediaGoblin federated media-publishing platform
 #   mediagoblin_ns             : [OPTIONAL] namespace (default: mediagoblin)
 #   mediagoblin_shorthn        : [OPTIONAL] hostname prefix for ingress (default: mediagoblin)
 #   mediagoblin_version        : [OPTIONAL] mediagoblin/mediagoblin image tag (default: latest)

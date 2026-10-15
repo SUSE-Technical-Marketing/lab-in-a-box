@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "stackpack" — configurable keys:
+# JSON section: "stackpack" — StackState monitoring integration
 #   stackpack_api_key         : [MANDATORY] StackState API key for this cluster
 #   stackpack_url             : [MANDATORY] StackState receiver URL
 #                               (e.g. https://stackstate.mydemo.lab:8080/receiver/sinks/topology)

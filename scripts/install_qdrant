@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "qdrant" — configurable keys:
+# JSON section: "qdrant" — Qdrant vector database (RAG/embedding search)
 #   qdrant_version    : [OPTIONAL] Helm chart version (empty = latest)
 #   qdrant_ns         : [OPTIONAL] namespace (default: qdrant)
 #   qdrant_rel        : [OPTIONAL] Helm repo alias (default: qdrant)

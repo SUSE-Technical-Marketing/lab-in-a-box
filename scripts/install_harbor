@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "harbor" — configurable keys:
+# JSON section: "harbor" — Container registry
 #   harbor_version       : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.15.0")
 #   harbor_ns            : [OPTIONAL] namespace (default: harbor)
 #   harbor_shorthn       : [OPTIONAL] hostname prefix (default: harbor)

@@ -15,9 +15,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "ansible_control_node" — configurable keys:
+# JSON section: "ansible_control_node" — Provisions a real Ansible control node
 #   ansible_control_node_playbook_dir  : [OPTIONAL] where example/pushed playbooks land
 #                                         (default: /srv/ansible/playbooks)
 #   ansible_control_node_inventory_dir : [OPTIONAL] where the dynamic inventory script

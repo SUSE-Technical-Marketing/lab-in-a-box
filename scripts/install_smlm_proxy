@@ -5,9 +5,9 @@
 #
 # Reference: https://documentation.suse.com/multi-linux-manager/5.2/en/docs/specialized-guides/kubernetes-guide/proxy-kubernetes-deployment.html
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "smlm_proxy" ─────────────────────────────────────────────────
+# ─── JSON section: "smlm_proxy" — SMLM proxy
 #
 # MANDATORY
 #   smlm_proxy_fqdn         : Fully-qualified domain name for the proxy

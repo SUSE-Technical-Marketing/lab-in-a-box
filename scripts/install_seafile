@@ -39,9 +39,9 @@
 # companion database's bind-address is therefore opened to 0.0.0.0, not left at
 # the loopback-only default install_nextcloud uses with --network host.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "seafile" ────────────────────────────────────────────────────
+# ─── JSON section: "seafile" — Seafile
 #
 #   seafile_deployment    : "podman" = a standalone deployment directly on a
 #                            host/VM, no Kubernetes. "kubernetes" = the real official Helm chart. (default: podman)

@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "apertus" — configurable keys:
+# JSON section: "apertus" — Apertus (Swiss AI Initiative) model, served via Ollama
 #   apertus_tag         : [OPTIONAL] Ollama model tag; the default is a ~5.1GB quantized build, practical
 #                         for lab hardware (default: 8b-instruct-2509-q4_k_m)
 #                         Other options: 8b-instruct-2509-bf16 (~16GB, full precision), 70b-instruct-

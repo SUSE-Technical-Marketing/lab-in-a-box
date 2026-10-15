@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "kubewarden" — configurable keys:
+# JSON section: "kubewarden" — Kubernetes policy engine
 #   kubewarden_version  : [OPTIONAL] Helm chart version (empty = latest, e.g. "2.0.0")
 #   kubewarden_ns       : [OPTIONAL] namespace (default: kubewarden)
 #   kubewarden_rel      : [OPTIONAL] Helm repo alias (default: kubewarden)

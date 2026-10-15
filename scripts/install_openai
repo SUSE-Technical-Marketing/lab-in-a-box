@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "openai" — configurable keys:
+# JSON section: "openai" — OpenAI API proxy (LiteLLM)
 #   openai_api_key   : [MANDATORY] OpenAI API key (from https://platform.openai.com)
 #   openai_model     : [OPTIONAL] default model (default: openai/gpt-5)
 #                       Examples: openai/gpt-5-mini, openai/gpt-5-nano, openai/o5

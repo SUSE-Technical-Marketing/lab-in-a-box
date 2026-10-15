@@ -15,9 +15,9 @@
 # the lab (or outside it entirely — client_registration_server just needs to
 # be reachable by FQDN).
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "client_registration" ────────────────────────────────────
+# ─── JSON section: "client_registration" — Register any VM as a Salt client of an existing uyuni/smlm server (activation key bootstrap + salt-key acceptance)
 #
 # MANDATORY
 #   client_registration_server           : FQDN of the target Uyuni/SMLM server

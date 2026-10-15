@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "agones" — configurable keys:
+# JSON section: "agones" — Dedicated game-server hosting/scaling (agones.dev)
 #   agones_version : [OPTIONAL] Helm chart version (empty = latest, e.g. "1.60.0")
 #   agones_ns      : [OPTIONAL] namespace (default: agones-system)
 #   agones_rel     : [OPTIONAL] Helm repo alias (default: agones)

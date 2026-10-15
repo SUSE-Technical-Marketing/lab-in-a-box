@@ -9,9 +9,9 @@
 # root password is written to /etc/gitlab/initial_root_password inside the container. The script reads that file back, so the
 # password it prints is the one in use.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# JSON section: "gitlab"
+# JSON section: "gitlab" — GitLab
 #   gitlab_deployment    : "podman" runs one Omnibus container on the target host. "kubernetes" deploys the official
 #                          Helm chart once, to the server node of the cluster. (default: podman)
 #

@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "linkerd" — configurable keys:
+# JSON section: "linkerd" — Service mesh
 #   linkerd_version     : [OPTIONAL] chart version of the edge charts (empty = latest, e.g. "2026.10.1")
 #   linkerd_ns          : [OPTIONAL] control plane namespace (default: linkerd)
 #   linkerd_viz_ns      : [OPTIONAL] viz extension namespace (default: linkerd-viz)

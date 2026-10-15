@@ -8,9 +8,9 @@
 #   OS mode         : script is called as a nodes addon     → clu_name env var is empty
 #   Override either mode by setting mariadb_mode = "kubernetes" or "os" in the JSON.
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
-# ─── JSON section: "mariadb" ────────────────────────────────────────────────────
+# ─── JSON section: "mariadb" — MariaDB database
 #
 # SHARED (both modes)
 #   mariadb_mode          : [OPTIONAL] Where to run MariaDB (default: auto) (options: auto, kubernetes, os)

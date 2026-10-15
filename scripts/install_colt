@@ -5,9 +5,9 @@
 #
 # Project: https://gitlab.com/NalaGinrut/colt (NalaGinrut/Roy Mu, GPLv3)
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
-# JSON section: "colt" — configurable keys:
+# JSON section: "colt" — Colt, a git-backed blog engine on GNU Artanis
 #   colt_image   : [MANDATORY] a pre-built image reference for Colt. Colt's own GitLab repo has a
 #                  Dockerfile at its root but publishes no image
 #                  to any registry — build and push one yourself first, e.g.:

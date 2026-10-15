@@ -3,9 +3,9 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
-# JSON section: "complianceascode" — configurable keys:
+# JSON section: "complianceascode" — Rancher's compliance operator
 #   complianceascode_version : [OPTIONAL] chart version; when unset, the newest rancher-compliance version whose supported
 #                              Kubernetes range includes the cluster's version, else the newest such rancher-cis-benchmark
 #   complianceascode_profile : [OPTIONAL] ClusterScanProfile of the scan, e.g. k3s-cis-2.0-profile, rke2-cis-2.0-profile;
