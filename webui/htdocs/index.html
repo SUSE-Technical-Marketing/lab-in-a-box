@@ -176,10 +176,16 @@
     <div id="createConfirm" class="dialog-body">
       <pre id="createSummary" class="create-summary"></pre>
       <p class="form-desc">The lab is saved on the server, then <code>setup_lab.py</code> creates it as root on the
-        automation node. Labs whose credentials are encrypted ask for a passphrase: create those with
-        <code>setup_lab.py</code> on the command line.</p>
+        automation node.</p>
       <label class="opt-toggle"><input type="checkbox" id="createKeep" checked> Keep VMs that already exist
         (<code>--keep</code>); unticked, they are destroyed and created again</label>
+      <div class="cred-grid">
+        <label class="field"><span class="f-name">Credential passphrase</span>
+          <input type="password" id="createPass" autocomplete="new-password"
+                 placeholder="only if this lab uses encrypted credentials"></label>
+      </div>
+      <p class="form-desc">The passphrase is handed to this one run, to decrypt its credential files, and to nothing
+        else: it is never saved, logged or shown again.</p>
     </div>
     <div id="createJob" class="dialog-body" hidden>
       <p id="jobState" class="job-state"></p>

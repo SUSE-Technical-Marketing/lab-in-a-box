@@ -322,7 +322,10 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <li><strong>Create lab</strong> — shows what the lab creates, saves it on the server, then runs <code>setup_lab.py</code>
   as root in the background and shows its log as it runs. <em>Keep VMs that already exist</em> (<code>--keep</code>) is
   ticked by default; unticked, existing VMs of the lab are destroyed and created again. A lab whose credentials are
-  encrypted asks for a passphrase: create it with <code>setup_lab.py</code> on the command line.</li>
+  encrypted takes its passphrase in the dialog: it is handed to that one run's environment
+  (<code>LAB_CREDENTIALS_PASSPHRASE</code>) and nowhere else — not in the job record, not in its log, not back to the
+  browser. Leave it empty for a lab with no encrypted credentials. The same variable lets any run without a terminal
+  (a scheduled run, a pipeline) decrypt them; a new passphrase is still only ever set interactively.</li>
 </ul>
 <h2 id="http-api">HTTP API</h2>
 <p>Same-origin JSON. Under Apache the base is <code>/lab-builder/api</code> (open) and <code>/lab-builder/admin</code>

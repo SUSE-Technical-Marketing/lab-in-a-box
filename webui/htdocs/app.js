@@ -2018,6 +2018,7 @@ function openCreate() {
   $("#createConfirm").hidden = false;
   $("#createJob").hidden = true;
   $("#createGo").hidden = false;
+  $("#createPass").value = "";
   showDialog("#createDialog");
 }
 
@@ -2025,7 +2026,11 @@ async function startCreate() {
   const filename = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
   try {
     await adminCall("save", { filename, config: state.lab });
-    const r = await adminCall("create", { filename: filename + ".json", keep: $("#createKeep").checked });
+    // The passphrase goes to this one request and is dropped straight away: it is never kept in state.
+    const passphrase = $("#createPass").value;
+    $("#createPass").value = "";
+    const r = await adminCall("create", {
+      filename: filename + ".json", keep: $("#createKeep").checked, passphrase });
     $("#createConfirm").hidden = true;
     $("#createGo").hidden = true;
     $("#createJob").hidden = false;

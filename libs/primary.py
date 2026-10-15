@@ -393,6 +393,27 @@ def _decrypt_value(envelope, cache_key, label, passphrase_prompt, max_attempts=3
         except crypto_store.DecryptionError:
             del _PASSPHRASE_CACHE[cache_key]
 
+    # A passphrase in the environment is for a run that cannot be asked (the web UI's "Create lab", a scheduled
+    # run). It is tried once: trying the same value again would only waste the attempts. When there is no terminal
+    # to fall back to, its failure is the answer.
+    # A caller that passes its own passphrase_prompt can ask without a terminal; otherwise asking needs one.
+    can_ask = passphrase_prompt is not None or sys.stdin.isatty()
+    env_pw = crypto_store.passphrase_from_env()
+    if env_pw:
+        try:
+            plaintext = crypto_store.decrypt_cascade(env_pw, envelope)
+        except crypto_store.DecryptionError as e:
+            if not can_ask:
+                return None, "{}: {} (from ${})".format(label, e, crypto_store.PASSPHRASE_ENV)
+            print("The passphrase in ${} does not fit {} — asking instead.".format(
+                crypto_store.PASSPHRASE_ENV, label))
+        else:
+            _PASSPHRASE_CACHE[cache_key] = env_pw
+            return plaintext, None
+    elif not can_ask:
+        return None, ("{}: it is encrypted and there is no terminal to ask for its passphrase — set ${} "
+                      "for this run".format(label, crypto_store.PASSPHRASE_ENV))
+
     last_err = None
     for attempt in range(max_attempts):
         pw = prompt_fn("Passphrase for {}: ".format(label))

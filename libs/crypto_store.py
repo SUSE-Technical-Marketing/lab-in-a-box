@@ -168,6 +168,18 @@ def decrypt_cascade(passphrase, envelope):
     return plaintext
 
 
+PASSPHRASE_ENV = "LAB_CREDENTIALS_PASSPHRASE"
+
+
+def passphrase_from_env():
+    """
+    The passphrase in PASSPHRASE_ENV, or None when it is unset or empty. It lets a run that cannot be asked — the
+    web UI's "Create lab", a scheduled run, a pipeline — decrypt credential files. It is only ever read, never
+    written: setting a NEW passphrase always asks, so a mis-set variable cannot silently encrypt a file with it.
+    """
+    return os.environ.get(PASSPHRASE_ENV) or None
+
+
 def prompt_passphrase(prompt="Passphrase: ", confirm=False):
     """getpass-based passphrase prompt (no echo). confirm=True asks twice and
     retries until they match — used by setup_credentials.py when SETTING a
