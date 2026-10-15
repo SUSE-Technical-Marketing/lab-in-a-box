@@ -118,7 +118,10 @@ Python libraries in <code>/usr/local/lib/lab_creation/</code> — exactly where 
 auto-detects them.</p>
 <blockquote>
 <p>If you change a script/definition later, re-run <code>install_automation_node_scripts.sh</code>
-so the installed copies (and therefore the web UI) pick it up.</p>
+so the installed copies (and therefore the web UI) pick it up. A re-run refreshes the files in place and touches
+Apache only when it has to: it restarts Apache when a module had to be enabled, reloads it when a config file
+changed, and leaves it running otherwise — so the web UI stays answering across a redeploy. It says which of the
+three it did.</p>
 </blockquote>
 <h3 id="2a-run-locally-fastest-no-apache">2a. Run locally (fastest, no Apache)</h3>
 <p>Zero dependencies — just Python 3:</p>

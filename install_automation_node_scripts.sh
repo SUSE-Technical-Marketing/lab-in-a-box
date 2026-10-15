@@ -186,6 +186,66 @@ done
 
 
 
+# ── Apache: install a config file, and act only on what changed ──────────────
+# A redeploy restarts Apache only when it has to. `systemctl restart` closes the
+# listening socket for the moment between stop and start, so every request that
+# arrives in that window is refused — with the lab-builder polling its own API,
+# a redeploy drops a couple of them for no reason. A changed config file needs
+# only a graceful reload (in-flight requests finish, the socket stays open); a
+# newly enabled module needs the real restart; an unchanged config needs
+# neither.
+_apache_reload=0            # a config file changed
+_apache_restart=0           # a module was enabled: a reload would not load it
+
+# Copy ${1} to ${2} only when it differs, and remember that the config changed.
+_apache_install_conf() {
+    if ! cmp -s "${1}" "${2}" 2>/dev/null
+    then
+        cp "${1}" "${2}" || return 1
+        _apache_reload=1
+    fi
+}
+
+# Remove ${1} if it is there, and remember that the config changed.
+_apache_remove_conf() {
+    if [[ -e "${1}" ]]
+    then
+        rm -f "${1}"
+        _apache_reload=1
+    fi
+}
+
+# Enable Apache module ${1} in /etc/sysconfig/apache2 if it is not already.
+# Anchored on the APACHE_MODULES line and word-bounded: the file's own
+# "## Default:" comment lists most of these names, so a plain match would skip
+# a module that is commented about but not actually enabled.
+_apache_enable_module() {
+    if ! grep -q "^APACHE_MODULES=\".*\b${1}\b" /etc/sysconfig/apache2 2>/dev/null
+    then
+        sed -i "s/^APACHE_MODULES=\"\(.*\)\"/APACHE_MODULES=\"\1 ${1}\"/" /etc/sysconfig/apache2
+        _apache_restart=1
+    fi
+}
+
+# Apply what the flags above call for to service ${1} (apache2 or httpd), and
+# say what was done. A service that is not running is started, whatever changed.
+_apache_apply() {
+    if [[ ${_apache_restart} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
+    then
+        systemctl restart "${1}" 2>/dev/null || true
+        echo "${1}: restarted"
+    elif [[ ${_apache_reload} -eq 1 ]]
+    then
+        systemctl reload "${1}" 2>/dev/null || systemctl restart "${1}" 2>/dev/null || true
+        echo "${1}: reloaded (configuration changed)"
+    else
+        echo "${1}: configuration unchanged, left running"
+    fi
+    _apache_reload=0
+    _apache_restart=0
+}
+
+
 # ── HTTPS for the provisioning web server ────────────────────────────────────
 # Apache serves /srv/www/htdocs (provisioning files, helm, lab-builder) on port
 # 80 and, through templates/apache/lab_creation-ssl.conf, on port 443 with a
@@ -228,21 +288,20 @@ chmod 0644 "${_tls_cert}"
 
 if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
 then
-    cp templates/apache/lab_creation-ssl.conf /etc/apache2/vhosts.d/lab_creation-ssl.conf
-    if ! grep -q '^APACHE_MODULES=".*\bssl\b' /etc/sysconfig/apache2 2>/dev/null
-    then
-        sed -i 's/^APACHE_MODULES="\(.*\)"/APACHE_MODULES="\1 ssl"/' /etc/sysconfig/apache2
-    fi
-    systemctl try-restart apache2 2>/dev/null || true
+    _apache_install_conf templates/apache/lab_creation-ssl.conf /etc/apache2/vhosts.d/lab_creation-ssl.conf
+    _apache_enable_module ssl
+    _apache_apply apache2
 elif [[ -d /etc/httpd/conf.d ]]            # RHEL family (needs the mod_ssl package)
 then
     if [[ -f /etc/httpd/conf.d/ssl.conf ]]
     then
-        sed '/^<IfDefine !SSL>$/,/^<\/IfDefine>$/d' templates/apache/lab_creation-ssl.conf > /etc/httpd/conf.d/lab_creation-ssl.conf
+        sed '/^<IfDefine !SSL>$/,/^<\/IfDefine>$/d' templates/apache/lab_creation-ssl.conf > "${_tmp_ssl_conf:=/tmp/lab_creation-ssl.conf.$$}"
+        _apache_install_conf "${_tmp_ssl_conf}" /etc/httpd/conf.d/lab_creation-ssl.conf
+        rm -f "${_tmp_ssl_conf}"
     else
-        cp templates/apache/lab_creation-ssl.conf /etc/httpd/conf.d/lab_creation-ssl.conf
+        _apache_install_conf templates/apache/lab_creation-ssl.conf /etc/httpd/conf.d/lab_creation-ssl.conf
     fi
-    systemctl try-restart httpd 2>/dev/null || true
+    _apache_apply httpd
 fi
 
 
@@ -455,46 +514,35 @@ UNITEOF
 
         if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
         then
-            cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
-            # enable the modules this needs if they aren't already: cgid and
-            # expires always, rewrite for the HTTPS redirect unless _webui_tls=0.
+            _apache_install_conf webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
+            # the modules this needs: cgid, Basic auth and expires always,
+            # rewrite for the HTTPS redirect unless _webui_tls=0.
             _needed_modules="cgid auth_basic authn_file authz_user expires"
             if [[ -n "${_lb_tls_cert}" ]]
             then
-                cp webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
+                _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
                 _needed_modules="${_needed_modules} rewrite"
             else
-                rm -f /etc/apache2/vhosts.d/lab-builder-ssl.conf
+                _apache_remove_conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
             fi
             for _mod in ${_needed_modules}
             do
-                # Anchored on the APACHE_MODULES line and word-bounded: the file's own
-                # "## Default:" comment lists most of these names, so a plain match would
-                # skip a module that is commented about but not actually enabled.
-                if ! grep -q "^APACHE_MODULES=\".*\b${_mod}\b" /etc/sysconfig/apache2 2>/dev/null
-                then
-                    sed -i "s/^APACHE_MODULES=\"\(.*\)\"/APACHE_MODULES=\"\1 ${_mod}\"/" /etc/sysconfig/apache2
-                fi
+                _apache_enable_module "${_mod}"
             done
-            # a restart (not just reload) is needed when new modules/Listen
-            # directives are added, which is only sometimes the case here —
-            # always restarting is simplest and safe (this is the automation
-            # VM's own webui, not a production service with connections to
-            # drain).
-            systemctl restart apache2 2>/dev/null || true
+            _apache_apply apache2
             echo "lab-builder web UI installed -> ${_lb_scheme}://<automation-vm>/lab-builder/"
             echo "  add a login for its server actions with: lab-builder-passwd <user>"
             [[ -n "${_lb_tls_cert}" ]] && echo "  (also reachable, and redirected to, from http://<automation-vm>/lab-builder/ — self-signed cert, browsers will warn once)"
         elif [[ -d /etc/httpd/conf.d ]]            # RHEL family
         then
-            cp webui/apache/lab-builder.conf /etc/httpd/conf.d/lab-builder.conf
+            _apache_install_conf webui/apache/lab-builder.conf /etc/httpd/conf.d/lab-builder.conf
             if [[ -n "${_lb_tls_cert}" ]]
             then
-                cp webui/apache/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
+                _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
             else
-                rm -f /etc/httpd/conf.d/lab-builder-ssl.conf
+                _apache_remove_conf /etc/httpd/conf.d/lab-builder-ssl.conf
             fi
-            systemctl restart httpd 2>/dev/null || true
+            _apache_apply httpd
             echo "lab-builder web UI installed -> ${_lb_scheme}://<automation-vm>/lab-builder/"
         else
             echo "webui copied to ${_lb_root}, but no Apache config dir found; configure manually (see README.webui.md), or set _webui_mode=service to skip Apache entirely"

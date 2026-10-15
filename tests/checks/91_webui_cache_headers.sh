@@ -8,6 +8,20 @@ _fail=0
 fail() { echo "FAIL: $*"; _fail=1; }
 
 echo test-node > /etc/hostname
+
+# The installer decides between restarting Apache, reloading it and leaving it alone; this container has no systemd,
+# so a stand-in systemctl records what it asks for and reports the service as running.
+mkdir -p /tmp/fakebin
+cat > /tmp/fakebin/systemctl <<'STUB'
+#!/bin/bash
+echo "$*" >> /tmp/systemctl.log
+[[ "${1}" == "is-active" ]] && exit 0
+exit 0
+STUB
+chmod 0755 /tmp/fakebin/systemctl
+export PATH="/tmp/fakebin:${PATH}"
+: > /tmp/systemctl.log
+
 _backup=off bash install_automation_node_scripts.sh >/tmp/install.log 2>&1 \
     || { tail -20 /tmp/install.log; fail "install_automation_node_scripts.sh failed"; }
 
@@ -23,6 +37,29 @@ grep -q '^APACHE_MODULES=".*\bexpires\b' /etc/sysconfig/apache2 && fail "could n
 _backup=off bash install_automation_node_scripts.sh >/tmp/install2.log 2>&1 || fail "second run failed"
 grep -q '^APACHE_MODULES=".*\bexpires\b' /etc/sysconfig/apache2 \
     || fail "expires was not re-enabled: the module check is satisfied by the Default comment instead of APACHE_MODULES"
+# Enabling a module takes a real restart: a reload does not load one.
+grep -q "restart apache2" /tmp/systemctl.log \
+    || fail "enabling a module did not restart Apache: $(tr '\n' '|' < /tmp/systemctl.log)"
+
+# A redeploy that changes nothing in Apache's configuration must leave it alone: a restart closes the listening
+# socket between stop and start, and every request that arrives in that window is refused.
+: > /tmp/systemctl.log
+_backup=off bash install_automation_node_scripts.sh >/tmp/install3.log 2>&1 || fail "third run failed"
+grep -q "restart apache2" /tmp/systemctl.log \
+    && fail "a redeploy with no configuration change restarted Apache: $(tr '\n' '|' < /tmp/systemctl.log)"
+grep -q "reload apache2" /tmp/systemctl.log \
+    && fail "a redeploy with no configuration change reloaded Apache: $(tr '\n' '|' < /tmp/systemctl.log)"
+grep -q "apache2: configuration unchanged" /tmp/install3.log \
+    || fail "the installer did not report Apache's configuration as unchanged"
+
+# A changed configuration file is enough to reload, and must not restart.
+sed -i '1i # redeployed\n' /etc/apache2/vhosts.d/lab-builder.conf
+: > /tmp/systemctl.log
+_backup=off bash install_automation_node_scripts.sh >/tmp/install4.log 2>&1 || fail "fourth run failed"
+grep -q "reload apache2" /tmp/systemctl.log \
+    || fail "a changed Apache config did not reload Apache: $(tr '\n' '|' < /tmp/systemctl.log)"
+grep -q "restart apache2" /tmp/systemctl.log \
+    && fail "a changed Apache config restarted Apache instead of reloading it"
 
 /usr/sbin/start_apache2 -t >/tmp/configtest.log 2>&1 || { cat /tmp/configtest.log; fail "Apache config test failed"; }
 /usr/sbin/start_apache2 -k start >/tmp/apache.log 2>&1 || { cat /tmp/apache.log; fail "Apache did not start"; }
