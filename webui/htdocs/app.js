@@ -318,6 +318,28 @@ function makeCube(kind, size, letter) {
 const HIDDEN_NODE_FIELDS = new Set(["kcluster", "addons"]);   // set by dropping, not typing
 const HIDDEN_CLUSTER_FIELDS = new Set(["addons"]);
 
+/* The fields of `fields` that apply to an instance configured as `cfg`: a
+   field's "show_if" names another field it depends on, and it applies only
+   while that field has a value. The Kubernetes node fields
+   (KUBERNETES_NODE_TYPE, harvester_role, INSTALL_RKE2_TYPE) depend on
+   "kcluster", so a VM in no Kubernetes cluster does not offer them. */
+function shownFields(fields, cfg) {
+  const set = (k) => { const v = (cfg || {})[k]; return v !== undefined && v !== null && v !== ""; };
+  return (fields || []).filter((f) => !f.show_if || set(f.show_if));
+}
+
+/* An instance's own fields plus the keys the canvas sets for it rather than
+   the form: a VM's "kcluster" is the name of the Kubernetes cluster block it
+   sits in. */
+function structuralCfg(item) {
+  const cfg = Object.assign({}, item.cfg);
+  if (item.type === "node" && item.parent) {
+    const c = state.model.items.find((i) => i.id === item.parent);
+    if (c && c.name) cfg.kcluster = c.name;
+  }
+  return cfg;
+}
+
 function cleanObj(o) {
   const r = {};
   Object.keys(o || {}).forEach((k) => {
@@ -929,7 +951,8 @@ async function openEditor(id) {
       const spec = item.type === "node" ? secs.nodes : secs.kclusters;
       const hidden = item.type === "node" ? HIDDEN_NODE_FIELDS : HIDDEN_CLUSTER_FIELDS;
       kind = item.type === "node" ? "VM" : "Kubernetes cluster"; title = item.name; desc = spec.description;
-      const inst = instanceBox(spec.fields.filter((f) => !hidden.has(f.name)), spec.key_label || "name");
+      const shown = shownFields(spec.fields.filter((f) => !hidden.has(f.name)), structuralCfg(item));
+      const inst = instanceBox(shown, spec.key_label || "name");
       form.appendChild(inst);
       inst.querySelector(".inst-key").value = item.name;
       inst.querySelectorAll("[data-field]").forEach((i) => setWidgetValue(i, item.cfg[i.dataset.field]));

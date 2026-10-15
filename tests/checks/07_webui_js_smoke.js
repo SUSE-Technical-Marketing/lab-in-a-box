@@ -461,6 +461,43 @@ async function urlParamChecks() {
   sandbox.location = saved.loc;
 }
 
+// -- shownFields / structuralCfg: a field's show_if dependency ------------
+// The Kubernetes node fields declare show_if "kcluster" in lab_schema, so a
+// VM that is in no Kubernetes cluster must not be offered them.
+{
+  const fields = [
+    { name: "myip", type: "string" },
+    { name: "KUBERNETES_NODE_TYPE", type: "string", show_if: "kcluster" },
+    { name: "harvester_role", type: "string", show_if: "kcluster" },
+  ];
+  const names = (cfg) => sandbox.shownFields(fields, cfg).map((f) => f.name);
+  check("show_if unmet: only the independent fields are shown",
+    JSON.stringify(names({ myip: "10.0.0.1" })) === '["myip"]');
+  check("show_if met: the dependent fields are shown too",
+    names({ kcluster: "clu1" }).length === 3);
+  check("show_if met by an empty value is not met",
+    JSON.stringify(names({ kcluster: "" })) === '["myip"]');
+  check("no cfg at all hides every dependent field",
+    JSON.stringify(names(undefined)) === '["myip"]');
+  check("a field without show_if is never filtered",
+    sandbox.shownFields([{ name: "myip" }], {}).length === 1);
+
+  const st = vm.runInContext("state", sandbox);
+  const saved = st.model.items;
+  st.model.items = [{ id: "c1", type: "cluster", name: "clu1", cfg: {}, parent: null }];
+  const inCluster = { id: "n1", type: "node", cfg: { myip: "10.0.0.1" }, parent: "c1" };
+  const loose = { id: "n2", type: "node", cfg: { myip: "10.0.0.2" }, parent: null };
+  check("structuralCfg: a VM in a cluster block gets that cluster as its kcluster",
+    sandbox.structuralCfg(inCluster).kcluster === "clu1");
+  check("structuralCfg: a VM outside every cluster has no kcluster",
+    sandbox.structuralCfg(loose).kcluster === undefined);
+  check("a clustered VM is offered the Kubernetes fields",
+    sandbox.shownFields(fields, sandbox.structuralCfg(inCluster)).length === 3);
+  check("a VM outside a cluster is not offered the Kubernetes fields",
+    sandbox.shownFields(fields, sandbox.structuralCfg(loose)).length === 1);
+  st.model.items = saved;
+}
+
 urlParamChecks().then(() => {
   if (failures) {
     console.error(failures + " check(s) failed");

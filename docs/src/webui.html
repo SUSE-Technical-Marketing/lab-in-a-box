@@ -231,7 +231,10 @@ the Apache config):</p>
 <li><strong>Common settings</strong> — double-click it and fill the defaults every VM uses (image, RAM, disk,
    CPU, network).</li>
 <li><strong>Kubernetes clusters and VMs</strong> — drag a Kubernetes cluster onto the canvas, then drag VMs onto it.
-   A VM dropped outside a Kubernetes cluster is a standalone VM. Double-click a block to set its name and settings.</li>
+   A VM dropped outside a Kubernetes cluster is a standalone VM. Double-click a block to set its name and settings.
+   A VM's form offers only the settings that apply to it: the Kubernetes node settings
+   (<code>KUBERNETES_NODE_TYPE</code>, <code>harvester_role</code>) appear once the VM is in a Kubernetes cluster,
+   and a value set before it left one is kept, not discarded.</li>
 <li><strong>Add-ons</strong> — drag an add-on onto where it installs:
    <ul>
    <li>an add-on with only the kubernetes layer goes on a Kubernetes cluster (dropped on one of its VMs, it goes to
