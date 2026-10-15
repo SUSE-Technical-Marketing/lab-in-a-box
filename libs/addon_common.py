@@ -142,7 +142,8 @@ def run_validate(json_path, check_fn, plugin=None):
     error count as an exit code — mirrors bash's `exit ${_ve}`. check_fn may be
     None (no field checks). With `plugin`, also prints [WARNING] lines for
     versions outside its version matrix (libs/versions.py); warnings do not
-    count as errors.
+    count as errors. With `script_path`, every value this add-on declares is
+    also checked against its own schema (schema_value_errors()).
     """
     definition, parse_error = primary.try_load_definition(json_path)
     if parse_error:
@@ -151,6 +152,11 @@ def run_validate(json_path, check_fn, plugin=None):
     v = Validator(definition)
     if check_fn is not None:
         check_fn(v)
+    if script_path:
+        schema_errors, schema_warnings = schema_value_errors(script_path, definition)
+        v.errors.extend("[ERROR] " + line for line in schema_errors)
+        for line in schema_warnings:
+            print("[WARNING] " + line)
     for line in v.errors:
         print(line)
     if plugin and plugin.get("versions"):

@@ -246,6 +246,12 @@ def _template_state(path):
         return None
 
 
+# Fields the preflight checks itself, with context the schema cannot carry, so schema_validate.py leaves them to it
+# and one bad value is reported once: backend and cloud_account against the installed backends and credential files,
+# config_method and install_type as the effective value a node ends up with after common's default.
+_PREFLIGHT_OWN_FIELDS = ("backend", "cloud_account", "config_method", "install_type")
+
+
 def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_node=None,
                             vm_img_loc=None, issues_out=None, host_checks=True):
     """
@@ -297,6 +303,14 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     nodes = definition.get("nodes") or {}
     kclusters = definition.get("kclusters") or {}
 
+    # Every value against the schema that declares it — type, enum, pattern and bounds (libs/schema_validate.py).
+    import lab_schema_base
+    import schema_validate
+    for finding in schema_validate.definition_findings(definition, lab_schema_base.base_lab_schema(),
+                                                       skip=_PREFLIGHT_OWN_FIELDS):
+        report = err if finding.severity == "error" else warn
+        report("{}: {}".format(finding.where, finding.message))
+
     # ── 2. common: required fields ────────────────────────────────────────────
     # common.ISO_IMAGE is only required when some node doesn't supply its own
     # override (nodes.<name>.ISO_IMAGE) — a lab where every node pins its own
@@ -318,14 +332,6 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     for req in ("VM_MEM", "VM_DSK", "VM_CPU"):
         if _empty(_jq_or(common.get(req))):
             err("common.{} is required".format(req))
-
-    dsk_bus = _jq_or(common.get("VM_DSK_BUS"))
-    if not _empty(dsk_bus) and dsk_bus not in ("virtio", "scsi", "sata", "usb", "ide"):
-        err("common.VM_DSK_BUS '{}' is invalid — must be one of: virtio, scsi, sata, usb, ide".format(dsk_bus))
-
-    net_model = _jq_or(common.get("VM_NET_MODEL"))
-    if not _empty(net_model) and net_model not in ("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3", "ne2k_pci"):
-        err("common.VM_NET_MODEL '{}' is invalid — must be one of: virtio, e1000, e1000e, rtl8139, vmxnet3, ne2k_pci".format(net_model))
 
     from backends import BACKENDS, CLOUD_BACKEND_NAMES
     from primary import try_load_cloud_account

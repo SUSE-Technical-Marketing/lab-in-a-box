@@ -185,7 +185,8 @@ def _dispatch(argv, **kwargs):
     code = None
     try:
         with redirect_stdout(buf):
-            ac.handle_common_args("/usr/local/bin/install_mariadb", "1.2.3", **kwargs)
+            # The real script: --validate also checks every value its own schema declares, from this very file.
+            ac.handle_common_args(str(_REPO / "scripts" / "install_mariadb"), "1.2.3", **kwargs)
     except SystemExit as e:
         code = e.code
     finally:
@@ -206,13 +207,20 @@ check("handle_common_args --validate: exits with the validator's error count", c
 
 path = _tmpjson({"mariadb": {"mariadb_port": "not-a-port"}})
 code, out = _dispatch(["--validate", path], validate_fn=_check_fn)
-check("handle_common_args --validate: non-zero exit when the definition has errors", code == 2)
+# The add-on's own checks and the ones its schema declares (mariadb_port is a port) both report this value.
+check("handle_common_args --validate: exits with the number of errors it printed",
+      code == out.count("[ERROR]") and code > 1)
 
 code, out = _dispatch(["--validate"], validate_fn=_check_fn)
 check("handle_common_args --validate: missing path argument exits 1", code == 1)
 
-code, out = _dispatch(["--validate", path])  # no validate_fn given
-check("handle_common_args --validate: exits 0 when the addon defines no validate_fn", code == 0)
+# No validate_fn: only the checks the add-on's own schema declares run, so a bad value is still an error.
+code, out = _dispatch(["--validate", path])
+check("handle_common_args --validate: an add-on with no checks of its own still rejects a bad value",
+      code == 1 and "mariadb.mariadb_port" in out)
+code, out = _dispatch(["--validate", _tmpjson({"mariadb": {"mariadb_port": "3306"}})])
+check("handle_common_args --validate: exits 0 when nothing is wrong and the addon defines no validate_fn",
+      code == 0)
 
 ac.print_help = lambda script_path, usage=None: print("HELP TEXT")
 code, out = _dispatch(["--help"])

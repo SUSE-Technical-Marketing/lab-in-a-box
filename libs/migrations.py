@@ -180,6 +180,27 @@ def trento_2_0(definition: dict) -> list:
     return changes
 
 
+def open_ports_2_0(definition: dict) -> list:
+    """
+    lab 2.0: open_ports and aws_open_ports (common and per-node) are lists of ports, as every backend reads them. A
+    string becomes a list, one item per port, so "443 69/udp" and "443,69/udp" both become ["443", "69/udp"].
+    """
+    changes = []
+    owners = [("common", definition.get("common"))]
+    owners += [("nodes." + name, cfg) for name, cfg in (definition.get("nodes") or {}).items()]
+    for where, cfg in owners:
+        if not isinstance(cfg, dict):
+            continue
+        for key in ("open_ports", "aws_open_ports"):
+            value = cfg.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            ports = [port for port in re.split(r"[,\s]+", value.strip()) if port]
+            cfg[key] = ports
+            changes.append("{}.{}: \"{}\" -> {}".format(where, key, value, json.dumps(ports)))
+    return changes
+
+
 MIGRATIONS = {
     "anthropic_2_0": _litellm_2_0("anthropic"),
     "appcollection_2_0": appcollection_2_0,
@@ -190,6 +211,7 @@ MIGRATIONS = {
     "kimi_2_0": _litellm_2_0("kimi"),
     "linkerd_2_0": linkerd_2_0,
     "openai_2_0": _litellm_2_0("openai"),
+    "open_ports_2_0": open_ports_2_0,
     "postgresql_2_0": postgresql_2_0,
     "rancher_2_0": rancher_2_0,
     "trento_2_0": trento_2_0,

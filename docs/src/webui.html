@@ -260,7 +260,10 @@ the Apache config):</p>
    <li>lab.json text that does not parse.</li>
    </ul>
    Warning: an add-on has settings, but no VM or Kubernetes cluster lists it.</li>
-<li><strong>Validate</strong> — runs <code>libs/primary</code> server-side; shows structural errors.</li>
+<li><strong>Validate</strong> — runs the same preflight <code>setup_lab.py</code> runs, server-side: structural
+   errors, and every value against the schema that declares it (an <code>myip</code> that is not an IP address, a
+   <code>VM_MEM</code> below its minimum, a value outside a field's declared list). Its host checks are off, so a
+   node's reachability and the source image on the KVM host are not checked here.</li>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
    the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>

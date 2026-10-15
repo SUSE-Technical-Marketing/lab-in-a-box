@@ -913,7 +913,7 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>ISO_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。</p>
+<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>ISO_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。</p>
 <p>依次执行：在 DNS 中注册两个节点 → 创建两台虚拟机（复制 QCOW2 镜像、生成 Combustion 文件、启动并等待 SSH）→ 在 <code>node101</code> 上以 server 身份安装 RKE2，然后在 <code>node102</code> 上以 agent 身份安装 → 在集群的管理节点（<code>mgm_node</code>，默认为第一个 server 节点，此处为 <code>node101</code>）上安装 <code>rancher</code> 和 <code>longhorn</code>。带 Rancher 的 2 节点集群通常需要 15–25 分钟，大部分时间用于 RKE2 引导和 Rancher 的 Helm 安装。</p>
 <ol start="3">
 <li><strong>验证 DNS 解析</strong>（在您自己的桌面上，<a href="#step-5--point-your-client-dns-at-the-automation-vm">指向自动化虚拟机的 DNS</a> 之后）：</li>

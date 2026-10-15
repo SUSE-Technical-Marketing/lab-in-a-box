@@ -737,7 +737,7 @@ root パスワードを設定します。省略すると、cloud-init や Igniti
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>ISO_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。</p>
+<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>ISO_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。 値そのものも、それを宣言しているスキーマに照らして検査されます。IP アドレスになっていない <code>myip</code>、数値でない、または最小値を下回る <code>VM_MEM</code>、宣言された Kubernetes クラスタ種別のいずれでもない <code>clu_type</code> などです。各アドオンの <code>--validate</code> も、自身のフィールドとノードごとの上書きに対して同じ検査を行います。</p>
 <p>処理の順序：両ノードを DNS に登録 → 両 VM を作成（QCOW2 イメージをコピーし、Combustion ファイルを生成して起動し、SSH を待つ）→ <code>node101</code> にサーバーとして、続いて <code>node102</code> にエージェントとして RKE2 をインストール → クラスターの管理ノード（<code>mgm_node</code>、デフォルトは最初のサーバーノードで、ここでは <code>node101</code>）に <code>rancher</code> と <code>longhorn</code> をインストール。Rancher 付きの 2 ノードクラスターは通常 15～25 分かかり、その大半は RKE2 の起動と Rancher の Helm インストールです。</p>
 <ol start="3">
 <li><strong>DNS の解決を確認します</strong>（自分のデスクトップを<a href="#step-5--point-your-client-dns-at-the-automation-vm">オートメーション VM の DNS に向けた</a>後で）：</li>
