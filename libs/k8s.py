@@ -447,29 +447,51 @@ class KubeadmDistro(K8sDistro):
             die("'{}': none of zypper, dnf or apt-get is available, so the Kubernetes packages cannot be "
                 "installed".format(hostname))
 
-        ssh_run(hostname, "{} containerd".format(prefix))
-        ssh_run(hostname, "mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && "
-                          "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
-
-        # The community repository is published per minor, so the cluster's own minor is what the node subscribes to.
+        # The repository and its key are set up before anything is installed: zypper skips a repository whose key
+        # it does not trust and then exits 106 for every later install, which looks like a failure of whatever was
+        # being installed at the time.
         if "apt-get" in prefix:
-            ssh_run(hostname, "apt-get update -qq && apt-get install -y apt-transport-https ca-certificates curl gpg")
+            ssh_run(hostname, "apt-get update -qq && apt-get install -y apt-transport-https ca-certificates "
+                              "curl gpg && mkdir -p /etc/apt/keyrings")
             ssh_run(hostname, "curl -fsSL https://pkgs.k8s.io/core:/stable:/{m}/deb/Release.key | "
-                              "gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg".format(m=minor))
+                              "gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg".format(m=minor))
             ssh_run(hostname, "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] "
                               "https://pkgs.k8s.io/core:/stable:/{m}/deb/ /' > /etc/apt/sources.list.d/"
                               "kubernetes.list && apt-get update -qq".format(m=minor))
         else:
-            ssh_run(hostname, "printf '[kubernetes]\\nname=Kubernetes\\nbaseurl=https://pkgs.k8s.io/core:/stable:/"
-                              "{m}/rpm/\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://pkgs.k8s.io/core:/stable:/{m}/"
-                              "rpm/repodata/repomd.xml.key\\n' > /etc/zypp/repos.d/kubernetes.repo 2>/dev/null || "
-                              "printf '[kubernetes]\\nname=Kubernetes\\nbaseurl=https://pkgs.k8s.io/core:/stable:/"
-                              "{m}/rpm/\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://pkgs.k8s.io/core:/stable:/{m}/"
-                              "rpm/repodata/repomd.xml.key\\n' > /etc/yum.repos.d/kubernetes.repo".format(m=minor))
-        ssh_run(hostname, "{} kubelet kubeadm kubectl".format(prefix))
+            repo_url = "https://pkgs.k8s.io/core:/stable:/{}/rpm/".format(minor)
+            repo = ("[kubernetes]\\nname=Kubernetes\\nbaseurl={url}\\nenabled=1\\nautorefresh=1\\n"
+                    "type=rpm-md\\ngpgcheck=1\\ngpgkey={url}repodata/repomd.xml.key\\n").format(url=repo_url)
+            ssh_run(hostname, "curl -fsSL {}repodata/repomd.xml.key -o /tmp/kubernetes-release.key && "
+                              "rpm --import /tmp/kubernetes-release.key && "
+                              "rm -f /tmp/kubernetes-release.key".format(repo_url))
+            ssh_run(hostname, "printf '{repo}' > /etc/zypp/repos.d/kubernetes.repo 2>/dev/null || "
+                              "printf '{repo}' > /etc/yum.repos.d/kubernetes.repo".format(repo=repo))
+
+        self._install_packages(hostname, prefix, "containerd")
+        ssh_run(hostname, "mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && "
+                          "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
+        self._install_packages(hostname, prefix, "kubelet kubeadm kubectl")
+        missing = ssh_run(hostname, "for b in kubeadm kubelet kubectl; do command -v $b >/dev/null || echo $b; done",
+                          check=False, capture=True)
+        if (missing.stdout or "").strip():
+            die("'{}': {} missing after the install — the Kubernetes {} repository at pkgs.k8s.io was not usable on "
+                "this node".format(hostname, ", ".join((missing.stdout or "").split()), minor))
+
         if transactional:
             reboot_into_pending_snapshot(hostname)
         ssh_run(hostname, "systemctl enable --now containerd && systemctl enable kubelet")
+
+    @staticmethod
+    def _install_packages(hostname, prefix, packages):
+        """
+        Install `packages` with the node's package manager. zypper exits 106 when it had to skip a repository, which
+        says nothing about whether the packages went in, so that code is not a failure here; what the packages were
+        for is checked afterwards instead.
+        """
+        result = ssh_run(hostname, "{} {}".format(prefix, packages), check=False)
+        if result.returncode not in (0, 106):
+            die("'{}': installing {} failed (exit {})".format(hostname, packages, result.returncode))
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         self.prepare_node(hostname, clu_ctx.get("clu_rel"))
