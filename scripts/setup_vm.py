@@ -331,6 +331,10 @@ def provision_vm(definition, config, defaults, vm_name):
             remote_sites = overlay.list_other_sites(hub_host, exclude_site_name=this_site)
             overlay.ensure_route_via_site_gateway(vm_name, gateway_lan_ip,
                                                    [cidr for _, cidr in remote_sites])
+            # The hub keeps the node, so a site that joins later can be routed to it without waiting for its next
+            # provisioning run, and a retired site's route can be taken off it again.
+            overlay.register_node(hub_host, this_site, vm_name, gateway_lan_ip)
+            overlay.refresh_routes(hub_host)
 
     log("\t\tVM \"{}\" created".format(vm_name))
     return pre_failures
