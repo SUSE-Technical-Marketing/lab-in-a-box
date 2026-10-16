@@ -67,6 +67,7 @@ PLUGIN = {
     "layers": ["kubernetes"],
     # Its extra Salt ports are exposed by reconfiguring the distribution's own bundled Traefik.
     "requires_kubernetes": ["rke2", "k3s"],
+    "requires_cluster": ["ingress", "storageclass"],
     "aux_services": [],
 }
 

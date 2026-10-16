@@ -172,7 +172,7 @@ _apps = None
 def _apps_lib():
     """
     libs/apps.py — an addon's PLUGIN capabilities (targets/layers/
-    requires_kubernetes/aux_services), same lazy-cached-import pattern as
+    requires_kubernetes/requires_cluster/provides_cluster/aux_services), same lazy-cached-import pattern as
     _primary_lib(). Uses load_plugin_from_path() (an explicit file path),
     not load_plugin()'s shutil.which() PATH lookup — a repo-checkout addon
     like scripts/install_<x>.py isn't on $PATH, but

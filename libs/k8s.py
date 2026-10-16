@@ -104,6 +104,14 @@ class K8sDistro(object):
 
     name = None
 
+    # Which apps.CLUSTER_NEEDS the distribution itself brings, with no add-on.
+    bundled = ()
+
+    # The clu_ingress/clu_storage value each bundled need corresponds to, and whether the distribution can be told
+    # to leave it out so something else can supply it.
+    bundled_choice = {}
+    can_disable_bundled = True
+
     ready_timeout = 1200
 
     def install_cluster(self, definition, clu_name, clu_ctx):
@@ -163,6 +171,9 @@ class K8sDistro(object):
 class K3sDistro(K8sDistro):
     name = "k3s"
 
+    bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # traefik and local-path
+    bundled_choice = {apps.CLUSTER_INGRESS: "traefik", apps.CLUSTER_STORAGECLASS: "local-path"}
+
     def kubeconfig_path(self):
         return "/etc/rancher/k3s/k3s.yaml"
 
@@ -190,6 +201,7 @@ class K3sDistro(K8sDistro):
         """
         clu_rel = clu_ctx.get("clu_rel") or "stable"
         mydomain = clu_ctx.get("mydomain", "")
+        disable = self._disable_flags(clu_ctx)
 
         prepare_local_as_kubeclient()
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
@@ -204,9 +216,9 @@ class K3sDistro(K8sDistro):
                 hostname,
                 "curl -sfL https://get.k3s.io | "
                 "INSTALL_K3S_CHANNEL={} {}"
-                "sh -s - server --tls-san {}.{}".format(
+                "sh -s - server --tls-san {}.{}{}".format(
                     shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
-                    shlex.quote(clu_name), shlex.quote(mydomain))
+                    shlex.quote(clu_name), shlex.quote(mydomain), disable)
             )
             self._start(hostname, "k3s")
             ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/k3s.sh; chmod 0644 /etc/profile.d/k3s.sh".format(
@@ -225,6 +237,15 @@ class K3sDistro(K8sDistro):
             )
             self._start(hostname, "k3s-agent")
             return token, rancher1_ip
+
+    # K3s only takes --disable at install time, so a cluster whose clu_ingress or clu_storage names something other
+    # than the bundled traefik or local-path is installed without that component from the start.
+    _DISABLE_FLAG = {apps.CLUSTER_INGRESS: "traefik", apps.CLUSTER_STORAGECLASS: "local-storage"}
+
+    def _disable_flags(self, clu_ctx):
+        """The `--disable` flags for the bundled components this cluster is not keeping."""
+        return "".join(" --disable {}".format(self._DISABLE_FLAG[need])
+                       for need in sorted(cluster_disabled(clu_ctx, self)) if need in self._DISABLE_FLAG)
 
     def _start(self, hostname, service):
         """
@@ -249,6 +270,9 @@ _RKE2_PATH    = "ZXhwb3J0IFBBVEg9JFBBVEg6L29wdC9ya2UyL2JpbjovdmFyL2xpYi9yYW5jaGV
 
 class RKE2Distro(K8sDistro):
     name = "rke2"
+
+    bundled = (apps.CLUSTER_INGRESS,)                            # rke2-ingress-nginx
+    bundled_choice = {apps.CLUSTER_INGRESS: "nginx"}
 
     def kubeconfig_path(self):
         return "/etc/rancher/rke2/rke2.yaml"
@@ -281,6 +305,10 @@ class RKE2Distro(K8sDistro):
               - "{domain}"
               - "{clu}.{domain}"
         """.format(domain=mydomain, clu=clu_name))
+        # clu_ingress naming something other than the bundled nginx: RKE2 leaves the component out when its
+        # config disables it, and the chosen ingress controller is then installed as an add-on.
+        if apps.CLUSTER_INGRESS in cluster_disabled(clu_ctx, self):
+            content += "disable:\n  - rke2-ingress-nginx\n"
         for kind in ("server", "agent"):
             cfg = clu_dir / "config-{}.yaml".format(kind)
             if not cfg.exists():
@@ -380,6 +408,8 @@ class KubeadmDistro(K8sDistro):
     """
 
     name = "kubeadm"
+
+    bundled = ()                                                 # upstream Kubernetes brings neither
 
     CNI_MANIFESTS = {
         "flannel": "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml",
@@ -548,8 +578,7 @@ class KubeadmDistro(K8sDistro):
         As the base does, with the node count recorded first: a single-node cluster has nowhere but its control
         plane to run pods, so _init() takes the control-plane taint off, and it can only know that in advance.
         """
-        clu_ctx = dict(clu_ctx, _node_count=sum(
-            1 for cfg in (definition.get("nodes") or {}).values() if cfg.get("kcluster") == clu_name))
+        clu_ctx = dict(clu_ctx, _node_count=kcluster_node_count(definition, clu_name))
         super(KubeadmDistro, self).install_cluster(definition, clu_name, clu_ctx)
 
     @staticmethod
@@ -571,6 +600,11 @@ class HarvesterDistro(K8sDistro):
     harvester_settings.
     """
     name = "harvester"
+
+    bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # its own RKE2 ingress and Longhorn
+    bundled_choice = {apps.CLUSTER_INGRESS: "nginx", apps.CLUSTER_STORAGECLASS: "longhorn"}
+    # Harvester is an appliance: its own ingress and Longhorn are part of the product and are not replaced.
+    can_disable_bundled = False
 
     def kubeconfig_path(self):
         return "/etc/rancher/rke2/rke2.yaml"
@@ -611,6 +645,137 @@ def get_distro(clu_type):
         die("Unknown Kubernetes distribution '{}' — supported: {}".format(
             clu_type, ", ".join(sorted(DISTROS))))
     return cls()
+
+# ── the ingress controller and storage class of a cluster ───────────────────
+#
+# A kcluster's clu_ingress and clu_storage name what supplies each of apps.CLUSTER_NEEDS. Unset means the
+# distribution's own where it has one (K3sDistro.bundled and friends), and otherwise the default below, so an
+# existing lab definition keeps the cluster it always had. "none" asks for nothing, for a lab that brings its own.
+# Each value is the add-on that installs it, which is run before the kcluster's own add-ons.
+
+INGRESS_ADDONS = {"nginx": "nginx", "traefik": "traefik", "none": ""}
+STORAGE_ADDONS = {"longhorn": "longhorn", "local-path": "local_path", "none": ""}
+
+DEFAULT_INGRESS = "nginx"
+DEFAULT_STORAGE = "longhorn"
+
+_CLUSTER_CHOICES = (
+    (apps.CLUSTER_INGRESS, "clu_ingress", INGRESS_ADDONS, DEFAULT_INGRESS),
+    (apps.CLUSTER_STORAGECLASS, "clu_storage", STORAGE_ADDONS, DEFAULT_STORAGE),
+)
+
+
+def kcluster_node_count(definition, clu_name):
+    """How many of the lab's nodes belong to `clu_name`."""
+    return sum(1 for cfg in (definition.get("nodes") or {}).values() if (cfg or {}).get("kcluster") == clu_name)
+
+
+def _known_distro(clu_type):
+    """
+    The distribution for `clu_type`, or None when the lab names one that does not exist. The cluster helpers below
+    use this rather than get_distro(), because a missing or wrong clu_type is reported by the preflight's own check
+    for it and must not abort everything else on the way there.
+    """
+    cls = DISTROS.get(clu_type)
+    return cls() if cls else None
+
+
+def _clu_section(definition, clu_name):
+    return (definition.get("kclusters", {}) or {}).get(clu_name, {}) or {}
+
+
+def cluster_needs(definition, clu_name):
+    """The apps.CLUSTER_NEEDS that the kcluster's own add-ons require of it."""
+    needs = set()
+    for entry in _clu_section(definition, clu_name).get("addons") or []:
+        needs.update(apps.load_plugin(apps.addon_entry_name(entry)).get("requires_cluster") or [])
+    return needs
+
+
+def cluster_plan(definition, clu_name):
+    """
+    What the kcluster is given to cover each of apps.CLUSTER_NEEDS, as a list of (need, add-on name) pairs in the
+    order they are installed: the ingress controller first, then the storage class.
+
+    A need is covered when the lab named it in clu_ingress/clu_storage, or when an add-on on this cluster requires
+    it and the distribution brings none — so a cluster gets nothing it is not asked for and nothing it already has.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    if distro is None:
+        return []
+    listed = {apps.addon_entry_name(e) for e in clu_cfg.get("addons") or []}
+    required = cluster_needs(definition, clu_name)
+    plan = []
+    for need, field, choices, default in _CLUSTER_CHOICES:
+        asked = str(clu_cfg.get(field) or "").strip().lower()
+        if not asked and (need in distro.bundled or need not in required):
+            continue
+        choice = cluster_choice(definition, clu_name, need)
+        if choice == distro.bundled_choice.get(need):
+            continue
+        if need in distro.bundled and not distro.can_disable_bundled:
+            die("kclusters.{}: {} cannot be '{}' on a {} cluster, which brings its own '{}'".format(
+                clu_name, field, choice, distro.name, distro.bundled_choice.get(need)))
+        addon = choices[choice]
+        if addon and addon not in listed:
+            plan.append((need, addon))
+    return plan
+
+
+def cluster_services(definition, clu_name):
+    """The add-ons that supply what the kcluster does not have itself, in the order they are installed."""
+    return [addon for _need, addon in cluster_plan(definition, clu_name)]
+
+
+def cluster_choice(definition, clu_name, need):
+    """
+    What supplies `need` on this kcluster, as a clu_ingress/clu_storage value: the field when the lab set one,
+    otherwise the distribution's own, otherwise the default. die()s on a value that names nothing.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    for a_need, field, choices, default in _CLUSTER_CHOICES:
+        if a_need != need:
+            continue
+        own = distro.bundled_choice.get(need) if distro else None
+        choice = str(clu_cfg.get(field) or own or default).strip().lower()
+        if choice not in choices:
+            die("kclusters.{}: {} '{}' is unknown — use one of {}".format(
+                clu_name, field, choice, ", ".join(sorted(choices))))
+        return choice
+    return ""
+
+
+def cluster_disabled(clu_ctx, distro):
+    """
+    The bundled components the cluster must be installed without, because its clu_ingress/clu_storage name something
+    else: a set of apps.CLUSTER_NEEDS. Read from clu_ctx, so it is available to install_server() on the node itself.
+    """
+    out = set()
+    for need, field, choices, default in _CLUSTER_CHOICES:
+        own = distro.bundled_choice.get(need)
+        if not own:
+            continue
+        choice = str(clu_ctx.get(field) or own).strip().lower()
+        if choice != own:
+            out.add(need)
+    return out
+
+
+def cluster_provides(definition, clu_name):
+    """
+    Which apps.CLUSTER_NEEDS the kcluster will have: what its distribution brings, plus what cluster_plan()
+    covers, plus what its own add-on list provides. This is what apps.requirement_issue() weighs an add-on's
+    requires_cluster against.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    provides = set(distro.bundled if distro else ())
+    provides.update(need for need, _addon in cluster_plan(definition, clu_name))
+    for entry in clu_cfg.get("addons") or []:
+        provides.update(apps.load_plugin(apps.addon_entry_name(entry)).get("provides_cluster") or [])
+    return provides
 
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────

@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong>69 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong>70 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
-<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。 <code>clu_type: kubeadm</code> は kubeadm でアップストリームの Kubernetes を構築します。マイナーバージョンは <code>clu_rel</code>、ネットワークプラグインは <code>clu_cni</code>（既定は flannel、calico、独自のものを使う場合は none）で指定します。</p>
+<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。 <code>clu_type: kubeadm</code> は kubeadm でアップストリームの Kubernetes を構築します。マイナーバージョンは <code>clu_rel</code>、ネットワークプラグインは <code>clu_cni</code>（既定は flannel、calico、独自のものを使う場合は none）で指定します。 <code>clu_ingress</code> と <code>clu_storage</code> は、クラスターの Ingress コントローラー（<code>nginx</code>、<code>traefik</code>）と既定のストレージクラス（<code>longhorn</code>、<code>local-path</code>）を指定します。未設定ならディストリビューションが備えるもの（RKE2 は nginx、K3s は Traefik と local-path、Harvester は両方）がそのまま使われ、どちらも備えないディストリビューションでは、クラスターのアドオンが必要とした時点で導入されます。別のものを指定すると同梱のコンポーネントを置き換え、<code>none</code> は何も導入しません。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
 <p>ラボは 1 台のハイパーバイザーに限定されません。オートメーション VM の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを使えます。</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -1092,6 +1092,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
 <td>SUSE Rancher Prime Kubernetes 管理プラットフォーム</td>
+</tr>
+<tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>Rancher の local-path-provisioner: ボリュームが Pod の実行ノード上のディレクトリであるデフォルトの StorageClass。レプリケーションが不要な場合の <code>longhorn</code> の軽量な代替で、kcluster は <code>clu_storage</code> でどちらかを指定します</td>
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>

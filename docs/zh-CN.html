@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>一个文件，一条命令。</strong>以声明方式描述虚拟机、Kubernetes 集群（RKE2 或 K3s）和附加组件。<code>setup_lab.py</code> 按依赖顺序构建它们，无需您手动运行 <code>virt-install</code> 或 Ansible。</li>
 <li><strong>家庭实验室或云端，同一份定义。</strong>实验室虚拟机运行在您自己的 KVM 主机、Harvester HCI，或 AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale 上。一个实验室可以跨越多台 KVM 主机，并可通过<a href="#cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</a>组合多个云和站点。</li>
-<li><strong>69 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
+<li><strong>70 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
 <li><strong>与代码同步的 Web 界面。</strong><a href="#web-ui-lab-builder">lab-builder</a> 根据附加组件自身的架构生成每个表单，因此脚本中新增的字段无需修改前端即可显示在界面中。</li>
 <li><strong>可插拔的预配方式。</strong>SLE Micro 使用 Ignition 和 Combustion，openSUSE 和 Ubuntu 使用 cloud-init，旧镜像使用 <code>virt-customize</code>，也可以从安装程序 ISO 进行自动安装（AutoYaST、Kickstart、Preseed 或 AutoInstall）。</li>
 <li><strong>凭据不放在实验室文件中。</strong>云和服务的凭据可以保存在按账户加密的文件中（使用 Argon2id 派生密钥，再级联使用 AES-256-GCM 和 ChaCha20-Poly1305）。</li>
@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
-<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。</p>
+<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。 <code>clu_ingress</code> 和 <code>clu_storage</code> 指定集群的入口控制器（<code>nginx</code>、<code>traefik</code>）和默认存储类（<code>longhorn</code>、<code>local-path</code>）。未设置时保留发行版自带的组件：RKE2 为 nginx，K3s 为 Traefik 和 local-path，Harvester 两者兼有；对于都不自带的发行版，一旦集群中的附加组件需要，就会安装一个。指定其他值会替换自带组件，<code>none</code> 则不安装任何组件。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
 <p>实验室并不局限于一台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -1089,6 +1089,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
 <td>SUSE Rancher Prime Kubernetes 管理平台</td>
+</tr>
+<tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>Rancher 的 local-path-provisioner：默认 StorageClass，其卷是 Pod 所在节点上的目录。在不需要复制时，它是 <code>longhorn</code> 的轻量替代；kcluster 在 <code>clu_storage</code> 中选择其一</td>
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>

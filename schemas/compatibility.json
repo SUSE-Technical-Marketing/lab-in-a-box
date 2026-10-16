@@ -148,6 +148,9 @@
    {"version": "2.0", "breaking": true, "changes": "Installs from the edge channel (linkerd_rel linkerd-edge, linkerd_repo_url https://helm.linkerd.io/edge; the stable channel ended at 2.14). The mesh identity is generated once and kept in the linkerd-lab-identity secret; the Gateway API CRDs are installed only when the cluster has none.", "migration": "linkerd_2_0"},
    {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:local_path": [
+   {"version": "1.0", "breaking": false, "changes": "new add-on: Rancher's local-path-provisioner as a default StorageClass"}
+  ],
   "addon:longhorn": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "lh_source: install SUSE Storage from the SUSE Application Collection instead of the upstream chart, with lh_appcollection_user/password/account for it"},
@@ -341,7 +344,8 @@
    {"version": "2.0", "breaking": true, "changes": "open_ports and aws_open_ports (common and per-node) are declared as the lists every backend reads them as, instead of strings", "migration": "open_ports_2_0"},
    {"version": "2.1", "breaking": false, "changes": "pre_commands and post_commands: shell commands a VM runs itself, before any other work and after all of it"},
    {"version": "2.2", "breaking": false, "changes": "lab_description in common: one line saying what a lab is for, shown where labs are listed"},
-   {"version": "2.3", "breaking": false, "changes": "clu_type kubeadm (upstream Kubernetes built with kubeadm), with clu_cni and clu_pod_cidr for the network plugin it applies."}
+   {"version": "2.3", "breaking": false, "changes": "clu_type kubeadm (upstream Kubernetes built with kubeadm), with clu_cni and clu_pod_cidr for the network plugin it applies."},
+   {"version": "2.4", "breaking": false, "changes": "kclusters gains clu_ingress and clu_storage: the ingress controller and default storage class of a cluster, installed as add-ons when its distribution brings none"}
   ]
  }
 }

@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.3"
+LAB_SCHEMA_VERSION = "2.4"
 
 
 def base_lab_schema():
@@ -155,6 +155,8 @@ def base_lab_schema():
                     {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s", "kubeadm", "harvester"], "description": "Kubernetes cluster type: rke2, k3s, kubeadm (upstream Kubernetes built with kubeadm, configured by clu_cni and clu_pod_cidr) or harvester (Harvester / SUSE Virtualization appliance nodes on AWS from an AMI)"},
                     {"name": "clu_rel", "required": True, "type": "string", "description": "Release channel: stable, latest, or a version string"},
                     {"name": "clu_cni", "required": False, "type": "string", "enum": ["flannel", "calico", "none"], "description": "clu_type kubeadm: network plugin the first server applies (default: flannel; none applies nothing, for a lab that brings its own)"},
+                    {"name": "clu_ingress", "required": False, "type": "string", "enum": ["nginx", "traefik", "none"], "description": "Ingress controller for this cluster. Unset keeps the one its distribution brings (nginx on rke2, traefik on k3s) and installs one on a distribution that brings none, when an add-on needs it. Naming a different one replaces the bundled controller; \"none\" installs no controller, for a cluster that brings its own."},
+                    {"name": "clu_storage", "required": False, "type": "string", "enum": ["longhorn", "local-path", "none"], "description": "Default storage class for this cluster. Unset keeps the one its distribution brings (local-path on k3s, Longhorn on harvester) and installs one on a distribution that brings none, when an add-on needs it. longhorn is SUSE Storage, replicated across nodes; local-path is a directory on the node the pod runs on; \"none\" installs none."},
                     {"name": "clu_pod_cidr", "required": False, "type": "string", "pattern": r"^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$", "description": "clu_type kubeadm: pod network (default: the network the chosen clu_cni's own manifest expects, 10.244.0.0/16 for flannel and 192.168.0.0/16 for calico)"},
                     {"name": "mydomain", "required": True, "type": "string", "description": "DNS domain for this Kubernetes cluster (e.g. mydemo.lab)"},
                     {"name": "addons", "required": False, "type": "array", "description": "List of Kubernetes cluster add-on names (install_<addon> scripts)"},

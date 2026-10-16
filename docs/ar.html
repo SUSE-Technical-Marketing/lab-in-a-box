@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>ملف واحد وأمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes ‏(RKE2 أو K3s) والإضافات بأسلوب تصريحي. يبنيها <code>setup_lab.py</code> بترتيب الاعتماديات دون أن تشغّل <code>virt-install</code> أو Ansible يدويًا.</li>
 <li><strong>مختبر منزلي أو سحابي، والتعريف نفسه.</strong> تعمل الأجهزة الافتراضية للمختبر على مضيفات KVM تملكها، أو على Harvester HCI، أو على AWS وGoogle Cloud وAlibaba Cloud وHetzner وScaleway وUpCloud وOVHcloud وExoscale. يمكن أن يمتد المختبر على عدة مضيفات KVM، وأن يجمع سحابات ومواقع مختلفة عبر <a href="#cross-cloud-wireguard-overlay">شبكة WireGuard متراكبة بين السحابات</a>.</li>
-<li><strong>69 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
+<li><strong>70 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
 <li><strong>واجهة ويب تتبع الشيفرة.</strong> يبني <a href="#web-ui-lab-builder">lab-builder</a> كل نموذج من مخطط الإضافة نفسها، فيظهر أي حقل جديد في السكربت في الواجهة دون تعديل الواجهة الأمامية.</li>
 <li><strong>تجهيز قابل للتبديل.</strong> Ignition وCombustion لـ SLE Micro، وcloud-init لـ openSUSE وUbuntu، و<code>virt-customize</code> للصور القديمة، أو تثبيت آلي من صورة ISO للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
 <li><strong>بيانات الاعتماد خارج ملف المختبر.</strong> يمكن حفظ بيانات اعتماد السحابات والخدمات في ملفات مشفّرة لكل حساب (اشتقاق المفتاح بـ Argon2id ثم AES-256-GCM وChaCha20-Poly1305 على التوالي).</li>
@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك).</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك). يحدّد <code>clu_ingress</code> و<code>clu_storage</code> متحكم الدخول (<code>nginx</code> أو <code>traefik</code>) وفئة التخزين الافتراضية (<code>longhorn</code> أو <code>local-path</code>) للعنقود. وبدون تحديد يبقى ما تأتي به التوزيعة — nginx في RKE2، وTraefik وlocal-path في K3s، وكلاهما في Harvester — أما التوزيعة التي لا تأتي بأيٍّ منهما فيُثبَّت لها واحد بمجرد أن تحتاجه إحدى إضافات العنقود؛ وتحديد غيره يستبدل المكوّن المضمّن، و<code>none</code> لا يثبّت شيئًا.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -1094,6 +1094,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
 <td>منصة SUSE Rancher Prime لإدارة Kubernetes</td>
+</tr>
+<tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>local-path-provisioner من Rancher: فئة تخزين افتراضية تكون وحدات التخزين فيها أدلة على العقدة التي يعمل عليها الـ pod. بديل خفيف لـ <code>longhorn</code> حين لا يلزم النسخ المتماثل؛ ويختار الـ kcluster أحدهما في <code>clu_storage</code></td>
 </tr>
 <tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>

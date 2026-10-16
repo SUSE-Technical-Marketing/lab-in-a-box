@@ -545,7 +545,14 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 continue
             from apps import load_plugin, requirement_issue
             from targets import TARGET_CONTAINER
-            issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype)
+            import k8s as _k8s
+            try:
+                # An unknown clu_ingress/clu_storage value is reported by the schema check rather than from here,
+                # where it would abort the whole preflight instead of being catalogued with everything else.
+                provides = _k8s.cluster_provides(definition, clu)
+            except SystemExit:
+                provides = None
+            issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype, provides=provides)
             if issue:
                 err("kclusters.{}: addon '{}' {}".format(clu, addon, issue))
             members = [n for n, c in nodes.items() if (c or {}).get("kcluster") == clu]

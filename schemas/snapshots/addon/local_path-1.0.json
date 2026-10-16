@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "local_path_default": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "local_path_dir": {
+   "default": "/opt/local-path-provisioner",
+   "required": false,
+   "type": "string"
+  },
+  "local_path_ns": {
+   "default": "local-path-storage",
+   "required": false,
+   "type": "namespace"
+  },
+  "local_path_version": {
+   "default": "v0.0.31",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:local_path",
+ "version": "1.0"
+}

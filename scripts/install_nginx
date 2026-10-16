@@ -18,6 +18,7 @@ PLUGIN = {
     "targets": ["container"],
     "layers": ["kubernetes"],
     "requires_kubernetes": None,
+    "provides_cluster": ["ingress"],
     "aux_services": [],
 }
 

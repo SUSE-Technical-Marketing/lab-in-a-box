@@ -83,6 +83,7 @@ PLUGIN = {
     "targets": ["container", "vm", "baremetal"],
     "layers": ["kubernetes", "standalone-container"],
     "requires_kubernetes": None,
+    "requires_cluster": ["storageclass"],
     "aux_services": [],
 }
 

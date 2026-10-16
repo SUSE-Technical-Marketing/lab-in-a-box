@@ -31,6 +31,7 @@ PLUGIN = {
     "targets": ["container"],
     "layers": ["kubernetes"],
     "requires_kubernetes": None,
+    "provides_cluster": ["storageclass"],
     "aux_services": [],
     "check": True,
     # Version matrix (libs/versions.py): the releases in SUSE's Longhorn support matrix
@@ -84,8 +85,27 @@ def setup_lh_repo(hostname, lh_rel=None, lh_repo_url=None):
     helm_repo_add(hostname, lh_rel or "longhorn", lh_repo_url or "https://charts.longhorn.io")
 
 
+def replica_flags(node_count):
+    """
+    The --set flags that size Longhorn to a cluster of `node_count` nodes: a volume cannot have more replicas than
+    there are nodes to put them on, and neither can the CSI sidecars, whose charts default to 3 of each. On a single
+    node a replica also has to be allowed to share it with the volume's other replicas.
+    """
+    replicas = max(1, min(int(node_count or 1), 3))
+    flags = [
+        "--set defaultSettings.defaultReplicaCount={}".format(replicas),
+        "--set csi.attacherReplicaCount={}".format(replicas),
+        "--set csi.provisionerReplicaCount={}".format(replicas),
+        "--set csi.resizerReplicaCount={}".format(replicas),
+        "--set csi.snapshotterReplicaCount={}".format(replicas),
+    ]
+    if replicas == 1:
+        flags.append("--set defaultSettings.replicaSoftAntiAffinity=true")
+    return " ".join(flags)
+
+
 def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_version=None,
-             chart="", extra_set=""):
+             chart="", extra_set="", node_count=1):
     """
     Install SUSE Longhorn. Mirrors setup_lh (bash).
 
@@ -102,9 +122,9 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
     ssh_run(hostname,
             "helm upgrade -i longhorn {} {} --namespace longhorn-system "
             "--set ingress.enabled=true --set ingress.host={} "
-            "--set persistence.migratable=true --set longhornUI.replicas=1{}".format(
+            "--set persistence.migratable=true --set longhornUI.replicas=1 {}{}".format(
                 chart or "{}/longhorn".format(rel), versions.helm_version_flag(lh_version), fqdn,
-                extra_set))
+                replica_flags(node_count), extra_set))
     print("Longhorn should be available in a few minutes in: {}".format(fqdn))
     return fqdn
 
@@ -188,7 +208,8 @@ def main():
         setup_lh_repo(vm_name, lh_rel=cfg.get("lh_rel"), lh_repo_url=cfg.get("lh_repo_url"))
     fqdn = setup_lh(vm_name, clu_name, clu_cfg.get("mydomain", ""), lh_rel=cfg.get("lh_rel"),
                     lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"),
-                    chart=chart, extra_set=extra_set)
+                    chart=chart, extra_set=extra_set,
+                    node_count=k8s.kcluster_node_count(definition, clu_name))
     ac.register_service_dns(definition, clu_name, fqdn)
 
     time.sleep(60)

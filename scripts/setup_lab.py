@@ -525,6 +525,13 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     # The cluster addons list is read from the definition, not from clu_cfg. load_kclu_vars() keeps only scalar fields, so a list is
     # dropped there. Per-node addons use phase_vm_addons() instead.
     addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
+    # The ingress controller and storage class the cluster's own distribution does not bring (clu_ingress,
+    # clu_storage) are add-ons like any other, installed before the ones that need them.
+    services = k8s.cluster_services(definition, clu_name)
+    if services:
+        lc.log("Cluster \"{}{}{}\" needs ( {} ) before its addons".format(
+            lc._RED, clu_name, lc._RESET, " ".join(services)))
+    addons = services + list(addons)
     if not addons:
         lc.log("No Kubernetes cluster addons for \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
         return
@@ -549,7 +556,8 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         installer = apps.addon_installer(addon)
         if not installer:
             lc.die("FAILED! Addon script \"install_{}\" not found".format(addon))
-        apps.check_requirements(apps.load_plugin(addon), targets.TARGET_CONTAINER, clu_type=clu_type)
+        apps.check_requirements(apps.load_plugin(addon), targets.TARGET_CONTAINER, clu_type=clu_type,
+                                provides=k8s.cluster_provides(definition, clu_name))
         lc.log("Running addon \"{}{}{}\" on \"{}{}{}\" for cluster \"{}{}{}\"".format(
             lc._RED, addon, lc._RESET, lc._RED, vm_name, lc._RESET, lc._RED, clu_name, lc._RESET))
         env = dict(os.environ)
