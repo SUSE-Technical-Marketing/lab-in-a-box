@@ -34,7 +34,7 @@ PLUGIN = {
     "name": "coredns",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 
@@ -105,8 +105,8 @@ def main():
 
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
-    if appco.from_appcollection(cfg, "coredns", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
+    if appco.from_appcollection(coredns_cfg, "coredns", appco.SOURCE_APPCOLLECTION):
+        creds = ac.resolve_credential(coredns_cfg, "appcollection", {
             "coredns_appcollection_user": "appcollection_user",
             "coredns_appcollection_password": "appcollection_password",
         }, account_key="coredns_appcollection_account")
