@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import ipalloc
 import primary
 import provisioning
 import suse_catalogue
@@ -132,6 +133,10 @@ def _cloud_no_mac(mymac):
 # critical section.
 _mac_lock = threading.Lock()
 
+# The same reason the MAC lock exists: picking an address, recording it in the shared definition and saving it are
+# one decision, and two nodes being created at once must not reach the same one.
+_ip_lock = threading.Lock()
+
 
 def _reachable_for_keep(vm_name: str, myip: str) -> bool:
     """
@@ -155,6 +160,42 @@ def _reachable_for_keep(vm_name: str, myip: str) -> bool:
         log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(_YELLOW, _RESET, _RED, vm_name, _RESET))
         return False
     return True
+
+
+def _cloud_no_ip(myip):
+    """
+    A cloud backend's check_or_generate_ip(): the provider assigns the address, so there is nothing to allocate and
+    an empty myip is not a gap. Returns myip unchanged, exactly as _cloud_no_mac() does for MACs.
+    """
+    return myip or ""
+
+
+def _check_or_generate_ip(used_ips, vm_name, myip, definition):
+    """
+    The address `vm_name` will have, allocating one when the definition gives none.
+
+    `myip` set is used as it is: the lab asked for that address by name, and the preflight already warns when
+    something answers on it. `myip` empty is allocated by libs/ipalloc.py from the network the definition already
+    describes, deterministically from the node's name, and written into the definition in memory so that everything
+    downstream (DNS registration, provisioning files, the node's own configuration) sees one answer. The definition
+    is then saved the same way a regenerated MAC is: through primary.save_definition(), a sibling file, never over
+    the lab's own source.
+
+    Returns the address, or die()s when the lab has no network to take one from or every address in it is taken.
+    """
+    if not _empty(myip):
+        return myip
+
+    allocated = ipalloc.allocate(vm_name, definition, used=used_ips)
+    if not allocated:
+        die("No address could be allocated for \"{}{}{}\": set 'myip' on it, or give the lab a 'mygw' and "
+            "'mymask' with a free address in that network".format(_RED, vm_name, _RESET))
+
+    definition["nodes"][vm_name]["myip"] = allocated
+    output_path = primary.save_definition(definition)
+    log("- No IP specified for \"{}{}{}\" — allocated {}; '{}' left untouched, the run's copy is '{}'".format(
+        _RED, vm_name, _RESET, allocated, definition.source_path, output_path))
+    return allocated
 
 
 def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model):
@@ -190,7 +231,7 @@ def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm
     used_macs = set(mac_by_domain.values())
 
     if _empty(mymac):
-        mymac = _lc._generate_unused_mac(used_macs)
+        mymac = _lc._generate_unused_mac(used_macs, vm_name=vm_name)
         log("- No MAC specified for \"{}{}{}\" — generated {}".format(_RED, vm_name, _RESET, mymac))
     else:
         mymac_lower = mymac.lower()
@@ -203,6 +244,7 @@ def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm
             print("  Generate a new MAC and update {}? [y/N] ".format(definition.source_path), end="", flush=True)
             answer = _read_conflict_confirmation()
             if re.match(r"^[Yy]$", answer):
+                # A conflict is resolved at random: the address derived from this name is the one already taken.
                 mymac = _lc._generate_unused_mac(used_macs)
                 definition["nodes"][vm_name]["mymac"] = mymac
                 output_path = primary.save_definition(definition)
@@ -336,6 +378,18 @@ class VMBackend(object):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         raise NotImplementedError
+
+    def list_used_ips(self):
+        """
+        The addresses this backend can see in use and nothing else can: a set of strings. Empty by default, which
+        leaves ipalloc with the definition, the lab DNS, this node's own addresses and its ping gate.
+        """
+        return set()
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        """Validate or allocate the address of a VM — see _check_or_generate_ip()."""
+        with _ip_lock:
+            return _check_or_generate_ip(self.list_used_ips(), vm_name, myip, definition)
 
     def host_resources(self):
         raise NotImplementedError
@@ -507,6 +561,25 @@ class LibvirtBackend(VMBackend):
         with _mac_lock:
             _, mac_by_domain = self.list_used_macs()
             return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
+
+    def list_used_ips(self):
+        """
+        The addresses this hypervisor can see: the leases of every libvirt network it serves, and the neighbour
+        table of the host itself, which holds whatever its bridges have been talking to. Best effort, since a
+        hypervisor that answers neither still leaves ipalloc its other sources.
+        """
+        found = set()
+        networks = self._virsh("net-list", "--name", capture_output=True, text=True, check=False)
+        for net in (getattr(networks, "stdout", "") or "").split():
+            leases = self._virsh("net-dhcp-leases", net, capture_output=True, text=True, check=False)
+            found.update(ipalloc.ips_in_text(getattr(leases, "stdout", "") or ""))
+        if self.remote_host:
+            neighbours = ssh_run(self.remote_host, "ip -4 neigh show", capture=True, check=False)
+        else:
+            neighbours = subprocess.run(["ip", "-4", "neigh", "show"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, universal_newlines=True)
+        found.update(ipalloc.ips_in_text(getattr(neighbours, "stdout", "") or ""))
+        return found
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """
@@ -1516,6 +1589,9 @@ class HetznerBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # Hetzner assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate. Checks
         the server's own status (running), then falls through to the same DNS/SSH checks — MAC is
@@ -1848,6 +1924,9 @@ class AWSBackend(VMBackend):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # EC2 assigns its own networking — see _cloud_no_mac()'s docstring
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
@@ -2383,6 +2462,9 @@ class GCPBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # GCE assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
         instance = self._find_instance(vm_name)
@@ -2641,6 +2723,9 @@ class AlibabaBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # ECS assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
         instance = self._find_instance(vm_name)
@@ -2879,6 +2964,9 @@ class ScalewayBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         server = self._find_server(vm_name)
         state = (server or {}).get("state")
@@ -3114,6 +3202,9 @@ class UpCloudBackend(VMBackend):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         server = self._find_server(vm_name)
@@ -3379,6 +3470,9 @@ class OVHcloudBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         instance = self._find_instance(vm_name)
         status = (instance or {}).get("status")
@@ -3589,6 +3683,9 @@ class ExoscaleBackend(VMBackend):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         instance = self._find_instance(vm_name)
@@ -3885,12 +3982,14 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
             "cannot continue".format(dns_vm_name, backend_name))
 
     # create_vm() returns once the provider has assigned an IP, but cloud-init still needs time to
-    # install and start bind9. Wait here until named answers, so add_to_dns()'s later SSH append
-    # does not race it. Because the DNS VM is a secondary server, check=False would otherwise hide
-    # that race completely.
+    # install bind9 and write the zone. Wait until cloud-init has finished and named is active, so
+    # add_to_dns()'s later SSH append finds the zone file. Installing the bind9 package starts named
+    # before the zone exists, so named being active alone is not enough. Because the DNS VM is a
+    # secondary server, check=False would otherwise hide that race completely.
     log("- Waiting for \"{}{}{}\" to finish installing and starting BIND".format(_RED, dns_vm_name, _RESET))
-    if not _lc.wait_for_ssh_command(ip, "systemctl is-active named", timeout=240):
-        die("cloud DNS VM '{}' ({}) never reported 'named' active within 240s — check it "
+    if not _lc.wait_for_ssh_command(
+            ip, "test -f /var/lib/cloud/instance/boot-finished && systemctl is-active named", timeout=240):
+        die("cloud DNS VM '{}' ({}) never finished cloud-init with 'named' active within 240s — check it "
             "manually (SSH in and inspect cloud-init's own log, /var/log/cloud-init-output.log)"
             .format(dns_vm_name, ip))
 

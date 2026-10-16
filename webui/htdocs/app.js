@@ -41,6 +41,8 @@ const state = {
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
   sel: "common", editing: null, base: null, schemaCache: {},
   textError: "",   // why the lab.json text does not parse, "" when it does
+  autoAddr: false,   // the tick box: leave myip/mymac to the run (libs/ipalloc.py)
+  previewAddr: {},   // {vm: ip} the run would allocate, from the same allocator (api "addresses")
 };
 
 // ---- tiny DOM helpers ------------------------------------------------------
@@ -353,6 +355,9 @@ function cleanObj(o) {
   return r;
 }
 
+/* The lab a model describes. With state.autoAddr set, a VM on a local backend keeps neither myip nor mymac: the
+   run allocates both (libs/ipalloc.py, backends.py), deterministically, so the file stays portable between sites.
+   The model itself is untouched, so clearing the tick box brings any typed address straight back. */
 function compileLab(model) {
   const lab = {};
   const common = cleanObj(model.common);
@@ -373,6 +378,9 @@ function compileLab(model) {
   model.items.forEach((i) => {
     if (i.type === "node" && i.name) {
       const o = cleanObj(i.cfg);
+      if (state.autoAddr && LOCAL_BACKENDS.has(has(i.cfg, "backend") ? i.cfg.backend : (model.common.backend || ""))) {
+        delete o.myip; delete o.mymac;
+      }
       const c = i.parent && byId[i.parent];
       if (c && c.name) o.kcluster = c.name;
       const ad = attached(i.id);
@@ -617,6 +625,7 @@ function lintLab(model) {
     });
     nodes.forEach((n) => {
       const backend = has(n.cfg, "backend") ? n.cfg.backend : (model.common.backend || "");
+      if (state.autoAddr) return;   // the run allocates it, and the preflight says which address that will be
       if (!has(n.cfg, "myip") && LOCAL_BACKENDS.has(backend)) errors.push("VM " + n.name + " has no IP address (myip).");
     });
     clusters.forEach((c) => {
@@ -817,7 +826,10 @@ function blockEl(item, mini) {
     sub = bits.length ? bits.join(" · ") : "defaults for every VM — double-click to set";
     letter = "C";
   } else if (type === "node") {
-    name = item.name || "unnamed VM"; sub = item.cfg.myip || "no IP yet"; letter = "V";
+    name = item.name || "unnamed VM";
+    sub = (state.autoAddr ? (state.previewAddr[item.name] ? state.previewAddr[item.name] + " (automatic)" : "address allocated at creation")
+                          : item.cfg.myip) || "no IP yet";
+    letter = "V";
   } else if (type === "cluster") {
     name = item.name || "unnamed Kubernetes cluster"; sub = item.cfg.clu_type || "Kubernetes cluster"; letter = "K";
   } else {
@@ -1664,6 +1676,21 @@ async function refreshImages() {
   } catch (e) { toast("Refresh error: " + e.message); }
 }
 
+/* Which address each VM with no myip would be given, asked of the same allocator the run uses, so the canvas shows
+   what will actually happen rather than a guess of its own. Silent on failure: it is a label, not a gate. */
+async function refreshPreviewAddresses() {
+  // The static page has no server to ask (its shim answers GETs only), so the canvas says an address is allocated
+  // at creation rather than naming one.
+  if (window.LAB_STATIC) { state.previewAddr = {}; renderCanvas(); return; }
+  try {
+    const r = await apiPost("addresses", { config: state.lab });
+    state.previewAddr = (r && r.addresses) || {};
+  } catch (e) {
+    state.previewAddr = {};
+  }
+  renderCanvas();
+}
+
 // ---- lab actions -----------------------------------------------------------
 async function validateLab() {
   const box = $("#validateResult");
@@ -2064,6 +2091,12 @@ async function watchJob(id) {
 // ---- wire up ---------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
+  $("#autoAddrBox").addEventListener("change", (e) => {
+    state.autoAddr = e.target.checked;
+    state.previewAddr = {};
+    refreshLab();
+    if (state.autoAddr) refreshPreviewAddresses();
+  });
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

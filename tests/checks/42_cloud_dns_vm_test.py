@@ -258,6 +258,14 @@ check("ensure_cloud_dns_vm() dies clearly when create_vm() reports no IP at all"
       any("no IP" in m for m in died))
 
 
+
+# The bind9 package starts named before cloud-init has written the zone, so named being active is not enough on its
+# own: add_to_dns()'s later append would find no zone file to append to.
+source = (_REPO / "libs" / "backends.py").read_text() if "_REPO" in dir() else Path(
+    __file__).resolve().parents[2].joinpath("libs", "backends.py").read_text()
+check("the cloud DNS VM is ready only once cloud-init has finished and named is active",
+      "/var/lib/cloud/instance/boot-finished && systemctl is-active named" in source)
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

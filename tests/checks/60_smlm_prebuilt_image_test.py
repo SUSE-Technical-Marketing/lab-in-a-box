@@ -102,6 +102,17 @@ check("preinstalled: no tooling install", not any("install -y" in c for c in cal
 check("preinstalled: no mgradm install", guard == [])
 check("preinstalled: no mgr-sync when channels are present", not any("mgr-sync" in c for c in calls))
 check("preinstalled: declarative steps still run", "ensure_activation_keys" in sc_calls)
+# A freshly booted pre-built image answers SSH before its uyuni-server unit has created the container, so the unit is
+# started first and the container is looked for afterwards.
+check("preinstalled: the server's own unit is started before its container is looked for",
+      any("systemctl start uyuni-server.service" in c and "podman container exists uyuni-server" in c
+          for c in calls))
+
+# mgrctl exec joins its arguments without quoting, so a script passed as `sh -c '<script>'` ran only its first word.
+auto = [c for c in run(dict(cfg, smlm_salt_auto_accept="true"), container_exists=True,
+                       present_channels="child-a\nchild-b\n")[0] if "auto-accept" in c]
+check("the salt auto_accept script reaches the container over stdin, not as an argument to sh -c",
+      auto and all("mgrctl exec -i -- bash -s" in c and "sh -c" not in c for c in auto))
 
 # ── pre-built image: one channel missing -> needs mirror credentials ───────
 try:

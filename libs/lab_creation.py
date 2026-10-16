@@ -16,6 +16,7 @@ Typical usage:
 # Author/s: Raul Mahiques
 # License: GPLv3
 
+import hashlib
 import base64
 import json
 import math
@@ -361,6 +362,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
 
     # ── 3. Per-node checks ─────────────────────────────────────────────────────
     seen_ips = set()
+    _previewed_ips = set()
     seen_macs = set()
     kclusters_defined = set(kclusters.keys())
 
@@ -413,7 +415,23 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         is_cloud_node = node_backend_eff in CLOUD_BACKEND_NAMES
 
         if _empty(myip) and not is_cloud_node:
-            err("nodes.{}: 'myip' is required".format(node))
+            # A lab may leave myip out and let the run allocate one from the network it already describes
+            # (libs/ipalloc.py). The choice is deterministic, so the address named here is the one the run will
+            # use. Without a mygw and mymask there is nothing to take it from, and the field is still required.
+            import ipalloc
+            would_get = (ipalloc.allocate(node, definition, used=_previewed_ips,
+                                          mydomain=str(common.get("mydomain") or ""), probe=False)
+                         if ipalloc.lab_network(common) else None)
+            if would_get:
+                # Each node's address is held against the next one's, as the run itself does by writing each
+                # allocation into the definition before moving on.
+                _previewed_ips.add(would_get)
+            if would_get:
+                warn("nodes.{}: no 'myip' — {} will be allocated from {}".format(
+                    node, would_get, ipalloc.lab_network(common)))
+            else:
+                err("nodes.{}: 'myip' is required — the lab has no 'mygw' and 'mymask' to allocate one "
+                    "from".format(node))
 
         if not _empty(myip):
             if myip in seen_ips:
@@ -814,19 +832,29 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
 
 # ── MAC address handling ────────────────────────────────────────────────────
 
-def _generate_unused_mac(used_macs):
+def _generate_unused_mac(used_macs, vm_name=""):
     """
-    Generate a random locally-administered unicast MAC not present in used_macs
-    (an iterable of lower-case MAC strings). Mirrors _generate_unused_mac (bash).
+    A locally-administered unicast MAC not present in used_macs (an iterable of lower-case MAC strings). Mirrors
+    _generate_unused_mac (bash).
 
-    NOTE: uses Python's random module rather than bash's $RANDOM — different
-    PRNG, but the same algorithm (byte0 = random & 0xFC | 0x02, bytes 1-5
-    uniform random) and the same guarantee (result not in used_macs). Bit-exact
-    output parity between bash and python runs was never possible here since
-    they use unrelated PRNGs; functional parity (a valid, unused, locally-
-    administered MAC) is what's preserved.
+    With `vm_name`, the address is derived from that name instead of being drawn at random, so a lab that does not
+    write its MACs down resolves to the same ones on every run and keeps its DHCP reservations and its PXE entries
+    (libs/ipalloc.py does the same for addresses). A collision walks to the next address derived from the same name
+    rather than falling back to chance, so the answer stays reproducible.
+
+    NOTE: the random path uses Python's random module rather than bash's $RANDOM — different PRNG, but the same
+    algorithm (byte0 = random & 0xFC | 0x02, bytes 1-5 uniform random) and the same guarantee (result not in
+    used_macs). Bit-exact output parity between bash and python runs was never possible here since they use
+    unrelated PRNGs; functional parity (a valid, unused, locally-administered MAC) is what's preserved.
     """
     used = set(used_macs)
+    if vm_name:
+        for attempt in range(256):
+            digest = hashlib.sha256("{}#{}".format(vm_name, attempt).encode("utf-8")).digest()
+            candidate = "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(
+                (digest[0] & 0xFC) | 0x02, digest[1], digest[2], digest[3], digest[4], digest[5])
+            if candidate not in used:
+                return candidate
     while True:
         b0 = "{:02x}".format((random.randint(0, 255) & 0xFC) | 0x02)
         candidate = "{}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(

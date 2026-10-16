@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.4"
+LAB_SCHEMA_VERSION = "2.5"
 
 
 def base_lab_schema():
@@ -89,7 +89,7 @@ def base_lab_schema():
                 "repeatable": True,
                 "key_label": "hostname (FQDN)",
                 "fields": [
-                    {"name": "myip", "required": True, "type": "string", "pattern": r"^(\d{1,3}\.){3}\d{1,3}$", "description": "VM IP address — required for libvirt/harvester; leave empty for a cloud backend (aws/gcp/hetzner/etc.), whose real IP is only known once the provider assigns it at create time"},
+                    {"name": "myip", "required": False, "type": "string", "pattern": r"^(\d{1,3}\.){3}\d{1,3}$", "description": "VM IP address. Left empty, one is allocated from the network common.mygw and common.mymask already describe, the same address every time for a given node name, and written beside the lab file rather than over it; the preflight names the address it will be. A cloud backend (aws/gcp/hetzner/etc.) assigns its own, so this stays empty there."},
                     {"name": "mymac", "required": False, "type": "string", "pattern": r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", "description": "VM MAC address (generated and conflict-checked if omitted, libvirt/harvester only — a cloud backend has no MAC concept and ignores this field entirely)"},
                     {"name": "kcluster", "required": False, "type": "string", "description": "Kubernetes cluster this node belongs to (a name in kclusters)"},
                     {"name": "KUBERNETES_NODE_TYPE", "required": False, "type": "string", "default": "server", "enum": ["server", "agent"], "show_if": "kcluster", "description": "Kubernetes node role (server/control-plane or agent/worker)"},

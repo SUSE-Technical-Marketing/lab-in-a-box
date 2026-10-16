@@ -78,6 +78,11 @@ def provision_vm(definition, config, defaults, vm_name):
     backend = backends.get_backend(definition, config, vm_name, for_existing=False,
                                     vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
 
+    # A node with no myip is given one before it is validated, the same way a node with no mymac is: from the
+    # network this definition already describes, deterministically from the node's name (libs/ipalloc.py).
+    backend.check_or_generate_ip(vm_name, (definition.get("nodes", {}).get(vm_name) or {}).get("myip", ""),
+                                 definition)
+
     if not validate_lab_definition(definition, config, iso_loc, lab_setup_path,
                                     target_node=vm_name, vm_img_loc=vm_img_loc):
         sys.exit(1)

@@ -74,6 +74,8 @@ def dispatch(action, method, params, body, user=None, https=False):
             data = json.loads(body.decode("utf-8") or "{}") if body else {}
             if action == "validate":
                 return 200, discovery.validate_lab(data.get("config", {}))
+            if action == "addresses":
+                return 200, {"addresses": discovery.preview_addresses(data.get("config", {}))}
 
         return 400, {"error": "unknown action %r (%s)" % (action, method)}
 

@@ -89,8 +89,17 @@ r = discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": dict(_good
 check("validate_lab: a valid lab passes", r["ok"] is True)
 check("validate_lab: the report is returned without colour codes", "\x1b[" not in r["output"])
 
+# A node with no myip is not a broken lab any more: the run allocates one from the network the definition already
+# describes, and the preflight names the address it will be (libs/ipalloc.py).
 r = discovery.validate_lab({"common": dict(_common), "nodes": {"vm1": {"config_method": "virt_customize"}}})
-check("validate_lab: a node with no myip fails", r["ok"] is False and "myip" in r["output"])
+check("validate_lab: a node with no myip is told which address it will be given",
+      r["ok"] is True and "will be allocated from" in r["output"])
+
+# Without a gateway and a mask there is nothing to allocate from, and the field is still required.
+r = discovery.validate_lab({"common": {k: v for k, v in _common.items() if k not in ("mygw", "mymask")},
+                            "nodes": {"vm1": {"config_method": "virt_customize"}}})
+check("validate_lab: a node with no myip and no network to take one from still fails",
+      r["ok"] is False and "myip" in r["output"])
 
 r = discovery.validate_lab({"common": dict(_common),
                             "nodes": {"vm1": dict(_good_node), "vm2": dict(_good_node, mymac="aa:bb:cc:dd:ee:02")}})

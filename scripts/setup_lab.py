@@ -440,6 +440,21 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
             lc.set_log_prefix(None)
 
 
+
+def phase_allocate_ips(definition, config):
+    """
+    Give every node that has no myip one, from the network the definition already describes. A cloud node is left
+    alone, since its provider assigns the address; so is a node whose lab has no mygw and mymask to take one from.
+    The allocation is recorded in the definition and saved beside the lab's own file, never over it.
+    """
+    missing = [name for name, cfg in (definition.get("nodes") or {}).items()
+               if not str((cfg or {}).get("myip") or "").strip()]
+    if not missing:
+        return
+    for vm_name in missing:
+        backend = backends.get_backend(definition, config, vm_name, for_existing=False)
+        backend.check_or_generate_ip(vm_name, "", definition)
+
 def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
     """
     Create the VMs for all nodes.
@@ -790,6 +805,11 @@ def main():
         cpu, mem, disk, ncount))
 
     phase_fetch_images(definition, config, iso_loc)
+
+    # A node with no myip gets one before anything is validated, so the preflight sees the addresses the run will
+    # actually use and the lab's own file can be written without any (see libs/ipalloc.py). Deterministic, so the
+    # same definition always resolves to the same addresses.
+    phase_allocate_ips(definition, config)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,
