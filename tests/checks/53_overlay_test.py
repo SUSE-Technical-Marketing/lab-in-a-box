@@ -549,6 +549,83 @@ check("...and refreshes the nodes of every other site, which is what closes the 
       "overlay.refresh_routes(hub_host)" in setup_vm_source)
 
 
+# ── cross-site DNS: the record is written where it has to resolve ─────────
+# Every DNS server here is a master of the same zone and a record arrives by being written into its zone file
+# (libs/services.py), so a node becomes resolvable at another site by writing it there as well. The hub is where a
+# run learns the other sites' servers.
+reset()
+overlay.register_dns_server("hub", "home", "192.168.88.73")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a site's DNS server is recorded on the hub", written and written[-1].strip() == "home 192.168.88.73")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\n")}
+overlay.register_dns_server("hub", "home", "192.168.88.9")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("registering the same site again replaces its line", written and written[-1].strip() == "home 192.168.88.9")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="home 192.168.88.73\naws-tmm 10.0.0.53\n")}
+check("every site's server is listed",
+      overlay.list_dns_servers("hub") == [("home", "192.168.88.73"), ("aws-tmm", "10.0.0.53")])
+check("a site's own server is left out when it asks, since the local write already reached it",
+      overlay.list_dns_servers("hub", exclude_site="home") == [("aws-tmm", "10.0.0.53")])
+
+# ── the whole zone, for the drift per-record writes cannot fix ────────────
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="home 192.168.88.73\naws-tmm 10.0.0.53\n")}
+with tempfile.TemporaryDirectory() as zone_dir:
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\nn1         IN  A       192.168.88.5\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("the zone reaches every registered site", (synced, failed) == (2, 0))
+pushed = [(host, body) for host, cmd, body in calls if "cat > " in cmd and body and "IN  A" in body]
+check("the file is replaced, not appended to",
+      pushed and all("cat > /var/lib/named/mydemo.lab.lan" in cmd
+                     for _h, cmd, body in calls if body and "IN  A" in body))
+check("it goes to both servers", sorted(host for host, _b in pushed) == ["10.0.0.53", "192.168.88.73"])
+check("named is reloaded where it landed",
+      any("reload named" in cmd for host, cmd, _b in calls if host == "10.0.0.53"))
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\n")}
+scripted["192.168.88.73"] = {"cat > ": FakeResult(returncode=255)}
+with tempfile.TemporaryDirectory() as zone_dir:
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    check("a site that cannot be written to is counted, not fatal",
+          overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir) == (0, 1))
+
+reset()
+with tempfile.TemporaryDirectory() as zone_dir:
+    try:
+        overlay.sync_zone_to_sites("hub", "absent.lab", zone_dir=zone_dir)
+        check("pushing a zone this node does not have is an error", False)
+    except SystemExit:
+        pass
+
+# A retired site stops receiving records, which is the same cleanup as its routes.
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\naws-tmm 10.0.0.0/16\n"),
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout=""),
+}
+overlay.retire_site("hub", "aws-tmm")
+check("retiring a site also drops its DNS server",
+      any("overlay_dns" in cmd and "aws-tmm" in cmd and "sed -i" in cmd for _h, cmd, _b in calls))
+
+setup_vm_source = (_REPO / "scripts" / "setup_vm.py").read_text()
+check("provisioning registers this site's DNS server",
+      "overlay.register_dns_server(hub_host, this_site, site_dns_server)" in setup_vm_source)
+check("...and writes the node's record into the other sites' servers",
+      "overlay.list_dns_servers(hub_host, exclude_site=this_site)" in setup_vm_source
+      and "remote_dns_servers=other_dns" in setup_vm_source)
+check("a libvirt or harvester site is served by this automation node's own BIND",
+      'site_dns_server = env.get("mydns", "")' in setup_vm_source)
+ctl = (_REPO / "scripts" / "overlay_ctl.py").read_text()
+check("the command can push the zone", "dns-sync" in ctl and "sync_zone_to_sites" in ctl)
+
+
 if failures:
     print("{} check(s) FAILED:".format(len(failures)))
     for f in failures:

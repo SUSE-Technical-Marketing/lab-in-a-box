@@ -35,6 +35,7 @@ import shlex
 from pathlib import Path
 
 from lab_creation import ssh_run, ssh_output, log, warn, die, wait_for_ssh_command
+from services import NAMED_ZONE_DIR as _NAMED_ZONE_DIR
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -47,6 +48,7 @@ _WG_CONF_PATH = _WG_KEY_DIR + "/wg0.conf"
 _ALLOC_PATH = _WG_KEY_DIR + "/overlay_allocations"
 _SITE_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_sites"
 _NODE_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_nodes"
+_DNS_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_dns"
 
 _ROUTES_SCRIPT_PATH = "/etc/lab-overlay-routes.sh"
 _ROUTES_UNIT_PATH = "/etc/systemd/system/lab-overlay-routes.service"
@@ -351,6 +353,75 @@ def forget_node(hub_host, node_host):
         expr=shlex.quote("/[[:space:]]{}[[:space:]]/d".format(node_host.replace(".", "\\.")))), check=False)
 
 
+
+def register_dns_server(hub_host, site_name, dns_ip):
+    """
+    Record, on the hub, which DNS server serves `site_name`. Idempotent upsert of one "site address" line.
+
+    Every DNS server in this project is a master of the same zone and records reach them by being written to each
+    one's zone file (libs/services.py's add_to_dns, through its remote_dns_servers list), so a site's nodes become
+    resolvable at another site by writing their records there too. The hub is where a run finds the other sites'
+    servers, exactly as it finds their subnets.
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
+    existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
+    kept.append("{} {}".format(site_name, dns_ip))
+    ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
+            input_text="\n".join(kept) + "\n")
+
+
+def list_dns_servers(hub_host, exclude_site=None):
+    """
+    Returns [(site_name, dns_ip), ...] for every site that registered a DNS server, excluding `exclude_site` (the
+    caller's own, whose server the local write already reached).
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
+    raw = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    out = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] != exclude_site:
+            out.append((parts[0], parts[1]))
+    return out
+
+
+def sync_zone_to_sites(hub_host, mydomain, zone_dir=None):
+    """
+    Replace every registered site's copy of `mydomain`'s zone with this automation node's own, and reload named
+    there.
+
+    Per-record writes reach the servers that were up at the time, which leaves two kinds of drift: a record a site
+    missed while its server was down, and a record for a node that has since been destroyed, since a teardown only
+    reaches the servers its own run knows about. Pushing the whole zone fixes both, because the file is replaced
+    rather than appended to. This automation node holds the record of every node of every site, so it is the copy
+    worth having.
+
+    Returns (synced, failed) as counts.
+    """
+    # Where this node keeps the zone (zone_dir only moves the local copy, for a test), and where every DNS server
+    # keeps it, which is the one convention _cloud_dns_vm_user_data() builds them with.
+    local_path = "{}/{}.lan".format((zone_dir or str(_NAMED_ZONE_DIR)).rstrip("/"), mydomain)
+    remote_path = "{}/{}.lan".format(str(_NAMED_ZONE_DIR).rstrip("/"), mydomain)
+    try:
+        content = Path(local_path).read_text()
+    except OSError as exc:
+        die("this automation node has no zone for '{}' at {} to push ({})".format(mydomain, local_path, exc))
+
+    synced = failed = 0
+    for site_name, dns_ip in list_dns_servers(hub_host):
+        written = ssh_run(dns_ip, "cat > {}".format(shlex.quote(remote_path)), input_text=content, check=False)
+        if written.returncode != 0:
+            warn("- Could not push the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
+            failed += 1
+            continue
+        ssh_run(dns_ip, "systemctl reload named 2>/dev/null || systemctl restart named", check=False)
+        log("- Pushed the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
+        synced += 1
+    return synced, failed
+
 def refresh_routes(hub_host, only_site=None):
     """
     Re-push the overlay routes of every node the hub knows about, so a node provisioned before another site joined
@@ -405,7 +476,8 @@ def retire_site(hub_host, site_name):
     remove_peer_from_hub(hub_host, site_name)
     ssh_run(hub_host, "ip route del {} dev wg0 2>/dev/null || true".format(shlex.quote(site_cidr)), check=False)
 
-    for path, pattern in ((_SITE_REGISTRY_PATH, "^{} "), (_ALLOC_PATH, "^{} "), (_NODE_REGISTRY_PATH, "^{} ")):
+    for path, pattern in ((_SITE_REGISTRY_PATH, "^{} "), (_ALLOC_PATH, "^{} "),
+                          (_NODE_REGISTRY_PATH, "^{} "), (_DNS_REGISTRY_PATH, "^{} ")):
         ssh_run(hub_host, "test -f {f} && sed -i {expr} {f} || true".format(
             f=shlex.quote(path), expr=shlex.quote("/{}/d".format(pattern.format(site_name)))), check=False)
 

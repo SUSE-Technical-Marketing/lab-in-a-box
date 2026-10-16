@@ -13,6 +13,9 @@ nobody can do automatically, because they are about a site whose lab is already 
     overlay_ctl.py --hub <host> retire <site>     take a site out: its peer, the hub's route for its subnet, its
                                                   lines in every registry, and the routes other sites' nodes hold
     overlay_ctl.py --hub <host> forget <node>     drop one node from the hub's node list
+    overlay_ctl.py --hub <host> dns-sync <domain> replace every site's copy of <domain>'s zone with this
+                                                  automation node's own, which is the one that holds every site's
+                                                  records
 
 <host> is the hub's gateway VM, the one OVERLAY_HUB_ACCOUNT names ("lab-overlay-gw-<backend>[-<account>]"), by name
 or address. It is given rather than looked up, so this never creates a hub that is not there.
@@ -39,6 +42,7 @@ USAGE = (
     "       overlay_ctl.py --hub <host> refresh [<site>]\n"
     "       overlay_ctl.py --hub <host> retire <site> [--yes]\n"
     "       overlay_ctl.py --hub <host> forget <node>\n"
+    "       overlay_ctl.py --hub <host> dns-sync <domain>\n"
 )
 
 
@@ -55,10 +59,11 @@ def cmd_list(hub):
     """Print the hub's own registries: the sites, the nodes routed through each, and the overlay addresses."""
     sites = overlay.list_other_sites(hub)
     nodes = overlay.list_nodes(hub)
+    dns = dict(overlay.list_dns_servers(hub))
     print("Sites ({}):".format(len(sites)))
     for name, cidr in sites:
         own = [n for n in nodes if n[0] == name]
-        print("  {:<28} {:<18} {} node(s)".format(name, cidr, len(own)))
+        print("  {:<28} {:<18} {} node(s)  dns {}".format(name, cidr, len(own), dns.get(name, "none registered")))
     print("Nodes ({}):".format(len(nodes)))
     for site_name, node_host, gateway in nodes:
         print("  {:<40} site {:<24} via {}".format(node_host, site_name, gateway))
@@ -69,6 +74,19 @@ def cmd_refresh(hub, site=None):
     refreshed, unreachable = overlay.refresh_routes(hub, only_site=site)
     print("Refreshed {} node(s); {} unreachable".format(refreshed, unreachable))
     return 1 if unreachable else 0
+
+
+def cmd_dns_sync(hub, mydomain):
+    """
+    Push this automation node's zone for `mydomain` to every site's DNS server.
+
+    A record written while a site's server was down never reached it, and a node destroyed later was only removed
+    from the servers its own teardown knew about. Both are drift in one direction: the site's copy is wrong and this
+    node's is right, so the fix is to replace the file rather than to append to it.
+    """
+    synced, failed = overlay.sync_zone_to_sites(hub, mydomain)
+    print("Pushed the '{}' zone to {} site(s); {} failed".format(mydomain, synced, failed))
+    return 1 if failed else 0
 
 
 def cmd_retire(hub, site, assume_yes):
@@ -124,6 +142,10 @@ def main():
         if not rest:
             die("retire needs the site name")
         return cmd_retire(hub, rest[0], assume_yes)
+    if action == "dns-sync":
+        if not rest:
+            die("dns-sync needs the domain, e.g. mydemo.lab")
+        return cmd_dns_sync(hub, rest[0])
     if action == "forget":
         if not rest:
             die("forget needs the node name")

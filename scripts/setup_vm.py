@@ -217,6 +217,9 @@ def provision_vm(definition, config, defaults, vm_name):
     backend_name = backends.effective_backend_name(definition, config, vm_name)
 
     remote_dns_servers = env.get("REMOTE_DNS_SERVERS", "").split()
+    # Which server serves this site, for the overlay's own DNS registry further down. A site on libvirt or Harvester
+    # is served by this automation node's own BIND, which every lab node already resolves through (mydns).
+    site_dns_server = env.get("mydns", "")
     if backend_name in backends.CLOUD_BACKEND_NAMES and not harv_clu:
         # A cloud node generally can't reach automation.mydemo.lab's own BIND (behind the home
         # lab's NAT) — a real multi-node cloud cluster needs a DNS server living inside that same
@@ -229,6 +232,7 @@ def provision_vm(definition, config, defaults, vm_name):
             preferred_image=backends.cloud_dns_image(definition, config, vm_name),
         )
         remote_dns_servers.append(dns_vm_ip)
+        site_dns_server = dns_vm_ip
 
     if env.get("myip"):
         add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
@@ -335,6 +339,18 @@ def provision_vm(definition, config, defaults, vm_name):
             # provisioning run, and a retired site's route can be taken off it again.
             overlay.register_node(hub_host, this_site, vm_name, gateway_lan_ip)
             overlay.refresh_routes(hub_host)
+
+            # A node is reachable across the overlay by its real hostname only where that name resolves, and each
+            # site's DNS server is a master of the same zone that records are written into (libs/services.py). So
+            # this site's server is registered on the hub, and this node's record is written into every other
+            # site's server as well. add_to_dns() skips a line that is already there, so this is a re-run of the
+            # same write with a wider list, not a second record.
+            if site_dns_server:
+                overlay.register_dns_server(hub_host, this_site, site_dns_server)
+            other_dns = [ip for _site, ip in overlay.list_dns_servers(hub_host, exclude_site=this_site)]
+            if other_dns and env.get("myip"):
+                add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
+                           remote_dns_servers=other_dns)
 
     log("\t\tVM \"{}\" created".format(vm_name))
     return pre_failures
