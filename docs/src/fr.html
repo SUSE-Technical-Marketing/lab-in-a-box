@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>
-<p>Une fois les VM démarrées, <code>setup_lab.py</code> installe Kubernetes sur chaque nœud selon la section <code>kclusters</code> du JSON. RKE2 et K3s sont tous deux pris en charge. Quand un cluster est prêt, ses modules s'exécutent les uns après les autres ; les modules de VM (rattachés à un nœud plutôt qu'à un cluster) s'exécutent une fois ce nœud provisionné. Chaque nœud RKE2 et chaque nœud serveur K3s reçoit <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, qui définit <code>KUBECONFIG</code> : <code>kubectl</code> et <code>helm</code> fonctionnent ainsi dans tout shell root du nœud, y compris les commandes SSH. Les modules qui exposent un nom d'hôte web (par exemple <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) l'enregistrent dans le DNS du lab, pointant vers les nœuds du kcluster ; la destruction d'un nœud supprime les enregistrements qui pointent vers lui.</p>
+<p>Une fois les VM démarrées, <code>setup_lab.py</code> installe Kubernetes sur chaque nœud selon la section <code>kclusters</code> du JSON. RKE2 et K3s sont tous deux pris en charge. Quand un cluster est prêt, ses modules s'exécutent les uns après les autres ; les modules de VM (rattachés à un nœud plutôt qu'à un cluster) s'exécutent une fois ce nœud provisionné. Chaque nœud RKE2 et chaque nœud serveur K3s reçoit <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, qui définit <code>KUBECONFIG</code> : <code>kubectl</code> et <code>helm</code> fonctionnent ainsi dans tout shell root du nœud, y compris les commandes SSH. Les modules qui exposent un nom d'hôte web (par exemple <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) l'enregistrent dans le DNS du lab, pointant vers les nœuds du kcluster ; la destruction d'un nœud supprime les enregistrements qui pointent vers lui. <code>clu_type: kubeadm</code> construit Kubernetes upstream avec kubeadm : la version mineure vient de <code>clu_rel</code> et le plugin réseau de <code>clu_cni</code> (flannel par défaut, calico, ou none pour fournir le vôtre).</p>
 <h3 id="multi-host-labs">Laboratoires multi-hôtes</h3>
 <p>Un laboratoire n'est pas limité à un seul hyperviseur. Définissez <code>KVM_HOSTS</code> (séparés par des espaces) dans <code>/etc/lab_creation.cfg</code> sur la VM d'automatisation pour rendre plusieurs hyperviseurs disponibles :</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

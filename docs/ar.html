@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها.</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك).</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -622,7 +622,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -668,7 +668,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

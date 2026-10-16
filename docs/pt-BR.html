@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Configuração do Kubernetes</h3>
-<p>Com as VMs no ar, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. RKE2 e K3s são suportados. Quando um cluster fica pronto, seus complementos rodam em sequência; os complementos de VM (ligados a um nó em vez de um cluster) rodam depois que esse nó é provisionado. Cada nó RKE2 e cada nó servidor K3s recebe <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, que define <code>KUBECONFIG</code>, para que <code>kubectl</code> e <code>helm</code> funcionem em qualquer shell de root do nó, inclusive em comandos via SSH. Complementos que expõem um nome de host web (por exemplo <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) o registram no DNS do laboratório, apontando para os nós do kcluster; destruir um nó remove os registros que apontam para ele.</p>
+<p>Com as VMs no ar, o <code>setup_lab.py</code> instala o Kubernetes em cada nó conforme a seção <code>kclusters</code> do JSON. RKE2 e K3s são suportados. Quando um cluster fica pronto, seus complementos rodam em sequência; os complementos de VM (ligados a um nó em vez de um cluster) rodam depois que esse nó é provisionado. Cada nó RKE2 e cada nó servidor K3s recebe <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, que define <code>KUBECONFIG</code>, para que <code>kubectl</code> e <code>helm</code> funcionem em qualquer shell de root do nó, inclusive em comandos via SSH. Complementos que expõem um nome de host web (por exemplo <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) o registram no DNS do laboratório, apontando para os nós do kcluster; destruir um nó remove os registros que apontam para ele. <code>clu_type: kubeadm</code> constrói o Kubernetes upstream com kubeadm, tomando a versão menor de <code>clu_rel</code> e o plugin de rede de <code>clu_cni</code> (flannel por padrão, calico, ou none para trazer o seu).</p>
 <h3 id="multi-host-labs">Laboratórios com vários hosts</h3>
 <p>Um laboratório não está limitado a um hipervisor. Defina <code>KVM_HOSTS</code> (separados por espaço) em <code>/etc/lab_creation.cfg</code> na VM de automação para disponibilizar mais de um hipervisor:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -622,7 +622,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -668,7 +668,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

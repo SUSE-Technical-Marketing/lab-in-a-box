@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Configuración de Kubernetes</h3>
-<p>Cuando las VMs están en marcha, <code>setup_lab.py</code> instala Kubernetes en cada nodo según la sección <code>kclusters</code> del JSON. Se admiten RKE2 y K3s. Cuando un clúster está listo, sus complementos se ejecutan en secuencia; los complementos de VM (asociados a un nodo y no a un clúster) se ejecutan después de aprovisionar ese nodo. Cada nodo RKE2 y cada nodo servidor K3s recibe <code>/etc/profile.d/rke2.sh</code> o <code>/etc/profile.d/k3s.sh</code>, que define <code>KUBECONFIG</code>, de modo que <code>kubectl</code> y <code>helm</code> funcionan en cualquier shell de root del nodo, incluidos los comandos por SSH. Los complementos que exponen un nombre de host web (por ejemplo <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) lo registran en el DNS del laboratorio, apuntando a los nodos del kcluster; al destruir un nodo se eliminan los registros que apuntan a él.</p>
+<p>Cuando las VMs están en marcha, <code>setup_lab.py</code> instala Kubernetes en cada nodo según la sección <code>kclusters</code> del JSON. Se admiten RKE2 y K3s. Cuando un clúster está listo, sus complementos se ejecutan en secuencia; los complementos de VM (asociados a un nodo y no a un clúster) se ejecutan después de aprovisionar ese nodo. Cada nodo RKE2 y cada nodo servidor K3s recibe <code>/etc/profile.d/rke2.sh</code> o <code>/etc/profile.d/k3s.sh</code>, que define <code>KUBECONFIG</code>, de modo que <code>kubectl</code> y <code>helm</code> funcionan en cualquier shell de root del nodo, incluidos los comandos por SSH. Los complementos que exponen un nombre de host web (por ejemplo <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) lo registran en el DNS del laboratorio, apuntando a los nodos del kcluster; al destruir un nodo se eliminan los registros que apuntan a él. <code>clu_type: kubeadm</code> construye Kubernetes upstream con kubeadm, tomando la versión menor de <code>clu_rel</code> y el complemento de red de <code>clu_cni</code> (flannel por omisión, calico, o none para aportar el tuyo).</p>
 <h3 id="multi-host-labs">Laboratorios en varios hosts</h3>
 <p>Un laboratorio no está limitado a un hipervisor. Defina <code>KVM_HOSTS</code> (separados por espacios) en <code>/etc/lab_creation.cfg</code> en la VM de automatización para disponer de más de un hipervisor:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

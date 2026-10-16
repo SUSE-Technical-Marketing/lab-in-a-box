@@ -17,6 +17,7 @@ Typical usage:
 # Author/s: Raul Mahiques
 # License: GPLv3
 
+import re
 import shlex
 import subprocess
 import textwrap
@@ -367,6 +368,179 @@ class RKE2Distro(K8sDistro):
             return token, rancher1_ip
 
 
+class KubeadmDistro(K8sDistro):
+    """
+    Upstream Kubernetes, installed with kubeadm from the community packages at pkgs.k8s.io. Unlike RKE2 and K3s
+    there is no vendor installer script: the node gets the kubelet, kubeadm and kubectl packages of the requested
+    minor, containerd as its runtime, and then kubeadm builds the cluster.
+
+    clu_rel is the Kubernetes minor to install ("1.33", or "v1.33.4", whose minor is used). clu_cni picks the
+    network plugin the first server applies: flannel (the default), calico, or none to apply nothing, for a lab that
+    brings its own. clu_pod_cidr overrides the pod network, which each plugin's default manifest expects to match.
+    """
+
+    name = "kubeadm"
+
+    CNI_MANIFESTS = {
+        "flannel": "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml",
+        "calico": "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml",
+    }
+    # Each plugin's own manifest carries this network, so the cluster has to be initialised with the same one.
+    CNI_POD_CIDRS = {"flannel": "10.244.0.0/16", "calico": "192.168.0.0/16"}
+    DEFAULT_CNI = "flannel"
+
+    def kubeconfig_path(self):
+        return "/etc/kubernetes/admin.conf"
+
+    def token_path(self):
+        """kubeadm keeps no join token on disk: a token is created when a node joins and expires by itself."""
+        return ""
+
+    def kubectl_command(self):
+        return "kubectl --kubeconfig {}".format(self.kubeconfig_path())
+
+    @staticmethod
+    def minor(clu_rel):
+        """The repository minor for a clu_rel: "1.33", "v1.33" and "v1.33.4+ignored" all give "v1.33"."""
+        match = re.search(r"(\d+)\.(\d+)", str(clu_rel or ""))
+        if not match:
+            die("clu_type kubeadm needs clu_rel to name a Kubernetes minor, for example \"1.33\" — got "
+                "{!r}".format(clu_rel))
+        return "v{}.{}".format(match.group(1), match.group(2))
+
+    def cni(self, clu_ctx):
+        """The network plugin to apply, validated against what this distro knows."""
+        name = str(clu_ctx.get("clu_cni") or self.DEFAULT_CNI).strip().lower()
+        if name not in list(self.CNI_MANIFESTS) + ["none"]:
+            die("clu_cni '{}' is invalid — use one of: {}, none".format(name, ", ".join(sorted(self.CNI_MANIFESTS))))
+        return name
+
+    def pod_cidr(self, clu_ctx):
+        """The pod network: the lab's own clu_pod_cidr, else the one the chosen plugin's manifest expects."""
+        return clu_ctx.get("clu_pod_cidr") or self.CNI_POD_CIDRS.get(self.cni(clu_ctx), "10.244.0.0/16")
+
+    def prepare_node(self, hostname, clu_rel):
+        """
+        Make a node able to run the kubelet: swap off, the modules and sysctls Kubernetes requires, containerd with
+        the systemd cgroup driver, and the kubelet, kubeadm and kubectl packages of this cluster's minor.
+
+        The package manager is detected rather than derived from the OS name, as ensure_podman_available() does. On a
+        transactional system the packages land in a new snapshot, so the node reboots into it before kubeadm runs.
+        """
+        minor = self.minor(clu_rel)
+        ssh_run(hostname, "swapoff -a; sed -i '/\\sswap\\s/s/^/#/' /etc/fstab", check=False)
+        ssh_run(hostname, "printf 'overlay\\nbr_netfilter\\n' > /etc/modules-load.d/k8s.conf; "
+                          "modprobe overlay; modprobe br_netfilter")
+        ssh_run(hostname, "printf 'net.bridge.bridge-nf-call-iptables=1\\nnet.ipv4.ip_forward=1\\n"
+                          "net.bridge.bridge-nf-call-ip6tables=1\\n' > /etc/sysctl.d/99-k8s.conf; sysctl --system "
+                          ">/dev/null")
+
+        transactional = is_transactional(hostname)
+        prefix = "transactional-update -n pkg install -y" if transactional else None
+        if prefix is None:
+            for manager, install in (("zypper", "zypper --non-interactive install -y"),
+                                     ("dnf", "dnf install -y"), ("apt-get", "apt-get install -y")):
+                if ssh_run(hostname, "command -v {}".format(manager), check=False).returncode == 0:
+                    prefix = install
+                    break
+        if prefix is None:
+            die("'{}': none of zypper, dnf or apt-get is available, so the Kubernetes packages cannot be "
+                "installed".format(hostname))
+
+        ssh_run(hostname, "{} containerd".format(prefix))
+        ssh_run(hostname, "mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && "
+                          "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
+
+        # The community repository is published per minor, so the cluster's own minor is what the node subscribes to.
+        if "apt-get" in prefix:
+            ssh_run(hostname, "apt-get update -qq && apt-get install -y apt-transport-https ca-certificates curl gpg")
+            ssh_run(hostname, "curl -fsSL https://pkgs.k8s.io/core:/stable:/{m}/deb/Release.key | "
+                              "gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg".format(m=minor))
+            ssh_run(hostname, "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] "
+                              "https://pkgs.k8s.io/core:/stable:/{m}/deb/ /' > /etc/apt/sources.list.d/"
+                              "kubernetes.list && apt-get update -qq".format(m=minor))
+        else:
+            ssh_run(hostname, "printf '[kubernetes]\\nname=Kubernetes\\nbaseurl=https://pkgs.k8s.io/core:/stable:/"
+                              "{m}/rpm/\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://pkgs.k8s.io/core:/stable:/{m}/"
+                              "rpm/repodata/repomd.xml.key\\n' > /etc/zypp/repos.d/kubernetes.repo 2>/dev/null || "
+                              "printf '[kubernetes]\\nname=Kubernetes\\nbaseurl=https://pkgs.k8s.io/core:/stable:/"
+                              "{m}/rpm/\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://pkgs.k8s.io/core:/stable:/{m}/"
+                              "rpm/repodata/repomd.xml.key\\n' > /etc/yum.repos.d/kubernetes.repo".format(m=minor))
+        ssh_run(hostname, "{} kubelet kubeadm kubectl".format(prefix))
+        if transactional:
+            reboot_into_pending_snapshot(hostname)
+        ssh_run(hostname, "systemctl enable --now containerd && systemctl enable kubelet")
+
+    def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
+        self.prepare_node(hostname, clu_ctx.get("clu_rel"))
+        if token is None:
+            return self._init(hostname, clu_name, clu_ctx)
+        log("  Joining '{}' as a control-plane node of '{}'".format(hostname, clu_name))
+        ssh_run(hostname, "{} --control-plane --certificate-key {}".format(
+            token["join"], shlex.quote(token["certificate_key"])))
+        self._write_root_kubeconfig(hostname)
+        return token, rancher1_ip
+
+    def install_agent(self, hostname, clu_name, clu_ctx, token, rancher1_ip):
+        self.prepare_node(hostname, clu_ctx.get("clu_rel"))
+        log("  Joining '{}' as a worker of '{}'".format(hostname, clu_name))
+        ssh_run(hostname, token["join"])
+        return token, rancher1_ip
+
+    def _init(self, hostname, clu_name, clu_ctx):
+        """
+        Build the cluster on its first node and return (join, hostname), where join carries the command another node
+        runs to join and the certificate key a further control-plane node needs.
+        """
+        mydomain = clu_ctx.get("mydomain", "")
+        endpoint = "{}.{}".format(clu_name, mydomain) if mydomain else hostname
+        log("  Initialising Kubernetes {} on '{}' (first node of '{}')".format(
+            self.minor(clu_ctx.get("clu_rel")), hostname, clu_name))
+        ssh_run(hostname, "kubeadm init --pod-network-cidr {} --control-plane-endpoint {}:6443 "
+                          "--upload-certs --ignore-preflight-errors=NumCPU".format(
+                              shlex.quote(self.pod_cidr(clu_ctx)), shlex.quote(endpoint)))
+        self._write_root_kubeconfig(hostname)
+        ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/kubeadm.sh; "
+                          "chmod 0644 /etc/profile.d/kubeadm.sh".format(self.kubeconfig_path()))
+
+        cni = self.cni(clu_ctx)
+        if cni == "none":
+            log("  clu_cni is \"none\": no network plugin applied, so the nodes stay NotReady until one is")
+        else:
+            log("  Applying the {} network plugin".format(cni))
+            ssh_run(hostname, "{} apply -f {}".format(self.kubectl_command(),
+                                                      shlex.quote(self.CNI_MANIFESTS[cni])))
+
+        # A single-node cluster has nowhere else to put pods, so the control-plane taint comes off.
+        if self._node_count(clu_ctx) == 1:
+            ssh_run(hostname, "{} taint nodes --all node-role.kubernetes.io/control-plane- ".format(
+                self.kubectl_command()), check=False)
+
+        join = ssh_output(hostname, "kubeadm token create --print-join-command").strip()
+        certificate_key = ssh_output(
+            hostname, "kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1").strip()
+        return {"join": join, "certificate_key": certificate_key}, hostname
+
+    def install_cluster(self, definition, clu_name, clu_ctx):
+        """
+        As the base does, with the node count recorded first: a single-node cluster has nowhere but its control
+        plane to run pods, so _init() takes the control-plane taint off, and it can only know that in advance.
+        """
+        clu_ctx = dict(clu_ctx, _node_count=sum(
+            1 for cfg in (definition.get("nodes") or {}).values() if cfg.get("kcluster") == clu_name))
+        super(KubeadmDistro, self).install_cluster(definition, clu_name, clu_ctx)
+
+    @staticmethod
+    def _node_count(clu_ctx):
+        """How many nodes this kcluster has, as install_cluster() recorded; 0 when it is not known."""
+        return int(clu_ctx.get("_node_count") or 0)
+
+    def _write_root_kubeconfig(self, hostname):
+        """Put the admin kubeconfig where a plain kubectl finds it, as the kubeadm documentation does."""
+        ssh_run(hostname, "mkdir -p /root/.kube && cp -f {} /root/.kube/config && "
+                          "chmod 0600 /root/.kube/config".format(self.kubeconfig_path()))
+
+
 class HarvesterDistro(K8sDistro):
     """
     Harvester / SUSE Virtualization (see libs/harvester.py). Nothing is installed over SSH: the cluster forms at first
@@ -403,6 +577,7 @@ class HarvesterDistro(K8sDistro):
 DISTROS = {
     "harvester": HarvesterDistro,
     "k3s": K3sDistro,
+    "kubeadm": KubeadmDistro,
     "rke2": RKE2Distro,
 }
 

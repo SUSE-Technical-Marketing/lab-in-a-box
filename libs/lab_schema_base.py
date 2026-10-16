@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.2"
+LAB_SCHEMA_VERSION = "2.3"
 
 
 def base_lab_schema():
@@ -152,8 +152,10 @@ def base_lab_schema():
                 "repeatable": True,
                 "key_label": "Kubernetes cluster name",
                 "fields": [
-                    {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s", "harvester"], "description": "Kubernetes cluster type: rke2, k3s, or harvester (Harvester / SUSE Virtualization appliance nodes on AWS from an AMI)"},
+                    {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s", "kubeadm", "harvester"], "description": "Kubernetes cluster type: rke2, k3s, kubeadm (upstream Kubernetes built with kubeadm, configured by clu_cni and clu_pod_cidr) or harvester (Harvester / SUSE Virtualization appliance nodes on AWS from an AMI)"},
                     {"name": "clu_rel", "required": True, "type": "string", "description": "Release channel: stable, latest, or a version string"},
+                    {"name": "clu_cni", "required": False, "type": "string", "enum": ["flannel", "calico", "none"], "description": "clu_type kubeadm: network plugin the first server applies (default: flannel; none applies nothing, for a lab that brings its own)"},
+                    {"name": "clu_pod_cidr", "required": False, "type": "string", "pattern": r"^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$", "description": "clu_type kubeadm: pod network (default: the network the chosen clu_cni's own manifest expects, 10.244.0.0/16 for flannel and 192.168.0.0/16 for calico)"},
                     {"name": "mydomain", "required": True, "type": "string", "description": "DNS domain for this Kubernetes cluster (e.g. mydemo.lab)"},
                     {"name": "addons", "required": False, "type": "array", "description": "List of Kubernetes cluster add-on names (install_<addon> scripts)"},
                     {"name": "mgm_node", "required": False, "type": "string", "description": "Hostname of the node that runs addon installers (default: first server node)"},

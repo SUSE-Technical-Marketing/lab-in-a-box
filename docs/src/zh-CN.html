@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
-<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。</p>
+<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
 <p>实验室并不局限于一台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

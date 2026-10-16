@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
-<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。</p>
+<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。 <code>clu_type: kubeadm</code> は kubeadm でアップストリームの Kubernetes を構築します。マイナーバージョンは <code>clu_rel</code>、ネットワークプラグインは <code>clu_cni</code>（既定は flannel、calico、独自のものを使う場合は none）で指定します。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
 <p>ラボは 1 台のハイパーバイザーに限定されません。オートメーション VM の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを使えます。</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
