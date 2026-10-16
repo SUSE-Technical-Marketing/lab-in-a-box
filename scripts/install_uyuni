@@ -45,8 +45,10 @@
 # Custom Salt states and formulas (installed into the server's own persistent volumes)
 #   uyuni_salt_states     : [{"name", "url" | "rpm", "sha256", "formula"}]
 #                           Custom Salt states put in /srv/salt/<name>, the one location a server upgrade keeps.
-#                           "url" is a tarball (.tar.gz, .tgz, .tar.bz2, .tar.xz) unpacked there, or a single .sls
-#                           written as its init.sls; "rpm" is a Salt-formula RPM, fetched and unpacked (never
+#                           "url" is a tarball unpacked there, or a single .sls
+#                           written as its init.sls, decided by reading the file and not by its URL; a
+#                           tarball holding one top-level directory has that wrapper stripped. "rpm" is a
+#                           Salt-formula RPM, fetched and unpacked (never
 #                           installed, since /usr/share/salt-formulas is not a volume) with its
 #                           salt-formulas/states/<name> and, for a formula, salt-formulas/metadata/<name>.
 #                           "sha256" is checked before anything is unpacked. "formula": true also installs the

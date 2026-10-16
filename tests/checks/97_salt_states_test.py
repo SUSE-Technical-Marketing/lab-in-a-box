@@ -22,16 +22,29 @@ def check(desc, cond):
 
 
 class _Run:
-    """Records every command ensure_salt_state() runs through the server's exec_prefix."""
+    """
+    Records every command ensure_salt_state() runs through the server's exec_prefix. `is_tar` answers the probe
+    that decides whether the downloaded file is an archive, and `fails` makes one command fail, for the paths that
+    only show up when something goes wrong.
+    """
 
-    def __init__(self, stamp=""):
+    def __init__(self, stamp="", is_tar=True, fails=""):
         self.cmds = []
         self.stamp = stamp
+        self.is_tar = is_tar
+        self.fails = fails
 
     def __call__(self, hostname, exec_prefix, cmd, **kwargs):
         self.cmds.append(cmd)
-        out = self.stamp if cmd.startswith("cat ") else ""
-        return mock.Mock(returncode=0 if (out or not cmd.startswith("cat ")) else 1, stdout=out)
+        if self.fails and self.fails in cmd:
+            if kwargs.get("check", True):
+                raise RuntimeError("command failed: " + cmd[:40])
+            return mock.Mock(returncode=1, stdout="")
+        if cmd.startswith("cat "):
+            return mock.Mock(returncode=0 if self.stamp else 1, stdout=self.stamp)
+        if cmd.startswith("tar -tf "):
+            return mock.Mock(returncode=0 if self.is_tar else 1, stdout="")
+        return mock.Mock(returncode=0, stdout="")
 
     def joined(self):
         return "\n".join(self.cmds)
@@ -50,6 +63,10 @@ check("it is fetched with its checksum verified first",
       "curl -fsSL -o source" in text and "sha256sum -c -" in text
       and text.index("sha256sum") < text.index("tar -xf"))
 check("it is unpacked into /srv/salt/<name>", "tar -xf /tmp/lab-in-a-box-salt-mystate/source -C /srv/salt/mystate" in text)
+check("what it is is decided by reading the file, not by the URL's extension",
+      "tar -tf /tmp/lab-in-a-box-salt-mystate/source" in text)
+check("an archive holding one top-level directory has that wrapper stripped",
+      "--strip-components=1" in text and "cut -d/ -f1 | sort -u | wc -l" in text)
 check("the directory is replaced, not merged into", "rm -rf /srv/salt/mystate" in text)
 check("the source is stamped so a re-run can tell", ".lab-in-a-box.source" in text and SHA in text)
 check("the work directory is cleaned up", "rm -rf /tmp/lab-in-a-box-salt-mystate" in text)
@@ -76,8 +93,18 @@ with mock.patch.object(sc, "_run", runner):
     check("a directory with no stamp is replaced",
           sc.ensure_salt_state("smlm.lab", "mgrctl exec --", "mystate", url="https://x/y.tgz") is True)
 
+# A tarball URL often ends in neither .tar.gz nor .sls — a codeload or GitLab archive link, for one — so the
+# source's kind cannot be read off the URL. Confirmed live on 2026-10-15: deciding by extension wrote the gzip
+# bytes into init.sls.
+runner = _Run(is_tar=True)
+with mock.patch.object(sc, "_run", runner):
+    sc.ensure_salt_state("smlm.lab", "mgrctl exec --", "fromcodeload",
+                         url="https://codeload.github.com/o/r/tar.gz/refs/heads/master")
+check("a tarball whose URL has no archive extension is still unpacked",
+      "tar -xf" in runner.joined() and "init.sls" not in runner.joined())
+
 # ── a single .sls ───────────────────────────────────────────────────────────
-runner = _Run()
+runner = _Run(is_tar=False)
 with mock.patch.object(sc, "_run", runner):
     sc.ensure_salt_state("smlm.lab", "mgrctl exec --", "onefile", url="https://example.com/thing.sls")
 check("a single .sls becomes the state's init.sls",
@@ -107,6 +134,20 @@ check("its metadata goes to /srv/formula_metadata/<name>",
       "/srv/formula_metadata/rpmstate/" in text)
 check("an RPM that ships no such state is an error, not a silent empty install",
       "ships no salt-formulas/states/rpmstate" in text)
+
+# ── a run that fails leaves nothing behind ─────────────────────────────────
+# Confirmed live on 2026-10-15: a wrong checksum used to leave its work directory inside the server container.
+runner = _Run(fails="sha256sum")
+try:
+    with mock.patch.object(sc, "_run", runner):
+        sc.ensure_salt_state("smlm.lab", "mgrctl exec --", "mystate", url="https://x/y.tgz", sha256=SHA)
+    check("a wrong checksum stops the install", False)
+except RuntimeError:
+    pass
+check("the work directory is removed even when the run fails",
+      "rm -rf /tmp/lab-in-a-box-salt-mystate" in runner.cmds[-1])
+check("nothing was installed over the existing state",
+      not any("cp -a" in c or "tar -xf" in c for c in runner.cmds))
 
 # ── the orchestrator ────────────────────────────────────────────────────────
 calls = []

@@ -4267,9 +4267,10 @@ def ensure_salt_state(hostname, exec_prefix, name, url="", rpm="", sha256="", fo
     Install custom Salt state (or formula) `name` on the server, from `url` or `rpm`, and return True when it was
     installed, False when it was already there.
 
-    url  : a tarball (.tar.gz, .tgz, .tar.bz2, .tar.xz) unpacked into /srv/salt/<name>, or a single .sls file
-           written as /srv/salt/<name>/init.sls. A formula's tarball may carry a form.yml, which is moved to
-           /srv/formula_metadata/<name>/form.yml.
+    url  : a tarball unpacked into /srv/salt/<name>, or a single .sls file written as
+           /srv/salt/<name>/init.sls. Which one it is is decided by reading the downloaded file, not by its URL:
+           a tarball's URL often ends in neither .tar.gz nor .sls (a codeload or GitLab archive link, for one).
+           A formula's tarball may carry a form.yml, which is moved to /srv/formula_metadata/<name>/form.yml.
     rpm  : a Salt-formula RPM, fetched and unpacked (never installed): salt-formulas/states/<name> becomes
            /srv/salt/<name> and salt-formulas/metadata/<name> becomes /srv/formula_metadata/<name>. An RPM that
            also ships Python modules or other files needs a custom server image and is out of scope.
@@ -4290,42 +4291,51 @@ def ensure_salt_state(hostname, exec_prefix, name, url="", rpm="", sha256="", fo
     state_dir = "{}/{}".format(SALT_STATES_DIR, name)
     meta_dir = "{}/{}".format(SALT_FORMULA_METADATA_DIR, name)
     work = "/tmp/lab-in-a-box-salt-{}".format(name)
-    fetch = ("rm -rf {work} && mkdir -p {work} && cd {work} && "
-             "curl -fsSL -o source {src}").format(work=work, src=shlex.quote(source))
-    if sha256:
-        fetch += " && echo {} source | sha256sum -c -".format(shlex.quote(sha256))
-    _run(hostname, exec_prefix, fetch)
+    try:
+        fetch = ("rm -rf {work} && mkdir -p {work} && cd {work} && "
+                 "curl -fsSL -o source {src}").format(work=work, src=shlex.quote(source))
+        if sha256:
+            fetch += " && echo {} source | sha256sum -c -".format(shlex.quote(sha256))
+        _run(hostname, exec_prefix, fetch)
 
-    if rpm:
-        unpack = ("cd {work} && rpm2cpio source | cpio -idm --quiet && "
-                  "test -d usr/share/salt-formulas/states/{name} || "
-                  "{{ echo 'the RPM ships no salt-formulas/states/{name}' >&2; exit 1; }}").format(
-                      work=work, name=name)
-        install = ("rm -rf {state} && mkdir -p {state} && "
-                   "cp -a {work}/usr/share/salt-formulas/states/{name}/. {state}/").format(
-                       state=state_dir, work=work, name=name)
-        if formula:
-            install += (" && rm -rf {meta} && mkdir -p {meta} && "
-                        "cp -a {work}/usr/share/salt-formulas/metadata/{name}/. {meta}/").format(
-                            meta=meta_dir, work=work, name=name)
-        _run(hostname, exec_prefix, unpack)
-        _run(hostname, exec_prefix, install)
-    elif re.search(r"\.(tar\.gz|tgz|tar\.bz2|tar\.xz)$", url):
-        _run(hostname, exec_prefix,
-             "rm -rf {state} && mkdir -p {state} && tar -xf {work}/source -C {state}".format(
-                 state=state_dir, work=work))
-        if formula:
+        if rpm:
+            unpack = ("cd {work} && rpm2cpio source | cpio -idm --quiet && "
+                      "test -d usr/share/salt-formulas/states/{name} || "
+                      "{{ echo 'the RPM ships no salt-formulas/states/{name}' >&2; exit 1; }}").format(
+                          work=work, name=name)
+            install = ("rm -rf {state} && mkdir -p {state} && "
+                       "cp -a {work}/usr/share/salt-formulas/states/{name}/. {state}/").format(
+                           state=state_dir, work=work, name=name)
+            if formula:
+                install += (" && rm -rf {meta} && mkdir -p {meta} && "
+                            "cp -a {work}/usr/share/salt-formulas/metadata/{name}/. {meta}/").format(
+                                meta=meta_dir, work=work, name=name)
+            _run(hostname, exec_prefix, unpack)
+            _run(hostname, exec_prefix, install)
+        elif _run(hostname, exec_prefix, "tar -tf {}/source > /dev/null 2>&1".format(work),
+                  check=False).returncode == 0:
+            # A release tarball usually holds one top-level directory (every GitHub and GitLab archive does), and Salt
+            # wants the state's own files directly under /srv/salt/<name>, so that single wrapper is stripped. An
+            # archive with several entries at its root is extracted as it is.
             _run(hostname, exec_prefix,
-                 "if [ -f {state}/form.yml ]; then mkdir -p {meta} && mv {state}/form.yml {meta}/form.yml; fi".format(
-                     state=state_dir, meta=meta_dir))
-    else:
-        _run(hostname, exec_prefix,
-             "rm -rf {state} && mkdir -p {state} && cp {work}/source {state}/init.sls".format(
-                 state=state_dir, work=work))
+                 "rm -rf {state} && mkdir -p {state} && "
+                 "if [ \"$(tar -tf {work}/source | cut -d/ -f1 | sort -u | wc -l)\" = \"1\" ]; then "
+                 "tar -xf {work}/source -C {state} --strip-components=1; else "
+                 "tar -xf {work}/source -C {state}; fi".format(state=state_dir, work=work))
+            if formula:
+                _run(hostname, exec_prefix,
+                     "if [ -f {state}/form.yml ]; then mkdir -p {meta} && mv {state}/form.yml {meta}/form.yml; fi".format(
+                         state=state_dir, meta=meta_dir))
+        else:
+            _run(hostname, exec_prefix,
+                 "rm -rf {state} && mkdir -p {state} && cp {work}/source {state}/init.sls".format(
+                     state=state_dir, work=work))
 
-    _run(hostname, exec_prefix, "printf '%s\\n' {} > {}/{}".format(
-        shlex.quote(stamp), state_dir, SALT_STATE_STAMP))
-    _run(hostname, exec_prefix, "rm -rf {}".format(work))
+        _run(hostname, exec_prefix, "printf '%s\\n' {} > {}/{}".format(
+            shlex.quote(stamp), state_dir, SALT_STATE_STAMP))
+    finally:
+        _run(hostname, exec_prefix, "rm -rf {}".format(work), check=False)
+
     print("  Salt state '{}' installed in {}{}".format(
         name, state_dir, " (formula metadata in {})".format(meta_dir) if formula else ""))
     return True
