@@ -19,7 +19,7 @@ PLUGIN = {
     "name": "example_chart",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
     # Version matrix (libs/versions.py): chart versions with each chart's kubeVersion minimum
     # (https://stefanprodan.github.io/podinfo/index.yaml).

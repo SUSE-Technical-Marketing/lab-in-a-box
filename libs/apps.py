@@ -9,7 +9,7 @@ An add-on is any executable named install_<addon>, with or without a file extens
 binary, ...), written in any language. Its contract:
 
     install_<addon> --schema json      prints its schema as JSON, with a "capabilities" object:
-                                       {"targets": [...], "layers": [...], "requires_kubernetes": [...] or null,
+                                       {"targets": [...], "layers": [...], "requires_kubernetes": null or [...],
                                         "aux_services": [...]}
     install_<addon> --capabilities     prints the same capabilities as JSON
     install_<addon> --validate <json>  exits non-zero, printing [ERROR] lines, when its config in the lab is invalid
@@ -26,7 +26,7 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "name": "mariadb",
         "targets": ["container"],               # subset of "container", "vm", "baremetal": where it may be placed (libs/targets.py)
         "layers": ["kubernetes"],               # subset of libs/layers.py's LAYER_*: how it can be installed (descriptive only)
-        "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
+        "requires_kubernetes": None,            # the clu_types it REQUIRES; None means any Kubernetes distribution
         "aux_services": [],                     # names from the services registry
         "versions": {...},                      # optional version matrix per version field (libs/versions.py)
         "status": "under-construction",         # optional; STATUSES; absent means "stable"
@@ -57,7 +57,7 @@ DEFAULT_PLUGIN = {
     "name": None,
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 

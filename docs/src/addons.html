@@ -72,7 +72,7 @@
      "description": "Number of replicas"}
   ],
   "capabilities": {
-    "targets": ["container"], "layers": ["kubernetes"], "requires_kubernetes": ["rke2", "k3s"],
+    "targets": ["container"], "layers": ["kubernetes"], "requires_kubernetes": null,
     "aux_services": [], "versions": {}
   }
 }
@@ -86,7 +86,7 @@
   <ul>
   <li><code>targets</code>: where it may be placed: <code>container</code> (on a kcluster), <code>vm</code> (a VM this lab creates), <code>baremetal</code> (an existing machine, <code>existing</code> nodes). The preflight refuses any other placement.</li>
   <li><code>layers</code>: how it installs: <code>kubernetes</code>, <code>standalone-container</code> (podman on a host), <code>os-native</code> (packages and files). The web UI groups add-ons by it.</li>
-  <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it supports (<code>rke2</code>, <code>k3s</code>), or <code>null</code>.</li>
+  <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it <em>requires</em>. <code>null</code>, the usual case, means any Kubernetes distribution; a list names the only ones it works on, as <code>install_fluid</code> does because its CSI plugin reads a <code>/var/lib/rancher/&lt;rke2|k3s&gt;</code> path.</li>
   <li><code>aux_services</code>: lab services it needs on the automation VM (e.g. <code>pxe</code>).</li>
   <li><code>versions</code>: optional version matrix; see <a href="index.html#add-on-version-matrix">Add-on version matrix</a>.</li>
   <li><code>status</code>: <code>stable</code> (the default when absent) or <code>under-construction</code>, for an add-on that is known not to work fully yet. An under-construction add-on still runs: <code>--help</code> starts with a <code>STATUS:</code> line, every run and the <code>setup_lab.py</code> preflight print a warning, and the web UI marks it with an "under construction" badge.</li>
@@ -110,7 +110,7 @@ PLUGIN = {
     "name": "example_chart",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 

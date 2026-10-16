@@ -66,16 +66,23 @@ check("there is no join-token file, because kubeadm keeps none", distro.token_pa
 class _Node:
     """Records what runs on a node, and answers the commands whose output the install reads."""
 
-    def __init__(self, transactional=False, missing=()):
+    def __init__(self, transactional=False, missing=(), skipped_repo=False, absent_binaries=""):
         self.cmds = []
         self.transactional = transactional
         self.missing = missing
+        self.skipped_repo = skipped_repo
+        self.absent_binaries = absent_binaries
 
     def run(self, hostname, cmd, **kwargs):
         self.cmds.append(cmd)
         for name in self.missing:
             if cmd == "command -v {}".format(name):
                 return mock.Mock(returncode=1, stdout="")
+        if "command -v $b" in cmd:
+            return mock.Mock(returncode=0, stdout=self.absent_binaries)
+        if self.skipped_repo and cmd.startswith(("zypper", "dnf", "transactional-update")):
+            # zypper's informational code for "a repository was skipped", which says nothing about the packages
+            return mock.Mock(returncode=106, stdout="")
         return mock.Mock(returncode=0, stdout="")
 
     def output(self, hostname, cmd, **kwargs):
@@ -113,6 +120,12 @@ check("containerd is installed and put on the systemd cgroup driver",
       "containerd" in text and "SystemdCgroup = true" in text)
 check("the packages come from the community repository of this cluster's minor",
       "pkgs.k8s.io/core:/stable:/v1.33" in text and "kubelet kubeadm kubectl" in text)
+# Confirmed live on 2026-10-16: without this, zypper answers its own trust prompt with no, skips the repository
+# and reports kubeadm as not existing at all.
+check("the repository's signing key is imported before the packages are installed",
+      "rpm --import" in text
+      and text.index("rpm --import") < text.index("kubelet kubeadm kubectl"))
+check("the repository is set to refresh itself", "autorefresh=1" in text)
 check("the cluster is initialised with the pod network and a control-plane endpoint",
       "kubeadm init --pod-network-cidr 10.244.0.0/16" in text and "--control-plane-endpoint clu.mydemo.lab:6443" in text)
 check("certificates are uploaded, so another control-plane node can join", "--upload-certs" in text)
@@ -136,6 +149,33 @@ node = _Node()
 _install(node, dict(CTX, clu_cni="calico"))
 check("calico is applied with its own network",
       "calico.yaml" in node.joined() and "--pod-network-cidr 192.168.0.0/16" in node.joined())
+
+
+# ── what the live run on 2026-10-16 found ───────────────────────────────────
+# The repository and its key come first: a zypper that does not trust the key skips the repository and then exits
+# 106 for every later install, so the failure surfaced on whatever was being installed at the time (containerd).
+node = _Node()
+text = node.joined() if node.cmds else ""
+_install(node, CTX)
+text = node.joined()
+check("the repository and its key are set up before anything is installed",
+      text.index("rpm --import") < text.index("containerd")
+      and text.index("kubernetes.repo") < text.index("containerd"))
+
+# zypper exits 106 when it skipped a repository, with the packages installed; that is not a failure.
+node = _Node(skipped_repo=True)
+_install(node, CTX)
+check("zypper's skipped-repository exit code does not abort the install",
+      "kubeadm init" in node.joined())
+
+# What the packages were for is checked instead, so a skipped repository cannot pass silently.
+node = _Node(absent_binaries="kubeadm\nkubelet\n")
+try:
+    _install(node, CTX)
+    check("missing binaries after the install are an error", False)
+except SystemExit:
+    pass
+check("the binaries are checked after the install", "command -v $b" in node.joined())
 
 # ── joining ─────────────────────────────────────────────────────────────────
 JOIN = {"join": "kubeadm join clu.lab:6443 --token t --discovery-token-ca-cert-hash sha256:1", "certificate_key": "k"}
@@ -174,6 +214,49 @@ seen = {}
 with mock.patch.object(k8s.K8sDistro, "install_cluster", side_effect=lambda d, c, ctx: seen.update(ctx)):
     distro.install_cluster(lab, "c1", {"clu_rel": "1.33"})
 check("only this cluster's nodes are counted", seen.get("_node_count") == 2)
+
+# ── an add-on restricts itself to distributions only when it must ───────────
+# requires_kubernetes names the distributions an add-on REQUIRES, so null (any Kubernetes) is the normal case and a
+# list is a real constraint: the add-on's own code has to be distribution-specific to justify one.
+import ast  # noqa: E402
+import re  # noqa: E402
+
+import apps  # noqa: E402
+
+DISTRO_SPECIFIC = re.compile(r"clu_type\s*==|/var/lib/rancher/|/etc/rancher/")
+restricting, any_k8s = [], []
+for path in sorted(Path(_REPO / "scripts").glob("install_*")):
+    source = path.read_text(errors="replace")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        continue
+    plugin = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "PLUGIN" for t in node.targets):
+            plugin = ast.literal_eval(node.value)
+    if plugin is None:
+        continue
+    required = plugin.get("requires_kubernetes")
+    if required is None:
+        any_k8s.append(path.name)
+        continue
+    restricting.append(path.name)
+    check("{}: every distribution it names is one k8s.py can build".format(path.name),
+          isinstance(required, list) and all(d in k8s.DISTROS for d in required))
+    check("{}: it is distribution-specific, which is what lets it restrict".format(path.name),
+          bool(DISTRO_SPECIFIC.search(source)))
+
+check("most add-ons run on any Kubernetes distribution", len(any_k8s) > 50)
+check("an add-on that names no distribution is placed on a kubeadm cluster",
+      apps.requirement_issue(dict(apps.DEFAULT_PLUGIN, name="x", requires_kubernetes=None),
+                             "container", clu_type="kubeadm") is None)
+check("the default for an add-on that prints no capabilities is any distribution",
+      apps.DEFAULT_PLUGIN["requires_kubernetes"] is None)
+check("one that names distributions is still refused on the others",
+      apps.requirement_issue(dict(apps.DEFAULT_PLUGIN, name="x", requires_kubernetes=["rke2", "k3s"]),
+                             "container", clu_type="kubeadm") is not None)
+
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

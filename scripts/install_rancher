@@ -25,7 +25,7 @@ PLUGIN = {
     "name": "rancher",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
     # Version matrix (libs/versions.py). Kubernetes ranges: SUSE Rancher Prime support matrix
     # (https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/) and cert-manager's supported releases

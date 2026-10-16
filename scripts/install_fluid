@@ -17,6 +17,7 @@ PLUGIN = {
     "name": "fluid",
     "targets": ["container"],
     "layers": ["kubernetes"],
+    # Its CSI plugin reads the kubelet kubeconfig and certificates under /var/lib/rancher/<rke2|k3s>/agent.
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }

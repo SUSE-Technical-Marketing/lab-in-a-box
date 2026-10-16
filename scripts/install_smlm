@@ -424,6 +424,7 @@ PLUGIN = {
     # both are listed here.
     "targets": ["container", "vm", "baremetal"],
     "layers": ["kubernetes", "standalone-container"],
+    # Its extra Salt and report-DB ports are exposed by reconfiguring the distribution's own bundled Traefik.
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }

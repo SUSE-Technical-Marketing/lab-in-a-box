@@ -19,7 +19,7 @@ PLUGIN = {
     "name": "istio",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 

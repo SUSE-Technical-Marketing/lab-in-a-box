@@ -65,6 +65,7 @@ PLUGIN = {
     "name": "smlm_proxy",
     "targets": ["container"],
     "layers": ["kubernetes"],
+    # Its extra Salt ports are exposed by reconfiguring the distribution's own bundled Traefik.
     "requires_kubernetes": ["rke2", "k3s"],
     "aux_services": [],
 }

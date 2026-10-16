@@ -82,7 +82,7 @@ PLUGIN = {
     "name": "nextcloud",
     "targets": ["container", "vm", "baremetal"],
     "layers": ["kubernetes", "standalone-container"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 
