@@ -3,7 +3,7 @@
 <ul>
 <li><strong>ملف واحد وأمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes ‏(RKE2 أو K3s) والإضافات بأسلوب تصريحي. يبنيها <code>setup_lab.py</code> بترتيب الاعتماديات دون أن تشغّل <code>virt-install</code> أو Ansible يدويًا.</li>
 <li><strong>مختبر منزلي أو سحابي، والتعريف نفسه.</strong> تعمل الأجهزة الافتراضية للمختبر على مضيفات KVM تملكها، أو على Harvester HCI، أو على AWS وGoogle Cloud وAlibaba Cloud وHetzner وScaleway وUpCloud وOVHcloud وExoscale. يمكن أن يمتد المختبر على عدة مضيفات KVM، وأن يجمع سحابات ومواقع مختلفة عبر <a href="#cross-cloud-wireguard-overlay">شبكة WireGuard متراكبة بين السحابات</a>.</li>
-<li><strong>71 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
+<li><strong>70 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
 <li><strong>واجهة ويب تتبع الشيفرة.</strong> يبني <a href="#web-ui-lab-builder">lab-builder</a> كل نموذج من مخطط الإضافة نفسها، فيظهر أي حقل جديد في السكربت في الواجهة دون تعديل الواجهة الأمامية.</li>
 <li><strong>تجهيز قابل للتبديل.</strong> Ignition وCombustion لـ SLE Micro، وcloud-init لـ openSUSE وUbuntu، و<code>virt-customize</code> للصور القديمة، أو تثبيت آلي من صورة ISO للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
 <li><strong>بيانات الاعتماد خارج ملف المختبر.</strong> يمكن حفظ بيانات اعتماد السحابات والخدمات في ملفات مشفّرة لكل حساب (اشتقاق المفتاح بـ Argon2id ثم AES-256-GCM وChaCha20-Poly1305 على التوالي).</li>
@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها.</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك). يحدّد <code>clu_ingress</code> و<code>clu_storage</code> متحكم الدخول (<code>nginx</code> أو <code>traefik</code>) وفئة التخزين الافتراضية (<code>longhorn</code> أو <code>local-path</code>) للعنقود. وبدون تحديد يبقى ما تأتي به التوزيعة — nginx في RKE2، وTraefik وlocal-path في K3s، وكلاهما في Harvester — أما التوزيعة التي لا تأتي بأيٍّ منهما فيُثبَّت لها واحد بمجرد أن تحتاجه إحدى إضافات العنقود؛ وتحديد غيره يستبدل المكوّن المضمّن، و<code>none</code> لا يثبّت شيئًا.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">صيغة تعريف المختبر</h2>
-<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>.</p>
+<p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>. و<code>examples/suse-multiproduct.json.template</code> هو مختبر متكامل يجمع عدة منتجات: عنقود RKE2 واحد يضم SUSE Rancher Prime وSUSE Storage وSUSE AI من SUSE Application Collection وSUSE Security، مثبّتة بالترتيب الذي توثّقه SUSE. و<code>suse-multiproduct-gpu.json.template</code> هو المختبر نفسه مع SUSE AI على وحدة معالجة رسومات NVIDIA، على عقدة <code>existing</code>، لأن تعريف المختبر لا يدعم تمرير PCI.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -527,6 +527,10 @@ rancher:
 <tr>
 <td><code>kvm_host</code></td>
 <td>تثبيت هذا الجهاز الافتراضي على مضيف محدد في <a href="#multi-host-labs">مختبر متعدد المضيفات</a></td>
+</tr>
+<tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>أوامر شِل تنفّذها هذه الآلة الافتراضية بنفسها بصلاحية root: <code>pre_commands</code> بمجرد أن تصبح جاهزة وقبل أي عمل يتعلق بـ Kubernetes أو الإضافات، و<code>post_commands</code> بعد كل ذلك. ويمكن تعيينهما في <code>common</code> لكل الآلات؛ وقائمة العقدة نفسها تحل محلهما، و<code>[]</code> تستثني تلك العقدة</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -739,7 +743,7 @@ cloud-init، لذا يجب أن تكون قيمة <code>config_method</code> ه�
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p>يفحص <code>setup_lab.py</code> الملف تلقائيًا قبل أي شيء آخر: عناوين IP الخاطئة، والإشارة إلى <code>kcluster</code> غير موجود، و<code>ISO_IMAGE</code> المفقود، وأخطاء مشابهة تُكتشف وتُعرض (<code>✗ Preflight FAILED — N error(s)</code>) دون إنشاء أي شيء، بدلًا من الفشل في منتصف الطريق. أما الملف السليم فيعرض <code>✓ Preflight passed</code> وينتقل مباشرة إلى البناء.</p>
+<p>يفحص <code>setup_lab.py</code> الملف تلقائيًا قبل أي شيء آخر: عناوين IP الخاطئة، والإشارة إلى <code>kcluster</code> غير موجود، و<code>ISO_IMAGE</code> المفقود، وأخطاء مشابهة تُكتشف وتُعرض (<code>✗ Preflight FAILED — N error(s)</code>) دون إنشاء أي شيء، بدلًا من الفشل في منتصف الطريق. أما الملف السليم فيعرض <code>✓ Preflight passed</code> وينتقل مباشرة إلى البناء. كما يُفحص كل قيمة مقابل المخطط الذي يصرّح بها: <code>myip</code> ليس عنوان IP، و<code>VM_MEM</code> ليس رقمًا أو أقل من حده الأدنى، و<code>clu_type</code> ليس أحد أنواع عناقيد Kubernetes المصرّح بها. ويفعل <code>--validate</code> لكل إضافة الشيء نفسه لحقولها الخاصة وللقيم التي يستبدلها كل عقدة.</p>
 <p>بالترتيب: يسجّل العقدتين في DNS ← ينشئ الجهازين الافتراضيين (ينسخ صورة QCOW2، ويولّد ملفات Combustion، ويقلعهما، وينتظر SSH) ← يثبّت RKE2 على <code>node101</code> كخادم ثم على <code>node102</code> كوكيل ← يثبّت <code>rancher</code> و<code>longhorn</code> على عقدة إدارة العنقود (<code>mgm_node</code>، وافتراضيًا أول عقدة خادم، وهي هنا <code>node101</code>). يستغرق عنقود من عقدتين مع Rancher عادةً بين 15 و25 دقيقة، معظمها في إقلاع RKE2 وتثبيت Rancher عبر Helm.</p>
 <ol start="3">
 <li><strong>تحقق من حل أسماء DNS</strong> (من حاسوبك، بعد <a href="#step-5--point-your-client-dns-at-the-automation-vm">توجيهه إلى DNS آلة الأتمتة الافتراضية</a>):</li>
@@ -913,8 +917,12 @@ install_longhorn --schema yaml      # ...or YAML
 <td>منصة SUSE Rancher Prime لإدارة Kubernetes</td>
 </tr>
 <tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>local-path-provisioner من Rancher: فئة تخزين افتراضية تكون وحدات التخزين فيها أدلة على العقدة التي يعمل عليها الـ pod. بديل خفيف لـ <code>longhorn</code> حين لا يلزم النسخ المتماثل؛ ويختار الـ kcluster أحدهما في <code>clu_storage</code></td>
+</tr>
+<tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>تخزين كتلي موزّع SUSE Longhorn</td>
+<td>تخزين كتلي موزّع SUSE Longhorn — من مخطط upstream افتراضيًا، أو كـ SUSE Storage من SUSE Application Collection عبر <code>lh_source: "appcollection"</code> (يتطلب حسابًا في Application Collection)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>
@@ -923,6 +931,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>وحدة التحكم Argo CD لـ GitOps</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>التسليم المستمر عبر Fleet في Rancher: مجموعات العناقيد وتسمياتها وموارد GitRepo، ومنها مستودع rancher/fleet-examples الموجود في التوثيق. وهو يهيّئ Fleet المرفق مع Rancher ولا يثبّته</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
@@ -1030,7 +1042,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي. ويثبّت تلقائياً أيضاً SUSE Linux 16 وopenSUSE Leap 16: تقدّم مدخلات <code>smlm_kickstart_profiles</code> التي تحتوي <code>agama_profile</code> ملف تعريف Agama بصيغة JSON، وتستورد مدخلات <code>smlm_distributions</code> التي تحتوي <code>iso_url</code> شجرة التثبيت من ملف ISO</td>
+<td>خادم SUSE Multi-Linux Manager: الميزات نفسها التي في <code>uyuni</code>، يُنشر بـ Helm على Kubernetes أو، مع <code>smlm_deployment: "podman"</code>، بواسطة <code>mgradm</code> مباشرة على مضيف أو جهاز افتراضي. ويثبّت تلقائياً أيضاً SUSE Linux 16 وopenSUSE Leap 16: تقدّم مدخلات <code>smlm_kickstart_profiles</code> التي تحتوي <code>agama_profile</code> ملف تعريف Agama بصيغة JSON، وتستورد مدخلات <code>smlm_distributions</code> التي تحتوي <code>iso_url</code> شجرة التثبيت من ملف ISO وهو و<code>uyuni</code> يثبّتان أيضًا حالات Salt وصيغه الخاصة بك: مدخلات <code>smlm_salt_states</code>/<code>uyuni_salt_states</code> تضع أرشيف tar أو ملف <code>.sls</code> واحدًا أو حزمة RPM لصيغة Salt في <code>/srv/salt</code> الدائم على الخادم (تُفك حزمة RPM ولا تُثبّت أبدًا، لأن <code>/usr/share/salt-formulas</code> لا يصمد أمام ترقية الخادم)</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1409,7 +1421,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
-<p>التشفير (راجع <code>libs/crypto_store.py</code>): تمر عبارة المرور عبر <strong>Argon2id</strong> (دالة اشتقاق مفاتيح بطيئة ومستهلكة للذاكرة عمدًا؛ وهي، لا خوارزمية التشفير، حدّ الأمان الحقيقي لملف مشفّر بعبارة مرور) لاشتقاق سر رئيسي بطول 512 بت؛ ثم تشتق <strong>HKDF-SHA512</strong> مفتاحين فرعيين مستقلين بطول 256 بت (مفصولين بوسم، لا مجرد تقسيم إلى نصفين)؛ وتُشفَّر البيانات بـ <strong>AES-256-GCM ثم ChaCha20-Poly1305 على التوالي</strong>، وهما خوارزميتا AEAD مختلفتان بنيويًا وبمفاتيح مستقلة، فلا يكفي كسر إحداهما كسرًا كاملًا وحده. تطلب كل أداة تحتاج إلى بيانات اعتماد (<code>setup_lab.py</code> و<code>setup_vm.py</code> وغيرهما) عبارة المرور مرة واحدة في كل تشغيل (تُحفظ في ذاكرة العملية فقط ولا تُكتب في أي مكان) عبر <code>try_load_cloud_account()</code> في <code>libs/primary.py</code>، وهي الدالة الوحيدة التي يمر بها كل شيء.</p>
+<p>التشفير (راجع <code>libs/crypto_store.py</code>): تمر عبارة المرور عبر <strong>Argon2id</strong> (دالة اشتقاق مفاتيح بطيئة ومستهلكة للذاكرة عمدًا؛ وهي، لا خوارزمية التشفير، حدّ الأمان الحقيقي لملف مشفّر بعبارة مرور) لاشتقاق سر رئيسي بطول 512 بت؛ ثم تشتق <strong>HKDF-SHA512</strong> مفتاحين فرعيين مستقلين بطول 256 بت (مفصولين بوسم، لا مجرد تقسيم إلى نصفين)؛ وتُشفَّر البيانات بـ <strong>AES-256-GCM ثم ChaCha20-Poly1305 على التوالي</strong>، وهما خوارزميتا AEAD مختلفتان بنيويًا وبمفاتيح مستقلة، فلا يكفي كسر إحداهما كسرًا كاملًا وحده. تطلب كل أداة تحتاج إلى بيانات اعتماد (<code>setup_lab.py</code> و<code>setup_vm.py</code> وغيرهما) عبارة المرور مرة واحدة في كل تشغيل (تُحفظ في ذاكرة العملية فقط ولا تُكتب في أي مكان) عبر <code>try_load_cloud_account()</code> في <code>libs/primary.py</code>، وهي الدالة الوحيدة التي يمر بها كل شيء. أما التشغيل الذي لا يمكن سؤاله — <strong>Create lab</strong> في واجهة الويب، أو تشغيل مُجدول، أو خط إنتاج — فيأخذ عبارة المرور من <code>LAB_CREDENTIALS_PASSPHRASE</code>، وتُجرّب مرة واحدة ولا تُكتب في أي مكان؛ أما تعيين عبارة مرور جديدة فيُسأل عنه دائمًا، فلا يمكن للمتغير أن يشفّر ملفًا بصمت.</p>
 <p>يمكن للملف أن يتخلى عن التشفير بـ <code>unencrypted: true</code> في المستوى الأعلى (ليس الافتراضي: يسأل <code>setup_credentials.py</code> قبل كتابة ملف كهذا). يشفّر <code>--encrypt-existing</code> في مكانها الحقول التي تبدو حساسة فقط (الأسماء الشبيهة بسر أو كلمة مرور أو رمز مميز)، ويترك مثلًا <code>AWS_REGION</code>/<code>AWS_PROFILE</code> مقروءة، ولا يكتب أبدًا فوق ملف الإدخال: بل يكتب <code>&lt;name&gt;.encrypted.yaml</code> بجانبه لتراجعه وتضعه في مكانه. يتطلب حزمة Python ‏<code>cryptography</code> ‏(<code>python311-cryptography</code>، أو <code>pip install cryptography</code>، الإصدار 41 أو أحدث لـ Argon2id) على آلة الأتمتة الافتراضية؛ ولا تُستورد إلا عند استخدام ملف مشفّر فعلًا، فلا يحتاج مختبر لا يضبط <code>cloud_account</code> أبدًا إلى أي اعتمادية جديدة.</p>
 <p><strong>بيانات اعتماد الخدمات الخارجية (SCC وSUSE Application Collection وHermes وغيرها).</strong> يغطي المخزن نفسه <code>/etc/lab_creation/credentials/</code> والتشفير نفسه والأداة نفسها <code>setup_credentials.py</code> أيضًا بيانات اعتماد الخدمات الخارجية غير السحابية، لا مزودي السحابة وحدهم. يُعلَّم الملف بـ <code>credential_kind</code> (مثل <code>scc</code> و<code>appcollection</code> و<code>hermes</code>) بدلًا من <code>cloudtype</code>، فيتشارك المفهومان المجلد والصيغة دون أي تعارض. توثّق كل إضافة تحتاج إلى بيانات اعتماد خدمة خارجية حقلها الاختياري <code>&lt;field&gt;_account</code> (مثل <code>smlm_scc_account</code> و<code>suse_ai_registry_account</code> و<code>hermes_account</code>) لتحديده صراحة؛ وإن لم يُضبط، يُكتشف تلقائيًا الملف الوحيد المطابق لـ <code>credential_kind</code> بالطريقة نفسها المتبعة مع <code>cloud_account</code>. <strong>يبقى وضع بيانات الاعتماد نصًا صريحًا في ملف JSON للمختبر صالحًا تمامًا</strong>: هذا المخزن بديل اختياري لا شرط؛ وتظل الحقول النصية الصريحة لكل إضافة (<code>smlm_scc_user</code> و<code>suse_ai_registry_user</code> و<code>hermes_llm_api_key</code> وغيرها) تعمل دون تغيير إن لم تستخدم مخزن بيانات الاعتماد أبدًا.</p>
 <pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first
