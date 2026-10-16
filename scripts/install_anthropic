@@ -1,0 +1,87 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install an Anthropic Claude AI proxy (LiteLLM)
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 2.1
+#
+# JSON section: "anthropic" — Anthropic Claude API proxy (LiteLLM)
+#   anthropic_api_key   : [MANDATORY] Anthropic API key (from https://console.anthropic.com)
+#   anthropic_model     : [OPTIONAL] default Claude model (default: anthropic/claude-sonnet-5)
+#                         Examples: anthropic/claude-opus-5, anthropic/claude-haiku-4-5
+#   anthropic_version   : [OPTIONAL] litellm-helm chart version (empty = latest)
+#   anthropic_chart     : [OPTIONAL] litellm-helm chart (default: oci://ghcr.io/berriai/litellm-helm)
+#   anthropic_ns        : [OPTIONAL] namespace (default: anthropic)
+#   anthropic_shorthn   : [OPTIONAL] hostname prefix (default: anthropic)
+#
+# Same shape as the "gemini" addon: deploys LiteLLM as an OpenAI-compatible proxy, this time in front
+# of Anthropic's own API. Any OpenAI SDK/client can reach Claude models through the resulting endpoint.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "anthropic",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "aux_services": [],
+}
+
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+import litellm_common  # noqa: E402
+from lab_creation import setup_helm  # noqa: E402
+
+
+def _validate(v):
+    v.vreq("anthropic", "anthropic_api_key")
+    v.vns("anthropic")
+    v.vver("anthropic")
+
+
+def setup_anthropic(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
+    """Install the LiteLLM proxy in front of the configured model; returns the endpoint hostname."""
+    ns = cfg.get("anthropic_ns") or "anthropic"
+    fqdn = "{}.{}.{}".format(cfg.get("anthropic_shorthn") or "anthropic", clu_name, mydomain)
+    litellm_common.setup_litellm_proxy(hostname, "anthropic-proxy", ns, fqdn, "claude", cfg.get("anthropic_model") or "anthropic/claude-sonnet-5",
+                                       cfg["anthropic_api_key"], chart=cfg.get("anthropic_chart") or "",
+                                       version=cfg.get("anthropic_version") or "")
+    return fqdn
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    cfg = definition.get("anthropic", {}) or {}
+    if not cfg.get("anthropic_api_key"):
+        print("ERROR: anthropic.anthropic_api_key is mandatory.", file=sys.stderr)
+        sys.exit(1)
+
+    setup_helm(vm_name, clu_name, online=definition.get("common", {}).get("online") == "1")
+    fqdn = setup_anthropic(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+
+if __name__ == "__main__":
+    main()

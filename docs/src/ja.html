@@ -3,7 +3,7 @@
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong>71 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong>70 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
-<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。</p>
+<p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。 <code>clu_type: kubeadm</code> は kubeadm でアップストリームの Kubernetes を構築します。マイナーバージョンは <code>clu_rel</code>、ネットワークプラグインは <code>clu_cni</code>（既定は flannel、calico、独自のものを使う場合は none）で指定します。 <code>clu_ingress</code> と <code>clu_storage</code> は、クラスターの Ingress コントローラー（<code>nginx</code>、<code>traefik</code>）と既定のストレージクラス（<code>longhorn</code>、<code>local-path</code>）を指定します。未設定ならディストリビューションが備えるもの（RKE2 は nginx、K3s は Traefik と local-path、Harvester は両方）がそのまま使われ、どちらも備えないディストリビューションでは、クラスターのアドオンが必要とした時点で導入されます。別のものを指定すると同梱のコンポーネントを置き換え、<code>none</code> は何も導入しません。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
 <p>ラボは 1 台のハイパーバイザーに限定されません。オートメーション VM の <code>/etc/lab_creation.cfg</code> に <code>KVM_HOSTS</code>（スペース区切り）を設定すると、複数のハイパーバイザーを使えます。</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">ラボ定義の形式</h2>
-<p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。</p>
+<p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。 <code>examples/suse-multiproduct.json.template</code> は複数製品を組み合わせたラボの実例です。1 つの RKE2 クラスタに SUSE Rancher Prime、SUSE Storage、SUSE Application Collection からの SUSE AI、SUSE Security を、SUSE が示す順序で導入します。<code>suse-multiproduct-gpu.json.template</code> は同じラボを NVIDIA GPU 上の SUSE AI で構成したもので、ラボ定義に PCI パススルーがないため <code>existing</code> ノードを使います。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -527,6 +527,10 @@ rancher:
 <tr>
 <td><code>kvm_host</code></td>
 <td><a href="#multi-host-labs">マルチホストラボ</a>で、この VM を特定のハイパーバイザーに固定</td>
+</tr>
+<tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>この VM が root として自分で実行するシェルコマンド。<code>pre_commands</code> は起動して到達可能になった直後、Kubernetes やアドオンの作業より前に、<code>post_commands</code> はそのすべてのあとに実行されます。<code>common</code> に書けばすべての VM が対象になり、ノード自身のリストがそれを置き換え、<code>[]</code> はそのノードを除外します</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -737,7 +741,7 @@ root パスワードを設定します。省略すると、cloud-init や Igniti
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>ISO_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。</p>
+<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>ISO_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。 値そのものも、それを宣言しているスキーマに照らして検査されます。IP アドレスになっていない <code>myip</code>、数値でない、または最小値を下回る <code>VM_MEM</code>、宣言された Kubernetes クラスタ種別のいずれでもない <code>clu_type</code> などです。各アドオンの <code>--validate</code> も、自身のフィールドとノードごとの上書きに対して同じ検査を行います。</p>
 <p>処理の順序：両ノードを DNS に登録 → 両 VM を作成（QCOW2 イメージをコピーし、Combustion ファイルを生成して起動し、SSH を待つ）→ <code>node101</code> にサーバーとして、続いて <code>node102</code> にエージェントとして RKE2 をインストール → クラスターの管理ノード（<code>mgm_node</code>、デフォルトは最初のサーバーノードで、ここでは <code>node101</code>）に <code>rancher</code> と <code>longhorn</code> をインストール。Rancher 付きの 2 ノードクラスターは通常 15～25 分かかり、その大半は RKE2 の起動と Rancher の Helm インストールです。</p>
 <ol start="3">
 <li><strong>DNS の解決を確認します</strong>（自分のデスクトップを<a href="#step-5--point-your-client-dns-at-the-automation-vm">オートメーション VM の DNS に向けた</a>後で）：</li>
@@ -911,8 +915,12 @@ install_longhorn --schema yaml      # ...or YAML
 <td>SUSE Rancher Prime Kubernetes 管理プラットフォーム</td>
 </tr>
 <tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>Rancher の local-path-provisioner: ボリュームが Pod の実行ノード上のディレクトリであるデフォルトの StorageClass。レプリケーションが不要な場合の <code>longhorn</code> の軽量な代替で、kcluster は <code>clu_storage</code> でどちらかを指定します</td>
+</tr>
+<tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn 分散ブロックストレージ</td>
+<td>SUSE Longhorn 分散ブロックストレージ — 既定ではアップストリームのチャートから、<code>lh_source: "appcollection"</code> を指定すると SUSE Application Collection の SUSE Storage から導入します（Application Collection のアカウントが必要です）</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>
@@ -921,6 +929,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>Argo CD GitOps コントローラー</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>Rancher の Fleet による継続的デリバリ。クラスタグループ、クラスタラベル、GitRepo リソースを構成し、ドキュメントにある rancher/fleet-examples リポジトリも追加できます。Fleet は Rancher に同梱されているため、導入ではなく設定を行います</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
@@ -1028,7 +1040,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします。SUSE Linux 16 と openSUSE Leap 16 の自動インストールにも対応し、<code>agama_profile</code> を持つ <code>smlm_kickstart_profiles</code> のエントリーは Agama の JSON プロファイルを配信し、<code>iso_url</code> を持つ <code>smlm_distributions</code> のエントリーは ISO からインストールツリーを取り込みます</td>
+<td>SUSE Multi-Linux Manager サーバー：<code>uyuni</code> と同じ機能で、Kubernetes 上に Helm でデプロイするか、<code>smlm_deployment: "podman"</code> を指定してホストや VM に <code>mgradm</code> で直接デプロイします。SUSE Linux 16 と openSUSE Leap 16 の自動インストールにも対応し、<code>agama_profile</code> を持つ <code>smlm_kickstart_profiles</code> のエントリーは Agama の JSON プロファイルを配信し、<code>iso_url</code> を持つ <code>smlm_distributions</code> のエントリーは ISO からインストールツリーを取り込みます この製品と <code>uyuni</code> はいずれも独自の Salt ステートやフォーミュラも導入できます。<code>smlm_salt_states</code>/<code>uyuni_salt_states</code> のエントリは、tarball、単一の <code>.sls</code>、または Salt フォーミュラの RPM をサーバの永続的な <code>/srv/salt</code> に配置します（RPM は展開するだけでインストールはしません。<code>/usr/share/salt-formulas</code> はサーバのアップグレードで失われるためです）</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1407,7 +1419,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
-<p>暗号方式（<code>libs/crypto_store.py</code> を参照）：パスフレーズは <strong>Argon2id</strong>（意図的に遅くメモリを多く使う KDF。パスフレーズで暗号化したファイルの本当の安全性の境界は、暗号ではなくこの KDF です）を通して 512 ビットのマスターシークレットを導出します。続いて <strong>HKDF-SHA512</strong> が独立した 256 ビットのサブキーを 2 つ導出します（単に半分に分けるのではなく、ラベルでドメインを分離）。データは <strong>AES-256-GCM の後に ChaCha20-Poly1305 をカスケードで</strong>適用して暗号化します。構造の異なる、独立した鍵を持つ 2 つの AEAD 暗号なので、どちらか一方のアルゴリズムが完全に破られても、それだけでは足りません。認証情報を必要とするツール（<code>setup_lab.py</code>、<code>setup_vm.py</code> など）は、すべてが通る唯一の関数である <code>libs/primary.py</code> の <code>try_load_cloud_account()</code> を通じて、実行ごとに一度パスフレーズを尋ねます（プロセスのメモリにのみ保持され、どこにも書き込まれません）。</p>
+<p>暗号方式（<code>libs/crypto_store.py</code> を参照）：パスフレーズは <strong>Argon2id</strong>（意図的に遅くメモリを多く使う KDF。パスフレーズで暗号化したファイルの本当の安全性の境界は、暗号ではなくこの KDF です）を通して 512 ビットのマスターシークレットを導出します。続いて <strong>HKDF-SHA512</strong> が独立した 256 ビットのサブキーを 2 つ導出します（単に半分に分けるのではなく、ラベルでドメインを分離）。データは <strong>AES-256-GCM の後に ChaCha20-Poly1305 をカスケードで</strong>適用して暗号化します。構造の異なる、独立した鍵を持つ 2 つの AEAD 暗号なので、どちらか一方のアルゴリズムが完全に破られても、それだけでは足りません。認証情報を必要とするツール（<code>setup_lab.py</code>、<code>setup_vm.py</code> など）は、すべてが通る唯一の関数である <code>libs/primary.py</code> の <code>try_load_cloud_account()</code> を通じて、実行ごとに一度パスフレーズを尋ねます（プロセスのメモリにのみ保持され、どこにも書き込まれません）。 問いかけられない実行（Web UI の <strong>Create lab</strong>、スケジュール実行、パイプライン）は、パスフレーズを <code>LAB_CREDENTIALS_PASSPHRASE</code> から受け取ります。一度だけ試され、どこにも書き出されません。新しいパスフレーズの設定は常に対話的に尋ねられるため、この変数が黙ってファイルを暗号化することはありません。</p>
 <p>ファイルは最上位に <code>unencrypted: true</code> を書くことで暗号化をしないこともできます（デフォルトではなく、<code>setup_credentials.py</code> はそのように書き込む前に確認します）。<code>--encrypt-existing</code> は機密に見えるフィールド（シークレット、パスワード、トークンらしい名前）だけをその場で暗号化し、たとえば <code>AWS_REGION</code>/<code>AWS_PROFILE</code> は読める状態のまま残します。入力ファイルは上書きせず、確認して配置できるように隣に <code>&lt;name&gt;.encrypted.yaml</code> を書き出します。オートメーション VM に Python パッケージ <code>cryptography</code>（<code>python311-cryptography</code>、または <code>pip install cryptography</code>。Argon2id には 41 以上）が必要です。実際に暗号化されたファイルを扱うときにだけ読み込まれるので、<code>cloud_account</code> を一度も設定しないラボでは新たな依存関係は不要です。</p>
 <p><strong>外部サービスの認証情報（SCC、SUSE Application Collection、Hermes など）。</strong>同じ <code>/etc/lab_creation/credentials/</code> のストア、同じ暗号化、同じ <code>setup_credentials.py</code> ツールで、クラウドプロバイダー以外の外部サービスの認証情報も扱えます。ファイルには <code>cloudtype</code> の代わりに <code>credential_kind</code>（例：<code>scc</code>、<code>appcollection</code>、<code>hermes</code>）を記述するので、2 つの概念はディレクトリと形式を共有しながら衝突しません。外部サービスの認証情報を必要とする各アドオンは、それを明示的に指定するための任意フィールド <code>&lt;field&gt;_account</code>（例：<code>smlm_scc_account</code>、<code>suse_ai_registry_account</code>、<code>hermes_account</code>）を文書化しています。未設定の場合は、<code>cloud_account</code> と同じく、該当する <code>credential_kind</code> のファイルが 1 つだけあればそれが自動で使われます。<strong>ラボ JSON に平文で書く方法も引き続き完全に有効です。</strong>このストアは認証情報の任意の代替手段であり、必須ではありません。認証情報ストアを一切使わなくても、各アドオンの平文のフィールド（<code>smlm_scc_user</code>、<code>suse_ai_registry_user</code>、<code>hermes_llm_api_key</code> など）はそのまま動作します。</p>
 <pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first

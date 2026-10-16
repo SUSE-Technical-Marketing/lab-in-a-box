@@ -177,7 +177,7 @@ check("validate_addon_configs: a lab with no addons anywhere returns True withou
 # ── phase_create_vms: --keep reusability + existing-node handling ──────────
 calls = {"destroy": [], "provision": [], "check_ssh_conn": []}
 setup_lab.destroy_vm = lambda definition, config, defaults, vm_name: calls["destroy"].append(vm_name)
-setup_lab.provision_vm = lambda definition, config, defaults, vm_name: calls["provision"].append(vm_name)
+setup_lab.provision_vm = lambda definition, config, defaults, vm_name: calls["provision"].append(vm_name) or []
 setup_lab.lc.check_ssh_conn = lambda vm_name: calls["check_ssh_conn"].append(vm_name)
 setup_lab.subprocess.run = lambda *a, **kw: FakeCompleted()
 
@@ -268,6 +268,7 @@ def _provision_second_node_dies(definition, config, defaults, vm_name):
     calls["provision"].append(vm_name)
     if vm_name == "vm_slow":
         raise SystemExit(1)
+    return []
 
 
 setup_lab.provision_vm = _provision_second_node_dies
@@ -289,6 +290,7 @@ def _provision_second_node_raises(definition, config, defaults, vm_name):
     calls["provision"].append(vm_name)
     if vm_name == "vm_slow":
         raise RuntimeError("SSH command failed")
+    return []
 
 
 setup_lab.provision_vm = _provision_second_node_raises
@@ -592,7 +594,9 @@ for k in calls:
 
 
 def _provision_records(definition, config, defaults, vm_name):
+    # provision_vm() returns the VM's pre_commands failures; phase_create_vms() folds them into the run report.
     calls["provision"].append(vm_name)
+    return []
 
 
 setup_lab.provision_vm = _provision_records
@@ -621,6 +625,7 @@ def _provision_one_dies(definition, config, defaults, vm_name):
     calls["provision"].append(vm_name)
     if vm_name == "pvm3":
         raise SystemExit(1)
+    return []
 
 
 setup_lab.provision_vm = _provision_one_dies

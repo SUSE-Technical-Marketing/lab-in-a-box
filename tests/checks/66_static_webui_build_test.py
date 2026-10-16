@@ -14,6 +14,8 @@ from pathlib import Path
 
 page = Path(sys.argv[1]).read_text()
 scripts = Path(sys.argv[2])
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "libs"))
+import apps  # noqa: E402  (loaded from libs/, for addon_files())
 failures = []
 
 
@@ -71,7 +73,7 @@ if m:
         n_fields = len(sc.get("fields", []))
         check("{}: option count {} matches its schema's {} fields".format(name, c["field_count"], n_fields),
               c["field_count"] == n_fields)
-        source = scripts / (name + ".py")
+        source = Path(apps.addon_files(str(scripts)).get(name) or "")
         if not source.is_file():
             continue
         plugin = plugin_literal(source) or {}

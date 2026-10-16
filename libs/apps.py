@@ -5,14 +5,18 @@
 """
 libs/apps.py: the plugin registry for install_<addon> executables.
 
-An add-on is any executable named install_<addon>, with or without a file extension (install_<addon>.py,
-install_<addon>.sh, a compiled binary, ...), written in any language. Its contract:
+An add-on is any executable named install_<addon>, with or without a file extension (install_<addon>.sh, a compiled
+binary, ...), written in any language. Its contract:
 
     install_<addon> --schema json      prints its schema as JSON, with a "capabilities" object:
-                                       {"targets": [...], "layers": [...], "requires_kubernetes": [...] or null,
-                                        "aux_services": [...]}
+                                       {"targets": [...], "layers": [...], "requires_kubernetes": null or [...],
+                                        "requires_cluster": [...], "provides_cluster": [...], "aux_services": [...]}
     install_<addon> --capabilities     prints the same capabilities as JSON
     install_<addon> --validate <json>  exits non-zero, printing [ERROR] lines, when its config in the lab is invalid
+    install_<addon> --check <json>     compares what is DEPLOYED with that config, on the target the install used
+                                       ($_vm_name / $clu_name): 0 it matches, 1 it does not (printing [FAIL] lines),
+                                       2 this add-on implements no check. "check": true in its capabilities says it
+                                       does (libs/addon_common.py's Checker)
     install_<addon> --version | --help
     install_<addon> <lab.json>         installs it; the target VM is in $_vm_name, the cluster in $clu_name
 
@@ -22,7 +26,9 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "name": "mariadb",
         "targets": ["container"],               # subset of "container", "vm", "baremetal": where it may be placed (libs/targets.py)
         "layers": ["kubernetes"],               # subset of libs/layers.py's LAYER_*: how it can be installed (descriptive only)
-        "requires_kubernetes": ["rke2", "k3s"], # or None if not a container addon
+        "requires_kubernetes": None,            # the clu_types it REQUIRES; None means any Kubernetes distribution
+        "requires_cluster": ["ingress"],        # CLUSTER_NEEDS the kcluster must already have for it to work
+        "provides_cluster": [],                 # CLUSTER_NEEDS it supplies to the kcluster itself
         "aux_services": [],                     # names from the services registry
         "versions": {...},                      # optional version matrix per version field (libs/versions.py)
         "status": "under-construction",         # optional; STATUSES; absent means "stable"
@@ -49,11 +55,26 @@ from typing import Dict, Iterable, List, Optional
 
 from lab_creation import die
 
+# ── what an add-on needs from the cluster it is placed on ───────────────────
+# A kcluster's distribution brings some of these itself (K3s brings both, RKE2 an ingress controller, kubeadm
+# neither); libs/k8s.py's cluster_provides() answers what a given kcluster will have, and the kcluster's clu_ingress
+# and clu_storage fields choose what supplies the rest.
+CLUSTER_INGRESS = "ingress"
+CLUSTER_STORAGECLASS = "storageclass"
+CLUSTER_NEEDS = (CLUSTER_INGRESS, CLUSTER_STORAGECLASS)
+
+_NEEDS_TEXT = {
+    CLUSTER_INGRESS: ("an ingress controller", "clu_ingress"),
+    CLUSTER_STORAGECLASS: ("a default storage class", "clu_storage"),
+}
+
 DEFAULT_PLUGIN = {
     "name": None,
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "provides_cluster": [],
     "aux_services": [],
 }
 
@@ -170,6 +191,29 @@ def describe(path: str) -> dict:
     return describe_many([real])[real]
 
 
+def load_addon_module(name: str, directory: Optional[str] = None):
+    """
+    Import add-on `name`'s script as a module and return it, for callers that need its functions rather than its
+    capabilities (its own unit tests, mainly). `directory` defaults to where addon_installer() looks. An add-on file
+    carries no .py extension, so a plain import statement cannot reach it; this loads it by path.
+
+    Raises FileNotFoundError when there is no such add-on.
+    """
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+
+    key = "install_{}".format(name) if not name.startswith("install_") else name
+    directory = directory or str(Path(sys.argv[0]).resolve().parent)
+    path = addon_files(directory).get(key)
+    if not path:
+        raise FileNotFoundError("no add-on {} in {}".format(key, directory))
+    loader = SourceFileLoader(key, path)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(key, loader))
+    sys.modules.setdefault(key, mod)
+    loader.exec_module(mod)
+    return mod
+
+
 def load_plugin_from_path(path: Optional[str], name: Optional[str] = None) -> dict:
     """
     Return the capabilities of the add-on executable at `path`, an explicit filesystem path, from its `--schema json`
@@ -272,8 +316,11 @@ def attach_capabilities(schema_dict, plugin_dict):
         "targets": plugin_dict.get("targets") or [],
         "layers": plugin_dict.get("layers") or [],
         "requires_kubernetes": plugin_dict.get("requires_kubernetes"),
+        "requires_cluster": plugin_dict.get("requires_cluster") or [],
+        "provides_cluster": plugin_dict.get("provides_cluster") or [],
         "aux_services": plugin_dict.get("aux_services") or [],
         "versions": plugin_dict.get("versions") or {},
+        "check": bool(plugin_dict.get("check")),
         "status": plugin_dict.get("status") or STATUS_STABLE,
         "status_note": plugin_dict.get("status_note") or "",
     }
@@ -293,11 +340,14 @@ def supports(plugin, target_kind):
     return target_kind in (plugin.get("targets") or [])
 
 
-def requirement_issue(plugin, target_kind, clu_type=None):
+def requirement_issue(plugin, target_kind, clu_type=None, provides=None):
     """
     Returns a human-readable problem string if placing `plugin` at
     `target_kind` (and, for a container placement, on a kcluster of
-    `clu_type`) is invalid — or None when the placement is fine.
+    `clu_type` that provides `provides`, an iterable of CLUSTER_NEEDS) is
+    invalid — or None when the placement is fine. `provides` of None means
+    the caller does not know what the cluster brings, and requires_cluster is
+    then not checked.
 
     This is the non-raising half of check_requirements(), split out so
     validate_lab_definition() can catalog the problem as one more preflight
@@ -306,8 +356,6 @@ def requirement_issue(plugin, target_kind, clu_type=None):
     stderr — the raised SystemExit itself carries no text, just an exit
     code, so catching it can't recover what went wrong).
     """
-    name = plugin.get("name") or "?"
-
     if not supports(plugin, target_kind):
         return "does not support target '{}' — supported: {}".format(
             target_kind, ", ".join(plugin.get("targets") or []) or "none")
@@ -317,10 +365,18 @@ def requirement_issue(plugin, target_kind, clu_type=None):
         if required and clu_type not in required:
             return "requires a Kubernetes distribution in {} — cluster is '{}'".format(required, clu_type)
 
+        if provides is not None:
+            for need in plugin.get("requires_cluster") or []:
+                if need in provides:
+                    continue
+                what, field = _NEEDS_TEXT.get(need, (need, ""))
+                return ("needs {} and this kcluster has none — set {} on it, or add an add-on that provides "
+                        "'{}'".format(what, field or need, need))
+
     return None
 
 
-def check_requirements(plugin, target_kind, clu_type=None):
+def check_requirements(plugin, target_kind, clu_type=None, provides=None):
     """
     die() with a clear message if placing `plugin` at `target_kind` (and, for
     a container placement, on a kcluster of `clu_type`) is invalid. Returns
@@ -329,6 +385,6 @@ def check_requirements(plugin, target_kind, clu_type=None):
     requirement_issue() directly instead so it can catalog the problem
     rather than abort.
     """
-    issue = requirement_issue(plugin, target_kind, clu_type=clu_type)
+    issue = requirement_issue(plugin, target_kind, clu_type=clu_type, provides=provides)
     if issue:
         die("Addon '{}' {}".format(plugin.get("name") or "?", issue))

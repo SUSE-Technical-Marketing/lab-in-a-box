@@ -1,0 +1,146 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install Ollama LLM server
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 2.0
+#
+# JSON section: "ollama" — Local LLM runtime
+#   ollama_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "0.51.0")
+#   ollama_ns           : [OPTIONAL] namespace (default: ollama)
+#   ollama_source : [OPTIONAL] where the chart comes from:
+#                         "appcollection" (the default: ollama from the SUSE Application
+#                         Collection, oci://dp.apps.rancher.io/charts/ollama), or "upstream"
+#                         for the project's own chart, which needs no account.
+#                         "appcollection" needs an Application Collection user and token:
+#                         ollama_appcollection_user/ollama_appcollection_password, or
+#                         ollama_appcollection_account naming a credential file of kind
+#                         "appcollection" (one such file in the store is found on its own).
+#   ollama_appcollection_user     : [OPTIONAL] Application Collection user
+#   ollama_appcollection_password : [OPTIONAL] Application Collection access token
+#   ollama_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
+#   ollama_shorthn      : [OPTIONAL] hostname prefix (default: ollama)
+#   ollama_rel          : [OPTIONAL] Helm repo alias (default: ollama-helm)
+#   ollama_repo_url     : [OPTIONAL] Helm repo URL (default: https://otwld.github.io/ollama-helm/)
+#   ollama_model        : [OPTIONAL] model to pre-pull on startup (default: llama3.2)
+#                         Examples: llama3.2, mistral, phi3, gemma2, qwen2.5
+
+__version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "ollama"
+
+PLUGIN = {
+    "name": "ollama",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "requires_cluster": ["ingress"],
+    "aux_services": [],
+}
+
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
+
+
+def _validate(v):
+    cfg = v.definition.get("ollama", {}) or {}
+    source = str(cfg.get("ollama_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] ollama.ollama_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("ollama", "ollama_appcollection_user", "appcollection",
+                             account_field="ollama_appcollection_account")
+        v.vreq_or_credential("ollama", "ollama_appcollection_password", "appcollection",
+                             account_field="ollama_appcollection_account")
+    v.vns("ollama")
+    v.vver("ollama")
+    v.vurl("ollama")
+
+
+def setup_ollama_repo(hostname, ollama_rel=None, ollama_repo_url=None):
+    """Add the Ollama Helm repo. Mirrors setup_ollama_repo (bash)."""
+    helm_repo_add(hostname, ollama_rel or "ollama-helm", ollama_repo_url or "https://otwld.github.io/ollama-helm/")
+
+
+def setup_ollama(hostname, clu_name, mydomain, ollama_rel=None, ollama_ns=None,
+                  ollama_version=None, ollama_shorthn=None, ollama_model=None, extra_set=""):
+    """Install Ollama. Mirrors setup_ollama (bash)."""
+    rel = ollama_rel or "ollama-helm"
+    ns = ollama_ns or "ollama"
+    ver_arg = "--version {}".format(ollama_version) if ollama_version else ""
+    model = ollama_model or "llama3.2"
+    fqdn = "{}.{}.{}".format(ollama_shorthn or "ollama", clu_name, mydomain)
+
+    ssh_run(hostname,
+            "helm upgrade -i ollama {}/ollama --namespace {} --create-namespace "
+            "--set ollama.models.pull={{{}}} "
+            "--set ingress.enabled=true "
+            "--set ingress.hosts[0].host={} "
+            "--set ingress.hosts[0].paths[0].path=/ "
+            "--set ingress.hosts[0].paths[0].pathType=Prefix "
+            "{}{}".format(rel, ns, model, fqdn, ver_arg, extra_set))
+    print("Ollama installed. Namespace: {}".format(ns))
+    print("API available at: http://{}".format(fqdn))
+    print("Model pre-pulled: {}".format(model))
+    return fqdn
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    cfg = definition.get("ollama", {}) or {}
+    online = definition.get("common", {}).get("online") == "1"
+
+    setup_helm(vm_name, clu_name, online=online)
+    repo, extra_set = "", ""
+    if appco.from_appcollection(cfg, "ollama", appco.SOURCE_APPCOLLECTION):
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "ollama_appcollection_user": "appcollection_user",
+            "ollama_appcollection_password": "appcollection_password",
+        }, account_key="ollama_appcollection_account")
+        user = creds["ollama_appcollection_user"]
+        password = creds["ollama_appcollection_password"]
+        if not user or not password:
+            die("ollama: ollama_source is \"appcollection\", so ollama_appcollection_user and "
+                "ollama_appcollection_password are needed — set them, set ollama_appcollection_account "
+                "to an \"appcollection\" credential file, or leave all three unset with exactly "
+                "one such file in the store (https://apps.rancher.io)")
+        repo, extra_set = appco.prepare_appcollection_repo(
+            vm_name, cfg.get("ollama_ns") or "ollama", user, password)
+    else:
+        setup_ollama_repo(vm_name, ollama_rel=cfg.get("ollama_rel"), ollama_repo_url=cfg.get("ollama_repo_url"))
+    fqdn = setup_ollama(
+        vm_name, clu_name, clu_cfg.get("mydomain", ""),
+        ollama_rel=repo or cfg.get("ollama_rel"), ollama_ns=cfg.get("ollama_ns"),
+        ollama_version=cfg.get("ollama_version"), ollama_shorthn=cfg.get("ollama_shorthn"),
+        ollama_model=cfg.get("ollama_model"),
+        extra_set=extra_set)
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+
+if __name__ == "__main__":
+    main()

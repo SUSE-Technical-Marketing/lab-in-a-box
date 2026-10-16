@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "anthropic_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "anthropic_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_model": {
+   "default": "anthropic/claude-sonnet-5",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_ns": {
+   "default": "anthropic",
+   "required": false,
+   "type": "namespace"
+  },
+  "anthropic_shorthn": {
+   "default": "anthropic",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:anthropic",
+ "version": "2.1"
+}

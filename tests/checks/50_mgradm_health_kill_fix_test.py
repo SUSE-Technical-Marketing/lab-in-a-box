@@ -182,7 +182,7 @@ mgradm_common.ensure_server_container_active("vm1", timeout=60, poll_interval=1)
 out2 = rec2.joined()
 
 check("ensure_server_container_active applies the health-kill-policy fix itself "
-      "(both install_uyuni.py and install_smlm.py get it for free)",
+      "(both install_uyuni and install_smlm get it for free)",
       "custom.conf" in out2 and "daemon-reload" in out2)
 check("ensure_server_container_active ALSO relaxes uyuni-db's own copy of the same "
       "policy, not just uyuni-server's",

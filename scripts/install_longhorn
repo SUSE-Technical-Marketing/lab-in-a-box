@@ -1,0 +1,219 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install LongHorn
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 2.0
+#
+# JSON section: "longhorn" — SUSE Longhorn distributed block storage
+#
+#   lh_shorthn   : [OPTIONAL] Short hostname for the UI ingress        (default: longhorn)
+#   lh_rel       : [OPTIONAL] Helm repo alias                          (default: longhorn)
+#   lh_source           : [OPTIONAL] where the chart comes from: "upstream" (default, charts.longhorn.io, no
+#                         account needed) or "appcollection" (SUSE Storage from the SUSE Application Collection,
+#                         oci://dp.apps.rancher.io/charts/suse-storage). "appcollection" needs an Application
+#                         Collection user and token: lh_appcollection_user/lh_appcollection_password, or
+#                         lh_appcollection_account naming a credential file of kind "appcollection" (one such file
+#                         in the store is found on its own).
+#   lh_appcollection_user     : [OPTIONAL] Application Collection user (lh_source "appcollection")
+#   lh_appcollection_password : [OPTIONAL] Application Collection access token (lh_source "appcollection")
+#   lh_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file to use instead
+#   lh_repo_url  : [OPTIONAL] Helm repo URL                           (default: https://charts.longhorn.io)
+#   lh_version   : [OPTIONAL] Helm chart version                       (empty = latest)
+
+__version__ = "__LABVERSION__"
+
+# SUSE Storage is this product in the SUSE Application Collection (its slug at https://apps.rancher.io).
+APPCOLLECTION_CHART = "suse-storage"
+
+PLUGIN = {
+    "name": "longhorn",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "provides_cluster": ["storageclass"],
+    "aux_services": [],
+    "check": True,
+    # Version matrix (libs/versions.py): the releases in SUSE's Longhorn support matrix
+    # (https://www.suse.com/suse-longhorn/support-matrix/all-supported-versions/) and newer; minimum Kubernetes from
+    # each chart's kubeVersion (https://charts.longhorn.io/index.yaml).
+    "versions": {
+        "lh_version": [
+            {"version": "1.13", "kubernetes": {"rke2": {"min": "1.34"}, "k3s": {"min": "1.34"}}},
+            {"version": "1.12", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+            {"version": "1.11", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+            {"version": "1.10", "kubernetes": {"rke2": {"min": "1.25"}, "k3s": {"min": "1.25"}}},
+        ],
+    },
+}
+
+import json
+import sys
+import time
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+import versions  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
+
+
+def _validate(v):
+    v.vns("longhorn")
+    v.vver("longhorn")
+    v.vurl("longhorn")
+    cfg = v.definition.get("longhorn", {}) or {}
+    source = str(cfg.get("lh_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] longhorn.lh_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("longhorn", "lh_appcollection_user", "appcollection",
+                             account_field="lh_appcollection_account")
+        v.vreq_or_credential("longhorn", "lh_appcollection_password", "appcollection",
+                             account_field="lh_appcollection_account")
+
+
+def setup_lh_repo(hostname, lh_rel=None, lh_repo_url=None):
+    """Add the SUSE Longhorn Helm repo. Mirrors setup_lh_repo (bash)."""
+    helm_repo_add(hostname, lh_rel or "longhorn", lh_repo_url or "https://charts.longhorn.io")
+
+
+def replica_flags(node_count):
+    """
+    The --set flags that size Longhorn to a cluster of `node_count` nodes: a volume cannot have more replicas than
+    there are nodes to put them on, and neither can the CSI sidecars, whose charts default to 3 of each. On a single
+    node a replica also has to be allowed to share it with the volume's other replicas.
+    """
+    replicas = max(1, min(int(node_count or 1), 3))
+    flags = [
+        "--set defaultSettings.defaultReplicaCount={}".format(replicas),
+        "--set csi.attacherReplicaCount={}".format(replicas),
+        "--set csi.provisionerReplicaCount={}".format(replicas),
+        "--set csi.resizerReplicaCount={}".format(replicas),
+        "--set csi.snapshotterReplicaCount={}".format(replicas),
+    ]
+    if replicas == 1:
+        flags.append("--set defaultSettings.replicaSoftAntiAffinity=true")
+    return " ".join(flags)
+
+
+def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_version=None,
+             chart="", extra_set="", node_count=1):
+    """
+    Install SUSE Longhorn. Mirrors setup_lh (bash).
+
+    The chart comes from the repo added under lh_rel; lh_version pins its version (empty = latest). `chart`
+    overrides the chart reference, for the SUSE Application Collection's OCI chart, and `extra_set` carries the
+    --set flags that come with it (the image pull secret).
+    """
+    rel = lh_rel or "longhorn"
+    fqdn = "{}.{}.{}".format(lh_shorthn or "longhorn", clu_name, mydomain)
+
+    ssh_run(hostname, "zypper install -y open-iscsi cryptsetup; "
+                       "systemctl enable --now iscsid.service ; modprobe iscsi_tcp")
+    ssh_run(hostname, "kubectl create namespace longhorn-system")
+    ssh_run(hostname,
+            "helm upgrade -i longhorn {} {} --namespace longhorn-system "
+            "--set ingress.enabled=true --set ingress.host={} "
+            "--set persistence.migratable=true --set longhornUI.replicas=1 {}{}".format(
+                chart or "{}/longhorn".format(rel), versions.helm_version_flag(lh_version), fqdn,
+                replica_flags(node_count), extra_set))
+    print("Longhorn should be available in a few minutes in: {}".format(fqdn))
+    return fqdn
+
+
+def _check(chk):
+    """
+    What is deployed against the lab's "longhorn" section: the Helm release in longhorn-system, its chart version
+    against lh_version, and every Longhorn pod running. Looks at the Kubernetes cluster's own management node, the
+    one the install ran on.
+    """
+    if "longhorn" not in chk.definition:
+        chk.ok("this lab has no longhorn section, so there is nothing to check")
+        return
+    target = k8s.first_server_node(chk.definition)
+    if not target:
+        chk.fail("the Kubernetes cluster has no server node to ask")
+        return
+    hostname = chk.vm_name or target[0]
+    release = json.loads(ssh_run(
+        hostname, "helm -n longhorn-system list -o json --filter '^longhorn$'", capture=True).stdout or "[]")
+    if not release:
+        chk.fail("no longhorn Helm release in longhorn-system on {}".format(hostname))
+        return
+    chk.expect("the Helm release's status", "deployed", release[0].get("status"))
+    wanted = versions.normalize(str(chk.get("longhorn", "lh_version")))
+    if wanted:
+        chk.expect("the deployed chart version", wanted,
+                   versions.normalize(str(release[0].get("chart", "")).rsplit("-", 1)[-1]))
+    else:
+        chk.ok("lh_version is unset, so any deployed version matches ({})".format(release[0].get("chart")))
+    not_running = ssh_run(
+        hostname, "kubectl -n longhorn-system get pods --no-headers "
+                  "--field-selector=status.phase!=Running,status.phase!=Succeeded", capture=True).stdout.strip()
+    if not_running:
+        chk.fail("every Longhorn pod should be running, these are not:\n    "
+                 + "\n    ".join(not_running.splitlines()))
+    else:
+        chk.ok("every pod in longhorn-system is running")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    cfg = definition.get("longhorn", {}) or {}
+    online = definition.get("common", {}).get("online") == "1"
+
+    # bash also does `load_rancher_vars` here — confirmed unused by setup_lh/
+    # setup_lh_repo (neither references any rancher_* variable); not ported.
+    setup_helm(vm_name, clu_name, online=online)
+    chart, extra_set = "", ""
+    if appco.from_appcollection(cfg, "lh", appco.SOURCE_APPCOLLECTION):
+        # SUSE Storage, the same product, from the SUSE Application Collection's OCI chart. It needs an account, so
+        # the credential is resolved the same way every other external-service credential is.
+        creds = ac.resolve_credential(cfg, "appcollection", {
+            "lh_appcollection_user": "appcollection_user",
+            "lh_appcollection_password": "appcollection_password",
+        }, account_key="lh_appcollection_account")
+        user = creds["lh_appcollection_user"]
+        password = creds["lh_appcollection_password"]
+        if not user or not password:
+            die("longhorn: lh_source is \"appcollection\", so lh_appcollection_user and "
+                "lh_appcollection_password are needed — set them, set lh_appcollection_account to an "
+                "\"appcollection\" credential file, or leave all three unset with exactly one such file in the "
+                "store (https://apps.rancher.io)")
+        chart, extra_set = appco.prepare_appcollection_chart(
+            vm_name, APPCOLLECTION_CHART, "longhorn-system", user, password)
+    else:
+        setup_lh_repo(vm_name, lh_rel=cfg.get("lh_rel"), lh_repo_url=cfg.get("lh_repo_url"))
+    fqdn = setup_lh(vm_name, clu_name, clu_cfg.get("mydomain", ""), lh_rel=cfg.get("lh_rel"),
+                    lh_shorthn=cfg.get("lh_shorthn"), lh_version=cfg.get("lh_version"),
+                    chart=chart, extra_set=extra_set,
+                    node_count=k8s.kcluster_node_count(definition, clu_name))
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+    time.sleep(60)
+
+
+if __name__ == "__main__":
+    main()

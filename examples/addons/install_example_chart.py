@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.11
 # Part of lab-in-a-box: example add-on that installs one Helm chart (podinfo) on a Kubernetes cluster.
-# See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name>.py to start a new add-on.
+# See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name> to start a new add-on.
 # License: GPLv3
 #
 # Schema version: 1.0
@@ -19,7 +19,7 @@ PLUGIN = {
     "name": "example_chart",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
     # Version matrix (libs/versions.py): chart versions with each chart's kubeVersion minimum
     # (https://stefanprodan.github.io/podinfo/index.yaml).

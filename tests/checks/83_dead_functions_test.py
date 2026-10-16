@@ -10,19 +10,27 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
 SKIP = ("tests", "legacy_bash", "python_migration", ".git")
+# Sources with no .py extension: lab_schema and every add-on (install_<name>, see apps.addon_files()).
 EXTRA = ("scripts/lab_schema",)
 DYNAMIC = {
     ("primary", "validate_definition"): "webui/lib/discovery.py calls it on the module _primary_lib() loads",
 }
 TEST_HOOKS = {
     ("primary", "clear_passphrase_cache"): "tests reset the cached credential passphrase between cases",
+    ("apps", "load_addon_module"): "an add-on's own unit tests import its code; install_<name> carries no .py "
+                                   "extension, so a plain import statement cannot reach it",
 }
+
+
+sys.path.insert(0, str(_REPO / "libs"))
+from apps import addon_files as _addon_files  # noqa: E402
 
 
 def sources() -> list:
     """Every Python source of the repository outside SKIP."""
     files = [p for p in _REPO.rglob("*.py") if p.relative_to(_REPO).parts[0] not in SKIP]
-    return files + [_REPO / e for e in EXTRA]
+    addons = [Path(v) for v in _addon_files(str(_REPO / "scripts")).values()]
+    return files + addons + [_REPO / e for e in EXTRA]
 
 
 def library_functions(libs: dict) -> set:

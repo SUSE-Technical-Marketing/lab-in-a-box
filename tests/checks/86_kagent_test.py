@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-# install_kagent.py — see 86_kagent.sh.
+# install_kagent — see 86_kagent.sh.
 import importlib.util
 import sys
 from importlib.machinery import SourceFileLoader
@@ -9,7 +9,7 @@ from unittest import mock
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
-_loader = SourceFileLoader("install_kagent", str(_REPO / "scripts" / "install_kagent.py"))
+_loader = SourceFileLoader("install_kagent", str(_REPO / "scripts" / "install_kagent"))
 _spec = importlib.util.spec_from_loader("install_kagent", _loader)
 ka = importlib.util.module_from_spec(_spec)
 _loader.exec_module(ka)

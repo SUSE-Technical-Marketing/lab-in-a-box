@@ -2,92 +2,122 @@
  "about": "Every version of every schema lab-in-a-box reads, oldest first. A breaking version raises MAJOR and names the libs/migrations.py step that migrate_config.py applies; see CONTRIBUTING.md, Schema versions.",
  "schemas": {
   "addon:agones": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:ansible_control_node": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:anthropic": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart anthropic_chart (default oci://ghcr.io/berriai/litellm-helm); anthropic_rel and anthropic_repo_url removed. No database; clients use the master key in the anthropic-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "anthropic_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart anthropic_chart (default oci://ghcr.io/berriai/litellm-helm); anthropic_rel and anthropic_repo_url removed. No database; clients use the master key in the anthropic-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "anthropic_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:apertus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:appcollection": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."},
-   {"version": "2.0", "breaking": true, "changes": "Logs helm in to the OCI registry appcollection_registry (default dp.apps.rancher.io) with the new mandatory appcollection_user and appcollection_password, or the credential file appcollection_account; installs appcollection_chart from oci://<registry>/charts with the pull secret application-collection. appcollection_rel and appcollection_repo_url removed.", "migration": "appcollection_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Logs helm in to the OCI registry appcollection_registry (default dp.apps.rancher.io) with the new mandatory appcollection_user and appcollection_password, or the credential file appcollection_account; installs appcollection_chart from oci://<registry>/charts with the pull secret application-collection. appcollection_rel and appcollection_repo_url removed.", "migration": "appcollection_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:argocd": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
   ],
   "addon:client_registration": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: client_registration_admin_pass, client_registration_server_ip, client_registration_server_node, client_registration_server_type."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: client_registration_admin_pass, client_registration_server_ip, client_registration_server_node, client_registration_server_type."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:codellama": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: codellama_model."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: codellama_model."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:colt": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:complianceascode": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "Installs Rancher's compliance operator (rancher-compliance, or rancher-cis-benchmark for older Kubernetes) from https://charts.rancher.io, picking the chart version for the cluster's Kubernetes version, and runs a CIS scan (new complianceascode_scan). complianceascode_profile is a ClusterScanProfile name; complianceascode_ns removed.", "migration": "complianceascode_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Installs Rancher's compliance operator (rancher-compliance, or rancher-cis-benchmark for older Kubernetes) from https://charts.rancher.io, picking the chart version for the cluster's Kubernetes version, and runs a CIS scan (new complianceascode_scan). complianceascode_profile is a ClusterScanProfile name; complianceascode_ns removed.", "migration": "complianceascode_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:coredns": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless coredns_source says otherwise, with coredns_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs coredns_source \"upstream\", which the migration writes.", "migration": "coredns_2_0"}
   ],
   "addon:deepseek": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:ds389": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: ds389_dm_password, ds389_image, ds389_ldap_nodeport, ds389_ldaps_nodeport, ds389_name, ds389_ns, ds389_storage_class, ds389_storage_size."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: ds389_dm_password, ds389_image, ds389_ldap_nodeport, ds389_ldaps_nodeport, ds389_name, ds389_ns, ds389_storage_class, ds389_storage_size."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:fleet": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version: configures Fleet in Rancher (workspace, cluster labels, cluster groups, GitRepos, and the documented rancher/fleet-examples repo)."}
   ],
   "addon:fluentd": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless fluentd_source says otherwise, with fluentd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs fluentd_source \"upstream\", which the migration writes.", "migration": "fluentd_2_0"}
   ],
   "addon:fluid": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:gemini": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart gemini_chart (default oci://ghcr.io/berriai/litellm-helm); gemini_rel and gemini_repo_url removed. No database; clients use the master key in the gemini-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts. The default model is gemini/gemini-2.5-flash (gemini-1.5-flash is retired).", "migration": "gemini_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart gemini_chart (default oci://ghcr.io/berriai/litellm-helm); gemini_rel and gemini_repo_url removed. No database; clients use the master key in the gemini-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts. The default model is gemini/gemini-2.5-flash (gemini-1.5-flash is retired).", "migration": "gemini_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:gitlab": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: gitlab_deployment, gitlab_edition, gitlab_hostname, gitlab_http_port, gitlab_https, gitlab_https_port, gitlab_image, gitlab_namespace, gitlab_rel, gitlab_repo_url, gitlab_ssh_port, gitlab_version."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: gitlab_deployment, gitlab_edition, gitlab_hostname, gitlab_http_port, gitlab_https, gitlab_https_port, gitlab_image, gitlab_namespace, gitlab_rel, gitlab_repo_url, gitlab_ssh_port, gitlab_version."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:gpu_operator": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:grafana": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: grafana_admin_password, grafana_image."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: grafana_admin_password, grafana_image."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:harbor": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless harbor_source says otherwise, with harbor_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs harbor_source \"upstream\", which the migration writes.", "migration": "harbor_2_0"}
   ],
   "addon:harvester": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:hermes": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: hermes_dashboard_user, hermes_git_ref, hermes_image_tag, hermes_llm_provider, hermes_ns, hermes_shorthn, hermes_storage_class, hermes_storage_size."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: hermes_dashboard_user, hermes_git_ref, hermes_image_tag, hermes_llm_provider, hermes_ns, hermes_shorthn, hermes_storage_class, hermes_storage_size."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:home_assistant": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: home_assistant_image_tag, home_assistant_ns, home_assistant_rel, home_assistant_repo_url, home_assistant_shorthn, home_assistant_storage_class, home_assistant_storage_size."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: home_assistant_image_tag, home_assistant_ns, home_assistant_rel, home_assistant_repo_url, home_assistant_shorthn, home_assistant_storage_class, home_assistant_storage_size."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:insecure_app": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:istio": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:jenkins": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -95,54 +125,73 @@
   ],
   "addon:kagent": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "Charts install from the OCI registry kagent_registry (kagent-crds, then kagent); kagent_rel and kagent_repo_url removed. New kagent_provider, kagent_model, kagent_api_key and kagent_ollama_host select the default model provider. The web UI gets an ingress and a DNS record.", "migration": "kagent_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Charts install from the OCI registry kagent_registry (kagent-crds, then kagent); kagent_rel and kagent_repo_url removed. New kagent_provider, kagent_model, kagent_api_key and kagent_ollama_host select the default model provider. The web UI gets an ingress and a DNS record.", "migration": "kagent_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:keycloak": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "Installs codecentric/keycloakx (official Keycloak image, development mode) instead of bitnami/keycloak, whose images are no longer published; defaults keycloak_rel codecentric and keycloak_repo_url https://codecentric.github.io/helm-charts. The bootstrap admin comes from the keycloak-admin secret; an unset keycloak_password is generated once and kept instead of keycloak123.", "migration": "keycloak_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Installs codecentric/keycloakx (official Keycloak image, development mode) instead of bitnami/keycloak, whose images are no longer published; defaults keycloak_rel codecentric and keycloak_repo_url https://codecentric.github.io/helm-charts. The bootstrap admin comes from the keycloak-admin secret; an unset keycloak_password is generated once and kept instead of keycloak123.", "migration": "keycloak_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:kimi": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: kimi_api_base."},
-   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart kimi_chart (default oci://ghcr.io/berriai/litellm-helm); kimi_rel and kimi_repo_url removed. No database; clients use the master key in the kimi-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "kimi_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart kimi_chart (default oci://ghcr.io/berriai/litellm-helm); kimi_rel and kimi_repo_url removed. No database; clients use the master key in the kimi-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "kimi_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:kubewarden": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:linkerd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "Installs from the edge channel (linkerd_rel linkerd-edge, linkerd_repo_url https://helm.linkerd.io/edge; the stable channel ended at 2.14). The mesh identity is generated once and kept in the linkerd-lab-identity secret; the Gateway API CRDs are installed only when the cluster has none.", "migration": "linkerd_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Installs from the edge channel (linkerd_rel linkerd-edge, linkerd_repo_url https://helm.linkerd.io/edge; the stable channel ended at 2.14). The mesh identity is generated once and kept in the linkerd-lab-identity secret; the Gateway API CRDs are installed only when the cluster has none.", "migration": "linkerd_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:local_path": [
+   {"version": "1.0", "breaking": false, "changes": "new add-on: Rancher's local-path-provisioner as a default StorageClass"}
   ],
   "addon:longhorn": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "lh_source: install SUSE Storage from the SUSE Application Collection instead of the upstream chart, with lh_appcollection_user/password/account for it"},
+   {"version": "2.0", "breaking": true, "changes": "SUSE Storage comes from the SUSE Application Collection unless lh_source says otherwise, with lh_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs lh_source \"upstream\", which the migration writes.", "migration": "longhorn_2_0"}
   ],
   "addon:mailman": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mailman_admin_email, mailman_admin_user, mailman_ns, mailman_shorthn, mailman_version."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mailman_admin_email, mailman_admin_user, mailman_ns, mailman_shorthn, mailman_version."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:mariadb": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mariadb_bind_address, mariadb_db, mariadb_password, mariadb_root_password, mariadb_user."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mariadb_bind_address, mariadb_db, mariadb_password, mariadb_root_password, mariadb_user."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:mediagoblin": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:milvus": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "1.2", "breaking": false, "changes": "milvus_source: install from the SUSE Application Collection instead of the upstream chart. Opt in: the Collection's chart has no pulsarv3 key and its minio has no mode, so this add-on's standalone-mode flags do not apply to it yet."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless milvus_source says otherwise, and standalone mode is configured per chart: the Collection's has no pulsarv3 key and no minio.mode, so its single-replica subcharts and kafka.enabled are set instead. Breaking: a lab that relied on the upstream chart by saying nothing now needs milvus_source \"upstream\", which the migration writes.", "migration": "milvus_2_0"}
   ],
   "addon:mistral": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mistral_model."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mistral_model."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:neuvector": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:nextcloud": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: nextcloud_admin_password, nextcloud_admin_user, nextcloud_airgap, nextcloud_assistant, nextcloud_db, nextcloud_db_password, nextcloud_db_root_password, nextcloud_deployment, nextcloud_flow, nextcloud_groupware, nextcloud_hostname, nextcloud_http_port, nextcloud_image, nextcloud_max_upload_size, nextcloud_namespace, nextcloud_redis, nextcloud_redis_version, nextcloud_rel, nextcloud_repo_url, nextcloud_talk, nextcloud_version."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: nextcloud_admin_password, nextcloud_admin_user, nextcloud_airgap, nextcloud_assistant, nextcloud_db, nextcloud_db_password, nextcloud_db_root_password, nextcloud_deployment, nextcloud_flow, nextcloud_groupware, nextcloud_hostname, nextcloud_http_port, nextcloud_image, nextcloud_max_upload_size, nextcloud_namespace, nextcloud_redis, nextcloud_redis_version, nextcloud_rel, nextcloud_repo_url, nextcloud_talk, nextcloud_version."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:nginx": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:nv-demo-helm": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -151,34 +200,44 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:ollama": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless ollama_source says otherwise, with ollama_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs ollama_source \"upstream\", which the migration writes.", "migration": "ollama_2_0"}
   ],
   "addon:open_saber": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:open_webui": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless open_webui_source says otherwise, with open_webui_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs open_webui_source \"upstream\", which the migration writes.", "migration": "open_webui_2_0"}
   ],
   "addon:openai": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart openai_chart (default oci://ghcr.io/berriai/litellm-helm); openai_rel and openai_repo_url removed. No database; clients use the master key in the openai-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "openai_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart openai_chart (default oci://ghcr.io/berriai/litellm-helm); openai_rel and openai_repo_url removed. No database; clients use the master key in the openai-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "openai_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:openldap": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:postgresql": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "2.0", "breaking": true, "changes": "Kubernetes mode runs a StatefulSet of registry.suse.com/suse/postgres:<postgresql_pg_version> (new postgresql_image, postgresql_storage) instead of the Bitnami chart, whose images are no longer published; postgresql_rel, postgresql_repo_url and postgresql_version removed. postgresql_pg_version applies to both modes.", "migration": "postgresql_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Kubernetes mode runs a StatefulSet of registry.suse.com/suse/postgres:<postgresql_pg_version> (new postgresql_image, postgresql_storage) instead of the Bitnami chart, whose images are no longer published; postgresql_rel, postgresql_repo_url and postgresql_version removed. postgresql_pg_version applies to both modes.", "migration": "postgresql_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:prometheus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: prometheus_image, prometheus_port, prometheus_retention, prometheus_version."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: prometheus_image, prometheus_port, prometheus_retention, prometheus_version."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:qdrant": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:qwen": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:rancher": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -186,62 +245,79 @@
   ],
   "addon:seafile": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: seafile_admin_email, seafile_admin_password, seafile_cache_provider, seafile_db_password, seafile_db_root_password, seafile_deployment, seafile_edition, seafile_hostname, seafile_jwt_private_key."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: seafile_admin_email, seafile_admin_password, seafile_cache_provider, seafile_db_password, seafile_db_root_password, seafile_deployment, seafile_edition, seafile_hostname, seafile_jwt_private_key."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:skynet_simulator": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:smlm": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: smlm_activation_key_desc, smlm_activation_key_enable_config_deployment, smlm_activation_key_universal_default, smlm_byos, smlm_chart, smlm_coco_image, smlm_db_ha, smlm_db_ha_cnpg_version, smlm_db_ha_pg_image, smlm_db_ha_replicas, smlm_db_ha_size, smlm_db_ha_sync, smlm_deployment, smlm_email, smlm_img_tag, smlm_ingress_class, smlm_lh_overprovision, smlm_ns, smlm_org, smlm_preinstalled, smlm_registry, smlm_rel, smlm_salt_auto_accept, smlm_shorthn, smlm_super_privileged."},
    {"version": "1.2", "breaking": false, "changes": "Add optional scripts to smlm_kickstart_profiles entries (kickstart.profile.addScript)."},
-   {"version": "1.3", "breaking": false, "changes": "Add smlm_distributions iso_url, iso_checksum_url, kernel_options and post_kernel_options, and smlm_kickstart_profiles agama_profile (Agama JSON profiles for SUSE Linux 16 and openSUSE Leap 16)."}
+   {"version": "1.3", "breaking": false, "changes": "Add smlm_distributions iso_url, iso_checksum_url, kernel_options and post_kernel_options, and smlm_kickstart_profiles agama_profile (Agama JSON profiles for SUSE Linux 16 and openSUSE Leap 16)."},
+   {"version": "1.4", "breaking": false, "changes": "smlm_salt_states: custom Salt states and formulas installed into the server's persistent /srv/salt and /srv/formula_metadata"},
+   {"version": "1.5", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:smlm_proxy": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: smlm_proxy_admin_pass, smlm_proxy_admin_user, smlm_proxy_email, smlm_proxy_img_repository, smlm_proxy_img_tag, smlm_proxy_max_cache, smlm_proxy_scc_password, smlm_proxy_scc_user, smlm_proxy_server, smlm_proxy_server_node."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: smlm_proxy_admin_pass, smlm_proxy_admin_user, smlm_proxy_email, smlm_proxy_img_repository, smlm_proxy_img_tag, smlm_proxy_max_cache, smlm_proxy_scc_password, smlm_proxy_scc_user, smlm_proxy_server, smlm_proxy_server_node."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:stackpack": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: stackpack_cluster_name."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: stackpack_cluster_name."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:starcoder2": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: starcoder2_model."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: starcoder2_model."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:struts_demo": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: struts_demo_attacker."}
   ],
   "addon:supertux_classic": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:suse_ai": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: suse_ai_components, suse_ai_ns, suse_ai_registry, suse_ai_shorthn."},
-   {"version": "1.2", "breaking": false, "changes": "Added suse_ai_regcode and suse_ai_scc_account (registry.suse.com pull secret), suse_ai_ollama_models and suse_ai_gpu."}
+   {"version": "1.2", "breaking": false, "changes": "Added suse_ai_regcode and suse_ai_scc_account (registry.suse.com pull secret), suse_ai_ollama_models and suse_ai_gpu."},
+   {"version": "1.3", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:suse_observability": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:traefik": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "New traefik_ingress_class (default traefik-standalone, not the cluster default; the release serves only that class) and traefik_service_type (default NodePort), so the release runs next to the cluster's own ingress controller."}
+   {"version": "1.1", "breaking": false, "changes": "New traefik_ingress_class (default traefik-standalone, not the cluster default; the release serves only that class) and traefik_service_type (default NodePort), so the release runs next to the cluster's own ingress controller."},
+   {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless traefik_source says otherwise, with traefik_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs traefik_source \"upstream\", which the migration writes.", "migration": "traefik_2_0"}
   ],
   "addon:trento": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: trento_secret_key."},
-   {"version": "2.0", "breaking": true, "changes": "Installs Trento Server from the OCI chart trento_chart (default oci://registry.suse.com/trento/trento-server); trento_rel and trento_repo_url removed. trento_admin is the admin user name (default admin); trento_password and trento_secret_key default to values the chart generates and keeps. New trento_ingress_class (default traefik).", "migration": "trento_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "Installs Trento Server from the OCI chart trento_chart (default oci://registry.suse.com/trento/trento-server); trento_rel and trento_repo_url removed. trento_admin is the admin user name (default admin); trento_password and trento_secret_key default to values the chart generates and keeps. New trento_ingress_class (default traefik).", "migration": "trento_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:uyuni": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: uyuni_activation_key_desc, uyuni_activation_key_enable_config_deployment, uyuni_activation_key_universal_default, uyuni_admin, uyuni_email, uyuni_org, uyuni_password, uyuni_ssl_password."}
+   {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: uyuni_activation_key_desc, uyuni_activation_key_enable_config_deployment, uyuni_activation_key_universal_default, uyuni_admin, uyuni_email, uyuni_org, uyuni_password, uyuni_ssl_password."},
+   {"version": "1.2", "breaking": false, "changes": "uyuni_salt_states: custom Salt states and formulas installed into the server's persistent /srv/salt and /srv/formula_metadata"},
+   {"version": "1.3", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
   "addon:weaviate": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:wikimusic": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:wordpress": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -264,7 +340,12 @@
   ],
   "lab": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "Add optional kclusters.clu_token: the join token set on the first rke2/k3s server."}
+   {"version": "1.1", "breaking": false, "changes": "Add optional kclusters.clu_token: the join token set on the first rke2/k3s server."},
+   {"version": "2.0", "breaking": true, "changes": "open_ports and aws_open_ports (common and per-node) are declared as the lists every backend reads them as, instead of strings", "migration": "open_ports_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "pre_commands and post_commands: shell commands a VM runs itself, before any other work and after all of it"},
+   {"version": "2.2", "breaking": false, "changes": "lab_description in common: one line saying what a lab is for, shown where labs are listed"},
+   {"version": "2.3", "breaking": false, "changes": "clu_type kubeadm (upstream Kubernetes built with kubeadm), with clu_cni and clu_pod_cidr for the network plugin it applies."},
+   {"version": "2.4", "breaking": false, "changes": "kclusters gains clu_ingress and clu_storage: the ingress controller and default storage class of a cluster, installed as add-ons when its distribution brings none"}
   ]
  }
 }

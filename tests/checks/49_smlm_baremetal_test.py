@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Unit tests for install_smlm.py's traditional mgradm and podman deployment (smlm_deployment: "podman"). The install uses the
-# shared helpers in libs/mgradm_common.py, which these tests mock rather than run. install_uyuni.py is not changed by it.
+# Unit tests for install_smlm's traditional mgradm and podman deployment (smlm_deployment: "podman"). The install uses the
+# shared helpers in libs/mgradm_common.py, which these tests mock rather than run. install_uyuni is not changed by it.
 # Run from 49_smlm_baremetal.sh, in its own container (see tests/run_tests.sh).
 import re
 import sys
@@ -12,7 +12,8 @@ sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
 import addon_common as ac  # noqa: E402
-import install_smlm as ism  # noqa: E402
+import apps  # noqa: E402
+ism = apps.load_addon_module("install_smlm", str(_REPO / "scripts"))  # no .py: loaded by path
 import mgradm_common  # noqa: E402
 
 failures = []
@@ -537,7 +538,7 @@ ism.setup_smlm = lambda *a, **k: k8s_setup_touched.append("setup_smlm")
 ism.k8s.first_server_node = lambda definition: k8s_setup_touched.append("first_server_node") or None
 
 old_argv = sys.argv
-sys.argv = ["install_smlm.py", "lab.json"]
+sys.argv = ["install_smlm", "lab.json"]
 try:
     ism.main()
 finally:

@@ -116,8 +116,9 @@ def _run_json(cmd: list) -> dict:
 
 
 def addon_paths() -> list:
-    """Every add-on in scripts/."""
-    return sorted(str(p) for p in (REPO / "scripts").glob("install_*.py"))
+    """Every add-on in scripts/, whatever its extension — the one apps.addon_files() would deploy per name."""
+    import apps
+    return sorted(apps.addon_files(str(REPO / "scripts")).values())
 
 
 def current_snapshots() -> dict:

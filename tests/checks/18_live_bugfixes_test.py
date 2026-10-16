@@ -35,12 +35,13 @@ import mgradm_common  # noqa: E402
 import db_common  # noqa: E402
 
 sys.path.insert(0, str(_REPO / "scripts"))
-import install_uyuni  # noqa: E402
-import install_smlm  # noqa: E402
-import install_postgresql  # noqa: E402
-import install_struts_demo  # noqa: E402
-import install_wordpress  # noqa: E402
-import install_smlm_proxy  # noqa: E402
+import apps  # noqa: E402
+install_uyuni = apps.load_addon_module("install_uyuni", str(_REPO / "scripts"))  # no .py: loaded by path
+install_smlm = apps.load_addon_module("install_smlm", str(_REPO / "scripts"))  # no .py: loaded by path
+install_postgresql = apps.load_addon_module("install_postgresql", str(_REPO / "scripts"))  # no .py: loaded by path
+install_struts_demo = apps.load_addon_module("install_struts_demo", str(_REPO / "scripts"))  # no .py: loaded by path
+install_wordpress = apps.load_addon_module("install_wordpress", str(_REPO / "scripts"))  # no .py: loaded by path
+install_smlm_proxy = apps.load_addon_module("install_smlm_proxy", str(_REPO / "scripts"))  # no .py: loaded by path
 
 # This test container has no local virsh/virt-install — force
 # run_libvirt_tool()'s local branch so the mocked subprocess.run below is
@@ -879,7 +880,7 @@ with tempfile.TemporaryDirectory() as tmp:
     smlm_setup_calls = []
     install_smlm.setup_smlm = lambda *a, **kw: smlm_setup_calls.append(a)
     old_argv = sys.argv
-    sys.argv = ["install_smlm.py", str(smlm_json)]
+    sys.argv = ["install_smlm", str(smlm_json)]
     smlm_error = None
     try:
         install_smlm.main()

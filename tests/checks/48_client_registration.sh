@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unit tests for install_client_registration.py's per-node
+# Unit tests for install_client_registration's per-node
 # client_registration_* override. Independent container — see
 # tests/run_tests.sh.
 set -uo pipefail

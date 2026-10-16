@@ -3,7 +3,7 @@
 Build the static, backend-free lab-builder page (published on GitHub Pages).
 
 Takes webui/htdocs/index.html and embeds the answers the live lab-builder API
-(webui/lib/api.py) gives for "components", "base" and every add-on's "schema",
+(webui/lib/api.py) gives for "components", "base", every add-on's "schema" and the example labs,
 computed from this repo checkout. An inline script replaces app.js's apiGet()
 with lookups over that data; CSS hides the controls that need the server
 (hypervisor status, image refresh, Validate, Save to server, Saved labs,
@@ -50,6 +50,11 @@ STATIC_API = """
       if (action === "components") return copy(data.components);
       if (action === "base") return copy(data.base);
       if (action === "status") return { available: false, hosts: [], images: [], config: {} };
+      if (action === "examples") return copy(data.examples);
+      if (action === "example") {
+        if (!Object.prototype.hasOwnProperty.call(data.exampleLabs, params.name)) throw new Error("unknown example: " + params.name);
+        return copy(data.exampleLabs[params.name]);
+      }
       if (action === "schema") {
         if (!Object.prototype.hasOwnProperty.call(data.schemas, params.name)) throw new Error("unknown add-on: " + params.name);
         return copy(data.schemas[params.name]);
@@ -82,7 +87,10 @@ def collect(version: str) -> dict:
     components["scripts_dir"] = "lab-in-a-box " + version
     components.pop("libs_dir", None)
     schemas = {c["name"]: api_get("schema", name=c["name"]) for c in components["components"] if c["kind"] == "addon"}
-    return {"components": components, "base": api_get("base"), "schemas": schemas}
+    examples = api_get("examples")
+    example_labs = {e["name"]: api_get("example", name=e["name"]) for e in examples["examples"]}
+    return {"components": components, "base": api_get("base"), "schemas": schemas,
+            "examples": examples, "exampleLabs": example_labs}
 
 
 def build(data: dict, version: str) -> str:

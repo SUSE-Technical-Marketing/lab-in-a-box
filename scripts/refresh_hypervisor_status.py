@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Part of lab-in-a-box — refreshes the cached hypervisor status snapshot the
-# lab-builder webui's status panel and live ISO_IMAGE dropdown read from.
+# lab-builder webui's status panel and live source-image dropdown read from.
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -113,7 +113,10 @@ def build_status():
     iso_loc = defaults.get("ISO_LOC", "")
 
     host_statuses = [host_status(h, vm_img_loc) for h in hosts]
-    images = list_images(hosts[0] if hosts else "", iso_loc)
+    # Per host: with several KVM hosts an image only exists where it was placed, so a lab's SOURCE_IMAGE has to be
+    # picked per host. "images" stays the union of all of them, for readers that only need the names.
+    images_by_host = {h: list_images(h, iso_loc) for h in hosts}
+    images = sorted({name for names in images_by_host.values() for name in names})
 
     config_out = {}
     for k in _CONFIG_KEYS:
@@ -128,13 +131,15 @@ def build_status():
         "config": config_out,
         "hosts": host_statuses,
         "images": images,
+        "images_by_host": images_by_host,
     }
 
 
 _HELP_TEXT = """\
 Usage: refresh_hypervisor_status.py [output_path]
 
-Writes the hypervisor status snapshot that the lab-builder web UI reads: hosts, their state and their source images.
+Writes the hypervisor status snapshot that the lab-builder web UI reads: hosts, their state, and the source images
+present on each of them.
 Secret-shaped configuration values are masked. output_path defaults to $LABBUILDER_STATUS_FILE, else
 /srv/www/lab-builder/status.json.
 

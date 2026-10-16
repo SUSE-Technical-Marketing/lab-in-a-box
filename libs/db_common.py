@@ -1,11 +1,11 @@
 #!/usr/bin/env python3.11
 # Part of lab-in-a-box. Shared OS-native MariaDB/PostgreSQL installation logic —
-# lives here (not in scripts/install_mariadb.py / scripts/install_postgresql.py
+# lives here (not in scripts/install_mariadb / scripts/install_postgresql
 # themselves) because install_automation_node_scripts.sh strips the .py suffix
 # off every scripts/install_<addon> file and installs it as a bare, standalone
 # executable under /usr/local/bin/ — it is never importable as a Python module.
-# Any addon that needs a companion database on the same host (install_nextcloud.py,
-# install_seafile.py, ...) imports setup_mariadb_os()/setup_postgresql_os() from
+# Any addon that needs a companion database on the same host (install_nextcloud,
+# install_seafile, ...) imports setup_mariadb_os()/setup_postgresql_os() from
 # here directly, instead of re-implementing its own ad-hoc database container —
 # the same "logic used by >1 script belongs in libs/" convention already
 # followed by spacecmd_common.py.
@@ -150,9 +150,9 @@ def setup_mariadb_os(hostname, cfg, virt_srv=None):
     """
     Installs MariaDB natively on `hostname` (no container) and configures it
     per `cfg` — the "mariadb" JSON section fields documented in
-    scripts/install_mariadb.py's own top-of-file schema doc. Returns
+    scripts/install_mariadb's own top-of-file schema doc. Returns
     {"root_password", "password", "port", "bind_address"} so a CALLING
-    addon (install_nextcloud.py, install_seafile.py, ...) can wire its own
+    addon (install_nextcloud, install_seafile, ...) can wire its own
     app container's DB connection settings to whatever was actually
     generated/configured, without duplicating any of this installation
     logic itself.
@@ -352,7 +352,7 @@ def setup_postgresql_os(hostname, cfg, virt_srv=None):
     """
     Installs PostgreSQL natively on `hostname` (no container) and
     configures it per `cfg` — the "postgresql" JSON section's OS-mode
-    fields documented in scripts/install_postgresql.py's own top-of-file
+    fields documented in scripts/install_postgresql's own top-of-file
     schema doc. Returns {"root_password", "password", "port"} for a
     calling addon to wire its own app container's DB connection settings
     to, same contract as setup_mariadb_os() above.

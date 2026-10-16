@@ -53,6 +53,7 @@
 <tr><td><code>install_&lt;name&gt; --schema json</code></td><td>exit 0 and print one JSON object: the schema (below). <code>--schema yaml</code> prints the same as YAML; JSON is valid YAML, so printing JSON is enough. <code>--input-definition</code> is an alias of <code>--schema</code>.</td></tr>
 <tr><td><code>install_&lt;name&gt; --capabilities</code></td><td>exit 0 and print the schema's <code>capabilities</code> object as JSON.</td></tr>
 <tr><td><code>install_&lt;name&gt; --validate &lt;lab.json&gt;</code></td><td>check its own section of the lab; print one <code>[ERROR] …</code> line per problem and exit with a non-zero code when there is one, else exit 0. <code>[WARNING] …</code> lines do not change the exit code. Print nothing else.</td></tr>
+<tr><td><code>install_&lt;name&gt; --check &lt;lab.json&gt;</code></td><td>compare what is <strong>deployed</strong> with its section of the lab, on the target the install used (<code>$_vm_name</code>, <code>$clu_name</code>): exit 0 when it matches, 1 when it does not (printing one <code>[FAIL] …</code> line per difference), 2 when the add-on implements no check. Print <code>[OK] …</code> lines for what was looked at. A lab that does not install the add-on has nothing to check: that is exit 0.</td></tr>
 <tr><td><code>install_&lt;name&gt; --version</code></td><td>exit 0 and print <code>install_&lt;name&gt; &lt;version&gt;</code>.</td></tr>
 <tr><td><code>install_&lt;name&gt; --help</code></td><td>exit 0 and print its usage and fields.</td></tr>
 <tr><td><code>install_&lt;name&gt; &lt;lab.json&gt;</code></td><td>install it (see <a href="#how-a-lab-uses-an-add-on">above</a>); exit 0 on success, non-zero on failure.</td></tr>
@@ -71,7 +72,7 @@
      "description": "Number of replicas"}
   ],
   "capabilities": {
-    "targets": ["container"], "layers": ["kubernetes"], "requires_kubernetes": ["rke2", "k3s"],
+    "targets": ["container"], "layers": ["kubernetes"], "requires_kubernetes": null,
     "aux_services": [], "versions": {}
   }
 }
@@ -85,8 +86,10 @@
   <ul>
   <li><code>targets</code>: where it may be placed: <code>container</code> (on a kcluster), <code>vm</code> (a VM this lab creates), <code>baremetal</code> (an existing machine, <code>existing</code> nodes). The preflight refuses any other placement.</li>
   <li><code>layers</code>: how it installs: <code>kubernetes</code>, <code>standalone-container</code> (podman on a host), <code>os-native</code> (packages and files). The web UI groups add-ons by it.</li>
-  <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it supports (<code>rke2</code>, <code>k3s</code>), or <code>null</code>.</li>
-  <li><code>aux_services</code>: lab services it needs on the automation VM (e.g. <code>pxe</code>).</li>
+  <li><code>requires_kubernetes</code>: for a <code>container</code> add-on, the kcluster types it <em>requires</em>. <code>null</code>, the usual case, means any Kubernetes distribution; a list names the only ones it works on, as <code>install_fluid</code> does because its CSI plugin reads a <code>/var/lib/rancher/&lt;rke2|k3s&gt;</code> path.</li>
+  <li><code>requires_cluster</code>: what the kcluster must already have for it to work: <code>ingress</code> (an ingress controller), <code>storageclass</code> (a default storage class). The kcluster's <code>clu_ingress</code> and <code>clu_storage</code> supply what its distribution does not bring, before the add-ons that need it; an add-on placed on a cluster that has neither is refused by the preflight, naming the field that fixes it.</li>
+<li><code>provides_cluster</code>: the same values, for an add-on that supplies one — <code>nginx</code> and <code>traefik</code> provide <code>ingress</code>, <code>longhorn</code> and <code>local_path</code> provide <code>storageclass</code>.</li>
+<li><code>aux_services</code>: lab services it needs on the automation VM (e.g. <code>pxe</code>).</li>
   <li><code>versions</code>: optional version matrix; see <a href="index.html#add-on-version-matrix">Add-on version matrix</a>.</li>
   <li><code>status</code>: <code>stable</code> (the default when absent) or <code>under-construction</code>, for an add-on that is known not to work fully yet. An under-construction add-on still runs: <code>--help</code> starts with a <code>STATUS:</code> line, every run and the <code>setup_lab.py</code> preflight print a warning, and the web UI marks it with an "under construction" badge.</li>
   <li><code>status_note</code>: required when <code>status</code> is <code>under-construction</code>: what does not work yet. It is the text of the warning and of the badge's tooltip.</li>
@@ -109,7 +112,7 @@ PLUGIN = {
     "name": "example_chart",
     "targets": ["container"],
     "layers": ["kubernetes"],
-    "requires_kubernetes": ["rke2", "k3s"],
+    "requires_kubernetes": None,
     "aux_services": [],
 }
 
@@ -125,6 +128,31 @@ def main():
 <li>The type comes from the name's suffix, for example: <code>_ns</code>/<code>_namespace</code> namespace, <code>_version</code>/<code>_ver</code> version, <code>_url</code> url, <code>_port</code> port, <code>_pass</code>/<code>_pwd</code>/<code>_password</code> password, <code>_enabled</code> boolean, <code>_replicas</code> integer; anything else is a string.</li>
 </ul>
 <p><code>validate_fn</code> receives an <code>addon_common.Validator</code>: <code>vreq(section, field)</code>, <code>vns(section)</code>, <code>vver(section)</code>, <code>vurl(section)</code>, <code>vbool(section, field)</code> add the matching <code>[ERROR]</code> lines, and you can append your own to <code>v.errors</code>. The version matrix's warnings are added for you.</p>
+<p><code>check_fn</code> receives an <code>addon_common.Checker</code>, for <code>--check</code>: <code>get(section, field, default)</code> is what the lab asked for, <code>expect(what, expected, found)</code> records a match or a difference, and <code>ok(what)</code>/<code>fail(what, expected, found)</code> do either on their own. <code>checker.vm_name</code> and <code>checker.clu_name</code> are the target. Declare <code>"check": True</code> in <code>PLUGIN</code> so a caller knows the add-on has one, and pass <code>check_fn=</code> to <code>handle_common_args()</code>. An exception inside the check is reported as a difference, never a crash. <code>scripts/install_longhorn</code> is a worked example: the Helm release's status, its chart version against <code>lh_version</code>, and every pod running.</p>
+<p><strong>Installing from the SUSE Application Collection.</strong> For a product the Collection carries
+(<a href="https://apps.rancher.io">apps.rancher.io</a>), an add-on can offer it as a second source: declare a
+<code>&lt;prefix&gt;_source</code> field with <code>"upstream"</code> (the default, so a lab without an account is
+unaffected) and <code>"appcollection"</code>, then ask <code>appco_common.from_appcollection(cfg, prefix)</code>
+and, when it is true, call <code>appco_common.prepare_appcollection_chart(host, slug, namespace, user, token)</code>
+— it creates the image pull secret, logs Helm in and returns the OCI chart reference plus the
+<code>--set global.imagePullSecrets[0]=</code> flag to pass to <code>helm upgrade -i</code>. The account is resolved
+like every other external-service credential (<code>&lt;prefix&gt;_appcollection_user</code>/<code>_password</code>,
+or <code>_account</code> naming a credential file of kind <code>appcollection</code>).
+<code>scripts/install_longhorn</code> is the worked example (SUSE Storage, slug <code>suse-storage</code>).</p>
+<p>Nine add-ons install from the Collection <strong>by default</strong>: <code>argocd</code>,
+<code>coredns</code>, <code>fluentd</code>, <code>harbor</code>, <code>longhorn</code>, <code>milvus</code>,
+<code>ollama</code>, <code>open_webui</code> and <code>traefik</code>. Those labs need an Application Collection
+account unless they set <code>&lt;prefix&gt;_source: "upstream"</code>, and each of those add-ons is at schema 2.0
+with a migration that writes that setting into a lab which relied on the old default. <code>install_milvus</code>
+shows what a second source can cost: standalone mode is configured differently by the two charts, since the
+Collection's carries its own message queue (<code>standalone.messageQueue</code>) and has neither
+<code>pulsarv3</code> nor <code>minio.mode</code>, so the add-on passes a different set of flags for each.</p>
+<p>Before flipping an add-on's default, check that the Collection's chart really accepts the <code>--set</code>
+paths the add-on passes: <code>helm show values oci://dp.apps.rancher.io/charts/&lt;slug&gt;</code> after a
+<code>helm registry login</code>. These charts carry no <code>values.schema.json</code>, so a flag that no longer
+matches is accepted in silence instead of failing. Two products were ruled out for shape rather than values:
+<code>istio</code> installs three charts upstream where the Collection has one, and the only observability entry
+there is the SUSE AI observability extension, not SUSE Observability itself.</p>
 <p>Use the helpers in <code>libs/lab_creation.py</code> to work on nodes: <code>ssh_run(host, cmd)</code>, <code>setup_helm(host, clu_name)</code>, <code>helm_repo_add(host, name, url)</code>, <code>die(msg)</code>; and <code>versions.helm_version_flag(value)</code> for a chart version field.</p>
 <h2 id="writing-it-in-another-language">Writing it in another language</h2>
 <p>Any executable works: it implements the commands of <a href="#the-contract">the contract</a> itself and prints the schema JSON. See <code>examples/addons/install_example_motd.sh</code>, which uses <code>jq</code> (a dependency of the automation VM) to read the lab definition.</p>
@@ -158,7 +186,7 @@ scripts/schema_versions.py record addon:&lt;name&gt; "What changed, in one sente
 </ul>
 <h2 id="testing">Testing</h2>
 <ul>
-<li><code>check_addon.py &lt;install_&lt;name&gt;&gt;</code> (in <code>scripts/</code>, deployed to <code>/usr/local/bin</code>) checks the contract: the name, <code>--schema json</code> and its schema version, fields and capabilities (including the version matrix), <code>--capabilities</code>, <code>--version</code>, <code>--help</code> and <code>--validate</code>. It prints PASS or FAIL per check (<code>--quiet</code>: only failures) and exits 1 on any failure. The test suite runs it on every add-on in <code>scripts/</code>. In a repository checkout, put <code>scripts/</code> on <code>PATH</code> first (<code>PATH=$PWD/scripts:$PATH</code>), since a Python add-on reads <code>lab_schema</code> from beside it or from <code>PATH</code>.</li>
+<li><code>check_addon.py &lt;install_&lt;name&gt;&gt;</code> (in <code>scripts/</code>, deployed to <code>/usr/local/bin</code>) checks the contract: the name, <code>--schema json</code> and its schema version, fields and capabilities (including the version matrix), <code>--capabilities</code>, <code>--version</code>, <code>--help</code>, <code>--validate</code> and <code>--check</code> (its exit code, and that it is implemented exactly when the capabilities say so). It prints PASS or FAIL per check (<code>--quiet</code>: only failures) and exits 1 on any failure. The test suite runs it on every add-on in <code>scripts/</code>. In a repository checkout, put <code>scripts/</code> on <code>PATH</code> first (<code>PATH=$PWD/scripts:$PATH</code>), since a Python add-on reads <code>lab_schema</code> from beside it or from <code>PATH</code>.</li>
 <li>Check 79 (<code>tests/checks/79_addon_install_test.py</code>) runs the install path of every Python add-on against a one-kcluster lab, with every command faked: it must finish with exit 0, send at least one command and never run <code>helm install</code>. It runs each add-on twice: once with only the required fields set, so every other field takes the code's own fallback, and once with every schema default filled in. Both runs must send the same commands, so a published default must be the value the code really uses. When an add-on needs more to run (a field its code requires, or a reply to a command it reads or polls), add it to <code>EXTRA_CONFIG</code> or <code>RESPONSES</code> there.</li>
 <li>Add a check for what it installs in <code>tests/checks/NN_&lt;name&gt;.sh</code> (with SSH and the tools it calls mocked, like the existing ones) and run <code>bash tests/run_tests.sh</code>; every check runs in its own podman container.</li>
 <li>Try it on a lab: list it in a test lab and run <code>setup_lab.py &lt;lab.json&gt;</code>; <code>setup_lab.py --debug</code> shows its output live.</li>

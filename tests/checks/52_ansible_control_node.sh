@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unit tests for install_ansible_control_node.py. Independent container —
+# Unit tests for install_ansible_control_node. Independent container —
 # see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit

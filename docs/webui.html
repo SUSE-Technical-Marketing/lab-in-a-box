@@ -349,7 +349,10 @@ Python libraries in <code>/usr/local/lib/lab_creation/</code> — exactly where 
 auto-detects them.</p>
 <blockquote>
 <p>If you change a script/definition later, re-run <code>install_automation_node_scripts.sh</code>
-so the installed copies (and therefore the web UI) pick it up.</p>
+so the installed copies (and therefore the web UI) pick it up. A re-run refreshes the files in place and touches
+Apache only when it has to: it restarts Apache when a module had to be enabled, reloads it when a config file
+changed, and leaves it running otherwise — so the web UI stays answering across a redeploy. It says which of the
+three it did.</p>
 </blockquote>
 <h3 id="2a-run-locally-fastest-no-apache">2a. Run locally (fastest, no Apache)</h3>
 <p>Zero dependencies — just Python 3:</p>
@@ -381,10 +384,10 @@ sudo chown wwwrun /srv/www/lab-builder/labs      # 'apache' on RHEL family
 sudo cp webui/apache/lab-builder.conf /etc/apache2/vhosts.d/    # SLES/openSUSE
 #   RHEL family:  sudo cp webui/apache/lab-builder.conf /etc/httpd/conf.d/
 
-# 4. Make sure CGI is enabled
-#   SLES/openSUSE: add 'cgid' to APACHE_MODULES in /etc/sysconfig/apache2, e.g.
-#     sudo sed -i 's/^APACHE_MODULES=&quot;\(.*\)&quot;/APACHE_MODULES=&quot;\1 cgid&quot;/' /etc/sysconfig/apache2
-#   RHEL family:   mod_cgid is on by default
+# 4. Make sure CGI and expiry headers are enabled
+#   SLES/openSUSE: add 'cgid' and 'expires' to APACHE_MODULES in /etc/sysconfig/apache2, e.g.
+#     sudo sed -i 's/^APACHE_MODULES=&quot;\(.*\)&quot;/APACHE_MODULES=&quot;\1 cgid expires&quot;/' /etc/sysconfig/apache2
+#   RHEL family:   mod_cgid and mod_expires are on by default
 sudo systemctl restart apache2                    # 'httpd' on RHEL family
 </code></pre>
 <p>Then browse to:</p>
@@ -454,6 +457,11 @@ the Apache config):</p>
 <td>where generated labs are written</td>
 <td><code>~/.lab-builder/labs</code></td>
 </tr>
+<tr>
+<td><code>LABBUILDER_EXAMPLES_DIR</code></td>
+<td>dir with the example labs offered as starting points</td>
+<td><code>/usr/share/lab_creation/examples</code>, else <code>&lt;repo&gt;/examples</code></td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -462,7 +470,10 @@ the Apache config):</p>
 <li><strong>Common settings</strong> — double-click it and fill the defaults every VM uses (image, RAM, disk,
    CPU, network).</li>
 <li><strong>Kubernetes clusters and VMs</strong> — drag a Kubernetes cluster onto the canvas, then drag VMs onto it.
-   A VM dropped outside a Kubernetes cluster is a standalone VM. Double-click a block to set its name and settings.</li>
+   A VM dropped outside a Kubernetes cluster is a standalone VM. Double-click a block to set its name and settings.
+   A VM's form offers only the settings that apply to it: the Kubernetes node settings
+   (<code>KUBERNETES_NODE_TYPE</code>, <code>harvester_role</code>) appear once the VM is in a Kubernetes cluster,
+   and a value set before it left one is kept, not discarded.</li>
 <li><strong>Add-ons</strong> — drag an add-on onto where it installs:
    <ul>
    <li>an add-on with only the kubernetes layer goes on a Kubernetes cluster (dropped on one of its VMs, it goes to
@@ -473,6 +484,9 @@ the Apache config):</p>
      anywhere.</li>
    </ul>
    A place a block cannot go is not highlighted while you drag, and a click-to-add there says why.</li>
+<li><strong>Start from an example</strong> — <strong>Examples…</strong> lists the lab definitions the project ships
+   in <code>examples/</code>, with what each one holds (VMs, Kubernetes clusters, add-ons); opening one builds the
+   canvas from it, exactly as opening a file does. The static GitHub Pages build carries the same examples.</li>
 <li><strong>Open or edit lab.json</strong> — <strong>Open…</strong> loads a <code>.json</code> or <code>.yaml</code> lab
    definition from your computer, and the JSON view can be edited directly. Either way the canvas is rebuilt from
    the definition: VMs join the Kubernetes cluster their <code>kcluster</code> names, each <code>addons</code> entry
@@ -488,7 +502,10 @@ the Apache config):</p>
    <li>lab.json text that does not parse.</li>
    </ul>
    Warning: an add-on has settings, but no VM or Kubernetes cluster lists it.</li>
-<li><strong>Validate</strong> — runs <code>libs/primary</code> server-side; shows structural errors.</li>
+<li><strong>Validate</strong> — runs the same preflight <code>setup_lab.py</code> runs, server-side: structural
+   errors, and every value against the schema that declares it (an <code>myip</code> that is not an IP address, a
+   <code>VM_MEM</code> below its minimum, a value outside a field's declared list). Its host checks are off, so a
+   node's reachability and the source image on the KVM host are not checked here.</li>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
    the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>
@@ -536,7 +553,10 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <li><strong>Create lab</strong> — shows what the lab creates, saves it on the server, then runs <code>setup_lab.py</code>
   as root in the background and shows its log as it runs. <em>Keep VMs that already exist</em> (<code>--keep</code>) is
   ticked by default; unticked, existing VMs of the lab are destroyed and created again. A lab whose credentials are
-  encrypted asks for a passphrase: create it with <code>setup_lab.py</code> on the command line.</li>
+  encrypted takes its passphrase in the dialog: it is handed to that one run's environment
+  (<code>LAB_CREDENTIALS_PASSPHRASE</code>) and nowhere else — not in the job record, not in its log, not back to the
+  browser. Leave it empty for a lab with no encrypted credentials. The same variable lets any run without a terminal
+  (a scheduled run, a pipeline) decrypt them; a new passphrase is still only ever set interactively.</li>
 </ul>
 <h2 id="http-api">HTTP API</h2>
 <p>Same-origin JSON. Under Apache the base is <code>/lab-builder/api</code> (open) and <code>/lab-builder/admin</code>
@@ -654,6 +674,13 @@ plus every addon config section. Create lab runs a saved lab with <code>setup_la
 <tr>
 <td>Apache serves the page but <code>/lab-builder/api</code> 404/500</td>
 <td>CGI not enabled, or <code>cgi-bin/labbuilder.py</code> not executable. Enable <code>cgid</code> (see setup 2b) and <code>chmod +x webui/cgi-bin/labbuilder.py</code>.</td>
+</tr>
+<tr>
+<td>The page is unstyled, or looks nothing like the hosted static builder, after an update</td>
+<td>The browser is still using a cached <code>style.css</code> or <code>app.js</code> from before the update, which does
+not match the new markup. Reload with the cache bypassed (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). The shipped
+<code>apache/lab-builder.conf</code> prevents this by making browsers revalidate these files, which needs
+<code>mod_expires</code> (setup 4).</td>
 </tr>
 <tr>
 <td><code>Save</code> fails with a permissions error</td>

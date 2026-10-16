@@ -422,7 +422,8 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
         # A boot-wait timeout on one node is logged as an error for that node, and the run continues with the other nodes.
         # Like destroy_vm() above, the error handling logs and moves on.
         try:
-            provision_vm(definition, config, defaults, vm_name)
+            for msg in provision_vm(definition, config, defaults, vm_name):
+                _report.add_error(msg)
             _report.add_node(vm_name, "created")
         except SystemExit:
             msg = "provisioning '{}' failed (continuing with the remaining nodes)".format(vm_name)
@@ -524,6 +525,13 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     # The cluster addons list is read from the definition, not from clu_cfg. load_kclu_vars() keeps only scalar fields, so a list is
     # dropped there. Per-node addons use phase_vm_addons() instead.
     addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
+    # The ingress controller and storage class the cluster's own distribution does not bring (clu_ingress,
+    # clu_storage) are add-ons like any other, installed before the ones that need them.
+    services = k8s.cluster_services(definition, clu_name)
+    if services:
+        lc.log("Cluster \"{}{}{}\" needs ( {} ) before its addons".format(
+            lc._RED, clu_name, lc._RESET, " ".join(services)))
+    addons = services + list(addons)
     if not addons:
         lc.log("No Kubernetes cluster addons for \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
         return
@@ -548,7 +556,8 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         installer = apps.addon_installer(addon)
         if not installer:
             lc.die("FAILED! Addon script \"install_{}\" not found".format(addon))
-        apps.check_requirements(apps.load_plugin(addon), targets.TARGET_CONTAINER, clu_type=clu_type)
+        apps.check_requirements(apps.load_plugin(addon), targets.TARGET_CONTAINER, clu_type=clu_type,
+                                provides=k8s.cluster_provides(definition, clu_name))
         lc.log("Running addon \"{}{}{}\" on \"{}{}{}\" for cluster \"{}{}{}\"".format(
             lc._RED, addon, lc._RESET, lc._RED, vm_name, lc._RESET, lc._RED, clu_name, lc._RESET))
         env = dict(os.environ)
@@ -648,6 +657,19 @@ def phase_vm_addons(definition, json_file):
         lc._level -= 1
 
 
+def phase_post_commands(definition):
+    """
+    Run every node's post_commands, now that its Kubernetes join and its own add-ons are done. A node whose VM
+    creation failed is skipped — there is nothing to run them on. Failures are errors in the run summary.
+    """
+    failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
+    for vm_name in definition.get("nodes", {}):
+        if vm_name in failed_nodes:
+            continue
+        for msg in lc.run_node_commands(definition, vm_name, "post"):
+            _report.add_error(msg)
+
+
 def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, parallel=0):
     # fresh=False is used by main(), which builds _report itself and seeds it
     # with the preflight's warnings/errors before this runs.
@@ -676,6 +698,7 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
         phase_install_k8s_and_addons(definition, config, defaults, json_file)
 
     phase_vm_addons(definition, json_file)
+    phase_post_commands(definition)
 
     lc.log("LAB setup completed")
     print_summary()

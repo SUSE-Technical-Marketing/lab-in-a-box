@@ -17,6 +17,7 @@ Typical usage:
 # Author/s: Raul Mahiques
 # License: GPLv3
 
+import re
 import shlex
 import subprocess
 import textwrap
@@ -103,6 +104,14 @@ class K8sDistro(object):
 
     name = None
 
+    # Which apps.CLUSTER_NEEDS the distribution itself brings, with no add-on.
+    bundled = ()
+
+    # The clu_ingress/clu_storage value each bundled need corresponds to, and whether the distribution can be told
+    # to leave it out so something else can supply it.
+    bundled_choice = {}
+    can_disable_bundled = True
+
     ready_timeout = 1200
 
     def install_cluster(self, definition, clu_name, clu_ctx):
@@ -162,6 +171,9 @@ class K8sDistro(object):
 class K3sDistro(K8sDistro):
     name = "k3s"
 
+    bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # traefik and local-path
+    bundled_choice = {apps.CLUSTER_INGRESS: "traefik", apps.CLUSTER_STORAGECLASS: "local-path"}
+
     def kubeconfig_path(self):
         return "/etc/rancher/k3s/k3s.yaml"
 
@@ -189,6 +201,7 @@ class K3sDistro(K8sDistro):
         """
         clu_rel = clu_ctx.get("clu_rel") or "stable"
         mydomain = clu_ctx.get("mydomain", "")
+        disable = self._disable_flags(clu_ctx)
 
         prepare_local_as_kubeclient()
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
@@ -203,9 +216,9 @@ class K3sDistro(K8sDistro):
                 hostname,
                 "curl -sfL https://get.k3s.io | "
                 "INSTALL_K3S_CHANNEL={} {}"
-                "sh -s - server --tls-san {}.{}".format(
+                "sh -s - server --tls-san {}.{}{}".format(
                     shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
-                    shlex.quote(clu_name), shlex.quote(mydomain))
+                    shlex.quote(clu_name), shlex.quote(mydomain), disable)
             )
             self._start(hostname, "k3s")
             ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/k3s.sh; chmod 0644 /etc/profile.d/k3s.sh".format(
@@ -224,6 +237,15 @@ class K3sDistro(K8sDistro):
             )
             self._start(hostname, "k3s-agent")
             return token, rancher1_ip
+
+    # K3s only takes --disable at install time, so a cluster whose clu_ingress or clu_storage names something other
+    # than the bundled traefik or local-path is installed without that component from the start.
+    _DISABLE_FLAG = {apps.CLUSTER_INGRESS: "traefik", apps.CLUSTER_STORAGECLASS: "local-storage"}
+
+    def _disable_flags(self, clu_ctx):
+        """The `--disable` flags for the bundled components this cluster is not keeping."""
+        return "".join(" --disable {}".format(self._DISABLE_FLAG[need])
+                       for need in sorted(cluster_disabled(clu_ctx, self)) if need in self._DISABLE_FLAG)
 
     def _start(self, hostname, service):
         """
@@ -248,6 +270,9 @@ _RKE2_PATH    = "ZXhwb3J0IFBBVEg9JFBBVEg6L29wdC9ya2UyL2JpbjovdmFyL2xpYi9yYW5jaGV
 
 class RKE2Distro(K8sDistro):
     name = "rke2"
+
+    bundled = (apps.CLUSTER_INGRESS,)                            # rke2-ingress-nginx
+    bundled_choice = {apps.CLUSTER_INGRESS: "nginx"}
 
     def kubeconfig_path(self):
         return "/etc/rancher/rke2/rke2.yaml"
@@ -280,6 +305,10 @@ class RKE2Distro(K8sDistro):
               - "{domain}"
               - "{clu}.{domain}"
         """.format(domain=mydomain, clu=clu_name))
+        # clu_ingress naming something other than the bundled nginx: RKE2 leaves the component out when its
+        # config disables it, and the chosen ingress controller is then installed as an add-on.
+        if apps.CLUSTER_INGRESS in cluster_disabled(clu_ctx, self):
+            content += "disable:\n  - rke2-ingress-nginx\n"
         for kind in ("server", "agent"):
             cfg = clu_dir / "config-{}.yaml".format(kind)
             if not cfg.exists():
@@ -367,6 +396,202 @@ class RKE2Distro(K8sDistro):
             return token, rancher1_ip
 
 
+class KubeadmDistro(K8sDistro):
+    """
+    Upstream Kubernetes, installed with kubeadm from the community packages at pkgs.k8s.io. Unlike RKE2 and K3s
+    there is no vendor installer script: the node gets the kubelet, kubeadm and kubectl packages of the requested
+    minor, containerd as its runtime, and then kubeadm builds the cluster.
+
+    clu_rel is the Kubernetes minor to install ("1.33", or "v1.33.4", whose minor is used). clu_cni picks the
+    network plugin the first server applies: flannel (the default), calico, or none to apply nothing, for a lab that
+    brings its own. clu_pod_cidr overrides the pod network, which each plugin's default manifest expects to match.
+    """
+
+    name = "kubeadm"
+
+    bundled = ()                                                 # upstream Kubernetes brings neither
+
+    CNI_MANIFESTS = {
+        "flannel": "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml",
+        "calico": "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml",
+    }
+    # Each plugin's own manifest carries this network, so the cluster has to be initialised with the same one.
+    CNI_POD_CIDRS = {"flannel": "10.244.0.0/16", "calico": "192.168.0.0/16"}
+    DEFAULT_CNI = "flannel"
+
+    def kubeconfig_path(self):
+        return "/etc/kubernetes/admin.conf"
+
+    def token_path(self):
+        """kubeadm keeps no join token on disk: a token is created when a node joins and expires by itself."""
+        return ""
+
+    def kubectl_command(self):
+        return "kubectl --kubeconfig {}".format(self.kubeconfig_path())
+
+    @staticmethod
+    def minor(clu_rel):
+        """The repository minor for a clu_rel: "1.33", "v1.33" and "v1.33.4+ignored" all give "v1.33"."""
+        match = re.search(r"(\d+)\.(\d+)", str(clu_rel or ""))
+        if not match:
+            die("clu_type kubeadm needs clu_rel to name a Kubernetes minor, for example \"1.33\" — got "
+                "{!r}".format(clu_rel))
+        return "v{}.{}".format(match.group(1), match.group(2))
+
+    def cni(self, clu_ctx):
+        """The network plugin to apply, validated against what this distro knows."""
+        name = str(clu_ctx.get("clu_cni") or self.DEFAULT_CNI).strip().lower()
+        if name not in list(self.CNI_MANIFESTS) + ["none"]:
+            die("clu_cni '{}' is invalid — use one of: {}, none".format(name, ", ".join(sorted(self.CNI_MANIFESTS))))
+        return name
+
+    def pod_cidr(self, clu_ctx):
+        """The pod network: the lab's own clu_pod_cidr, else the one the chosen plugin's manifest expects."""
+        return clu_ctx.get("clu_pod_cidr") or self.CNI_POD_CIDRS.get(self.cni(clu_ctx), "10.244.0.0/16")
+
+    def prepare_node(self, hostname, clu_rel):
+        """
+        Make a node able to run the kubelet: swap off, the modules and sysctls Kubernetes requires, containerd with
+        the systemd cgroup driver, and the kubelet, kubeadm and kubectl packages of this cluster's minor.
+
+        The package manager is detected rather than derived from the OS name, as ensure_podman_available() does. On a
+        transactional system the packages land in a new snapshot, so the node reboots into it before kubeadm runs.
+        """
+        minor = self.minor(clu_rel)
+        ssh_run(hostname, "swapoff -a; sed -i '/\\sswap\\s/s/^/#/' /etc/fstab", check=False)
+        ssh_run(hostname, "printf 'overlay\\nbr_netfilter\\n' > /etc/modules-load.d/k8s.conf; "
+                          "modprobe overlay; modprobe br_netfilter")
+        ssh_run(hostname, "printf 'net.bridge.bridge-nf-call-iptables=1\\nnet.ipv4.ip_forward=1\\n"
+                          "net.bridge.bridge-nf-call-ip6tables=1\\n' > /etc/sysctl.d/99-k8s.conf; sysctl --system "
+                          ">/dev/null")
+
+        transactional = is_transactional(hostname)
+        prefix = "transactional-update -n pkg install -y" if transactional else None
+        if prefix is None:
+            for manager, install in (("zypper", "zypper --non-interactive install -y"),
+                                     ("dnf", "dnf install -y"), ("apt-get", "apt-get install -y")):
+                if ssh_run(hostname, "command -v {}".format(manager), check=False).returncode == 0:
+                    prefix = install
+                    break
+        if prefix is None:
+            die("'{}': none of zypper, dnf or apt-get is available, so the Kubernetes packages cannot be "
+                "installed".format(hostname))
+
+        # The repository and its key are set up before anything is installed: zypper skips a repository whose key
+        # it does not trust and then exits 106 for every later install, which looks like a failure of whatever was
+        # being installed at the time.
+        if "apt-get" in prefix:
+            ssh_run(hostname, "apt-get update -qq && apt-get install -y apt-transport-https ca-certificates "
+                              "curl gpg && mkdir -p /etc/apt/keyrings")
+            ssh_run(hostname, "curl -fsSL https://pkgs.k8s.io/core:/stable:/{m}/deb/Release.key | "
+                              "gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg".format(m=minor))
+            ssh_run(hostname, "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] "
+                              "https://pkgs.k8s.io/core:/stable:/{m}/deb/ /' > /etc/apt/sources.list.d/"
+                              "kubernetes.list && apt-get update -qq".format(m=minor))
+        else:
+            repo_url = "https://pkgs.k8s.io/core:/stable:/{}/rpm/".format(minor)
+            repo = ("[kubernetes]\\nname=Kubernetes\\nbaseurl={url}\\nenabled=1\\nautorefresh=1\\n"
+                    "type=rpm-md\\ngpgcheck=1\\ngpgkey={url}repodata/repomd.xml.key\\n").format(url=repo_url)
+            ssh_run(hostname, "curl -fsSL {}repodata/repomd.xml.key -o /tmp/kubernetes-release.key && "
+                              "rpm --import /tmp/kubernetes-release.key && "
+                              "rm -f /tmp/kubernetes-release.key".format(repo_url))
+            ssh_run(hostname, "printf '{repo}' > /etc/zypp/repos.d/kubernetes.repo 2>/dev/null || "
+                              "printf '{repo}' > /etc/yum.repos.d/kubernetes.repo".format(repo=repo))
+
+        self._install_packages(hostname, prefix, "containerd")
+        ssh_run(hostname, "mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && "
+                          "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
+        self._install_packages(hostname, prefix, "kubelet kubeadm kubectl")
+        missing = ssh_run(hostname, "for b in kubeadm kubelet kubectl; do command -v $b >/dev/null || echo $b; done",
+                          check=False, capture=True)
+        if (missing.stdout or "").strip():
+            die("'{}': {} missing after the install — the Kubernetes {} repository at pkgs.k8s.io was not usable on "
+                "this node".format(hostname, ", ".join((missing.stdout or "").split()), minor))
+
+        if transactional:
+            reboot_into_pending_snapshot(hostname)
+        ssh_run(hostname, "systemctl enable --now containerd && systemctl enable kubelet")
+
+    @staticmethod
+    def _install_packages(hostname, prefix, packages):
+        """
+        Install `packages` with the node's package manager. zypper exits 106 when it had to skip a repository, which
+        says nothing about whether the packages went in, so that code is not a failure here; what the packages were
+        for is checked afterwards instead.
+        """
+        result = ssh_run(hostname, "{} {}".format(prefix, packages), check=False)
+        if result.returncode not in (0, 106):
+            die("'{}': installing {} failed (exit {})".format(hostname, packages, result.returncode))
+
+    def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
+        self.prepare_node(hostname, clu_ctx.get("clu_rel"))
+        if token is None:
+            return self._init(hostname, clu_name, clu_ctx)
+        log("  Joining '{}' as a control-plane node of '{}'".format(hostname, clu_name))
+        ssh_run(hostname, "{} --control-plane --certificate-key {}".format(
+            token["join"], shlex.quote(token["certificate_key"])))
+        self._write_root_kubeconfig(hostname)
+        return token, rancher1_ip
+
+    def install_agent(self, hostname, clu_name, clu_ctx, token, rancher1_ip):
+        self.prepare_node(hostname, clu_ctx.get("clu_rel"))
+        log("  Joining '{}' as a worker of '{}'".format(hostname, clu_name))
+        ssh_run(hostname, token["join"])
+        return token, rancher1_ip
+
+    def _init(self, hostname, clu_name, clu_ctx):
+        """
+        Build the cluster on its first node and return (join, hostname), where join carries the command another node
+        runs to join and the certificate key a further control-plane node needs.
+        """
+        mydomain = clu_ctx.get("mydomain", "")
+        endpoint = "{}.{}".format(clu_name, mydomain) if mydomain else hostname
+        log("  Initialising Kubernetes {} on '{}' (first node of '{}')".format(
+            self.minor(clu_ctx.get("clu_rel")), hostname, clu_name))
+        ssh_run(hostname, "kubeadm init --pod-network-cidr {} --control-plane-endpoint {}:6443 "
+                          "--upload-certs --ignore-preflight-errors=NumCPU".format(
+                              shlex.quote(self.pod_cidr(clu_ctx)), shlex.quote(endpoint)))
+        self._write_root_kubeconfig(hostname)
+        ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/kubeadm.sh; "
+                          "chmod 0644 /etc/profile.d/kubeadm.sh".format(self.kubeconfig_path()))
+
+        cni = self.cni(clu_ctx)
+        if cni == "none":
+            log("  clu_cni is \"none\": no network plugin applied, so the nodes stay NotReady until one is")
+        else:
+            log("  Applying the {} network plugin".format(cni))
+            ssh_run(hostname, "{} apply -f {}".format(self.kubectl_command(),
+                                                      shlex.quote(self.CNI_MANIFESTS[cni])))
+
+        # A single-node cluster has nowhere else to put pods, so the control-plane taint comes off.
+        if self._node_count(clu_ctx) == 1:
+            ssh_run(hostname, "{} taint nodes --all node-role.kubernetes.io/control-plane- ".format(
+                self.kubectl_command()), check=False)
+
+        join = ssh_output(hostname, "kubeadm token create --print-join-command").strip()
+        certificate_key = ssh_output(
+            hostname, "kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1").strip()
+        return {"join": join, "certificate_key": certificate_key}, hostname
+
+    def install_cluster(self, definition, clu_name, clu_ctx):
+        """
+        As the base does, with the node count recorded first: a single-node cluster has nowhere but its control
+        plane to run pods, so _init() takes the control-plane taint off, and it can only know that in advance.
+        """
+        clu_ctx = dict(clu_ctx, _node_count=kcluster_node_count(definition, clu_name))
+        super(KubeadmDistro, self).install_cluster(definition, clu_name, clu_ctx)
+
+    @staticmethod
+    def _node_count(clu_ctx):
+        """How many nodes this kcluster has, as install_cluster() recorded; 0 when it is not known."""
+        return int(clu_ctx.get("_node_count") or 0)
+
+    def _write_root_kubeconfig(self, hostname):
+        """Put the admin kubeconfig where a plain kubectl finds it, as the kubeadm documentation does."""
+        ssh_run(hostname, "mkdir -p /root/.kube && cp -f {} /root/.kube/config && "
+                          "chmod 0600 /root/.kube/config".format(self.kubeconfig_path()))
+
+
 class HarvesterDistro(K8sDistro):
     """
     Harvester / SUSE Virtualization (see libs/harvester.py). Nothing is installed over SSH: the cluster forms at first
@@ -375,6 +600,11 @@ class HarvesterDistro(K8sDistro):
     harvester_settings.
     """
     name = "harvester"
+
+    bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # its own RKE2 ingress and Longhorn
+    bundled_choice = {apps.CLUSTER_INGRESS: "nginx", apps.CLUSTER_STORAGECLASS: "longhorn"}
+    # Harvester is an appliance: its own ingress and Longhorn are part of the product and are not replaced.
+    can_disable_bundled = False
 
     def kubeconfig_path(self):
         return "/etc/rancher/rke2/rke2.yaml"
@@ -403,6 +633,7 @@ class HarvesterDistro(K8sDistro):
 DISTROS = {
     "harvester": HarvesterDistro,
     "k3s": K3sDistro,
+    "kubeadm": KubeadmDistro,
     "rke2": RKE2Distro,
 }
 
@@ -414,6 +645,137 @@ def get_distro(clu_type):
         die("Unknown Kubernetes distribution '{}' — supported: {}".format(
             clu_type, ", ".join(sorted(DISTROS))))
     return cls()
+
+# ── the ingress controller and storage class of a cluster ───────────────────
+#
+# A kcluster's clu_ingress and clu_storage name what supplies each of apps.CLUSTER_NEEDS. Unset means the
+# distribution's own where it has one (K3sDistro.bundled and friends), and otherwise the default below, so an
+# existing lab definition keeps the cluster it always had. "none" asks for nothing, for a lab that brings its own.
+# Each value is the add-on that installs it, which is run before the kcluster's own add-ons.
+
+INGRESS_ADDONS = {"nginx": "nginx", "traefik": "traefik", "none": ""}
+STORAGE_ADDONS = {"longhorn": "longhorn", "local-path": "local_path", "none": ""}
+
+DEFAULT_INGRESS = "nginx"
+DEFAULT_STORAGE = "longhorn"
+
+_CLUSTER_CHOICES = (
+    (apps.CLUSTER_INGRESS, "clu_ingress", INGRESS_ADDONS, DEFAULT_INGRESS),
+    (apps.CLUSTER_STORAGECLASS, "clu_storage", STORAGE_ADDONS, DEFAULT_STORAGE),
+)
+
+
+def kcluster_node_count(definition, clu_name):
+    """How many of the lab's nodes belong to `clu_name`."""
+    return sum(1 for cfg in (definition.get("nodes") or {}).values() if (cfg or {}).get("kcluster") == clu_name)
+
+
+def _known_distro(clu_type):
+    """
+    The distribution for `clu_type`, or None when the lab names one that does not exist. The cluster helpers below
+    use this rather than get_distro(), because a missing or wrong clu_type is reported by the preflight's own check
+    for it and must not abort everything else on the way there.
+    """
+    cls = DISTROS.get(clu_type)
+    return cls() if cls else None
+
+
+def _clu_section(definition, clu_name):
+    return (definition.get("kclusters", {}) or {}).get(clu_name, {}) or {}
+
+
+def cluster_needs(definition, clu_name):
+    """The apps.CLUSTER_NEEDS that the kcluster's own add-ons require of it."""
+    needs = set()
+    for entry in _clu_section(definition, clu_name).get("addons") or []:
+        needs.update(apps.load_plugin(apps.addon_entry_name(entry)).get("requires_cluster") or [])
+    return needs
+
+
+def cluster_plan(definition, clu_name):
+    """
+    What the kcluster is given to cover each of apps.CLUSTER_NEEDS, as a list of (need, add-on name) pairs in the
+    order they are installed: the ingress controller first, then the storage class.
+
+    A need is covered when the lab named it in clu_ingress/clu_storage, or when an add-on on this cluster requires
+    it and the distribution brings none — so a cluster gets nothing it is not asked for and nothing it already has.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    if distro is None:
+        return []
+    listed = {apps.addon_entry_name(e) for e in clu_cfg.get("addons") or []}
+    required = cluster_needs(definition, clu_name)
+    plan = []
+    for need, field, choices, default in _CLUSTER_CHOICES:
+        asked = str(clu_cfg.get(field) or "").strip().lower()
+        if not asked and (need in distro.bundled or need not in required):
+            continue
+        choice = cluster_choice(definition, clu_name, need)
+        if choice == distro.bundled_choice.get(need):
+            continue
+        if need in distro.bundled and not distro.can_disable_bundled:
+            die("kclusters.{}: {} cannot be '{}' on a {} cluster, which brings its own '{}'".format(
+                clu_name, field, choice, distro.name, distro.bundled_choice.get(need)))
+        addon = choices[choice]
+        if addon and addon not in listed:
+            plan.append((need, addon))
+    return plan
+
+
+def cluster_services(definition, clu_name):
+    """The add-ons that supply what the kcluster does not have itself, in the order they are installed."""
+    return [addon for _need, addon in cluster_plan(definition, clu_name)]
+
+
+def cluster_choice(definition, clu_name, need):
+    """
+    What supplies `need` on this kcluster, as a clu_ingress/clu_storage value: the field when the lab set one,
+    otherwise the distribution's own, otherwise the default. die()s on a value that names nothing.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    for a_need, field, choices, default in _CLUSTER_CHOICES:
+        if a_need != need:
+            continue
+        own = distro.bundled_choice.get(need) if distro else None
+        choice = str(clu_cfg.get(field) or own or default).strip().lower()
+        if choice not in choices:
+            die("kclusters.{}: {} '{}' is unknown — use one of {}".format(
+                clu_name, field, choice, ", ".join(sorted(choices))))
+        return choice
+    return ""
+
+
+def cluster_disabled(clu_ctx, distro):
+    """
+    The bundled components the cluster must be installed without, because its clu_ingress/clu_storage name something
+    else: a set of apps.CLUSTER_NEEDS. Read from clu_ctx, so it is available to install_server() on the node itself.
+    """
+    out = set()
+    for need, field, choices, default in _CLUSTER_CHOICES:
+        own = distro.bundled_choice.get(need)
+        if not own:
+            continue
+        choice = str(clu_ctx.get(field) or own).strip().lower()
+        if choice != own:
+            out.add(need)
+    return out
+
+
+def cluster_provides(definition, clu_name):
+    """
+    Which apps.CLUSTER_NEEDS the kcluster will have: what its distribution brings, plus what cluster_plan()
+    covers, plus what its own add-on list provides. This is what apps.requirement_issue() weighs an add-on's
+    requires_cluster against.
+    """
+    clu_cfg = _clu_section(definition, clu_name)
+    distro = _known_distro(clu_cfg.get("clu_type"))
+    provides = set(distro.bundled if distro else ())
+    provides.update(need for need, _addon in cluster_plan(definition, clu_name))
+    for entry in clu_cfg.get("addons") or []:
+        provides.update(apps.load_plugin(apps.addon_entry_name(entry)).get("provides_cluster") or [])
+    return provides
 
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────

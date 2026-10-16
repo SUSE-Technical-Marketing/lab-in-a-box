@@ -35,6 +35,7 @@ from lab_creation import (  # noqa: E402
     prepare_ignition_combustion, prepare_cloud_init,
     prepare_virt_customize_for_vm, prepare_install_iso,
     add_to_dns, clean_ssh_keys, check_ssh_conn,
+    run_node_commands,
 )
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
@@ -57,6 +58,9 @@ def provision_vm(definition, config, defaults, vm_name):
     config     : lab_creation.cfg dict (REMOTE_HOST, VIRT_SRV, KVM_HOSTS, ROOT_SSH_KEY, …).
     defaults   : lab_creation.defaults dict (LAB_SETUP_PATH, VM_IMG_LOC, ISO_LOC, …).
     vm_name    : the node key in definition["nodes"] to provision.
+
+    Returns one message per pre_commands command that failed on the VM (an empty list when all of them succeeded or
+    there are none), for the caller's own run report.
     """
     node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
     if is_existing_node(node_cfg):
@@ -239,9 +243,13 @@ def provision_vm(definition, config, defaults, vm_name):
         # The Harvester appliance installs itself at first boot; it is not rebooted, and the cluster is waited for in
         # setup_lab.py's Kubernetes phase (k8s.HarvesterDistro).
         log("\t\tVM \"{}\" created (Harvester cluster \"{}\", VIP {})".format(vm_name, harv_clu, harv_vip))
-        return
+        return []
     backend.reboot_vm(vm_name)
     check_ssh_conn(vm_name)
+
+    # The VM is up and reachable: run its pre_commands before anything else is done to it (setup_lab.py's Kubernetes
+    # and add-on phases come after this returns). A failure is reported and does not stop the rest of the lab.
+    pre_failures = run_node_commands(definition, vm_name, "pre")
 
     # Cross-cloud WireGuard overlay (see libs/overlay.py), enabled with common.overlay or OVERLAY_ENABLED. It is site-to-site, not
     # per-node. Only each site's automation VM, or a small gateway VM for a non-hub cloud account, joins the overlay. A node gets a
@@ -320,6 +328,7 @@ def provision_vm(definition, config, defaults, vm_name):
                                                    [cidr for _, cidr in remote_sites])
 
     log("\t\tVM \"{}\" created".format(vm_name))
+    return pre_failures
 
 
 def main():
@@ -370,7 +379,12 @@ def main():
     except RuntimeError as e:
         die("destroy before recreate failed for '{}': {}".format(vm_name, e))
 
-    provision_vm(definition, config, defaults, vm_name)
+    failures = provision_vm(definition, config, defaults, vm_name)
+    # Provisioning one VM on its own has no later phase, so its post_commands run here. Under setup_lab.py they run
+    # after this node's Kubernetes join and its own add-ons instead (phase_post_commands).
+    failures += run_node_commands(definition, vm_name, "post")
+    if failures:
+        die("{} command(s) failed on '{}' — see the messages above".format(len(failures), vm_name))
 
 
 if __name__ == "__main__":

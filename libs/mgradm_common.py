@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Part of lab-in-a-box. Shared mgradm and podman install mechanics, used by install_uyuni.py (Uyuni) and by the podman deployment
-# mode of install_smlm.py (SUSE Multi-Linux Manager). These functions live in libs/ because install_<addon> scripts are deployed
+# Part of lab-in-a-box. Shared mgradm and podman install mechanics, used by install_uyuni (Uyuni) and by the podman deployment
+# mode of install_smlm (SUSE Multi-Linux Manager). These functions live in libs/ because install_<addon> scripts are deployed
 # without their .py suffix, so one addon script cannot import another. Logic that more than one script uses belongs in libs/.
 # Author/s: Raul Mahiques
 # License: GPLv3

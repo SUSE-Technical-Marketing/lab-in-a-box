@@ -1,8 +1,6 @@
 #!/usr/bin/env python3.11
 # libs/litellm_common.py and its add-ons — see 87_litellm.sh.
-import importlib.util
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +12,9 @@ import litellm_common as lc  # noqa: E402
 failures = []
 
 
+import apps  # noqa: E402
+
+
 def check(desc, cond):
     if not cond:
         failures.append(desc)
@@ -21,10 +22,8 @@ def check(desc, cond):
 
 
 def load(name):
-    loader = SourceFileLoader("install_" + name, str(_REPO / "scripts" / "install_{}.py".format(name)))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("install_" + name, loader))
-    loader.exec_module(module)
-    return module
+    """An add-on's module. It has no .py extension, so importlib cannot infer a loader from the path."""
+    return apps.load_addon_module(name, str(_REPO / "scripts"))
 
 
 def run(fn, *args, **kwargs):

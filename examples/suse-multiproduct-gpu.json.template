@@ -1,0 +1,58 @@
+{
+"nodes": {
+  "mgmt1.mydemo.lab": {"myip": "192.168.88.61", "mymac": "34:8a:b1:4b:1a:61",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "mgmt2.mydemo.lab": {"myip": "192.168.88.62", "mymac": "34:8a:b1:4b:1a:62",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "mgmt3.mydemo.lab": {"myip": "192.168.88.63", "mymac": "34:8a:b1:4b:1a:63",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "gpu1.mydemo.lab":  {"myip": "192.168.88.65",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "agent",
+                       "existing": true}
+},
+
+"common": {
+  "lab_name": "SUSE multi-product on a GPU",
+  "lab_description": "The SUSE multi-product lab with SUSE AI on an NVIDIA GPU: the gpu_operator add-on and suse_ai_gpu true, on a GPU machine this toolkit does not create. gpu1 is an existing node (a host or VM with an NVIDIA GPU already, reachable over SSH as root), because the lab definition has no PCI passthrough: a libvirt VM created here cannot be given a GPU. A cloud GPU instance works too, with backend and cloud_instance_type on that node.",
+  "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+  "VM_MEM": "8192",
+  "VM_DSK": "80",
+  "VM_CPU": "4",
+  "mymask": "24",
+  "mygw": "192.168.88.1",
+  "mydns": "192.168.88.1",
+  "mynet_reverse": "88.168.192"
+},
+
+"kclusters": {
+  "mgmt": {
+    "clu_type": "rke2",
+    "clu_rel": "stable",
+    "mydomain": "mydemo.lab",
+    "addons": ["rancher", "longhorn", "appcollection", "gpu_operator", "suse_ai", "neuvector"]
+  }
+},
+
+"rancher": {
+  "rancher_shorthn": "rancher"
+},
+
+"longhorn": {
+  "lh_shorthn": "longhorn"
+},
+
+"appcollection": {
+  "appcollection_account": "appcollection"
+},
+
+"suse_ai": {
+  "suse_ai_registry_account": "appcollection",
+  "suse_ai_gpu": "true",
+  "suse_ai_ollama_models": "llama3.1:8b",
+  "suse_ai_shorthn": "ai"
+},
+
+"neuvector": {
+  "nv_shorthn": "neuvector"
+}
+}

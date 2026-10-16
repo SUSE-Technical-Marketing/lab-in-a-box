@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "openai_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "openai_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "openai_model": {
+   "default": "openai/gpt-5",
+   "required": false,
+   "type": "string"
+  },
+  "openai_ns": {
+   "default": "openai",
+   "required": false,
+   "type": "namespace"
+  },
+  "openai_shorthn": {
+   "default": "openai",
+   "required": false,
+   "type": "string"
+  },
+  "openai_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:openai",
+ "version": "2.1"
+}
