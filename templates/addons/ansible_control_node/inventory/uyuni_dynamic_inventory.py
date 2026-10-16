@@ -19,12 +19,12 @@ this file:
     UYUNI_PASS          its password (required)
     UYUNI_VERIFY_SSL    "false" to skip TLS verification (default: true —
                          set to "false" for this lab's own self-signed
-                         cert, same reality install_smlm.py itself works
+                         cert, same reality install_smlm itself works
                          around elsewhere in this project)
 
 Any of these not already present in the process environment are filled in
 from _ENV_FILE_PATH (/etc/ansible/uyuni_inventory.env — a plain KEY=VALUE
-file, written by install_ansible_control_node.py's own
+file, written by install_ansible_control_node's own
 setup_ansible_control_node() when a smlm/uyuni addon node exists in the
 same lab) if it exists — added 2026-09-18 after a real, live-reported
 failure: SMLM's own "Ansible > Schedule Playbook" feature invokes this
@@ -57,7 +57,7 @@ system groups do (e.g. "galilean-moons").
 
 The control node itself is normally ALSO a registered SMLM system (it has
 to be, to hold the Ansible Control Node entitlement) and so naturally
-appears in this inventory too — but install_ansible_control_node.py only
+appears in this inventory too — but install_ansible_control_node only
 ever installs its own SSH key on every OTHER lab node, never on itself
 (the control node has no reason to SSH to itself under normal use). A
 real, live-reported failure (2026-09-19): SMLM's own "Schedule Playbook"

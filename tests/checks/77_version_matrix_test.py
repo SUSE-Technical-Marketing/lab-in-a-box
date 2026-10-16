@@ -82,7 +82,7 @@ with mock.patch("apps.load_plugin", return_value={}):
 # -- the declared matrices are published and well-formed
 for addon, fields in (("rancher", ["cert_manager_ver", "rancher_version"]), ("longhorn", ["lh_version"]),
                       ("neuvector", ["nv_version"])):
-    r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_{}.py".format(addon)), "--schema", "json"],
+    r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_{}".format(addon)), "--schema", "json"],
                        stdout=subprocess.PIPE, universal_newlines=True)
     caps = json.loads(r.stdout).get("capabilities", {}) if r.returncode == 0 else {}
     vers = caps.get("versions") or {}
@@ -93,26 +93,25 @@ for addon, fields in (("rancher", ["cert_manager_ver", "rancher_version"]), ("lo
 # -- --validate prints warnings without failing
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
     json.dump({"rancher": {"rancher_version": "2.9.0"}}, f)
-r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_rancher.py"), "--validate", f.name],
+r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_rancher"), "--validate", f.name],
                    stdout=subprocess.PIPE, universal_newlines=True)
 check("--validate: out-of-matrix version is a warning, exit 0",
       r.returncode == 0 and "[WARNING] rancher: rancher_version '2.9.0'" in r.stdout)
 with open(f.name, "w") as fh:
     json.dump({"rancher": {"rancher_version": "--version 2.13.3"}}, fh)
-r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_rancher.py"), "--validate", f.name],
+r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_rancher"), "--validate", f.name],
                    stdout=subprocess.PIPE, universal_newlines=True)
 check("--validate: --version X form still valid and in the matrix", r.returncode == 0 and r.stdout.strip() == "")
 
 # -- helm commands
 sys.path.insert(0, str(_REPO / "scripts"))
-import importlib.util  # noqa: E402
+sys.path.insert(0, str(_REPO / "libs"))
+import apps  # noqa: E402
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, str(_REPO / "scripts" / (name + ".py")))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """An add-on's module. It has no .py extension, so importlib cannot infer a loader from the path."""
+    return apps.load_addon_module(name, str(_REPO / "scripts"))
 
 
 lh = load("install_longhorn")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Unit tests for the per-node addon-config override. An addons[] entry is a plain "<addon>" string, or a single-key
 # {"<addon>": {...}} mapping that overrides that addon's shared config for one node. The shared parsing helpers
-# (apps.addon_entry_name and addon_entry_overrides), k8s.addon_nodes() and addon_node_config(), and install_client_registration.py
+# (apps.addon_entry_name and addon_entry_overrides), k8s.addon_nodes() and addon_node_config(), and install_client_registration
 # are covered. register_client() is mocked. Run from 48_client_registration.sh, in its own container (see tests/run_tests.sh).
 import sys
 from pathlib import Path
@@ -94,8 +94,8 @@ check("addon_node_config: overriding one node never mutates the shared top-level
       cfg_def["client_registration"]["client_registration_activation_key"] == "1-shared-default")
 
 
-# ── install_client_registration.py: end-to-end through main() ──────────────
-import install_client_registration as icr  # noqa: E402
+# ── install_client_registration: end-to-end through main() ──────────────
+icr = apps.load_addon_module("install_client_registration", str(_REPO / "scripts"))  # no .py: loaded by path
 
 _real_register_client = icr.register_client  # main() tests below stub this out
 
@@ -104,7 +104,7 @@ icr.register_client = lambda vm_name, cfg, json_file=None: calls.append((vm_name
 icr.primary.load_definition = lambda path: cfg_def
 
 old_argv = sys.argv
-sys.argv = ["install_client_registration.py", "lab.json"]
+sys.argv = ["install_client_registration", "lab.json"]
 try:
     icr.main()
 finally:
@@ -122,7 +122,7 @@ check("install_client_registration main(): each node's nested override reaches r
 calls.clear()
 import os  # noqa: E402
 os.environ["_vm_name"] = "callisto"
-sys.argv = ["install_client_registration.py", "lab.json"]
+sys.argv = ["install_client_registration", "lab.json"]
 try:
     icr.main()
 finally:

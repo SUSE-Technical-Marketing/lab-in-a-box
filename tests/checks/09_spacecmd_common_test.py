@@ -289,7 +289,7 @@ check("ensure_channels_synced: truly no-op on empty list", len(fake.calls) == 0)
 
 # -- wait_for_channels_synced: completion and timeout ----------------------
 # Waits until each channel's reposync log ends with "Sync completed.", not merely until the channel exists. The same
-# signal is used by install_smlm.py's channel sync monitor.
+# signal is used by install_smlm's channel sync monitor.
 sc.time.sleep = lambda s: None  # no real waiting in tests
 
 fake = FakeSSH(responses=[("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n"))])
@@ -1438,7 +1438,7 @@ except SystemExit:
 check("run_content_lifecycle_actions: 'wait' without 'wait_env' dies", died)
 
 # -- ensure_openscap_prerequisites ------------------------------------------
-# The OpenSCAP scanner and the SCAP content are installed on the client, so a scan scheduled with install_smlm.py needs no
+# The OpenSCAP scanner and the SCAP content are installed on the client, so a scan scheduled with install_smlm needs no
 # separate manual step.
 fake = FakeSSH(responses=[("test -f", FakeResult(returncode=0))])
 sc.ssh_run = fake

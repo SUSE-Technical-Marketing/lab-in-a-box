@@ -1,7 +1,7 @@
 {
  "fields": {
   "mariadb_bind_address": {
-   "default": "127.0.0.1 \u2014 loopback-only; a caller relying on this from another container on the SAME host is expected to reach it via --network host, same convention as install_prometheus.py/install_grafana.py, not by opening this up to the outside",
+   "default": "127.0.0.1 \u2014 loopback-only; a caller relying on this from another container on the SAME host is expected to reach it via --network host, same convention as install_prometheus/install_grafana, not by opening this up to the outside",
    "required": false,
    "type": "string"
   },

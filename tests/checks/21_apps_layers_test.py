@@ -90,19 +90,21 @@ apps.attach_capabilities(schema, {
 })
 check("attach_capabilities adds a capabilities key without disturbing existing schema keys",
       schema["section"] == "fixture" and schema["fields"] == [])
-check("attach_capabilities's capabilities dict has all seven fields",
+check("attach_capabilities's capabilities dict has every field",
       schema["capabilities"] == {
           "targets": ["container"], "layers": ["kubernetes"],
-          "requires_kubernetes": ["rke2", "k3s"], "aux_services": ["pxe"], "versions": {},
-          "status": "stable", "status_note": "",
+          "requires_kubernetes": ["rke2", "k3s"], "requires_cluster": [], "provides_cluster": [],
+          "aux_services": ["pxe"], "versions": {},
+          "check": False, "status": "stable", "status_note": "",
       })
 
 schema2 = {}
 apps.attach_capabilities(schema2, {})
 check("attach_capabilities on an empty plugin dict fills in empty/None defaults, never KeyErrors",
       schema2["capabilities"] == {
-          "targets": [], "layers": [], "requires_kubernetes": None, "aux_services": [], "versions": {},
-          "status": "stable", "status_note": "",
+          "targets": [], "layers": [], "requires_kubernetes": None, "requires_cluster": [],
+          "provides_cluster": [], "aux_services": [], "versions": {},
+          "check": False, "status": "stable", "status_note": "",
       })
 
 
@@ -111,7 +113,13 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
 tracked = subprocess.run(["git", "-c", "safe.directory={}".format(_REPO), "-C", str(_REPO), "ls-files", "-s", "scripts/install_*"],
                          stdout=subprocess.PIPE, universal_newlines=True).stdout.split("\n")
 modes = {line.split()[3]: line.split()[0] for line in tracked if line.strip()}
-check("found the expected 68 tracked add-ons to check", len(modes) == 68)
+# Not a fixed number: an add-on is added now and then. What must hold is that every add-on git tracks is one
+# apps.addon_files() discovers, so none is silently invisible to the loader, and that the glob found some at all.
+discovered = apps.addon_files(str(_REPO / "scripts"))
+check("there are add-ons to check at all", len(modes) > 50)
+check("every tracked add-on is one addon_files() discovers: {}".format(
+      sorted(set(Path(p).name for p in modes) - set(Path(p).name for p in discovered.values()))),
+      set(Path(p).name for p in modes) <= set(Path(p).name for p in discovered.values()))
 check("every tracked add-on has the executable bit in git: {}".format(
       sorted(p for p, m in modes.items() if m != "100755")), all(m == "100755" for m in modes.values()))
 described = apps.describe_many(str(_REPO / p) for p in modes)
@@ -146,7 +154,7 @@ with tempfile.TemporaryDirectory() as d:
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
             mock.patch.object(apps.shutil, "which", return_value="/usr/local/bin/install_zz_test") as which:
         found = apps.addon_installer("zz_test")
-    check("addon_installer: an executable install_<name>.py next to the program wins over PATH",
+    check("addon_installer: an executable install_<name> next to the program wins over PATH",
           found == local and not which.called)
     os.chmod(local, 0o644)
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]), \
@@ -161,7 +169,7 @@ with tempfile.TemporaryDirectory() as d:
     os.chmod(bare, 0o755)
     with mock.patch.object(apps.sys, "argv", [os.path.join(d, "setup_lab.py")]):
         found = apps.addon_installer("zz_test")
-    check("addon_installer: with install_<name> and install_<name>.py both present, the one addon_files() deploys wins",
+    check("addon_installer: with install_<name> and install_<name> both present, the one addon_files() deploys wins",
           found == local)
 
 vm_only = dict(apps.DEFAULT_PLUGIN, name="vmonly", targets=["vm"])

@@ -1,0 +1,46 @@
+{
+ "fields": {
+  "coredns_appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "coredns_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "coredns_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "coredns_ns": {
+   "default": "coredns",
+   "required": false,
+   "type": "namespace"
+  },
+  "coredns_rel": {
+   "default": "coredns",
+   "required": false,
+   "type": "string"
+  },
+  "coredns_repo_url": {
+   "default": "https://coredns.github.io/helm",
+   "required": false,
+   "type": "url"
+  },
+  "coredns_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "coredns_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:coredns",
+ "version": "2.0"
+}

@@ -39,6 +39,15 @@ function check(desc, cond) {
   check("schema answers a copy, not the embedded object", same(await apiGet("schema", { name }), data.schemas[name]));
   check("base answers the embedded base schema", same(await apiGet("base"), data.base));
   check("status reports unavailable", (await apiGet("status")).available === false);
+  const examples = await apiGet("examples");
+  check("examples answers the embedded list", same(examples, data.examples));
+  check("every example is a lab the page can open", examples.examples.length > 0
+    && examples.examples.every((e) => data.exampleLabs[e.name] && data.exampleLabs[e.name].nodes));
+  const first = examples.examples[0].name;
+  check("example answers the embedded definition of " + first,
+    same(await apiGet("example", { name: first }), data.exampleLabs[first]));
+  await apiGet("example", { name: "nope.json" }).then(
+    () => check("an unknown example is rejected", false), () => {});
   await apiGet("schema", { name: "install_does_not_exist" }).then(
     () => check("unknown add-on is rejected", false), () => {});
   await apiGet("validate").then(

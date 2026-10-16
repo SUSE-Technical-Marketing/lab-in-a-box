@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-# install_complianceascode.py — see 88_complianceascode.sh.
+# install_complianceascode — see 88_complianceascode.sh.
 import importlib.util
 import sys
 from importlib.machinery import SourceFileLoader
@@ -7,7 +7,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
-_loader = SourceFileLoader("install_complianceascode", str(_REPO / "scripts" / "install_complianceascode.py"))
+_loader = SourceFileLoader("install_complianceascode", str(_REPO / "scripts" / "install_complianceascode"))
 ca = importlib.util.module_from_spec(importlib.util.spec_from_loader("install_complianceascode", _loader))
 _loader.exec_module(ca)
 

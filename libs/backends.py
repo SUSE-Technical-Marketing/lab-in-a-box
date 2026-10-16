@@ -1077,7 +1077,7 @@ class HarvesterBackend(VMBackend):
     """
     Provisions guest VMs on an existing, externally managed Harvester cluster instead of a
     KVM/libvirt hypervisor. This backend consumes a cluster that already exists, as LibvirtBackend
-    consumes an existing KVM host. It is separate from scripts/install_harvester.py, which installs
+    consumes an existing KVM host. It is separate from scripts/install_harvester, which installs
     Harvester components inside an RKE2 or K3s cluster.
 
     Requirements and limits:

@@ -129,7 +129,7 @@ check("_looks_sensitive: AWS_KEY_NAME does not match (a name reference, not a se
 # ── setup_credentials.py: write_account_file() + encrypt_existing() round trip ──
 with tempfile.TemporaryDirectory() as d:
     primary.clear_passphrase_cache()
-    sc.crypto_store.prompt_passphrase = lambda *a, **kw: "buildpw"
+    crypto_store.prompt_passphrase = lambda *a, **kw: "buildpw"
     out = sc.write_account_file(Path(d) / "aws-ci.yaml", "aws",
                                 {"AWS_REGION": "us-east-1", "AWS_SECRET_ACCESS_KEY": "s3kr3t"}, encrypt=True)
     written = yaml.safe_load(out.read_text())
@@ -145,7 +145,7 @@ with tempfile.TemporaryDirectory() as d:
     plain_path.write_text(yaml.safe_dump({
         "cloudtype": "aws", "AWS_REGION": "eu-west-1", "AWS_SECRET_ACCESS_KEY": "plain-secret",
     }))
-    sc.crypto_store.prompt_passphrase = lambda *a, **kw: "retrofitpw"
+    crypto_store.prompt_passphrase = lambda *a, **kw: "retrofitpw"
     import builtins
     _orig_input = builtins.input
     builtins.input = lambda *a, **kw: "y"
@@ -192,7 +192,7 @@ def interactive(fn, answers, secrets):
     """Run interactive builder `fn` in a new directory with typed `answers` and masked `secrets`: (path, data)."""
     d = Path(tempfile.mkdtemp())
     with mock.patch("builtins.input", side_effect=answers), \
-            mock.patch.object(sc.crypto_store, "prompt_passphrase", side_effect=secrets):
+            mock.patch.object(crypto_store, "prompt_passphrase", side_effect=secrets):
         path = fn(str(d))
     return path, yaml.safe_load(path.read_text())
 

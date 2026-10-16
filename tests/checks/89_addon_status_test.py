@@ -96,7 +96,9 @@ check("run: an under-construction add-on warns on stderr and still runs",
 r = run(OK, "lab.json")
 check("run: a stable add-on runs without a warning", r.returncode == 0 and "RAN" in r.stdout and "WARNING" not in r.stderr)
 
-r = run(UC, "--validate", "lab.json")
+lab = tmp / "lab.json"
+lab.write_text(json.dumps({"common": {}, "nodes": {}}))
+r = run(UC, "--validate", str(lab))
 check("--validate: prints no status warning (the preflight prints it once)",
       r.returncode == 0 and "UNDER CONSTRUCTION" not in r.stdout + r.stderr)
 
@@ -132,9 +134,13 @@ check("check_addon.py: the under-construction add-on passes the whole contract",
 os.environ["PATH"] = "{}:{}".format(tmp, os.environ["PATH"])
 import setup_lab  # noqa: E402
 
+# Each add-on's --validate reads the definition from the path, so it has to be the file the definition came from.
+definition = {"kclusters": {"c1": {"addons": ["uc_demo", "ok_demo"]}}, "nodes": {}}
+preflight_lab = tmp / "preflight-lab.json"
+preflight_lab.write_text(json.dumps(definition))
 err, out = io.StringIO(), io.StringIO()
 with redirect_stderr(err), redirect_stdout(out):
-    ok = setup_lab.validate_addon_configs({"kclusters": {"c1": {"addons": ["uc_demo", "ok_demo"]}}, "nodes": {}}, "lab.json")
+    ok = setup_lab.validate_addon_configs(definition, str(preflight_lab))
 check("preflight: an under-construction add-on is a warning, not an error", ok is True)
 check("preflight: the warning names the add-on and its note, once",
       err.getvalue().count("UNDER CONSTRUCTION") == 1 and "'uc_demo'" in err.getvalue() and NOTE in err.getvalue())

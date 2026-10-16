@@ -1,0 +1,140 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install ArgoCD GitOps controller
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 2.0
+#
+# JSON section: "argocd" — Argo CD GitOps controller
+#   argocd_version      : [OPTIONAL] Helm chart version (empty = latest, e.g. "7.6.8")
+#   argocd_ns           : [OPTIONAL] namespace (default: argocd)
+#   argocd_source : [OPTIONAL] where the chart comes from:
+#                         "appcollection" (the default: argo-cd from the SUSE Application
+#                         Collection, oci://dp.apps.rancher.io/charts/argo-cd), or "upstream"
+#                         for the project's own chart, which needs no account.
+#                         "appcollection" needs an Application Collection user and token:
+#                         argocd_appcollection_user/argocd_appcollection_password, or
+#                         argocd_appcollection_account naming a credential file of kind
+#                         "appcollection" (one such file in the store is found on its own).
+#   argocd_appcollection_user     : [OPTIONAL] Application Collection user
+#   argocd_appcollection_password : [OPTIONAL] Application Collection access token
+#   argocd_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
+#   argocd_shorthn      : [OPTIONAL] hostname prefix (default: argocd)
+#   argocd_rel          : [OPTIONAL] Helm repo alias (default: argo)
+#   argocd_repo_url     : [OPTIONAL] Helm repo URL (default: https://argoproj.github.io/argo-helm)
+
+__version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "argo-cd"
+
+PLUGIN = {
+    "name": "argocd",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "requires_cluster": ["ingress"],
+    "aux_services": [],
+}
+
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
+
+
+def _validate(v):
+    cfg = v.definition.get("argocd", {}) or {}
+    source = str(cfg.get("argocd_source") or appco.SOURCE_APPCOLLECTION).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] argocd.argocd_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("argocd", "argocd_appcollection_user", "appcollection",
+                             account_field="argocd_appcollection_account")
+        v.vreq_or_credential("argocd", "argocd_appcollection_password", "appcollection",
+                             account_field="argocd_appcollection_account")
+    v.vns("argocd")
+    v.vver("argocd")
+    v.vurl("argocd")
+
+
+def setup_argocd_repo(hostname, argocd_rel=None, argocd_repo_url=None):
+    """Add the ArgoCD Helm repo. Mirrors setup_argocd_repo (bash)."""
+    helm_repo_add(hostname, argocd_rel or "argo", argocd_repo_url or "https://argoproj.github.io/argo-helm")
+
+
+def setup_argocd(hostname, clu_name, mydomain, argocd_rel=None, argocd_ns=None,
+                  argocd_version=None, argocd_shorthn=None, extra_set=""):
+    """Install ArgoCD. Mirrors setup_argocd (bash)."""
+    rel = argocd_rel or "argo"
+    ns = argocd_ns or "argocd"
+    ver_arg = "--version {}".format(argocd_version) if argocd_version else ""
+    fqdn = "{}.{}.{}".format(argocd_shorthn or "argocd", clu_name, mydomain)
+    ssh_run(hostname,
+            "helm upgrade -i argocd {}/argo-cd "
+            "--namespace {} --create-namespace "
+            "--set server.ingress.enabled=true "
+            "--set server.ingress.hostname={} "
+            "--set configs.params.server\\.insecure=true "
+            "{}{}".format(rel, ns, fqdn, ver_arg, extra_set))
+    print("ArgoCD available at: http://{}".format(fqdn))
+    print("Initial admin password: kubectl -n {} get secret argocd-initial-admin-secret "
+          "-o jsonpath='{{.data.password}}' | base64 -d".format(ns))
+    return fqdn
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    argocd_cfg = definition.get("argocd", {}) or {}
+    online = definition.get("common", {}).get("online") == "1"
+
+    setup_helm(vm_name, clu_name, online=online)
+    repo, extra_set = "", ""
+    if appco.from_appcollection(argocd_cfg, "argocd", appco.SOURCE_APPCOLLECTION):
+        creds = ac.resolve_credential(argocd_cfg, "appcollection", {
+            "argocd_appcollection_user": "appcollection_user",
+            "argocd_appcollection_password": "appcollection_password",
+        }, account_key="argocd_appcollection_account")
+        user = creds["argocd_appcollection_user"]
+        password = creds["argocd_appcollection_password"]
+        if not user or not password:
+            die("argocd: argocd_source is \"appcollection\", so argocd_appcollection_user and "
+                "argocd_appcollection_password are needed — set them, set argocd_appcollection_account "
+                "to an \"appcollection\" credential file, or leave all three unset with exactly "
+                "one such file in the store (https://apps.rancher.io)")
+        repo, extra_set = appco.prepare_appcollection_repo(
+            vm_name, argocd_cfg.get("argocd_ns") or "argocd", user, password)
+    else:
+        setup_argocd_repo(vm_name, argocd_rel=argocd_cfg.get("argocd_rel"), argocd_repo_url=argocd_cfg.get("argocd_repo_url"))
+    fqdn = setup_argocd(
+        vm_name, clu_name, clu_cfg.get("mydomain", ""),
+        argocd_rel=repo or argocd_cfg.get("argocd_rel"), argocd_ns=argocd_cfg.get("argocd_ns"),
+        argocd_version=argocd_cfg.get("argocd_version"), argocd_shorthn=argocd_cfg.get("argocd_shorthn"),
+        extra_set=extra_set)
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+
+if __name__ == "__main__":
+    main()

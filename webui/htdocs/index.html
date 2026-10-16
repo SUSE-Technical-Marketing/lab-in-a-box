@@ -9,8 +9,10 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16191e" media="(prefers-color-scheme: dark)">
-  <script src="theme.js"></script>
-  <link rel="stylesheet" href="style.css">
+  <!-- ?v=__LABVERSION__ (the deployed version, substituted at install time) changes these URLs on every
+       redeploy, so a browser cannot pair a cached style.css or app.js with newer markup. -->
+  <script src="theme.js?v=__LABVERSION__"></script>
+  <link rel="stylesheet" href="style.css?v=__LABVERSION__">
 </head>
 <body>
   <header class="topbar">
@@ -83,13 +85,14 @@
         <input id="labName" type="text" value="lab" spellcheck="false" aria-label="lab file name">
         <button id="openBtn" class="btn" title="Open a lab definition (.json, .yaml) from this computer">Open…</button>
         <input id="openFile" type="file" accept=".json,.yaml,.yml,application/json" hidden>
+        <button id="examplesBtn" class="btn" title="Open one of the project's example labs as a starting point">Examples…</button>
         <button id="validateBtn" class="btn">Validate</button>
         <button id="downloadBtn" class="btn">Download</button>
         <button id="saveBtn" class="btn">Save to server</button>
         <button id="savedBtn" class="btn">Saved labs…</button>
         <button id="createBtn" class="btn primary">Create lab</button>
       </div>
-      <p class="hint">Edit lab.json directly or open a file: the canvas follows it. Validation runs through the project's own Python libraries on the server; Save to server, Saved labs and Create lab need a login.</p>
+      <p class="hint">Edit lab.json directly, open a file or start from an example: the canvas follows it. Validation runs through the project's own Python libraries on the server; Save to server, Saved labs and Create lab need a login.</p>
     </aside>
   </main>
 
@@ -122,6 +125,13 @@
     <div class="editor-head"><h3 id="savedTitle">Saved labs</h3></div>
     <ul id="savedList" class="saved-list"></ul>
     <div class="editor-foot"><span class="spacer"></span><button type="button" id="savedClose" class="btn">Close</button></div>
+  </dialog>
+
+  <!-- examples: the project's own lab definitions, opened as a starting point (no login needed) -->
+  <dialog id="examplesDialog" class="editor small-dialog" aria-labelledby="examplesTitle">
+    <div class="editor-head"><h3 id="examplesTitle">Example labs</h3></div>
+    <ul id="examplesList" class="saved-list"></ul>
+    <div class="editor-foot"><span class="spacer"></span><button type="button" id="examplesClose" class="btn">Close</button></div>
   </dialog>
 
   <!-- credentials (login, HTTPS): values are written, never read back -->
@@ -166,10 +176,16 @@
     <div id="createConfirm" class="dialog-body">
       <pre id="createSummary" class="create-summary"></pre>
       <p class="form-desc">The lab is saved on the server, then <code>setup_lab.py</code> creates it as root on the
-        automation node. Labs whose credentials are encrypted ask for a passphrase: create those with
-        <code>setup_lab.py</code> on the command line.</p>
+        automation node.</p>
       <label class="opt-toggle"><input type="checkbox" id="createKeep" checked> Keep VMs that already exist
         (<code>--keep</code>); unticked, they are destroyed and created again</label>
+      <div class="cred-grid">
+        <label class="field"><span class="f-name">Credential passphrase</span>
+          <input type="password" id="createPass" autocomplete="new-password"
+                 placeholder="only if this lab uses encrypted credentials"></label>
+      </div>
+      <p class="form-desc">The passphrase is handed to this one run, to decrypt its credential files, and to nothing
+        else: it is never saved, logged or shown again.</p>
     </div>
     <div id="createJob" class="dialog-body" hidden>
       <p id="jobState" class="job-state"></p>
@@ -192,7 +208,7 @@
   <script src="vendor/mermaid.min.js"></script>
   <!-- js-yaml 4.1.0, unmodified — see vendor/js-yaml.LICENSE.txt (MIT). -->
   <script src="vendor/js-yaml.min.js"></script>
-  <script src="app.js"></script>
-  <script src="cube-fx.js"></script>
+  <script src="app.js?v=__LABVERSION__"></script>
+  <script src="cube-fx.js?v=__LABVERSION__"></script>
 </body>
 </html>

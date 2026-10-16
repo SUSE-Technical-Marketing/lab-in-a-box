@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-# install_suse_ai.py — see 84_suse_ai.sh.
+# install_suse_ai — see 84_suse_ai.sh.
 import importlib.util
 import sys
 from importlib.machinery import SourceFileLoader
@@ -9,7 +9,7 @@ from unittest import mock
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
-_loader = SourceFileLoader("install_suse_ai", str(_REPO / "scripts" / "install_suse_ai.py"))
+_loader = SourceFileLoader("install_suse_ai", str(_REPO / "scripts" / "install_suse_ai"))
 _spec = importlib.util.spec_from_loader("install_suse_ai", _loader)
 sa = importlib.util.module_from_spec(_spec)
 _loader.exec_module(sa)

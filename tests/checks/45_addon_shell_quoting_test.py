@@ -40,7 +40,8 @@ class _Rec:
 
 
 # ── install_keycloak.setup_keycloak ────────────────────────────────────────
-import install_keycloak  # noqa: E402
+import apps  # noqa: E402
+install_keycloak = apps.load_addon_module("install_keycloak", str(_REPO / "scripts"))  # no .py: loaded by path
 rec = _Rec()
 install_keycloak.ssh_run = rec
 install_keycloak.setup_keycloak("vm1", "c1", "mydemo.lab", {"keycloak_admin": "ad'min", "keycloak_password": NASTY})
@@ -72,7 +73,7 @@ check("postgresql: the SQL statements are fed to psql, not the shell",
 
 
 # ── install_rancher.setup_rancher (helm upgrade line only) ─────────────────
-import install_rancher  # noqa: E402
+install_rancher = apps.load_addon_module("install_rancher", str(_REPO / "scripts"))  # no .py: loaded by path
 rec = _Rec()
 install_rancher.ssh_run = rec
 # stub out everything setup_rancher does around the helm call, so it runs to the end

@@ -24,7 +24,11 @@ Usage: lab-builder-helper <command> [argument]
   credentials-delete FILE     delete credential file FILE
   lab-create FILE [--keep]    start setup_lab.py on saved lab FILE in the
                               background (--keep: keep VMs that already exist);
-                              prints the job id
+                              prints the job id. A JSON stdin {"passphrase":
+                              "..."} is passed to the job's own environment
+                              (LAB_CREDENTIALS_PASSPHRASE) so a lab with
+                              encrypted credentials can be created without a
+                              terminal; it is never logged or stored
   lab-status JOB              a job's state, exit code and the end of its log
   lab-jobs                    every job, newest first
 
@@ -51,6 +55,7 @@ for _candidate in ("/usr/local/bin", str(Path(__file__).resolve().parent)):
     if Path(_candidate, "setup_credentials.py").is_file() and _candidate not in sys.path:
         sys.path.append(_candidate)
 
+import crypto_store  # noqa: E402
 import primary  # noqa: E402
 import setup_credentials  # noqa: E402
 
@@ -226,8 +231,13 @@ def job_state(d: Path) -> dict:
     return dict(meta, job=d.name, state=state, rc=rc)
 
 
-def lab_create(name: str, keep: bool) -> dict:
-    """Start setup_lab.py on saved lab `name` as a background job; refuse while one runs for that lab."""
+def lab_create(name: str, keep: bool, passphrase: str = "") -> dict:
+    """
+    Start setup_lab.py on saved lab `name` as a background job; refuse while one runs for that lab.
+
+    `passphrase` decrypts the lab's credential files (libs/crypto_store.py). It is handed to the job in its own
+    environment and nowhere else: not in job.json, not in the log, not on a command line other processes can read.
+    """
     lab = LABS_DIR / safe_name(name, "lab file")
     if lab.suffix != ".json" or not lab.is_file():
         raise Refused("no saved lab {}".format(name))
@@ -237,15 +247,28 @@ def lab_create(name: str, keep: bool) -> dict:
             st = job_state(d)
             if st["lab"] == lab.name and st["state"] == "running":
                 raise Refused("lab {} is already being created (job {})".format(lab.name, d.name))
-    job = "{}-{}".format(lab.stem, time.strftime("%Y%m%d-%H%M%S"))
-    d = JOBS_DIR / job
-    d.mkdir(mode=0o700)
+    # The id carries the lab and the time; two runs within the same second get -2, -3, … rather than colliding.
+    stamp = "{}-{}".format(lab.stem, time.strftime("%Y%m%d-%H%M%S"))
+    job, attempt = stamp, 1
+    while True:
+        d = JOBS_DIR / job
+        try:
+            d.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            attempt += 1
+            job = "{}-{}".format(stamp, attempt)
     cmd = [SETUP_LAB] + (["--keep"] if keep else []) + [str(lab)]
+    env = dict(os.environ)
+    if passphrase:
+        env[crypto_store.PASSPHRASE_ENV] = passphrase
+    else:
+        env.pop(crypto_store.PASSPHRASE_ENV, None)
     with open(d / "log", "wb") as log:
         proc = subprocess.Popen(
             ["/bin/sh", "-c", '"$@"; echo $? > "$0"', str(d / "rc")] + cmd,
             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-            cwd=str(JOBS_DIR), start_new_session=True, close_fds=True)
+            cwd=str(JOBS_DIR), env=env, start_new_session=True, close_fds=True)
     (d / "job.json").write_text(json.dumps({"lab": lab.name, "started": int(time.time()), "pid": proc.pid,
                                             "keep": keep}))
     return {"job": job}
@@ -278,7 +301,7 @@ def run(args: list) -> dict:
     if cmd == "credentials-delete" and len(rest) == 1:
         return credentials_delete(rest[0])
     if cmd == "lab-create" and rest and rest[1:] in ([], ["--keep"]):
-        return lab_create(rest[0], rest[1:] == ["--keep"])
+        return lab_create(rest[0], rest[1:] == ["--keep"], read_stdin().get("passphrase", ""))
     if cmd == "lab-status" and len(rest) == 1:
         return lab_status(rest[0])
     if cmd == "lab-jobs" and not rest:

@@ -121,7 +121,10 @@ def dispatch(action, method, params, data):
         if os.path.basename(data.get("filename", "")) != data.get("filename", ""):
             raise ValueError("invalid filename")
         name = discovery._safe_name(data.get("filename", ""))
-        return helper(["lab-create", name] + (["--keep"] if data.get("keep") else []))
+        # The passphrase (for a lab whose credentials are encrypted) reaches the helper on stdin, never as an
+        # argument other processes could read, and the helper puts it only in the job's own environment.
+        return helper(["lab-create", name] + (["--keep"] if data.get("keep") else []),
+                      {"passphrase": data.get("passphrase", "")})
     if action == "job" and method == "GET":
         return helper(["lab-status", one("id")])
     if action == "jobs" and method == "GET":

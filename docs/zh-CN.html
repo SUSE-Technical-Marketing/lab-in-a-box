@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>一个文件，一条命令。</strong>以声明方式描述虚拟机、Kubernetes 集群（RKE2 或 K3s）和附加组件。<code>setup_lab.py</code> 按依赖顺序构建它们，无需您手动运行 <code>virt-install</code> 或 Ansible。</li>
 <li><strong>家庭实验室或云端，同一份定义。</strong>实验室虚拟机运行在您自己的 KVM 主机、Harvester HCI，或 AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale 上。一个实验室可以跨越多台 KVM 主机，并可通过<a href="#cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</a>组合多个云和站点。</li>
-<li><strong>71 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
+<li><strong>70 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
 <li><strong>与代码同步的 Web 界面。</strong><a href="#web-ui-lab-builder">lab-builder</a> 根据附加组件自身的架构生成每个表单，因此脚本中新增的字段无需修改前端即可显示在界面中。</li>
 <li><strong>可插拔的预配方式。</strong>SLE Micro 使用 Ignition 和 Combustion，openSUSE 和 Ubuntu 使用 cloud-init，旧镜像使用 <code>virt-customize</code>，也可以从安装程序 ISO 进行自动安装（AutoYaST、Kickstart、Preseed 或 AutoInstall）。</li>
 <li><strong>凭据不放在实验室文件中。</strong>云和服务的凭据可以保存在按账户加密的文件中（使用 Argon2id 派生密钥，再级联使用 AES-256-GCM 和 ChaCha20-Poly1305）。</li>
@@ -377,7 +377,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
-<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。</p>
+<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。 <code>clu_ingress</code> 和 <code>clu_storage</code> 指定集群的入口控制器（<code>nginx</code>、<code>traefik</code>）和默认存储类（<code>longhorn</code>、<code>local-path</code>）。未设置时保留发行版自带的组件：RKE2 为 nginx，K3s 为 Traefik 和 local-path，Harvester 两者兼有；对于都不自带的发行版，一旦集群中的附加组件需要，就会安装一个。指定其他值会替换自带组件，<code>none</code> 则不安装任何组件。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
 <p>实验室并不局限于一台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -591,7 +591,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">实验室定义格式</h2>
-<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。</p>
+<p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。 <code>examples/suse-multiproduct.json.template</code> 是一个多产品的完整示例：在一个 RKE2 集群上，按 SUSE 文档给出的顺序部署 SUSE Rancher Prime、SUSE Storage、来自 SUSE Application Collection 的 SUSE AI 和 SUSE Security。<code>suse-multiproduct-gpu.json.template</code> 是同一个实验室，但 SUSE AI 运行在 NVIDIA GPU 上，使用 <code>existing</code> 节点，因为实验室定义不支持 PCI 直通。</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p><code>.yaml</code>/<code>.yml</code> 文件同样可用：格式根据扩展名识别（如果文件不是有效的 JSON，则尝试按 YAML 解析），在 <code>setup_lab.py</code> 的预检、<code>install_&lt;addon&gt; --validate</code> 以及每个附加组件自身的加载过程中都相同。YAML 输入需要在自动化虚拟机上安装 <code>pyyaml</code>（<code>pip install pyyaml</code>）；缺少它时会得到提示安装的明确错误，而不是只接受 JSON 的静默失败。</p></aside>
 <pre><code class="language-jsonc">{
@@ -622,7 +622,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot; or &quot;k3s&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -668,7 +668,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot; or &quot;k3s&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -706,6 +706,10 @@ rancher:
 <tr>
 <td><code>kvm_host</code></td>
 <td>在<a href="#multi-host-labs">多主机实验室</a>中将此虚拟机固定到特定虚拟化主机</td>
+</tr>
+<tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>此 VM 以 root 身份自行运行的 shell 命令：<code>pre_commands</code> 在它启动并可连接之后、任何 Kubernetes 或插件工作之前运行，<code>post_commands</code> 在这些工作全部完成之后运行。也可以写在 <code>common</code> 中以适用于所有 VM；节点自己的列表会替换它，<code>[]</code> 则让该节点不运行任何命令</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -913,7 +917,7 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>ISO_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。</p>
+<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>ISO_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。</p>
 <p>依次执行：在 DNS 中注册两个节点 → 创建两台虚拟机（复制 QCOW2 镜像、生成 Combustion 文件、启动并等待 SSH）→ 在 <code>node101</code> 上以 server 身份安装 RKE2，然后在 <code>node102</code> 上以 agent 身份安装 → 在集群的管理节点（<code>mgm_node</code>，默认为第一个 server 节点，此处为 <code>node101</code>）上安装 <code>rancher</code> 和 <code>longhorn</code>。带 Rancher 的 2 节点集群通常需要 15–25 分钟，大部分时间用于 RKE2 引导和 Rancher 的 Helm 安装。</p>
 <ol start="3">
 <li><strong>验证 DNS 解析</strong>（在您自己的桌面上，<a href="#step-5--point-your-client-dns-at-the-automation-vm">指向自动化虚拟机的 DNS</a> 之后）：</li>
@@ -1087,8 +1091,12 @@ install_longhorn --schema yaml      # ...or YAML
 <td>SUSE Rancher Prime Kubernetes 管理平台</td>
 </tr>
 <tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>Rancher 的 local-path-provisioner：默认 StorageClass，其卷是 Pod 所在节点上的目录。在不需要复制时，它是 <code>longhorn</code> 的轻量替代；kcluster 在 <code>clu_storage</code> 中选择其一</td>
+</tr>
+<tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn 分布式块存储</td>
+<td>SUSE Longhorn 分布式块存储 — 默认使用上游 chart，或通过 <code>lh_source: "appcollection"</code> 以 SUSE Storage 的形式从 SUSE Application Collection 安装（需要 Application Collection 账号）</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>
@@ -1097,6 +1105,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>Argo CD GitOps 控制器</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>Rancher 中的 Fleet 持续交付：集群组、集群标签和 GitRepo 资源，也包括文档中的 rancher/fleet-examples 仓库。Fleet 随 Rancher 一起提供，因此这里只做配置而不安装</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
@@ -1204,7 +1216,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager 服务器：功能与 <code>uyuni</code> 相同，可用 Helm 部署在 Kubernetes 上，或设置 <code>smlm_deployment: "podman"</code> 后由 <code>mgradm</code> 直接部署到主机或虚拟机上。还可自动安装 SUSE Linux 16 和 openSUSE Leap 16：带 <code>agama_profile</code> 的 <code>smlm_kickstart_profiles</code> 条目提供 Agama JSON 配置文件，带 <code>iso_url</code> 的 <code>smlm_distributions</code> 条目从 ISO 导入安装树</td>
+<td>SUSE Multi-Linux Manager 服务器：功能与 <code>uyuni</code> 相同，可用 Helm 部署在 Kubernetes 上，或设置 <code>smlm_deployment: "podman"</code> 后由 <code>mgradm</code> 直接部署到主机或虚拟机上。还可自动安装 SUSE Linux 16 和 openSUSE Leap 16：带 <code>agama_profile</code> 的 <code>smlm_kickstart_profiles</code> 条目提供 Agama JSON 配置文件，带 <code>iso_url</code> 的 <code>smlm_distributions</code> 条目从 ISO 导入安装树 它和 <code>uyuni</code> 还可以安装你自己的 Salt 状态和公式：<code>smlm_salt_states</code>/<code>uyuni_salt_states</code> 的条目会把 tarball、单个 <code>.sls</code> 或 Salt 公式 RPM 放入服务器的持久化 <code>/srv/salt</code>（RPM 只解包、从不安装，因为 <code>/usr/share/salt-formulas</code> 无法在服务器升级后保留）</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1583,7 +1595,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
-<p>加密方式（请参阅 <code>libs/crypto_store.py</code>）：口令先经过 <strong>Argon2id</strong>（一种故意设计得缓慢且耗内存的 KDF；对于用口令加密的文件，真正的安全边界是它，而不是密码算法）派生出 512 位主密钥；随后 <strong>HKDF-SHA512</strong> 派生出两个独立的 256 位子密钥（按标签进行域分离，而不只是一分为二）；数据<strong>先用 AES-256-GCM、再用 ChaCha20-Poly1305 级联</strong>加密，这是两种结构不同、密钥独立的 AEAD 算法，因此即使其中一种算法被彻底攻破，单靠它也不够。任何需要凭据的工具（<code>setup_lab.py</code>、<code>setup_vm.py</code> 等）都会通过 <code>libs/primary.py</code> 的 <code>try_load_cloud_account()</code>（所有调用都经过的唯一函数）在每次运行时询问一次口令（只缓存在进程内存中，从不写入任何地方）。</p>
+<p>加密方式（请参阅 <code>libs/crypto_store.py</code>）：口令先经过 <strong>Argon2id</strong>（一种故意设计得缓慢且耗内存的 KDF；对于用口令加密的文件，真正的安全边界是它，而不是密码算法）派生出 512 位主密钥；随后 <strong>HKDF-SHA512</strong> 派生出两个独立的 256 位子密钥（按标签进行域分离，而不只是一分为二）；数据<strong>先用 AES-256-GCM、再用 ChaCha20-Poly1305 级联</strong>加密，这是两种结构不同、密钥独立的 AEAD 算法，因此即使其中一种算法被彻底攻破，单靠它也不够。任何需要凭据的工具（<code>setup_lab.py</code>、<code>setup_vm.py</code> 等）都会通过 <code>libs/primary.py</code> 的 <code>try_load_cloud_account()</code>（所有调用都经过的唯一函数）在每次运行时询问一次口令（只缓存在进程内存中，从不写入任何地方）。 无法交互询问的运行（Web UI 的 <strong>Create lab</strong>、计划任务、流水线）会改用 <code>LAB_CREDENTIALS_PASSPHRASE</code> 中的口令，只尝试一次，且不会写到任何地方；设置新口令始终会交互询问，因此该变量不会悄悄加密文件。</p>
 <p>文件可以在顶层设置 <code>unencrypted: true</code> 来放弃加密（这不是默认设置，<code>setup_credentials.py</code> 在写入这种文件前会询问）。<code>--encrypt-existing</code> 只就地加密看起来敏感的字段（名称像密钥、密码或令牌的字段），让 <code>AWS_REGION</code>/<code>AWS_PROFILE</code> 等保持可读，并且从不覆盖输入文件：它会在旁边写出 <code>&lt;name&gt;.encrypted.yaml</code>，供您检查后放到正确位置。需要在自动化虚拟机上安装 Python 包 <code>cryptography</code>（<code>python311-cryptography</code>，或 <code>pip install cryptography</code>，Argon2id 需要 ≥41）；它只在实际处理加密文件时才会被导入，因此从不设置 <code>cloud_account</code> 的实验室不需要任何新依赖。</p>
 <p><strong>外部服务凭据（SCC、SUSE Application Collection、Hermes 等）。</strong>同一个 <code>/etc/lab_creation/credentials/</code> 存储、同样的加密和同一个 <code>setup_credentials.py</code> 工具也适用于非云的外部服务凭据，而不仅限于云提供商。这类文件用 <code>credential_kind</code>（例如 <code>scc</code>、<code>appcollection</code>、<code>hermes</code>）而非 <code>cloudtype</code> 标记，因此两种概念共用目录和格式，但永不冲突。每个需要外部服务凭据的附加组件都会说明自己的可选字段 <code>&lt;field&gt;_account</code>（例如 <code>smlm_scc_account</code>、<code>suse_ai_registry_account</code>、<code>hermes_account</code>），用于显式指定凭据；未设置时，与 <code>cloud_account</code> 一样，会自动使用唯一匹配该 <code>credential_kind</code> 的文件。<strong>在实验室 JSON 中写明文凭据仍然完全有效</strong>：此存储只是凭据的可选替代方案，绝非必需；即使您从不使用凭据存储，每个附加组件自己的明文字段（<code>smlm_scc_user</code>、<code>suse_ai_registry_user</code>、<code>hermes_llm_api_key</code> 等）也照常工作。</p>
 <pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first

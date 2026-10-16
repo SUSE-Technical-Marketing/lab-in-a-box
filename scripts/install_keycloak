@@ -1,0 +1,127 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install Keycloak identity provider
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 2.1
+#
+# JSON section: "keycloak" — Identity and access management
+#   keycloak_version    : [OPTIONAL] keycloakx chart version (empty = latest, e.g. "7.3.2")
+#   keycloak_ns         : [OPTIONAL] namespace (default: keycloak)
+#   keycloak_shorthn    : [OPTIONAL] hostname prefix (default: keycloak)
+#   keycloak_rel        : [OPTIONAL] Helm repo alias (default: codecentric)
+#   keycloak_repo_url   : [OPTIONAL] Helm repo URL of the keycloakx chart (default: https://codecentric.github.io/helm-charts)
+#   keycloak_admin      : [OPTIONAL] bootstrap admin user name (default: admin)
+#   keycloak_password   : [OPTIONAL] bootstrap admin password; when unset, a random one is generated once and kept
+#
+# Runs the official Keycloak image (quay.io/keycloak/keycloak) in development mode (kc.sh start-dev): realms and users
+# live in the pod's own database and are lost when the pod is recreated. The bootstrap admin is read from the
+# keycloak-admin secret.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "keycloak",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "requires_cluster": ["storageclass"],
+    "aux_services": [],
+}
+
+import json
+import secrets
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+
+
+def _validate(v):
+    v.vns("keycloak")
+    v.vver("keycloak")
+    v.vurl("keycloak")
+
+
+def setup_keycloak_repo(hostname: str, keycloak_rel: str = None, keycloak_repo_url: str = None) -> None:
+    """Add the Helm repo of the keycloakx chart."""
+    helm_repo_add(hostname, keycloak_rel or "codecentric", keycloak_repo_url or "https://codecentric.github.io/helm-charts")
+
+
+def admin_secret(hostname: str, ns: str, cfg: dict) -> None:
+    """keycloak-admin with KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD: replaced when keycloak_password is set, otherwise created
+    once with a random password. The password travels in an environment variable."""
+    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    create = ("kubectl create secret generic keycloak-admin -n {} --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME={} "
+              "--from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_PASSWORD\"").format(
+        shlex.quote(ns), shlex.quote(cfg.get("keycloak_admin") or "admin"))
+    if cfg.get("keycloak_password"):
+        cmd = create + " --dry-run=client -o yaml | kubectl apply -f -"
+    else:
+        cmd = "kubectl get secret keycloak-admin -n {} >/dev/null 2>&1 || {}".format(shlex.quote(ns), create)
+    ssh_run(hostname, "KC_PASSWORD={} bash -c {}".format(
+        shlex.quote(cfg.get("keycloak_password") or secrets.token_urlsafe(18)), shlex.quote(cmd)))
+
+
+def chart_values(fqdn: str) -> str:
+    """keycloakx values (JSON, a YAML subset): start-dev behind the ingress at http://<fqdn>/, admin from keycloak-admin."""
+    return json.dumps({
+        "command": ["/opt/keycloak/bin/kc.sh", "start-dev"],
+        "http": {"relativePath": "/"},
+        "extraEnv": ("- name: KC_PROXY_HEADERS\n  value: xforwarded\n- name: KC_HOSTNAME_STRICT\n  value: \"false\"\n"
+                     "- name: KC_HTTP_ENABLED\n  value: \"true\"\n"),
+        "extraEnvFrom": "- secretRef:\n    name: keycloak-admin\n",
+        "ingress": {"enabled": True, "rules": [{"host": fqdn, "paths": [{"path": "/", "pathType": "Prefix"}]}], "tls": []},
+    })
+
+
+def setup_keycloak(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
+    """Install Keycloak from <keycloak_rel>/keycloakx behind an ingress; returns the hostname."""
+    ns = cfg.get("keycloak_ns") or "keycloak"
+    ver_arg = " --version {}".format(shlex.quote(cfg["keycloak_version"])) if cfg.get("keycloak_version") else ""
+    fqdn = "{}.{}.{}".format(cfg.get("keycloak_shorthn") or "keycloak", clu_name, mydomain)
+    admin_secret(hostname, ns, cfg)
+    ssh_run(hostname, "helm upgrade --install keycloak {}/keycloakx --namespace {}{} --wait --timeout 10m -f -".format(
+        shlex.quote(cfg.get("keycloak_rel") or "codecentric"), shlex.quote(ns), ver_arg), input_text=chart_values(fqdn))
+    print("Keycloak available at: http://{}  (admin console: http://{}/admin, user: {})".format(
+        fqdn, fqdn, cfg.get("keycloak_admin") or "admin"))
+    print("Admin password: kubectl -n {} get secret keycloak-admin -o jsonpath='{{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}}' "
+          "| base64 -d".format(ns))
+    return fqdn
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    cfg = definition.get("keycloak", {}) or {}
+    online = definition.get("common", {}).get("online") == "1"
+
+    setup_helm(vm_name, clu_name, online=online)
+    setup_keycloak_repo(vm_name, keycloak_rel=cfg.get("keycloak_rel"), keycloak_repo_url=cfg.get("keycloak_repo_url"))
+    fqdn = setup_keycloak(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg)
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+
+if __name__ == "__main__":
+    main()

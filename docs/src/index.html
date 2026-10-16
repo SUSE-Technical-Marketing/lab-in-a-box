@@ -3,7 +3,7 @@
 <ul>
 <li><strong>One file, one command.</strong> Describe VMs, Kubernetes clusters (RKE2 or K3s) and add-ons declaratively. <code>setup_lab.py</code> builds them in dependency order, without you running <code>virt-install</code> or Ansible by hand.</li>
 <li><strong>Home lab or cloud, same definition.</strong> Lab VMs run on KVM hosts you own, on Harvester HCI, or on AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud or Exoscale. Labs can span several KVM hosts, and a single lab can mix clouds and sites through a <a href="#cross-cloud-wireguard-overlay">cross-cloud WireGuard overlay</a>.</li>
-<li><strong>71 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
+<li><strong>70 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
 <li><strong>A web UI that follows the code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renders each form from the add-on's own schema, so a new field in a script shows up in the UI with no front-end change.</li>
 <li><strong>Pluggable provisioning.</strong> Ignition and Combustion for SLE Micro, cloud-init for openSUSE and Ubuntu, <code>virt-customize</code> for legacy images, or a scripted install from an installer ISO (AutoYaST, Kickstart, Preseed or AutoInstall).</li>
 <li><strong>Credentials kept out of the lab file.</strong> Cloud and service credentials can live in per-account encrypted files (Argon2id key derivation, then AES-256-GCM and ChaCha20-Poly1305 in cascade).</li>
@@ -172,7 +172,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
-<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned. Every RKE2 node and every K3s server node gets <code>/etc/profile.d/rke2.sh</code> or <code>/etc/profile.d/k3s.sh</code>, which sets <code>KUBECONFIG</code>, so <code>kubectl</code> and <code>helm</code> work in any root shell on the node, SSH commands included. Add-ons that expose a web hostname (for example <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) register it in the lab DNS, pointing at the kcluster's nodes; destroying a node removes the records that point at it.</p>
+<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned. Every RKE2 node and every K3s server node gets <code>/etc/profile.d/rke2.sh</code> or <code>/etc/profile.d/k3s.sh</code>, which sets <code>KUBECONFIG</code>, so <code>kubectl</code> and <code>helm</code> work in any root shell on the node, SSH commands included. Add-ons that expose a web hostname (for example <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) register it in the lab DNS, pointing at the kcluster's nodes; destroying a node removes the records that point at it. <code>clu_type: kubeadm</code> builds upstream Kubernetes with kubeadm instead, taking its Kubernetes minor from <code>clu_rel</code> and its network plugin from <code>clu_cni</code> (flannel by default, calico, or none to bring your own). <code>clu_ingress</code> and <code>clu_storage</code> name the cluster's ingress controller (<code>nginx</code>, <code>traefik</code>) and default storage class (<code>longhorn</code>, <code>local-path</code>). Unset keeps what the distribution brings — nginx on RKE2, Traefik and local-path on K3s, both on Harvester — and installs one on a distribution that brings none, as soon as an add-on on the cluster needs it; naming a different one replaces the bundled component, and <code>none</code> installs nothing.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
 <p>A lab isn't limited to one hypervisor. Set <code>KVM_HOSTS</code> (space-separated) in <code>/etc/lab_creation.cfg</code> on the automation VM to make more than one hypervisor available:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -404,7 +404,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 
 <hr />
 <h2 id="lab-definition-format">Lab definition format</h2>
-<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>).</p>
+<p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> is a worked multi-product lab: one RKE2 cluster with SUSE Rancher Prime, SUSE Storage, SUSE AI from the SUSE Application Collection and SUSE Security, installed in the order SUSE documents. <code>suse-multiproduct-gpu.json.template</code> is the same lab with SUSE AI on an NVIDIA GPU, on an <code>existing</code> node, since the lab definition has no PCI passthrough.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -443,7 +443,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -489,7 +489,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot; or &quot;harvester&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -527,6 +527,10 @@ rancher:
 <tr>
 <td><code>kvm_host</code></td>
 <td>Pin this VM to a specific hypervisor in a <a href="#multi-host-labs">multi-host lab</a></td>
+</tr>
+<tr>
+<td><code>pre_commands</code>, <code>post_commands</code></td>
+<td>Shell commands this VM runs itself, as root: <code>pre_commands</code> once it is up and before any Kubernetes or add-on work, <code>post_commands</code> after all of it. Also settable in <code>common</code> for every VM; a node's own list replaces it, and <code>[]</code> opts that node out</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -777,7 +781,7 @@ so this section doesn't grow without bound.</p>
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>ISO_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building.</p>
+<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>ISO_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building. Every value is checked against the schema that declares it, too: an <code>myip</code> that is not an IP address, a <code>VM_MEM</code> that is not a number or below its minimum, a <code>clu_type</code> that is not one of the declared Kubernetes cluster types. Each add-on's <code>--validate</code> does the same for its own fields and for a per-node override of them.</p>
 <p>In order, this: registers both nodes in DNS → creates both VMs (copies the QCOW2 image, generates Combustion files, boots them, waits for SSH) → installs RKE2 on <code>node101</code> as server, then <code>node102</code> as agent → installs <code>rancher</code> and <code>longhorn</code> on the cluster's management node (<code>mgm_node</code>, defaulting to the first server node — <code>node101</code> here). A 2-node cluster with Rancher typically takes 15–25 minutes; most of it is RKE2 bootstrapping and Rancher's own Helm install.</p>
 <ol start="3">
 <li><strong>Verify DNS resolves</strong> (from your own desktop, once it's <a href="#step-5--point-your-client-dns-at-the-automation-vm">pointed at the automation VM's DNS</a>):</li>
@@ -951,8 +955,12 @@ install_longhorn --schema yaml      # ...or YAML
 <td>SUSE Rancher Prime Kubernetes management platform</td>
 </tr>
 <tr>
+<td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>
+<td>local-path-provisioner from Rancher: a default StorageClass whose volumes are directories on the node the pod runs on. Light alternative to <code>longhorn</code> where replication is not needed; a kcluster names either one in <code>clu_storage</code></td>
+</tr>
+<tr>
 <td><a href="https://longhorn.io/"><code>longhorn</code></a></td>
-<td>SUSE Longhorn distributed block storage</td>
+<td>SUSE Longhorn distributed block storage — from its upstream chart by default, or as SUSE Storage from the SUSE Application Collection with <code>lh_source: "appcollection"</code> (which needs an Application Collection account)</td>
 </tr>
 <tr>
 <td><a href="https://goharbor.io/"><code>harbor</code></a></td>
@@ -961,6 +969,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>Argo CD GitOps controller</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>Fleet continuous delivery in Rancher: cluster groups, cluster labels and GitRepo resources, including the documented rancher/fleet-examples repo. Configures the Fleet that ships with Rancher rather than installing it</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
@@ -1068,7 +1080,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm</code></a></td>
-<td>SUSE Multi-Linux Manager server — the same feature set as <code>uyuni</code>, deployed with Helm on Kubernetes or, with <code>smlm_deployment: "podman"</code>, by <code>mgradm</code> directly on a host or VM. It can also autoinstall SUSE Linux 16 and openSUSE Leap 16: <code>smlm_kickstart_profiles</code> entries with <code>agama_profile</code> serve an Agama JSON profile, and <code>smlm_distributions</code> entries with <code>iso_url</code> import the install tree from an ISO</td>
+<td>SUSE Multi-Linux Manager server — the same feature set as <code>uyuni</code>, deployed with Helm on Kubernetes or, with <code>smlm_deployment: "podman"</code>, by <code>mgradm</code> directly on a host or VM. It can also autoinstall SUSE Linux 16 and openSUSE Leap 16: <code>smlm_kickstart_profiles</code> entries with <code>agama_profile</code> serve an Agama JSON profile, and <code>smlm_distributions</code> entries with <code>iso_url</code> import the install tree from an ISO Both it and <code>uyuni</code> also install your own Salt states and formulas: <code>smlm_salt_states</code>/<code>uyuni_salt_states</code> entries put a tarball, a single <code>.sls</code> or a Salt-formula RPM in the server's persistent <code>/srv/salt</code> (an RPM is unpacked, never installed, because <code>/usr/share/salt-formulas</code> does not survive a server upgrade)</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/products/multi-linux-manager/"><code>smlm_proxy</code></a></td>
@@ -1463,7 +1475,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
-<p>Cipher (see <code>libs/crypto_store.py</code>): the passphrase runs through <strong>Argon2id</strong> (a deliberately slow, memory-hard KDF — this, not the cipher, is the real security boundary for a passphrase-encrypted file) to derive a 512-bit master secret; <strong>HKDF-SHA512</strong> then derives two independent 256-bit subkeys (domain-separated by label, not just split in half); the data is encrypted with <strong>AES-256-GCM then ChaCha20-Poly1305 in cascade</strong> — two structurally different, independently-keyed AEAD ciphers, so a catastrophic break of either single algorithm still isn't enough on its own. Any tool that needs a credential (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) prompts for its passphrase once per run (cached in process memory only, never written anywhere) via <code>libs/primary.py</code>'s <code>try_load_cloud_account()</code> — the one function everything goes through.</p>
+<p>Cipher (see <code>libs/crypto_store.py</code>): the passphrase runs through <strong>Argon2id</strong> (a deliberately slow, memory-hard KDF — this, not the cipher, is the real security boundary for a passphrase-encrypted file) to derive a 512-bit master secret; <strong>HKDF-SHA512</strong> then derives two independent 256-bit subkeys (domain-separated by label, not just split in half); the data is encrypted with <strong>AES-256-GCM then ChaCha20-Poly1305 in cascade</strong> — two structurally different, independently-keyed AEAD ciphers, so a catastrophic break of either single algorithm still isn't enough on its own. Any tool that needs a credential (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) prompts for its passphrase once per run (cached in process memory only, never written anywhere) via <code>libs/primary.py</code>'s <code>try_load_cloud_account()</code> — the one function everything goes through. A run that cannot be asked — the web UI's <strong>Create lab</strong>, a scheduled run, a pipeline — takes the passphrase from <code>LAB_CREDENTIALS_PASSPHRASE</code> instead, tried once and never written anywhere; setting a new passphrase always asks, so the variable can never silently encrypt a file.</p>
 <p>A file can opt out of encryption with a top-level <code>unencrypted: true</code> (not the default — <code>setup_credentials.py</code> asks before writing one this way). <code>--encrypt-existing</code> encrypts only the sensitive-looking fields (secret/password/token-shaped names) in place, leaving e.g. <code>AWS_REGION</code>/<code>AWS_PROFILE</code> readable, and never overwrites its input — it writes <code>&lt;name&gt;.encrypted.yaml</code> alongside it for you to review and move into place. Requires the <code>cryptography</code> Python package (<code>python311-cryptography</code>, or <code>pip install cryptography</code>, ≥41 for Argon2id) on the automation VM — imported lazily, only when an actually-encrypted file is touched, so a lab that never sets <code>cloud_account</code> needs no new dependency.</p>
 <p><strong>External-service credentials (SCC, SUSE Application Collection, Hermes, …).</strong> The same <code>/etc/lab_creation/credentials/</code> store, encryption, and <code>setup_credentials.py</code> tool also cover non-cloud external-service credentials — not just cloud providers. A file is marked with <code>credential_kind</code> (e.g. <code>scc</code>, <code>appcollection</code>, <code>hermes</code>) instead of <code>cloudtype</code>, so the two concepts share the directory/format without ever colliding. Each addon that needs an external-service credential documents its own optional <code>&lt;field&gt;_account</code> (e.g. <code>smlm_scc_account</code>, <code>suse_ai_registry_account</code>, <code>hermes_account</code>) to name one explicitly; left unset, exactly one matching <code>credential_kind</code> file auto-discovers the same way <code>cloud_account</code> does. <strong>Plaintext-in-lab-JSON remains fully valid either way</strong> — this store is an optional alternative for the credential, never a requirement; every addon's own plaintext fields (<code>smlm_scc_user</code>, <code>suse_ai_registry_user</code>, <code>hermes_llm_api_key</code>, …) still work unchanged if you never touch the credential store at all.</p>
 <pre><code class="language-shell">setup_credentials.py   # interactive — now asks &quot;cloud provider or external service?&quot; first

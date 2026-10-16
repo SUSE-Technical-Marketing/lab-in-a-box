@@ -1,0 +1,154 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install Rancher's local-path-provisioner on a Kubernetes cluster
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "local_path" — a default StorageClass backed by a directory on each node
+#   local_path_version : [OPTIONAL] local-path-provisioner release to apply (default: v0.0.31)
+#   local_path_ns      : [OPTIONAL] namespace it runs in (default: local-path-storage)
+#   local_path_dir     : [OPTIONAL] directory on each node the volumes live in
+#                        (default: /opt/local-path-provisioner)
+#   local_path_default : [OPTIONAL] "false" leaves it as a non-default StorageClass, for a cluster
+#                        that already has a default one. Default: true.
+#
+# Volumes are directories on the node that the pod runs on, so a volume does not follow its pod to
+# another node and nothing is replicated. For a storage class that does both, use the longhorn
+# add-on. A kcluster names either one in clu_storage.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "local_path",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "provides_cluster": ["storageclass"],
+    "aux_services": [],
+    "check": True,
+}
+
+import json  # noqa: E402
+import shlex  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import ssh_run, die, log  # noqa: E402
+
+DEFAULT_VERSION = "v0.0.31"
+DEFAULT_NS = "local-path-storage"
+DEFAULT_DIR = "/opt/local-path-provisioner"
+STORAGE_CLASS = "local-path"
+DEFAULT_ANNOTATION = "storageclass.kubernetes.io/is-default-class"
+
+MANIFEST_URL = ("https://raw.githubusercontent.com/rancher/local-path-provisioner/"
+                "{version}/deploy/local-path-storage.yaml")
+
+
+def _validate(v):
+    cfg = v.definition.get("local_path", {}) or {}
+    v.vbool("local_path", "local_path_default")
+    directory = str(cfg.get("local_path_dir") or DEFAULT_DIR)
+    if not directory.startswith("/"):
+        v.errors.append("[ERROR] local_path.local_path_dir '{}': must be an absolute path".format(directory))
+    version = str(cfg.get("local_path_version") or DEFAULT_VERSION)
+    if not version.startswith("v"):
+        v.errors.append("[ERROR] local_path.local_path_version '{}': must be a release tag, e.g. {}".format(
+            version, DEFAULT_VERSION))
+
+
+def config_patch(directory):
+    """The ConfigMap merge patch that points the provisioner at `directory` instead of the manifest's own path."""
+    config = ('{\n  "nodePathMap":[\n    {\n      "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",\n'
+              '      "paths":["%s"]\n    }\n  ]\n}\n' % directory)
+    return json.dumps({"data": {"config.json": config}})
+
+
+def setup_local_path(hostname, cfg):
+    """
+    Apply the local-path-provisioner release named by local_path_version, point it at local_path_dir and, unless
+    local_path_default is false, annotate its StorageClass as the cluster's default. Idempotent: the manifest is
+    applied, never created, and the annotation is set to the value it should already have.
+    """
+    version = str(cfg.get("local_path_version") or DEFAULT_VERSION)
+    namespace = str(cfg.get("local_path_ns") or DEFAULT_NS)
+    directory = str(cfg.get("local_path_dir") or DEFAULT_DIR)
+    is_default = str(cfg.get("local_path_default", "true")).strip().lower() != "false"
+
+    log("# Installing local-path-provisioner {} (volumes under {})".format(version, directory))
+    url = MANIFEST_URL.format(version=version)
+    applied = ssh_run(hostname, "kubectl apply -n {} -f {}".format(shlex.quote(namespace), shlex.quote(url)),
+                      check=False, capture=True)
+    if applied.returncode != 0:
+        die("local_path: could not apply {} — is the release tag right and the node online?".format(url))
+
+    if directory != DEFAULT_DIR:
+        ssh_run(hostname, "kubectl -n {} patch configmap local-path-config --type merge -p {}".format(
+            shlex.quote(namespace), shlex.quote(config_patch(directory))))
+        ssh_run(hostname, "kubectl -n {} rollout restart deploy/local-path-provisioner".format(
+            shlex.quote(namespace)), check=False)
+
+    ssh_run(hostname, "kubectl patch storageclass {} -p {}".format(
+        shlex.quote(STORAGE_CLASS),
+        shlex.quote('{"metadata":{"annotations":{"%s":"%s"}}}' % (DEFAULT_ANNOTATION, "true" if is_default
+                                                                  else "false"))))
+    ssh_run(hostname, "kubectl -n {} rollout status deploy/local-path-provisioner --timeout=300s".format(
+        shlex.quote(namespace)), check=False)
+    print("StorageClass '{}' is available{}".format(STORAGE_CLASS, ", as the cluster default" if is_default else ""))
+    return STORAGE_CLASS
+
+
+def _check(chk):
+    """What is deployed against the lab's "local_path" section: the StorageClass, its default annotation and the
+    provisioner's own deployment."""
+    if "local_path" not in chk.definition:
+        chk.ok("this lab has no local_path section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("local_path", {}) or {}
+    namespace = str(cfg.get("local_path_ns") or DEFAULT_NS)
+    hostname = chk.vm_name
+
+    r = ssh_run(hostname, "kubectl get storageclass {} -o jsonpath='{{.metadata.annotations.{}}}'".format(
+        shlex.quote(STORAGE_CLASS), DEFAULT_ANNOTATION.replace(".", "\\.")), check=False, capture=True)
+    if r.returncode != 0:
+        chk.fail("there is no '{}' StorageClass on this cluster".format(STORAGE_CLASS))
+        return
+    expected = "true" if str(cfg.get("local_path_default", "true")).strip().lower() != "false" else "false"
+    chk.expect("StorageClass '{}' default annotation".format(STORAGE_CLASS), expected, (r.stdout or "").strip()
+               or "false")
+
+    ready = ssh_run(hostname, "kubectl -n {} get deploy local-path-provisioner "
+                              "-o jsonpath='{{.status.readyReplicas}}'".format(shlex.quote(namespace)),
+                    check=False, capture=True)
+    if (ready.stdout or "").strip() in ("", "0"):
+        chk.fail("the local-path-provisioner deployment in {} has no ready replica".format(namespace))
+    else:
+        chk.ok("the local-path-provisioner deployment in {} is running".format(namespace))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    setup_local_path(vm_name, definition.get("local_path", {}) or {})
+
+
+if __name__ == "__main__":
+    main()

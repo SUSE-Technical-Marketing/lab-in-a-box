@@ -3,14 +3,15 @@
 # See docs/addons.html (Add-on developers' guide). Copy it to scripts/install_<name>.sh to start a new add-on.
 # License: GPLv3
 #
-# Contract: --schema [json|yaml], --capabilities, --validate <lab>, --version, --help, or <lab> to install.
-# The install run gets the lab definition as $1 and the VM in $_vm_name. Needs jq and root SSH to the VM.
+# Contract: --schema [json|yaml], --capabilities, --validate <lab>, --check <lab>, --version, --help, or <lab> to
+# install. The install run gets the lab definition as $1 and the VM in $_vm_name. Needs jq and root SSH to the VM.
+# --check compares what is deployed with the lab: exit 0 it matches, 1 it does not, 2 no check implemented.
 set -euo pipefail
 
 _version="__LABVERSION__"
 _section="example_motd"
 
-_capabilities='{"targets": ["vm", "baremetal"], "layers": ["os-native"], "requires_kubernetes": null, "aux_services": [], "versions": {}}'
+_capabilities='{"targets": ["vm", "baremetal"], "layers": ["os-native"], "requires_kubernetes": null, "aux_services": [], "versions": {}, "check": true}'
 
 _schema() {
     cat <<JSON
@@ -45,10 +46,26 @@ case "${1:-}" in
             exit 1
         fi
         ;;
+    --check)
+        [[ -n "${2:-}" ]] || { echo "[FAIL] --check requires a lab definition file"; exit 1; }
+        if ! jq -e --arg s "${_section}" 'has($s)' "$2" >/dev/null; then
+            echo "[OK] this lab has no ${_section} section, so there is nothing to check"
+            exit 0
+        fi
+        _vm="${_vm_name:?_vm_name is not set (setup_lab.py sets it)}"
+        _want=$(_config "$2" "${_vm}" | jq -r '.example_motd_message // ""')
+        _have=$(ssh -o StrictHostKeyChecking=accept-new -q "root@${_vm}" "cat /etc/motd" 2>/dev/null || true)
+        if [[ "${_have}" == *"${_want}"* ]]; then
+            echo "[OK] /etc/motd on ${_vm} holds the configured message"
+            exit 0
+        fi
+        echo "[FAIL] /etc/motd on ${_vm}: expected it to hold '${_want}'"
+        exit 1
+        ;;
     --version|-v) echo "install_${_section} ${_version}" ;;
     --help)
         echo "Usage: install_${_section} <lab.json>   (the VM is taken from \$_vm_name)"
-        sed -n '2,9p' "$0"
+        sed -n '2,8p' "$0"
         ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *)

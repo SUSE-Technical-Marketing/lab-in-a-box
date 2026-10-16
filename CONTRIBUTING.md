@@ -48,12 +48,12 @@ flowchart LR
 2. Make your change. Match the style of the surrounding code:
    - Python targets **3.11**, stdlib-only. No new third-party dependency
      without discussing it in an issue first.
-   - Every `scripts/install_<addon>.py` is self-contained and follows the
+   - Every `scripts/install_<addon>` is self-contained and follows the
      same pattern: a `# JSON section: "<name>" — configurable keys: ...`
      comment block at the top (this is what `--schema`/the web UI read to
      build forms), then `import addon_common`/`primary`/`k8s` from `libs/`,
      then the actual work over SSH. Look at a small existing add-on (e.g.
-     `install_argocd.py`) before writing a new one.
+     `install_argocd`) before writing a new one.
    - Logic used by more than one script belongs in `libs/`, not copy-pasted.
    - Don't use a fixed `sleep()` to wait on something coming up (a reboot, a
      service, an API) — poll for the actual condition instead
@@ -87,7 +87,7 @@ it:
 
 | Schema | Name | Declared in |
 |---|---|---|
-| Lab definition | `lab` | `LAB_SCHEMA_VERSION` in `scripts/lab_schema` |
+| Lab definition | `lab` | `LAB_SCHEMA_VERSION` in `libs/lab_schema_base.py` |
 | Add-on section | `addon:<name>` | the add-on's `schema_version`; for a Python add-on, the `# Schema version: M.m` line above its `# JSON section:` block |
 | `lab_creation.cfg` | `config:lab_creation.cfg` | `# Schema version:` line of `templates/lab_creation.cfg.example` |
 | `lab_creation.defaults` | `config:lab_creation.defaults` | `# Schema version:` line of `lab_creation.defaults` |
@@ -123,6 +123,12 @@ The rules:
    ```
    `record` stores the snapshot and adds the entry to
    `schemas/compatibility.json`.
+
+What a field declares is enforced, so declare it accurately: `libs/schema_validate.py`
+checks every value in a lab definition against its field's `type`, `enum`,
+`pattern`, `min` and `max` — from `setup_lab.py`'s preflight, each add-on's
+`--validate` and the web UI alike. A value written as a `??name` placeholder is
+resolved later and is never checked.
 
 Check 80 (`tests/checks/80_schema_versions.sh`) fails when a schema changed
 without a new recorded version, when a compatible version contains a
@@ -181,7 +187,7 @@ See [Available addons](README.md#available-addons) and
 [Lab definition format](README.md#lab-definition-format) in the README for
 the JSON shape add-ons plug into. In short:
 
-1. Create `scripts/install_<name>.py` following the pattern of an existing
+1. Create `scripts/install_<name>` following the pattern of an existing
    add-on (self-contained, `# Schema version: 1.0` line and `# JSON section:`
    doc comment, `addon_common` dispatch for `--help`/`--version`/`--schema`).
    Record its first version with

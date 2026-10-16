@@ -180,18 +180,81 @@ def trento_2_0(definition: dict) -> list:
     return changes
 
 
+def open_ports_2_0(definition: dict) -> list:
+    """
+    lab 2.0: open_ports and aws_open_ports (common and per-node) are lists of ports, as every backend reads them. A
+    string becomes a list, one item per port, so "443 69/udp" and "443,69/udp" both become ["443", "69/udp"].
+    """
+    changes = []
+    owners = [("common", definition.get("common"))]
+    owners += [("nodes." + name, cfg) for name, cfg in (definition.get("nodes") or {}).items()]
+    for where, cfg in owners:
+        if not isinstance(cfg, dict):
+            continue
+        for key in ("open_ports", "aws_open_ports"):
+            value = cfg.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            ports = [port for port in re.split(r"[,\s]+", value.strip()) if port]
+            cfg[key] = ports
+            changes.append("{}.{}: \"{}\" -> {}".format(where, key, value, json.dumps(ports)))
+    return changes
+
+
+def _appcollection_default_2_0(name: str, prefix: str = ""):
+    """
+    The step for an add-on whose chart now comes from the SUSE Application Collection by default. It writes
+    "<name>_source": "upstream" into a lab that uses the add-on without saying where its chart comes from, which is
+    what that lab meant: the project's own chart, needing no Application Collection account. A lab that already
+    names a source keeps it. The section is created when the lab uses the add-on with no section of its own,
+    because leaving it absent is what would silently move it to the Collection.
+    """
+    key = "{}_source".format(prefix or name)
+
+    def step(definition: dict) -> list:
+        used = isinstance(definition.get(name), dict)
+        for owner in list((definition.get("kclusters") or {}).values()) + list((definition.get("nodes") or {}).values()):
+            for entry in (owner or {}).get("addons") or []:
+                if apps.addon_entry_name(entry) == name:
+                    used = True
+        if not used:
+            return []
+        section = definition.get(name)
+        if not isinstance(section, dict):
+            section = {}
+            definition[name] = section
+        if key in section:
+            return []
+        section[key] = "upstream"
+        return ["{}: {} set to \"upstream\", the chart this lab was written against".format(name, key)]
+
+    step.__doc__ = ("addon:{0} 2.0: the chart comes from the SUSE Application Collection unless {0}_source says "
+                    "otherwise; writes {0}_source \"upstream\" into a lab that relied on the old default.".format(name))
+    return step
+
+
 MIGRATIONS = {
     "anthropic_2_0": _litellm_2_0("anthropic"),
     "appcollection_2_0": appcollection_2_0,
+    "argocd_2_0": _appcollection_default_2_0("argocd"),
     "complianceascode_2_0": complianceascode_2_0,
+    "coredns_2_0": _appcollection_default_2_0("coredns"),
+    "fluentd_2_0": _appcollection_default_2_0("fluentd"),
     "gemini_2_0": _litellm_2_0("gemini"),
+    "harbor_2_0": _appcollection_default_2_0("harbor"),
     "kagent_2_0": kagent_2_0,
     "keycloak_2_0": keycloak_2_0,
     "kimi_2_0": _litellm_2_0("kimi"),
     "linkerd_2_0": linkerd_2_0,
+    "longhorn_2_0": _appcollection_default_2_0("longhorn", "lh"),
+    "milvus_2_0": _appcollection_default_2_0("milvus"),
+    "ollama_2_0": _appcollection_default_2_0("ollama"),
+    "open_ports_2_0": open_ports_2_0,
+    "open_webui_2_0": _appcollection_default_2_0("open_webui"),
     "openai_2_0": _litellm_2_0("openai"),
     "postgresql_2_0": postgresql_2_0,
     "rancher_2_0": rancher_2_0,
+    "traefik_2_0": _appcollection_default_2_0("traefik"),
     "trento_2_0": trento_2_0,
 }
 

@@ -40,8 +40,10 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
         sys.path.insert(0, _candidate)
 
 import primary  # noqa: E402
-import crypto_store  # noqa: E402
 from lab_creation import die  # noqa: E402
+
+# crypto_store is imported where it is used, not here: it needs the "cryptography" package, and reading the field
+# registries below (which the lab-builder does to show what a credential consists of) must not require it.
 
 _HELP_TEXT = __doc__
 
@@ -114,7 +116,7 @@ PROVIDER_FIELDS = {
 # libs/addon_common.py's resolve_credential()) so the two concepts never
 # collide: a file is either a cloud account or a service credential, never
 # both. One credential file per kind is reusable across every addon that
-# needs it (e.g. a single "scc" file for install_smlm.py's smlm_scc_user
+# needs it (e.g. a single "scc" file for install_smlm's smlm_scc_user
 # AND any other addon that later wants SCC credentials too), regardless of
 # each addon's own JSON-field prefix — see each field's own canonical name.
 SERVICE_CREDENTIAL_FIELDS = {
@@ -157,6 +159,7 @@ def _looks_sensitive(key):
 def _prompt_field(key: str, required: bool, sensitive: bool) -> str:
     """One field prompt — masked (no echo) if sensitive, plain input() otherwise.
     Loops until a required field gets a non-empty answer."""
+    import crypto_store  # lazy: only needed when a passphrase or an envelope is handled
     suffix = "" if required else " (optional, Enter to skip)"
     prompt = "  {}{}: ".format(key, suffix)
     while True:
@@ -204,6 +207,7 @@ def _write_file(out_path: Path, marker: dict, fields: dict, encrypt: bool, passp
     Write a credentials YAML at `out_path` (mode 0600): `marker` (the cloudtype or credential_kind) and the schema
     version, then `fields`, whole-file encrypted when `encrypt` (the passphrase is prompted for when not given).
     """
+    import crypto_store  # lazy: only needed when a passphrase or an envelope is handled
     import yaml
 
     payload = dict(marker, schema_version=CREDENTIALS_SCHEMA_VERSION)
@@ -274,6 +278,7 @@ def encrypt_existing(path):
     else readable. Never overwrites the input file — writes
     "<name-without-ext>.encrypted.yaml" alongside it (same
     never-touch-the-original discipline as primary.save_definition())."""
+    import crypto_store  # lazy: only needed when a passphrase or an envelope is handled
     import yaml
 
     p = Path(path)
@@ -320,6 +325,7 @@ def sensitive_plaintext_fields(data):
 def write_encrypted_copy(path, data, keys, passphrase):
     """Write "<stem>.encrypted.yaml" next to credentials file `path`: mapping `data`
     with the values of `keys` encrypted with `passphrase`. Returns the new path."""
+    import crypto_store  # lazy: only needed when a passphrase or an envelope is handled
     import yaml
 
     for k in keys:

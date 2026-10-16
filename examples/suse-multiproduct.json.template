@@ -1,0 +1,58 @@
+{
+"nodes": {
+  "mgmt1.mydemo.lab": {"myip": "192.168.88.61", "mymac": "34:8a:b1:4b:1a:61",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "mgmt2.mydemo.lab": {"myip": "192.168.88.62", "mymac": "34:8a:b1:4b:1a:62",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "mgmt3.mydemo.lab": {"myip": "192.168.88.63", "mymac": "34:8a:b1:4b:1a:63",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "server"},
+  "ai1.mydemo.lab":   {"myip": "192.168.88.64", "mymac": "34:8a:b1:4b:1a:64",
+                       "kcluster": "mgmt", "KUBERNETES_NODE_TYPE": "agent",
+                       "VM_MEM": "16384", "VM_DSK": "120", "VM_CPU": "10"}
+},
+
+"common": {
+  "lab_name": "SUSE multi-product",
+  "lab_description": "One RKE2 cluster with SUSE Rancher Prime, SUSE Storage, SUSE AI from the SUSE Application Collection and SUSE Security, installed in that documented order. Milvus runs on 16 GB, below its documented 32 GB minimum, on purpose, so the whole lab fits in 40 GB of RAM: expect it to be slow and do not use this sizing as a reference.",
+  "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+  "VM_MEM": "8192",
+  "VM_DSK": "80",
+  "VM_CPU": "4",
+  "mymask": "24",
+  "mygw": "192.168.88.1",
+  "mydns": "192.168.88.1",
+  "mynet_reverse": "88.168.192"
+},
+
+"kclusters": {
+  "mgmt": {
+    "clu_type": "rke2",
+    "clu_rel": "stable",
+    "mydomain": "mydemo.lab",
+    "addons": ["rancher", "longhorn", "appcollection", "suse_ai", "neuvector"]
+  }
+},
+
+"rancher": {
+  "rancher_shorthn": "rancher"
+},
+
+"longhorn": {
+  "lh_shorthn": "longhorn"
+},
+
+"appcollection": {
+  "appcollection_account": "appcollection"
+},
+
+"suse_ai": {
+  "suse_ai_registry_account": "appcollection",
+  "suse_ai_gpu": "false",
+  "suse_ai_ollama_models": "llama3.2:1b",
+  "suse_ai_shorthn": "ai"
+},
+
+"neuvector": {
+  "nv_shorthn": "neuvector"
+}
+}

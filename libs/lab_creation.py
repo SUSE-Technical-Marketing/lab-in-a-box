@@ -235,8 +235,25 @@ def _addon_version_issues(definition, addon_entry, node_names, clu_type="", clu_
                            os_variants=[v for v in os_variants if v])
 
 
+def _template_state(path):
+    """
+    Whether `path` is an existing file: True, False, or None when it cannot be told apart — a directory on the way is
+    not readable by this user. Path.is_file() raises in that case, which must not abort a whole validation run.
+    """
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return None
+
+
+# Fields the preflight checks itself, with context the schema cannot carry, so schema_validate.py leaves them to it
+# and one bad value is reported once: backend and cloud_account against the installed backends and credential files,
+# config_method and install_type as the effective value a node ends up with after common's default.
+_PREFLIGHT_OWN_FIELDS = ("backend", "cloud_account", "config_method", "install_type")
+
+
 def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_node=None,
-                            vm_img_loc=None, issues_out=None):
+                            vm_img_loc=None, issues_out=None, host_checks=True):
     """
     Preflight-validate an already loaded lab definition. Prints a full report of errors and warnings, and returns True when
     there are no errors. Warnings never block.
@@ -251,6 +268,10 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         lab_setup_path : template tree on the automation VM (LAB_SETUP_PATH) for ignition, combustion, cloud-init and install_iso.
         target_node    : optional single VM hostname. Limits the per-node and per-kcluster checks to that node.
         vm_img_loc     : passed to select_kvm_host() when KVM_HOSTS lists more than one host, for resource probing.
+        host_checks    : when False, every check that needs a KVM host or the network is skipped: SSH reachability of
+                         "existing" nodes, the VM-name collision and resource probes on the host, the informational IP
+                         ping, and the source-image checks. Only the definition's own contents are then validated, so
+                         callers without SSH access to the hypervisors (the lab-builder's CGI) can validate a lab.
 
     The function validates the definition's contents and does not re-read the file. Empty collections are skipped, so an empty
     nodes object is not reported as an error.
@@ -282,6 +303,14 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     nodes = definition.get("nodes") or {}
     kclusters = definition.get("kclusters") or {}
 
+    # Every value against the schema that declares it — type, enum, pattern and bounds (libs/schema_validate.py).
+    import lab_schema_base
+    import schema_validate
+    for finding in schema_validate.definition_findings(definition, lab_schema_base.base_lab_schema(),
+                                                       skip=_PREFLIGHT_OWN_FIELDS):
+        report = err if finding.severity == "error" else warn
+        report("{}: {}".format(finding.where, finding.message))
+
     # ── 2. common: required fields ────────────────────────────────────────────
     # common.ISO_IMAGE is only required when some node doesn't supply its own
     # override (nodes.<name>.ISO_IMAGE) — a lab where every node pins its own
@@ -303,14 +332,6 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     for req in ("VM_MEM", "VM_DSK", "VM_CPU"):
         if _empty(_jq_or(common.get(req))):
             err("common.{} is required".format(req))
-
-    dsk_bus = _jq_or(common.get("VM_DSK_BUS"))
-    if not _empty(dsk_bus) and dsk_bus not in ("virtio", "scsi", "sata", "usb", "ide"):
-        err("common.VM_DSK_BUS '{}' is invalid — must be one of: virtio, scsi, sata, usb, ide".format(dsk_bus))
-
-    net_model = _jq_or(common.get("VM_NET_MODEL"))
-    if not _empty(net_model) and net_model not in ("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3", "ne2k_pci"):
-        err("common.VM_NET_MODEL '{}' is invalid — must be one of: virtio, e1000, e1000e, rtl8139, vmxnet3, ne2k_pci".format(net_model))
 
     from backends import BACKENDS, CLOUD_BACKEND_NAMES
     from primary import try_load_cloud_account
@@ -471,13 +492,13 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         # baremetal and an already-running VM this tool didn't create.
         from targets import is_existing_node, check_ssh_only_reachability
         if is_existing_node(node_cfg):
-            if not _empty(myip) and not check_ssh_only_reachability(node):
+            if host_checks and not _empty(myip) and not check_ssh_only_reachability(node):
                 err("nodes.{}: marked \"existing\" but not reachable via SSH".format(node))
             continue
 
         # Hypervisor: VM name must not already exist on the host it would be
         # (re)created on
-        node_host, node_virt_srv = resolved_host_for(node)
+        node_host, node_virt_srv = resolved_host_for(node) if host_checks else (None, None)
         if node_virt_srv:
             dominfo = run_libvirt_tool(
                 "virsh", node_host, node_virt_srv, ["dominfo", node],
@@ -488,7 +509,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                      "(will be destroyed and recreated)".format(node, node_host))
 
         # IP reachability (informational)
-        if not _empty(myip):
+        if host_checks and not _empty(myip):
             ping = subprocess.run(["ping", "-c1", "-W1", str(myip)],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if ping.returncode == 0:
@@ -524,7 +545,14 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 continue
             from apps import load_plugin, requirement_issue
             from targets import TARGET_CONTAINER
-            issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype)
+            import k8s as _k8s
+            try:
+                # An unknown clu_ingress/clu_storage value is reported by the schema check rather than from here,
+                # where it would abort the whole preflight instead of being catalogued with everything else.
+                provides = _k8s.cluster_provides(definition, clu)
+            except SystemExit:
+                provides = None
+            issue = requirement_issue(load_plugin(addon), TARGET_CONTAINER, clu_type=ctype, provides=provides)
             if issue:
                 err("kclusters.{}: addon '{}' {}".format(clu, addon, issue))
             members = [n for n, c in nodes.items() if (c or {}).get("kcluster") == clu]
@@ -601,120 +629,122 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     downloadable = {req[1] for req in image_download_requests(definition)}
 
     # ── 6. Hypervisor: source image exists ────────────────────────────────────
-    # Per-node/per-host: with multiple KVM hosts a node's image needs to
-    # exist on the specific host it resolves to (ISO_LOC is the same path on
-    # every host by design, but the file itself only needs to be there via
-    # setup_kvm_node's storage-sharing step — checked per host, not assumed).
-    if _empty(iso_loc):
-        err("ISO_LOC is not set — check /etc/lab_creation.defaults")
+    # Skipped without host_checks: each of these reads the KVM host over SSH.
+    if host_checks:
+        # Per-node/per-host: with multiple KVM hosts a node's image needs to
+        # exist on the specific host it resolves to (ISO_LOC is the same path on
+        # every host by design, but the file itself only needs to be there via
+        # setup_kvm_node's storage-sharing step — checked per host, not assumed).
+        if _empty(iso_loc):
+            err("ISO_LOC is not set — check /etc/lab_creation.defaults")
 
-    hv_ssh_ok = {}  # host -> bool, cached so each distinct host is only SSH-tested once
+        hv_ssh_ok = {}  # host -> bool, cached so each distinct host is only SSH-tested once
 
-    def hv_reachable(host):
-        if host not in hv_ssh_ok:
-            ssh_test = subprocess.run(
+        def hv_reachable(host):
+            if host not in hv_ssh_ok:
+                ssh_test = subprocess.run(
+                    ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                     "-o", "ConnectTimeout=5", "-q", "root@{}".format(host), "echo ok"],
+                    capture_output=True, text=True,
+                )
+                ok = (ssh_test.stdout or "").strip() == "ok"
+                if not ok:
+                    err("Cannot reach KVM host '{}' via SSH — image checks skipped ({})".format(
+                        host, ((ssh_test.stdout or "") + (ssh_test.stderr or "")).strip()))
+                hv_ssh_ok[host] = ok
+            return hv_ssh_ok[host]
+
+        def check_image_on_hv(img, label, host):
+            if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
+                return
+            test = subprocess.run(
                 ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-                 "-o", "ConnectTimeout=5", "-q", "root@{}".format(host), "echo ok"],
+                 "-o", "ConnectTimeout=5", "-q", "root@{}".format(host),
+                 "test -f '{}/{}'".format(iso_loc, img)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if test.returncode != 0 and img in downloadable:
+                warn("{}: image '{}' not yet at {}:{}/{} — setup_lab.py downloads it (ISO_URL)".format(
+                    label, img, host, iso_loc, img))
+                return
+            if test.returncode != 0:
+                avail_proc = subprocess.run(
+                    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-q",
+                     "root@{}".format(host),
+                     "ls '{}/'*.qcow2 2>/dev/null | xargs -n1 basename".format(iso_loc)],
+                    capture_output=True, text=True,
+                )
+                avail = "  ".join((avail_proc.stdout or "").splitlines()[:10])
+                suffix = " — available: {}".format(avail) if avail else ""
+                err("{}: image '{}' not found at {}:{}/{}{}".format(label, img, host, iso_loc, img, suffix))
+
+        from targets import is_existing_node as _is_existing_node
+
+        def _uses_libvirt(node):
+            # The ISO_IMAGE existence check applies only to libvirt backends, which use the hypervisor's ISO_LOC. Other backends
+            # resolve images by name in their own environment, so the check is skipped for them.
+            if _account_cloudtype_for(node):
+                return False  # a cloud_account always means a cloud backend
+            node_backend = _jq_or((nodes.get(node) or {}).get("backend")) or _jq_or(common.get("backend"))
+            return _empty(node_backend) or node_backend == "libvirt"
+
+        created_nodes_to_check = [n for n in nodes_to_check if not _is_existing_node(nodes.get(n) or {})]
+        libvirt_nodes_to_check = [n for n in created_nodes_to_check if _uses_libvirt(n)]
+
+        if not _empty(iso_loc):
+            hosts_used = {resolved_host_for(node)[0] for node in libvirt_nodes_to_check} - {None}
+            if hosts_used:
+                for host in hosts_used:
+                    check_image_on_hv(iso, "common.ISO_IMAGE", host)
+            for node in libvirt_nodes_to_check:
+                node_host, _ = resolved_host_for(node)
+                node_iso = _image(nodes.get(node) or {})
+                if not _empty(node_iso):
+                    check_image_on_hv(node_iso, "nodes.{}.ISO_IMAGE".format(node), node_host)
+
+        # ── 6b. Hypervisor: VM_DSK must not be smaller than the source image ──────
+        # `qemu-img resize` (run at copy time by every non-install_iso config_method)
+        # fails outright if asked to shrink an image below its own virtual size —
+        # qemu-img reports "Use the --shrink option to perform a shrink operation." as a hard
+        # provisioning error for a node with a too-small VM_DSK.
+        # Rather than let that surface mid-run, detect it here: bump the node's
+        # VM_DSK up to the image's real virtual size (in memory only — the on-disk
+        # lab file is untouched) and record a warning so the summary shows it.
+        def check_min_disk_for_node(node):
+            node_cfg = nodes.get(node) or {}
+            img = _image(node_cfg) or iso
+            host, _ = resolved_host_for(node)
+            if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
+                return
+            try:
+                req_gib = int(str(node_cfg.get("VM_DSK", common.get("VM_DSK", "")) or "").strip())
+            except (TypeError, ValueError):
+                return  # missing/invalid VM_DSK is already an [ERROR] from section 2
+            info = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                 "-o", "ConnectTimeout=5", "-q", "root@{}".format(host),
+                 "qemu-img info --output=json '{}/{}'".format(iso_loc, img)],
                 capture_output=True, text=True,
             )
-            ok = (ssh_test.stdout or "").strip() == "ok"
-            if not ok:
-                err("Cannot reach KVM host '{}' via SSH — image checks skipped ({})".format(
-                    host, ((ssh_test.stdout or "") + (ssh_test.stderr or "")).strip()))
-            hv_ssh_ok[host] = ok
-        return hv_ssh_ok[host]
+            if info.returncode != 0:
+                return  # can't introspect it (no qemu-img, odd format) — best-effort only
+            try:
+                vsize = int(json.loads(info.stdout).get("virtual-size", 0))
+            except (ValueError, TypeError, AttributeError):
+                return
+            if vsize <= 0:
+                return
+            img_gib = int(math.ceil(vsize / (1024 ** 3)))
+            if req_gib < img_gib:
+                warn("nodes.{}.VM_DSK is {} GiB but its source image '{}' is {} GiB — "
+                     "raising VM_DSK to {} GiB (a smaller disk would fail at qemu-img resize)".format(
+                         node, req_gib, img, img_gib, img_gib))
+                if isinstance(nodes.get(node), dict):
+                    nodes[node]["VM_DSK"] = str(img_gib)
 
-    def check_image_on_hv(img, label, host):
-        if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
-            return
-        test = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-             "-o", "ConnectTimeout=5", "-q", "root@{}".format(host),
-             "test -f '{}/{}'".format(iso_loc, img)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if test.returncode != 0 and img in downloadable:
-            warn("{}: image '{}' not yet at {}:{}/{} — setup_lab.py downloads it (ISO_URL)".format(
-                label, img, host, iso_loc, img))
-            return
-        if test.returncode != 0:
-            avail_proc = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-q",
-                 "root@{}".format(host),
-                 "ls '{}/'*.qcow2 2>/dev/null | xargs -n1 basename".format(iso_loc)],
-                capture_output=True, text=True,
-            )
-            avail = "  ".join((avail_proc.stdout or "").splitlines()[:10])
-            suffix = " — available: {}".format(avail) if avail else ""
-            err("{}: image '{}' not found at {}:{}/{}{}".format(label, img, host, iso_loc, img, suffix))
-
-    from targets import is_existing_node as _is_existing_node
-
-    def _uses_libvirt(node):
-        # The ISO_IMAGE existence check applies only to libvirt backends, which use the hypervisor's ISO_LOC. Other backends
-        # resolve images by name in their own environment, so the check is skipped for them.
-        if _account_cloudtype_for(node):
-            return False  # a cloud_account always means a cloud backend
-        node_backend = _jq_or((nodes.get(node) or {}).get("backend")) or _jq_or(common.get("backend"))
-        return _empty(node_backend) or node_backend == "libvirt"
-
-    created_nodes_to_check = [n for n in nodes_to_check if not _is_existing_node(nodes.get(n) or {})]
-    libvirt_nodes_to_check = [n for n in created_nodes_to_check if _uses_libvirt(n)]
-
-    if not _empty(iso_loc):
-        hosts_used = {resolved_host_for(node)[0] for node in libvirt_nodes_to_check} - {None}
-        if hosts_used:
-            for host in hosts_used:
-                check_image_on_hv(iso, "common.ISO_IMAGE", host)
-        for node in libvirt_nodes_to_check:
-            node_host, _ = resolved_host_for(node)
-            node_iso = _image(nodes.get(node) or {})
-            if not _empty(node_iso):
-                check_image_on_hv(node_iso, "nodes.{}.ISO_IMAGE".format(node), node_host)
-
-    # ── 6b. Hypervisor: VM_DSK must not be smaller than the source image ──────
-    # `qemu-img resize` (run at copy time by every non-install_iso config_method)
-    # fails outright if asked to shrink an image below its own virtual size —
-    # qemu-img reports "Use the --shrink option to perform a shrink operation." as a hard
-    # provisioning error for a node with a too-small VM_DSK.
-    # Rather than let that surface mid-run, detect it here: bump the node's
-    # VM_DSK up to the image's real virtual size (in memory only — the on-disk
-    # lab file is untouched) and record a warning so the summary shows it.
-    def check_min_disk_for_node(node):
-        node_cfg = nodes.get(node) or {}
-        img = _image(node_cfg) or iso
-        host, _ = resolved_host_for(node)
-        if _empty(img) or _empty(iso_loc) or not host or not hv_reachable(host):
-            return
-        try:
-            req_gib = int(str(node_cfg.get("VM_DSK", common.get("VM_DSK", "")) or "").strip())
-        except (TypeError, ValueError):
-            return  # missing/invalid VM_DSK is already an [ERROR] from section 2
-        info = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-             "-o", "ConnectTimeout=5", "-q", "root@{}".format(host),
-             "qemu-img info --output=json '{}/{}'".format(iso_loc, img)],
-            capture_output=True, text=True,
-        )
-        if info.returncode != 0:
-            return  # can't introspect it (no qemu-img, odd format) — best-effort only
-        try:
-            vsize = int(json.loads(info.stdout).get("virtual-size", 0))
-        except (ValueError, TypeError, AttributeError):
-            return
-        if vsize <= 0:
-            return
-        img_gib = int(math.ceil(vsize / (1024 ** 3)))
-        if req_gib < img_gib:
-            warn("nodes.{}.VM_DSK is {} GiB but its source image '{}' is {} GiB — "
-                 "raising VM_DSK to {} GiB (a smaller disk would fail at qemu-img resize)".format(
-                     node, req_gib, img, img_gib, img_gib))
-            if isinstance(nodes.get(node), dict):
-                nodes[node]["VM_DSK"] = str(img_gib)
-
-    if not _empty(iso_loc):
-        for node in libvirt_nodes_to_check:
-            check_min_disk_for_node(node)
+        if not _empty(iso_loc):
+            for node in libvirt_nodes_to_check:
+                check_min_disk_for_node(node)
 
     # ── 7. Local: provisioning templates ──────────────────────────────────────
     # Only check the config methods actually used in this definition
@@ -735,23 +765,34 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             needs_ign_cmb = True
 
     if needs_ign_cmb:
-        if not Path("{}/ignition/template".format(lab_setup_path)).is_file():
-            err("Ignition template not found: {}/ignition/template".format(lab_setup_path))
-        if not Path("{}/combustion/template".format(lab_setup_path)).is_file():
-            err("Combustion template not found: {}/combustion/template".format(lab_setup_path))
+        for _name, _tpl in (("Ignition", "{}/ignition/template".format(lab_setup_path)),
+                            ("Combustion", "{}/combustion/template".format(lab_setup_path))):
+            _state = _template_state(_tpl)
+            if _state is None:
+                warn("{} template {} is not readable by this user — not checked".format(_name, _tpl))
+            elif not _state:
+                err("{} template not found: {}".format(_name, _tpl))
 
     if needs_cloud_init:
         for tpl in ("user-data", "network-config", "meta-data"):
-            if not Path("{}/cloud-init/template_{}".format(lab_setup_path, tpl)).is_file():
-                err("cloud-init template not found: {}/cloud-init/template_{}".format(lab_setup_path, tpl))
+            _tpl = "{}/cloud-init/template_{}".format(lab_setup_path, tpl)
+            _state = _template_state(_tpl)
+            if _state is None:
+                warn("cloud-init template {} is not readable by this user — not checked".format(_tpl))
+            elif not _state:
+                err("cloud-init template not found: {}".format(_tpl))
 
     if needs_install_iso:
         itype = _jq_or(common.get("install_type"))
         if not _empty(itype) and itype not in ("autoyast", "kickstart", "preseed", "autoinstall"):
             err("common.install_type '{}' is invalid — must be: autoyast, kickstart, preseed, or autoinstall".format(itype))
         eff_itype = resolve_install_type("" if _empty(itype) else itype, iso)
-        if not Path("{}/install_iso/template_{}".format(lab_setup_path, eff_itype)).is_file():
-            err("install_iso template not found: {}/install_iso/template_{}".format(lab_setup_path, eff_itype))
+        _tpl = "{}/install_iso/template_{}".format(lab_setup_path, eff_itype)
+        _state = _template_state(_tpl)
+        if _state is None:
+            warn("install_iso template {} is not readable by this user — not checked".format(_tpl))
+        elif not _state:
+            err("install_iso template not found: {}".format(_tpl))
 
     # ── Report ─────────────────────────────────────────────────────────────────
     if issues:
@@ -799,6 +840,49 @@ def _generate_unused_mac(used_macs):
 # ── SSH helpers ───────────────────────────────────────────────────────────────
 
 _SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
+
+
+def node_commands(definition: dict, vm_name: str, phase: str) -> list:
+    """
+    The commands a VM runs for `phase` ("pre" or "post"): its own pre_commands/post_commands, else common's. A node
+    that declares the field replaces common's list rather than adding to it, so a VM can also opt out with [].
+    """
+    key = "{}_commands".format(phase)
+    node_cfg = (definition.get("nodes") or {}).get(vm_name) or {}
+    commands = node_cfg[key] if key in node_cfg else (definition.get("common") or {}).get(key)
+    if _empty(commands):
+        return []
+    if isinstance(commands, str):
+        return [commands]
+    return [str(c) for c in commands if not _empty(c)]
+
+
+def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
+    """
+    Run `vm_name`'s commands for `phase` on the VM itself, over SSH as root, in the order they are declared. Each
+    command's own output is shown. Returns one message per command that failed; an empty list when all of them
+    succeeded or there are none. A failure does not stop the commands after it: a lab author sees every one that
+    needs fixing in a single run.
+    """
+    commands = node_commands(definition, vm_name, phase)
+    if not commands:
+        return []
+    log("Running {} \"{}{}_commands{}\" on \"{}{}{}\"".format(
+        len(commands), _RED, phase, _RESET, _RED, vm_name, _RESET))
+    failures = []
+    global _level
+    _level += 1
+    try:
+        for command in commands:
+            try:
+                ssh_run(vm_name, command)
+            except RuntimeError as exc:
+                message = "{}_commands on '{}': '{}' failed: {}".format(phase, vm_name, command, exc)
+                error(message)
+                failures.append(message)
+    finally:
+        _level -= 1
+    return failures
 
 
 def ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="root"):
@@ -852,9 +936,9 @@ def ssh_output(hostname, cmd):
 def detect_os(hostname):
     """
     Detect the remote OS family/version from /etc/os-release. Shared by every
-    OS-native addon installer (install_postgresql.py, install_mariadb.py, ...)
+    OS-native addon installer (install_postgresql, install_mariadb, ...)
     that has to branch on distro to pick a package manager — promoted here
-    from install_postgresql.py's own former private pg_detect_os() once a
+    from install_postgresql's own former private pg_detect_os() once a
     second addon needed the identical logic.
     """
     raw = ssh_run(hostname, "source /etc/os-release 2>/dev/null && "

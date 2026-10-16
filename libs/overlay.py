@@ -51,7 +51,7 @@ _ROUTES_SCRIPT_PATH = "/etc/lab-overlay-routes.sh"
 _ROUTES_UNIT_PATH = "/etc/systemd/system/lab-overlay-routes.service"
 
 # Same one-liner OR-chain convention already used by
-# scripts/install_ansible_control_node.py for ansible-core — zypper (SUSE),
+# scripts/install_ansible_control_node for ansible-core — zypper (SUSE),
 # apt (Debian/Ubuntu — the "wireguard" meta-package pulls wireguard-tools),
 # dnf (RHEL family) in that order, first one that exists on the node wins.
 _INSTALL_CMD = (

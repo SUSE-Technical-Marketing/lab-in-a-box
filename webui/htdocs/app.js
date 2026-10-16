@@ -16,6 +16,9 @@ const API = "api";
 
 // ---- schema vocabulary (the only fixed convention) -------------------------
 const STRUCTURAL = new Set(["fields", "sections"]);        // containers, not output keys
+// Keys of a schema that describe the add-on rather than configure it: they carry no fields, so rendering them as
+// form groups left a heading with nothing under it. The dialog shows the layers as badges instead.
+const SCHEMA_METADATA = new Set(["capabilities"]);
 const META_SCALAR = new Set(["schema_version", "addon", "section",
   "component", "description", "repeatable", "key_label", "name", "type",
   "required", "default"]);
@@ -32,7 +35,7 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 // their *effective* default instead of the schema's hardcoded one. Reset on
 // every fresh schema load (selectBase/selectComponent).
 const state = {
-  components: [], lab: {}, commonDefaults: {},
+  components: [], lab: {}, commonDefaults: {}, credTypes: {},
   // block model behind the canvas (see compileLab); state.lab is compiled from it
   // extra: top-level lab keys the canvas does not model, kept as they are
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
@@ -317,6 +320,28 @@ function makeCube(kind, size, letter) {
 //   model.addonCfg : {section: {field: value}}             -> one shared section per add-on
 const HIDDEN_NODE_FIELDS = new Set(["kcluster", "addons"]);   // set by dropping, not typing
 const HIDDEN_CLUSTER_FIELDS = new Set(["addons"]);
+
+/* The fields of `fields` that apply to an instance configured as `cfg`: a
+   field's "show_if" names another field it depends on, and it applies only
+   while that field has a value. The Kubernetes node fields
+   (KUBERNETES_NODE_TYPE, harvester_role, INSTALL_RKE2_TYPE) depend on
+   "kcluster", so a VM in no Kubernetes cluster does not offer them. */
+function shownFields(fields, cfg) {
+  const set = (k) => { const v = (cfg || {})[k]; return v !== undefined && v !== null && v !== ""; };
+  return (fields || []).filter((f) => !f.show_if || set(f.show_if));
+}
+
+/* An instance's own fields plus the keys the canvas sets for it rather than
+   the form: a VM's "kcluster" is the name of the Kubernetes cluster block it
+   sits in. */
+function structuralCfg(item) {
+  const cfg = Object.assign({}, item.cfg);
+  if (item.type === "node" && item.parent) {
+    const c = state.model.items.find((i) => i.id === item.parent);
+    if (c && c.name) cfg.kcluster = c.name;
+  }
+  return cfg;
+}
 
 function cleanObj(o) {
   const r = {};
@@ -889,6 +914,7 @@ function renderCanvas() {
 function setWidgetValue(input, val) {
   if (val === undefined || val === null) return;
   const s = Array.isArray(val) ? val.join(",") : String(val);
+  if (typeof input._setFromValue === "function") input._setFromValue(s);
   if (input.tagName === "SELECT") {
     if (!Array.from(input.options).some((o) => o.value === s)) { const o = el("option", null, s); o.value = s; input.appendChild(o); }
     input.dataset.userTouched = "1";
@@ -928,7 +954,8 @@ async function openEditor(id) {
       const spec = item.type === "node" ? secs.nodes : secs.kclusters;
       const hidden = item.type === "node" ? HIDDEN_NODE_FIELDS : HIDDEN_CLUSTER_FIELDS;
       kind = item.type === "node" ? "VM" : "Kubernetes cluster"; title = item.name; desc = spec.description;
-      const inst = instanceBox(spec.fields.filter((f) => !hidden.has(f.name)), spec.key_label || "name");
+      const shown = shownFields(spec.fields.filter((f) => !hidden.has(f.name)), structuralCfg(item));
+      const inst = instanceBox(shown, spec.key_label || "name");
       form.appendChild(inst);
       inst.querySelector(".inst-key").value = item.name;
       inst.querySelectorAll("[data-field]").forEach((i) => setWidgetValue(i, item.cfg[i.dataset.field]));
@@ -995,6 +1022,7 @@ function walk(node, parent, outPath) {
 
   for (const [key, val] of Object.entries(node)) {
     if (!val || typeof val !== "object") continue;      // skip scalar meta
+    if (SCHEMA_METADATA.has(key)) continue;            // describes the add-on, not a setting
     if (STRUCTURAL.has(key)) { walk(val, parent, outPath); continue; }  // wrapper: no output key
     if (val.repeatable === true) {                                      // keyed map of instances
       parent.appendChild(repeatGroup(key, val, outPath.concat(key)));
@@ -1009,6 +1037,8 @@ function walk(node, parent, outPath) {
     box.appendChild(body);
     parent.appendChild(box);
     walk(val, body, outPath.concat(key));
+    // A group that turned out to hold no field is not shown at all: a heading with nothing under it says nothing.
+    if (!body.childNodes.length) parent.removeChild(box);
   }
 }
 
@@ -1032,24 +1062,21 @@ function fieldRow(field, outPath, repeatMode) {
                 : null;
 
   let input;
-  // Special hybrid control for SOURCE_IMAGE: dropdown of common images + custom URL input
+  // Special hybrid control for SOURCE_IMAGE: the images really present on the KVM hosts (field.enum, injected by
+  // discovery.image_choices() as {value: file name, label: "<host> - <file name>"}) plus a free-text URL or path. The
+  // list is empty where no host can be read, such as the published static build, leaving only the free-text input.
   if (field.name === "SOURCE_IMAGE") {
     const container = el("div", "source-image-container");
 
-    // Select dropdown with common images
     const select = el("select");
     select.className = "source-image-select";
 
-    const commonImages = [
-      { label: "— Select or enter custom URL —", value: "" },
-      { label: "SL-Micro 6.1 (QCOW2)", value: "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2" },
-      { label: "SLES 15 SP6", value: "SLES-15-SP6-for-SAP-Applications.x86_64-cloud.qcow2" },
-      { label: "openSUSE Leap 15.6", value: "openSUSE-Leap-15.6.x86_64.qcow2" },
-      { label: "Ubuntu 24.04 LTS", value: "ubuntu-24.04-cloud-amd64.qcow2" },
-      { label: "— Enter custom URL —", value: "CUSTOM_URL" }
-    ];
+    const listed = Array.isArray(field.enum) ? field.enum : [];
+    const images = [{ label: listed.length ? "— Select an image or enter a URL —" : "— Enter a URL or file name —", value: "" }]
+      .concat(listed.map((o) => (o && typeof o === "object") ? { label: o.label, value: o.value } : { label: o, value: o }))
+      .concat([{ label: "— Enter custom URL —", value: "CUSTOM_URL" }]);
 
-    commonImages.forEach((img) => {
+    images.forEach((img) => {
       const opt = el("option", null, img.label);
       opt.value = img.value;
       select.appendChild(opt);
@@ -1099,6 +1126,19 @@ function fieldRow(field, outPath, repeatMode) {
 
     select.addEventListener("change", syncValue);
     textInput.addEventListener("input", syncValue);
+
+    // Show a value that was set from outside (loading a lab, a common default): select it when it is one of the
+    // listed images, otherwise put it in the free-text input, so the form always shows what the lab actually holds.
+    input._setFromValue = (v) => {
+      const inList = listed.some((o) => ((o && typeof o === "object") ? o.value : o) === v);
+      if (v && inList) {
+        select.value = v; textInput.value = v; textInput.style.display = "none";
+      } else if (v) {
+        select.value = "CUSTOM_URL"; textInput.value = v; textInput.style.display = "block";
+      } else {
+        select.value = ""; textInput.value = ""; textInput.style.display = "none";
+      }
+    };
 
     row.appendChild(container);
     // Don't append input here; let the normal flow handle it after initialization
@@ -1584,18 +1624,33 @@ function openLabFile(file) {
 // every other field's value untouched. The field's current value is kept
 // even if it no longer matches any listed image (added as a synthetic extra
 // option) rather than silently dropped.
+const IMAGE_FIELDS = new Set(["SOURCE_IMAGE", "ISO_IMAGE"]);
+
+// The images on each host, as the renderer's enum entries: value is the file name a lab stores, label is
+// "<host> - <file name>". Mirrors discovery.image_choices() for the live refresh below.
+function imageChoices(s) {
+  const byHost = s.images_by_host || {};
+  const hosts = Object.keys(byHost).sort();
+  if (hosts.length) {
+    return hosts.reduce((out, h) => out.concat(
+      (byHost[h] || []).slice().sort().map((n) => ({ value: n, label: h + " - " + n }))), []);
+  }
+  return (s.images || []).slice();
+}
+
 async function refreshImages() {
   try {
     const s = await apiGet("status");
-    const images = s.images || [];
+    const images = imageChoices(s);
     const targets = Array.from($("#schemaForm").querySelectorAll("[data-outpath],[data-field]"))
-      .filter((elm) => elm._field && elm._field.name === "ISO_IMAGE");
+      .filter((elm) => elm._field && IMAGE_FIELDS.has(elm._field.name));
     targets.forEach((old) => {
       const outPath = old.dataset.outpath ? JSON.parse(old.dataset.outpath).slice(0, -1) : [];
       const repeatMode = old.dataset.repeat === "1";
       const field = Object.assign({}, old._field, { enum: images.length ? images.slice() : undefined });
       const oldValue = old.value;
-      if (oldValue && !images.includes(oldValue)) field.enum = (field.enum || []).concat(oldValue);
+      const values = images.map((o) => (o && typeof o === "object") ? o.value : o);
+      if (oldValue && !values.includes(oldValue)) field.enum = (field.enum || []).concat(oldValue);
       const newRow = fieldRow(field, outPath, repeatMode);
       const newInput = newRow.querySelector("select,input");
       newInput.value = oldValue;
@@ -1605,7 +1660,7 @@ async function refreshImages() {
     loadStatus();
     toast(targets.length
       ? `Image list refreshed (${images.length} available).`
-      : "Image list refreshed — no ISO_IMAGE field on this form.");
+      : "Image list refreshed — no source-image field on this form.");
   } catch (e) { toast("Refresh error: " + e.message); }
 }
 
@@ -1616,7 +1671,10 @@ async function validateLab() {
     const r = await apiPost("validate", { config: state.lab });
     box.hidden = false;
     box.className = "validate-result " + (r.ok ? "ok" : "err");
-    box.textContent = r.ok ? "✓ Valid lab definition." : (r.output || "Validation failed.");
+    // A valid lab can still carry warnings, so the report is shown either way.
+    box.textContent = r.ok
+      ? "✓ Valid lab definition." + (r.output ? "\n" + r.output : "")
+      : (r.output || "Validation failed.");
   } catch (e) { toast("Validate error: " + e.message); }
 }
 function downloadLab() {
@@ -1751,6 +1809,37 @@ function setupEmbed(origin) {
 }
 
 // ---- saved labs (login) ---------------------------------------------------------
+async function openExamplesDialog() {
+  const list = $("#examplesList");
+  list.innerHTML = "";
+  showDialog("#examplesDialog");
+  try {
+    const r = await apiGet("examples");
+    if (!r.examples.length) list.appendChild(el("li", "muted", "No example lab was found."));
+    r.examples.forEach((ex) => {
+      const li = el("li", "saved-row");
+      li.appendChild(el("span", "saved-name", ex.title || ex.name));
+      const parts = [ex.nodes + (ex.nodes === 1 ? " VM" : " VMs")];
+      if (ex.kclusters) parts.push(ex.kclusters + (ex.kclusters === 1 ? " Kubernetes cluster" : " Kubernetes clusters"));
+      if (ex.addons.length) parts.push(ex.addons.join(", "));
+      li.appendChild(el("span", "muted", ex.description || parts.join(" · ")));
+      const b = el("button", "btn", "Open");
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        try {
+          loadLab(await apiGet("example", { name: ex.name }));
+          $("#labName").value = (ex.title || ex.name).replace(/\s+/g, "-");
+          closeDialog("#examplesDialog");
+          toast("Opened the " + (ex.title || ex.name) + " example");
+        } catch (e) { toast("Cannot open " + ex.name + ": " + e.message); }
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+  } catch (e) { list.appendChild(el("li", "issue err", e.message)); }
+}
+
+
 async function openSavedDialog() {
   const list = $("#savedList");
   list.innerHTML = "";
@@ -1803,6 +1892,14 @@ async function openCredentials() {
 async function loadCredentials() {
   const tbody = $("#credList");
   tbody.innerHTML = "";
+  // What a credential consists of needs no login (names and flags only), so the Provider/Service list is filled first
+  // and independently: a failing or unauthorised admin call must not leave the form with nothing to choose from.
+  try {
+    state.credTypes = await apiGet("credential-types");
+  } catch (e) {
+    state.credTypes = state.credTypes || {};
+  }
+  renderCredTypes();
   try {
     state.cred = await adminCall("credentials");
   } catch (e) {
@@ -1839,7 +1936,7 @@ function renderCredTypes() {
   const sel = $("#credType");
   const prev = sel.value;
   sel.innerHTML = "";
-  Object.keys(state.cred[kind] || {}).sort().forEach((t) => sel.appendChild(new Option(t, t)));
+  Object.keys((state.credTypes || {})[kind] || {}).sort().forEach((t) => sel.appendChild(new Option(t, t)));
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   renderCredFields();
 }
@@ -1847,7 +1944,7 @@ function renderCredTypes() {
 function renderCredFields() {
   const box = $("#credFields");
   box.innerHTML = "";
-  (state.cred[$("#credKind").value][$("#credType").value] || []).forEach((f) => {
+  ((((state.credTypes || {})[$("#credKind").value]) || {})[$("#credType").value] || []).forEach((f) => {
     const lab = el("label", "field");
     lab.appendChild(el("span", "f-name", f.name + (f.required ? " *" : "")));
     const inp = el("input");
@@ -1927,6 +2024,7 @@ function openCreate() {
   $("#createConfirm").hidden = false;
   $("#createJob").hidden = true;
   $("#createGo").hidden = false;
+  $("#createPass").value = "";
   showDialog("#createDialog");
 }
 
@@ -1934,7 +2032,11 @@ async function startCreate() {
   const filename = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
   try {
     await adminCall("save", { filename, config: state.lab });
-    const r = await adminCall("create", { filename: filename + ".json", keep: $("#createKeep").checked });
+    // The passphrase goes to this one request and is dropped straight away: it is never kept in state.
+    const passphrase = $("#createPass").value;
+    $("#createPass").value = "";
+    const r = await adminCall("create", {
+      filename: filename + ".json", keep: $("#createKeep").checked, passphrase });
     $("#createConfirm").hidden = true;
     $("#createGo").hidden = true;
     $("#createJob").hidden = false;
@@ -1965,6 +2067,8 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);
+  $("#examplesBtn").addEventListener("click", openExamplesDialog);
+  $("#examplesClose").addEventListener("click", () => closeDialog("#examplesDialog"));
   $("#savedBtn").addEventListener("click", openSavedDialog);
   $("#savedClose").addEventListener("click", () => closeDialog("#savedDialog"));
   $("#credBtn").addEventListener("click", openCredentials);

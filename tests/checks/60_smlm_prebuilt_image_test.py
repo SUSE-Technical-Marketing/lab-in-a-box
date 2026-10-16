@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unit tests for install_smlm.py's pre-built server image support and the
+# Unit tests for install_smlm's pre-built server image support and the
 # server-side lab conveniences — see 60_smlm_prebuilt_image.sh. SSH and the
 # XML-RPC API are mocked; mgradm_common's install helpers are stubbed the same
 # way 49_smlm_baremetal_test.py does.
@@ -12,7 +12,8 @@ sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
 import addon_common as ac  # noqa: E402
-import install_smlm as ism  # noqa: E402
+import apps  # noqa: E402
+ism = apps.load_addon_module("install_smlm", str(_REPO / "scripts"))  # no .py: loaded by path
 import mgradm_common  # noqa: E402
 
 failures = []

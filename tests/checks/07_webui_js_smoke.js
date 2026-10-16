@@ -7,8 +7,25 @@ const fs = require("fs");
 const vm = require("vm");
 
 const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
+// Enough of an element for the schema renderer to build a tree and for the test to read it back: walk() only
+// creates elements, sets a class or text, appends and (for an empty group) removes.
+function makeElement(tag) {
+  return {
+    tagName: String(tag).toUpperCase(), className: "", textContent: "", childNodes: [], dataset: {},
+    get childElementCount() { return this.childNodes.length; },
+    appendChild(child) { this.childNodes.push(child); return child; },
+    removeChild(child) { this.childNodes = this.childNodes.filter((c) => c !== child); return child; },
+    setAttribute() {}, addEventListener() {},
+    querySelectorAll: () => [], querySelector: () => null,
+  };
+}
+
 const sandbox = {
-  document: { querySelectorAll: () => [], addEventListener: () => {} },
+  document: {
+    querySelectorAll: () => [], addEventListener: () => {}, createElement: makeElement,
+    createTextNode: (text) => ({ nodeType: 3, textContent: String(text), childNodes: [] }),
+    createDocumentFragment: () => makeElement("fragment"),
+  },
   window: { addEventListener: () => {} },
   console, URL, URLSearchParams, TextDecoder, atob,
 };
@@ -401,8 +418,147 @@ check("?lab=: base64url lab decoded", sandbox.decodeLabParam(b64).common.VM_MEM 
   st.schemaCache = saved.cache; st.base = saved.base;
 }
 
-if (failures) {
-  console.error(failures + " check(s) failed");
-  process.exit(1);
+// -- imageChoices: per-host source images, labelled "<host> - <file name>" ----
+{
+  const c = sandbox.imageChoices({ images_by_host: { nuc2: ["b.iso"], nuc1: ["b.iso", "a.qcow2"] },
+                                   images: ["a.qcow2", "b.iso"] });
+  check("imageChoices: one entry per host and image, ordered by host then name",
+    JSON.stringify(c) === JSON.stringify([
+      { value: "a.qcow2", label: "nuc1 - a.qcow2" },
+      { value: "b.iso", label: "nuc1 - b.iso" },
+      { value: "b.iso", label: "nuc2 - b.iso" }]));
+  check("imageChoices: the value is the file name a lab stores, not the label",
+    c.every((o) => !o.value.includes(" - ")));
+  check("imageChoices: an older snapshot with only the flat list yields plain names",
+    JSON.stringify(sandbox.imageChoices({ images: ["x.qcow2"] })) === JSON.stringify(["x.qcow2"]));
+  check("imageChoices: no images anywhere yields an empty list",
+    JSON.stringify(sandbox.imageChoices({})) === "[]");
 }
-console.log("all app.js smoke checks passed");
+
+// -- prefillAddons / applyUrlParams: ?addons= puts the named add-ons on the canvas ----------------------------------
+// Async, so the summary below runs from its continuation: a top-level exit would report success before these resolve.
+async function urlParamChecks() {
+  const st = vm.runInContext("state", sandbox);
+  const saved = { comps: st.components, items: st.model.items, seq: st.model.seq, loc: sandbox.location };
+  const toasts = [];
+  st.components = [{ name: "install_longhorn" }, { name: "install_rancher" }];
+  st.model.items = [];
+  st.model.seq = 0;
+  sandbox.loadAddonSchema = async (comp) => ({ section: comp.replace("install_", "") });
+  sandbox.renderCanvas = () => {};
+  sandbox.refreshLab = () => {};
+  sandbox.toast = (m) => toasts.push(m);
+  sandbox.Option = function (text, value) { return { text, value, tagName: "OPTION" }; };
+
+  const unknown = await sandbox.prefillAddons(["longhorn", "install_rancher", "longhorn", "nope"]);
+  check("?addons=: a bare name and an install_ name both match, and each add-on is added once",
+    st.model.items.length === 2
+    && st.model.items.every((i) => i.type === "addon" && i.parent === null)
+    && st.model.items.map((i) => i.comp).join(",") === "install_longhorn,install_rancher");
+  check("?addons=: an add-on no component matches is reported, not added", unknown.join(",") === "nope");
+
+  st.model.items = [];
+  st.model.seq = 0;
+  sandbox.location = { search: "?addons=longhorn,nope" };
+  await sandbox.applyUrlParams();
+  check("applyUrlParams: reads ?addons= and names the unknown ones in a toast",
+    st.model.items.length === 1 && toasts.some((t) => t.includes("Unknown add-ons, not added: nope")));
+
+  const lab = { common: { VM_MEM: 2 }, nodes: {} };
+  const b64 = Buffer.from(JSON.stringify(lab)).toString("base64url");
+  const loaded = [];
+  sandbox.loadLab = (l) => loaded.push(l);
+  sandbox.location = { search: "?lab=" + b64 };
+  await sandbox.applyUrlParams();
+  check("applyUrlParams: reads ?lab= and opens that lab", loaded.length === 1 && loaded[0].common.VM_MEM === 2);
+
+  st.components = saved.comps;
+  st.model.items = saved.items;
+  st.model.seq = saved.seq;
+  sandbox.location = saved.loc;
+}
+
+// -- shownFields / structuralCfg: a field's show_if dependency ------------
+// The Kubernetes node fields declare show_if "kcluster" in lab_schema, so a
+// VM that is in no Kubernetes cluster must not be offered them.
+{
+  const fields = [
+    { name: "myip", type: "string" },
+    { name: "KUBERNETES_NODE_TYPE", type: "string", show_if: "kcluster" },
+    { name: "harvester_role", type: "string", show_if: "kcluster" },
+  ];
+  const names = (cfg) => sandbox.shownFields(fields, cfg).map((f) => f.name);
+  check("show_if unmet: only the independent fields are shown",
+    JSON.stringify(names({ myip: "10.0.0.1" })) === '["myip"]');
+  check("show_if met: the dependent fields are shown too",
+    names({ kcluster: "clu1" }).length === 3);
+  check("show_if met by an empty value is not met",
+    JSON.stringify(names({ kcluster: "" })) === '["myip"]');
+  check("no cfg at all hides every dependent field",
+    JSON.stringify(names(undefined)) === '["myip"]');
+  check("a field without show_if is never filtered",
+    sandbox.shownFields([{ name: "myip" }], {}).length === 1);
+
+  const st = vm.runInContext("state", sandbox);
+  const saved = st.model.items;
+  st.model.items = [{ id: "c1", type: "cluster", name: "clu1", cfg: {}, parent: null }];
+  const inCluster = { id: "n1", type: "node", cfg: { myip: "10.0.0.1" }, parent: "c1" };
+  const loose = { id: "n2", type: "node", cfg: { myip: "10.0.0.2" }, parent: null };
+  check("structuralCfg: a VM in a cluster block gets that cluster as its kcluster",
+    sandbox.structuralCfg(inCluster).kcluster === "clu1");
+  check("structuralCfg: a VM outside every cluster has no kcluster",
+    sandbox.structuralCfg(loose).kcluster === undefined);
+  check("a clustered VM is offered the Kubernetes fields",
+    sandbox.shownFields(fields, sandbox.structuralCfg(inCluster)).length === 3);
+  check("a VM outside a cluster is not offered the Kubernetes fields",
+    sandbox.shownFields(fields, sandbox.structuralCfg(loose)).length === 1);
+  st.model.items = saved;
+}
+
+// -- walk(): an add-on's schema rendered as a form ------------------------
+// A schema's "capabilities" object describes the add-on; it holds no fields, so rendering it left a group heading
+// with nothing under it for targets, layers, aux_services and versions.
+{
+  const headings = (node) => {
+    const out = [];
+    const visit = (e) => {
+      if (e.className === "group-head") out.push(e.childNodes.length ? e.textContent : e.textContent);
+      (e.childNodes || []).forEach(visit);
+    };
+    (node.childNodes || []).forEach(visit);
+    return out;
+  };
+  const schema = {
+    section: "demo", description: "A demo add-on",
+    fields: [{ name: "demo_port", type: "port" }],
+    capabilities: { targets: ["container"], layers: ["kubernetes"], requires_kubernetes: ["rke2"],
+                    aux_services: [], versions: { demo_version: [{ version: "1.0" }] }, check: true },
+  };
+  const form = makeElement("div");
+  sandbox.walk(schema, form, []);
+  check("the capabilities block renders no headings at all", headings(form).length === 0);
+  check("the add-on's own field is still rendered", form.childNodes.length === 1);
+
+  // A group that does hold a field keeps its heading.
+  const grouped = { fields: [], pxe: { description: "PXE", fields: [{ name: "pxe_bridge", type: "string" }] } };
+  const form2 = makeElement("div");
+  sandbox.walk(grouped, form2, []);
+  check("a group with a field keeps its heading", headings(form2).includes("pxe"));
+
+  // A group whose fields are all hidden renders nothing, so no bare heading is left behind.
+  const hiddenOnly = { fields: [], legacy: { description: "old", fields: [{ name: "old_key", type: "string", hidden: true }] } };
+  const form3 = makeElement("div");
+  sandbox.walk(hiddenOnly, form3, []);
+  check("a group whose only field is hidden is dropped, heading and all", form3.childNodes.length === 0);
+}
+
+urlParamChecks().then(() => {
+  if (failures) {
+    console.error(failures + " check(s) failed");
+    process.exit(1);
+  }
+  console.log("all app.js smoke checks passed");
+}, (e) => {
+  console.error("FAIL: the ?addons=/?lab= checks threw: " + e.message);
+  process.exit(1);
+});
