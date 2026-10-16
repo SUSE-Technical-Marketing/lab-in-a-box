@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>Un fichier, une commande.</strong> Décrivez de façon déclarative des VM, des clusters Kubernetes (RKE2 ou K3s) et des modules complémentaires. <code>setup_lab.py</code> les construit dans l'ordre des dépendances, sans que vous ayez à lancer <code>virt-install</code> ou Ansible à la main.</li>
 <li><strong>Labo à domicile ou dans le cloud, même définition.</strong> Les VM du laboratoire tournent sur vos propres hôtes KVM, sur Harvester HCI ou sur AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Un laboratoire peut s'étendre sur plusieurs hôtes KVM et combiner clouds et sites grâce à un <a href="#cross-cloud-wireguard-overlay">réseau superposé WireGuard multi-cloud</a>.</li>
-<li><strong>71 modules prêts à l'emploi.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud et d'autres, ainsi que des applications de démonstration volontairement vulnérables pour la formation à la sécurité.</li>
+<li><strong>69 modules prêts à l'emploi.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud et d'autres, ainsi que des applications de démonstration volontairement vulnérables pour la formation à la sécurité.</li>
 <li><strong>Une interface web qui suit le code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> génère chaque formulaire à partir du schéma du module lui-même : un nouveau champ dans un script apparaît dans l'interface sans modification du frontend.</li>
 <li><strong>Provisionnement interchangeable.</strong> Ignition et Combustion pour SLE Micro, cloud-init pour openSUSE et Ubuntu, <code>virt-customize</code> pour les images anciennes, ou une installation automatisée depuis une ISO d'installation (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
 <li><strong>Identifiants hors du fichier de laboratoire.</strong> Les identifiants des clouds et des services peuvent être stockés dans des fichiers chiffrés par compte (dérivation de clé Argon2id, puis AES-256-GCM et ChaCha20-Poly1305 en cascade).</li>
@@ -1106,6 +1106,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>Contrôleur GitOps Argo CD</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>Livraison continue Fleet dans Rancher : groupes de clusters, étiquettes et ressources GitRepo, dont le dépôt rancher/fleet-examples de la documentation. Configure le Fleet livré avec Rancher, il ne l'installe pas</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>

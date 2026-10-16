@@ -111,7 +111,13 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
 tracked = subprocess.run(["git", "-c", "safe.directory={}".format(_REPO), "-C", str(_REPO), "ls-files", "-s", "scripts/install_*"],
                          stdout=subprocess.PIPE, universal_newlines=True).stdout.split("\n")
 modes = {line.split()[3]: line.split()[0] for line in tracked if line.strip()}
-check("found the expected 68 tracked add-ons to check", len(modes) == 68)
+# Not a fixed number: an add-on is added now and then. What must hold is that every add-on git tracks is one
+# apps.addon_files() discovers, so none is silently invisible to the loader, and that the glob found some at all.
+discovered = apps.addon_files(str(_REPO / "scripts"))
+check("there are add-ons to check at all", len(modes) > 50)
+check("every tracked add-on is one addon_files() discovers: {}".format(
+      sorted(set(Path(p).name for p in modes) - set(Path(p).name for p in discovered.values()))),
+      set(Path(p).name for p in modes) <= set(Path(p).name for p in discovered.values()))
 check("every tracked add-on has the executable bit in git: {}".format(
       sorted(p for p, m in modes.items() if m != "100755")), all(m == "100755" for m in modes.values()))
 described = apps.describe_many(str(_REPO / p) for p in modes)

@@ -1,0 +1,253 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will configure Fleet in Rancher
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "fleet" — Fleet continuous delivery in Rancher (cluster groups, labels, GitRepos)
+#   fleet_workspace       : [OPTIONAL] workspace the GitRepos and cluster groups go in
+#                           (default: fleet-default, where Rancher puts downstream clusters;
+#                           fleet-local is the cluster Rancher itself runs on)
+#   fleet_cluster_labels  : [OPTIONAL] [{"cluster", "labels": {"<key>": "<value>"}}]
+#                           Labels put on a Fleet Cluster so a GitRepo or a cluster group can
+#                           select it. "cluster" is the Fleet Cluster's own name, which for a
+#                           downstream cluster is Rancher's cluster ID, not its display name.
+#   fleet_cluster_groups  : [OPTIONAL] [{"name", "selector": {"<key>": "<value>"}}]
+#                           A ClusterGroup selecting clusters by label. A GitRepo with no
+#                           targets of its own deploys to the group named "default".
+#   fleet_gitrepos        : [OPTIONAL] [{"name", "repo", "branch", "revision", "paths": [...],
+#                           "service_account", "paused", "targets": [{"name", "cluster_group",
+#                           "cluster_selector": {"<key>": "<value>"}}]}]
+#                           "repo" is the git URL and "paths" the directories in it to deploy
+#                           (default: the repository root). "targets" selects where it deploys:
+#                           a cluster group, a label selector, or nothing for the workspace's
+#                           default. Idempotent per resource: applied, never recreated.
+#   fleet_examples        : [OPTIONAL] "true" adds the documented example GitRepo,
+#                           rancher/fleet-examples' multi-cluster/helm, which deploys per
+#                           environment by the env label (dev, test, prod). Default: false.
+#
+# Fleet ships with Rancher, so this configures what is already there rather than installing it.
+# It runs on the cluster Rancher runs on and refuses to do anything when Fleet's own CRDs are
+# absent, which is what an unconfigured or missing Rancher looks like.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "fleet",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": ["rke2", "k3s"],
+    "aux_services": [],
+    "check": True,
+}
+
+import json  # noqa: E402
+import shlex  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import ssh_run, die  # noqa: E402
+
+DEFAULT_WORKSPACE = "fleet-default"
+EXAMPLES_REPO = "https://github.com/rancher/fleet-examples"
+EXAMPLES_PATH = "multi-cluster/helm"
+_NAME_RE = r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+
+
+def _validate(v):
+    import re
+
+    cfg = v.definition.get("fleet", {}) or {}
+    v.vbool("fleet", "fleet_examples")
+    workspace = str(cfg.get("fleet_workspace") or DEFAULT_WORKSPACE)
+    if not re.match(_NAME_RE, workspace):
+        v.errors.append("[ERROR] fleet.fleet_workspace '{}': must be a Kubernetes namespace name".format(workspace))
+    for entry in cfg.get("fleet_cluster_labels") or []:
+        if not isinstance(entry, dict) or not entry.get("cluster") or not isinstance(entry.get("labels"), dict):
+            v.errors.append("[ERROR] fleet.fleet_cluster_labels: every entry needs a 'cluster' and a 'labels' "
+                            "mapping")
+    for entry in cfg.get("fleet_cluster_groups") or []:
+        if not isinstance(entry, dict) or not re.match(_NAME_RE, str(entry.get("name", ""))):
+            v.errors.append("[ERROR] fleet.fleet_cluster_groups: every entry needs a 'name' that is a valid "
+                            "Kubernetes name")
+            continue
+        if not isinstance(entry.get("selector"), dict) or not entry["selector"]:
+            v.errors.append("[ERROR] fleet.fleet_cluster_groups[{}]: needs a 'selector' mapping of labels to "
+                            "match".format(entry["name"]))
+    for entry in cfg.get("fleet_gitrepos") or []:
+        if not isinstance(entry, dict) or not re.match(_NAME_RE, str(entry.get("name", ""))):
+            v.errors.append("[ERROR] fleet.fleet_gitrepos: every entry needs a 'name' that is a valid Kubernetes "
+                            "name")
+            continue
+        if not str(entry.get("repo", "")).startswith(("http://", "https://", "git@", "ssh://")):
+            v.errors.append("[ERROR] fleet.fleet_gitrepos[{}].repo: must be a git URL (http(s), ssh or "
+                            "git@)".format(entry["name"]))
+        if entry.get("paths") is not None and not isinstance(entry["paths"], list):
+            v.errors.append("[ERROR] fleet.fleet_gitrepos[{}].paths: must be a list of directories in the "
+                            "repository".format(entry["name"]))
+        for target in entry.get("targets") or []:
+            if not isinstance(target, dict) or not (target.get("cluster_group") or target.get("cluster_selector")):
+                v.errors.append("[ERROR] fleet.fleet_gitrepos[{}].targets: every target needs a 'cluster_group' "
+                                "or a 'cluster_selector'".format(entry["name"]))
+
+
+def fleet_available(hostname: str) -> bool:
+    """Whether Fleet's own CRDs are on the cluster, which is what tells Rancher's Fleet apart from no Fleet."""
+    r = ssh_run(hostname, "kubectl get crd gitrepos.fleet.cattle.io", check=False, capture=True)
+    return r.returncode == 0
+
+
+def cluster_group_manifest(name: str, selector: dict, workspace: str) -> str:
+    """A Fleet ClusterGroup selecting clusters by label."""
+    return json.dumps({
+        "apiVersion": "fleet.cattle.io/v1alpha1",
+        "kind": "ClusterGroup",
+        "metadata": {"name": name, "namespace": workspace},
+        "spec": {"selector": {"matchLabels": {str(k): str(val) for k, val in selector.items()}}},
+    })
+
+
+def gitrepo_manifest(entry: dict, workspace: str) -> str:
+    """A Fleet GitRepo: where the git content is, and which clusters it deploys to."""
+    spec = {"repo": entry["repo"]}
+    if entry.get("branch"):
+        spec["branch"] = entry["branch"]
+    if entry.get("revision"):
+        spec["revision"] = entry["revision"]
+    if entry.get("paths"):
+        spec["paths"] = list(entry["paths"])
+    if entry.get("service_account"):
+        spec["serviceAccount"] = entry["service_account"]
+    if str(entry.get("paused") or "").lower() in ("1", "true", "yes"):
+        spec["paused"] = True
+    targets = []
+    for i, target in enumerate(entry.get("targets") or []):
+        out = {"name": target.get("name") or "target-{}".format(i)}
+        if target.get("cluster_group"):
+            out["clusterGroup"] = target["cluster_group"]
+        if target.get("cluster_selector"):
+            out["clusterSelector"] = {
+                "matchLabels": {str(k): str(v) for k, v in target["cluster_selector"].items()}}
+        targets.append(out)
+    if targets:
+        spec["targets"] = targets
+    return json.dumps({
+        "apiVersion": "fleet.cattle.io/v1alpha1",
+        "kind": "GitRepo",
+        "metadata": {"name": entry["name"], "namespace": workspace},
+        "spec": spec,
+    })
+
+
+def examples_gitrepo(workspace: str) -> dict:
+    """
+    The GitRepo of the documented example (rancher/fleet-examples, multi-cluster/helm). Its own fleet.yaml deploys
+    per environment through targetCustomizations on the env label, so this needs no targets of its own.
+    """
+    return {"name": "fleet-examples-multi-cluster", "repo": EXAMPLES_REPO, "branch": "master",
+            "paths": [EXAMPLES_PATH]}
+
+
+def label_cluster(hostname: str, cluster: str, labels: dict, workspace: str) -> None:
+    """Put `labels` on Fleet Cluster `cluster`, so a GitRepo or a cluster group can select it."""
+    pairs = " ".join("{}={}".format(shlex.quote(str(k)), shlex.quote(str(v))) for k, v in labels.items())
+    ssh_run(hostname, "kubectl -n {} label cluster.fleet.cattle.io {} {} --overwrite".format(
+        shlex.quote(workspace), shlex.quote(cluster), pairs))
+
+
+def setup_fleet(hostname: str, cfg: dict) -> dict:
+    """
+    Configure Fleet on the cluster Rancher runs on: label its clusters, create the cluster groups, then apply the
+    GitRepos. Returns what was applied, as {"labelled", "groups", "gitrepos"} counts.
+
+    Every resource goes through kubectl apply, so running it again changes nothing that already matches.
+    """
+    workspace = cfg.get("fleet_workspace") or DEFAULT_WORKSPACE
+    if not fleet_available(hostname):
+        die("fleet: this cluster has no Fleet CRDs (gitrepos.fleet.cattle.io) — Fleet ships with Rancher, so "
+            "install the rancher add-on on this Kubernetes cluster first")
+    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
+        shlex.quote(workspace)))
+
+    labelled = 0
+    for entry in cfg.get("fleet_cluster_labels") or []:
+        label_cluster(hostname, entry["cluster"], entry["labels"], workspace)
+        labelled += 1
+
+    groups = 0
+    for entry in cfg.get("fleet_cluster_groups") or []:
+        ssh_run(hostname, "kubectl apply -f -",
+                input_text=cluster_group_manifest(entry["name"], entry["selector"], workspace))
+        groups += 1
+
+    repos = list(cfg.get("fleet_gitrepos") or [])
+    if str(cfg.get("fleet_examples") or "").lower() in ("1", "true", "yes"):
+        repos.append(examples_gitrepo(workspace))
+    for entry in repos:
+        ssh_run(hostname, "kubectl apply -f -", input_text=gitrepo_manifest(entry, workspace))
+
+    print("Fleet configured in workspace {}: {} cluster(s) labelled, {} cluster group(s), {} GitRepo(s)".format(
+        workspace, labelled, groups, len(repos)))
+    print("Watch a deployment with: kubectl -n {} get gitrepo".format(workspace))
+    return {"labelled": labelled, "groups": groups, "gitrepos": len(repos)}
+
+
+def _check(chk):
+    """
+    What is deployed against the lab's "fleet" section: every cluster group and GitRepo it asks for exists in the
+    workspace, and each GitRepo points at the repository the lab names.
+    """
+    if "fleet" not in chk.definition:
+        chk.ok("this lab has no fleet section, so there is nothing to check")
+        return
+    target = k8s.first_server_node(chk.definition)
+    if not target:
+        chk.fail("the Kubernetes cluster has no server node to ask")
+        return
+    hostname = chk.vm_name or target[0]
+    cfg = chk.definition.get("fleet") or {}
+    workspace = cfg.get("fleet_workspace") or DEFAULT_WORKSPACE
+    if not fleet_available(hostname):
+        chk.fail("this cluster has no Fleet CRDs, so nothing the fleet section asks for can be there")
+        return
+    for kind, key, name_of in (("clustergroup", "fleet_cluster_groups", lambda e: e.get("name")),
+                               ("gitrepo", "fleet_gitrepos", lambda e: e.get("name"))):
+        for entry in cfg.get(key) or []:
+            name = name_of(entry)
+            r = ssh_run(hostname, "kubectl -n {} get {} {} -o jsonpath='{{.spec.repo}}'".format(
+                shlex.quote(workspace), kind, shlex.quote(str(name))), check=False, capture=True)
+            if r.returncode != 0:
+                chk.fail("{} '{}' is not in workspace {}".format(kind, name, workspace))
+            elif kind == "gitrepo" and entry.get("repo"):
+                chk.expect("gitrepo '{}' points at".format(name), entry["repo"], (r.stdout or "").strip())
+            else:
+                chk.ok("{} '{}' exists in workspace {}".format(kind, name, workspace))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    json_file = sys.argv[1]
+    definition = primary.load_definition(json_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    setup_fleet(vm_name, definition.get("fleet", {}) or {})
+
+
+if __name__ == "__main__":
+    main()

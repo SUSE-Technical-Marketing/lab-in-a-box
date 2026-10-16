@@ -1,0 +1,31 @@
+{
+ "fields": {
+  "fleet_cluster_groups": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fleet_cluster_labels": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fleet_examples": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fleet_gitrepos": {
+   "default": "the repository root",
+   "required": false,
+   "type": "string"
+  },
+  "fleet_workspace": {
+   "default": "fleet-default, where Rancher puts downstream clusters; fleet-local is the cluster Rancher itself runs on",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:fleet",
+ "version": "1.0"
+}

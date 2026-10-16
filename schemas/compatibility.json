@@ -63,6 +63,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: ds389_dm_password, ds389_image, ds389_ldap_nodeport, ds389_ldaps_nodeport, ds389_name, ds389_ns, ds389_storage_class, ds389_storage_size."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:fleet": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version: configures Fleet in Rancher (workspace, cluster labels, cluster groups, GitRepos, and the documented rancher/fleet-examples repo)."}
+  ],
   "addon:fluentd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},

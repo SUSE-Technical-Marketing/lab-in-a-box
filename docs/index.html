@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>One file, one command.</strong> Describe VMs, Kubernetes clusters (RKE2 or K3s) and add-ons declaratively. <code>setup_lab.py</code> builds them in dependency order, without you running <code>virt-install</code> or Ansible by hand.</li>
 <li><strong>Home lab or cloud, same definition.</strong> Lab VMs run on KVM hosts you own, on Harvester HCI, or on AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud or Exoscale. Labs can span several KVM hosts, and a single lab can mix clouds and sites through a <a href="#cross-cloud-wireguard-overlay">cross-cloud WireGuard overlay</a>.</li>
-<li><strong>71 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
+<li><strong>69 ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
 <li><strong>A web UI that follows the code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renders each form from the add-on's own schema, so a new field in a script shows up in the UI with no front-end change.</li>
 <li><strong>Pluggable provisioning.</strong> Ignition and Combustion for SLE Micro, cloud-init for openSUSE and Ubuntu, <code>virt-customize</code> for legacy images, or a scripted install from an installer ISO (AutoYaST, Kickstart, Preseed or AutoInstall).</li>
 <li><strong>Credentials kept out of the lab file.</strong> Cloud and service credentials can live in per-account encrypted files (Argon2id key derivation, then AES-256-GCM and ChaCha20-Poly1305 in cascade).</li>
@@ -1144,6 +1144,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://argo-cd.readthedocs.io/"><code>argocd</code></a></td>
 <td>Argo CD GitOps controller</td>
+</tr>
+<tr>
+<td><a href="https://fleet.rancher.io/"><code>fleet</code></a></td>
+<td>Fleet continuous delivery in Rancher: cluster groups, cluster labels and GitRepo resources, including the documented rancher/fleet-examples repo. Configures the Fleet that ships with Rancher rather than installing it</td>
 </tr>
 <tr>
 <td><a href="https://www.kubewarden.io/"><code>kubewarden</code></a></td>
