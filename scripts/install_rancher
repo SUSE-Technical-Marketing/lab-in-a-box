@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.1
+# Schema version: 2.2
 #
 # JSON section: "rancher" — SUSE Rancher Prime Kubernetes management platform
 #
@@ -17,6 +17,13 @@
 #   rancher_admin_pwd      : [OPTIONAL] The password the admin user ends up with. The install completes Rancher's
 #                            first login (without which its server URL stays empty and no cluster can be imported)
 #                            and changes the password to this one. Default: the bootstrap password is kept.
+#   rancher_import_clusters: [OPTIONAL] Kubernetes clusters to import into this Rancher, as
+#                            [{"kcluster": "<name>"}] for another kcluster of this same lab, or
+#                            [{"name": "<rancher name>", "node": "<host>"}] for an existing cluster reached by a
+#                            host whose kubectl talks to it. "name" defaults to the kcluster's own name, and
+#                            "insecure_tls": "false" stops the agent being told to accept this Rancher's
+#                            self-signed certificate. Each one is applied, polled and waited for until Rancher
+#                            reports it active; a cluster already imported is left alone.
 #   rancher_replicas       : [OPTIONAL] Number of Rancher replicas            (default: 2)
 #   rancher_cert_repo_name : [OPTIONAL] cert-manager Helm repo alias          (default: jetstack)
 #   rancher_cert_repo_url  : [OPTIONAL] cert-manager Helm repo URL            (default: https://charts.jetstack.io)
@@ -51,6 +58,7 @@ PLUGIN = {
 
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -74,6 +82,31 @@ def _validate(v):
     v.vns("rancher")
     v.vver("rancher")
     v.vurl("rancher")
+    cfg = v.definition.get("rancher", {}) or {}
+    kclusters = v.definition.get("kclusters", {}) or {}
+    for entry in cfg.get("rancher_import_clusters") or []:
+        if not isinstance(entry, dict):
+            v.errors.append("[ERROR] rancher.rancher_import_clusters: every entry is an object with a 'kcluster' "
+                            "of this lab or a 'node' to reach the cluster through")
+            continue
+        kcluster = str(entry.get("kcluster") or "").strip()
+        node = str(entry.get("node") or "").strip()
+        name = str(entry.get("name") or kcluster).strip()
+        if not kcluster and not node:
+            v.errors.append("[ERROR] rancher.rancher_import_clusters[{}]: needs a 'kcluster' of this lab or a "
+                            "'node' to reach the cluster through".format(name or "?"))
+        if kcluster and kcluster not in kclusters:
+            v.errors.append("[ERROR] rancher.rancher_import_clusters[{}]: kcluster '{}' is not in this lab".format(
+                name or kcluster, kcluster))
+        if node and node not in (v.definition.get("nodes") or {}) and "." not in node:
+            v.errors.append("[ERROR] rancher.rancher_import_clusters[{}]: node '{}' is neither a node of this lab "
+                            "nor a hostname".format(name or node, node))
+        if not name:
+            v.errors.append("[ERROR] rancher.rancher_import_clusters: an entry reached by 'node' needs a 'name' "
+                            "for the cluster in Rancher")
+        elif not IMPORT_NAME_RE.match(name):
+            v.errors.append("[ERROR] rancher.rancher_import_clusters[{}]: the name Rancher gives a cluster must be "
+                            "a Kubernetes name (lower-case letters, digits and dashes)".format(name))
 
 
 def setup_rancher_repo(hostname, cfg):
@@ -196,6 +229,8 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
                                  cfg.get("rancher_admin_pwd") or initial_rancher_pwd)
     print("# Admin password: {}".format(admin_pwd))
 
+    import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg)
+
 
 def finish_bootstrap(hostname, hostname_fqdn, bootstrap_pwd, admin_pwd):
     """
@@ -249,6 +284,150 @@ def finish_bootstrap(hostname, hostname_fqdn, bootstrap_pwd, admin_pwd):
     return admin_pwd
 
 
+IMPORT_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+IMPORT_WORKSPACE = "fleet-default"
+IMPORT_ID_TIMEOUT = 120
+IMPORT_MANIFEST_TIMEOUT = 180
+IMPORT_ACTIVE_TIMEOUT = 1800
+IMPORT_POLL = 10
+
+
+def _api_token(hostname, hostname_fqdn, admin_pwd):
+    """A Rancher API bearer token for the admin user, or "" when the login fails."""
+    return ssh_output(hostname, (
+        "curl -sk https://{host}/v3-public/localProviders/local?action=login "
+        "-H 'content-type: application/json' -d {payload} "
+        "| tr ',' '\n' | sed -n 's/.*\"token\":\"\\([^\"]*\\).*/\\1/p' | head -1"
+    ).format(host=hostname_fqdn, payload=shlex.quote(json.dumps({"username": "admin", "password": admin_pwd}))))
+
+
+def _poll(what, read, timeout):
+    """Call `read` until it returns something, for at most `timeout` seconds; "" when it never does."""
+    waited = 0
+    while waited < timeout:
+        value = read()
+        if value:
+            return value
+        time.sleep(IMPORT_POLL)
+        waited += IMPORT_POLL
+        if waited % 60 == 0:
+            print("  still waiting for {} ({}s)".format(what, waited))
+    return ""
+
+
+def import_cluster(hostname, hostname_fqdn, admin_pwd, name, target_node, insecure_tls=True):
+    """
+    Import the Kubernetes cluster that `target_node`'s kubectl talks to into the Rancher on `hostname`, as `name`.
+    Returns Rancher's own cluster id, or "" when it could not be imported.
+
+    The sequence, and why each step is what it is (confirmed live on 2026-10-17 importing a kubeadm cluster):
+
+      1. A provisioning.cattle.io/v1 Cluster, which is how a cluster Rancher does not provision is registered. Its
+         agentEnvVars carry CATTLE_INSECURE_TLS, because a lab's Rancher serves a self-signed certificate and the
+         agent in the other cluster has no reason to trust it.
+      2. Its .status.clusterName, Rancher's own c-m-xxxxx id, which the rest needs and which appears a moment later.
+      3. A ClusterRegistrationToken created THROUGH THE v3 API. One applied as a CRD is never populated: no token,
+         no manifest URL, forever. This step is why the import needs an API login at all.
+      4. The manifest that token points at, applied on the other cluster. It installs the cattle-cluster-agent.
+      5. Rancher reporting the cluster active, which is the only evidence the agent reached back.
+
+    Importing needs Rancher's server URL to be set (finish_bootstrap does it): without it step 3 yields nothing.
+    """
+    kubectl_rancher = "kubectl"
+    existing = ssh_run(hostname, "{} -n {} get cluster.provisioning.cattle.io {} -o jsonpath='{{.status.clusterName}}'"
+                       .format(kubectl_rancher, shlex.quote(IMPORT_WORKSPACE), shlex.quote(name)),
+                       check=False, capture=True)
+    if existing.returncode == 0 and (existing.stdout or "").strip():
+        cluster_id = (existing.stdout or "").strip()
+        print("# Cluster '{}' is already imported as {}".format(name, cluster_id))
+    else:
+        print("# Importing cluster '{}' into Rancher".format(name))
+        manifest = {
+            "apiVersion": "provisioning.cattle.io/v1",
+            "kind": "Cluster",
+            "metadata": {"name": name, "namespace": IMPORT_WORKSPACE},
+            "spec": {},
+        }
+        if insecure_tls:
+            manifest["spec"]["agentEnvVars"] = [{"name": "CATTLE_INSECURE_TLS", "value": "true"}]
+        ssh_run(hostname, "{} apply -f -".format(kubectl_rancher), input_text=json.dumps(manifest))
+        cluster_id = _poll("Rancher to give '{}' an id".format(name), lambda: ssh_output(
+            hostname, "{} -n {} get cluster.provisioning.cattle.io {} -o jsonpath='{{.status.clusterName}}'".format(
+                kubectl_rancher, shlex.quote(IMPORT_WORKSPACE), shlex.quote(name))), IMPORT_ID_TIMEOUT)
+        if not cluster_id:
+            warn("- Rancher never gave cluster '{}' an id; it is not imported".format(name))
+            return ""
+
+    token = _api_token(hostname, hostname_fqdn, admin_pwd)
+    if not token:
+        warn("- Could not log in to Rancher to create a registration token for '{}'; it is not imported".format(name))
+        return ""
+
+    # The registration token has to come from the API. The same call on an already-imported cluster just returns
+    # another valid token, so a re-run is safe.
+    ssh_run(hostname, "curl -sk -o /dev/null -X POST https://{host}/v3/clusterregistrationtoken "
+                      "-H 'content-type: application/json' -H {auth} -d {payload}".format(
+                          host=hostname_fqdn, auth=shlex.quote("Authorization: Bearer " + token),
+                          payload=shlex.quote(json.dumps({"type": "clusterRegistrationToken",
+                                                          "clusterId": cluster_id}))), check=False)
+    # Only a real import manifest: the collection's own answer also carries a "manifestUrl" in its sort links
+    # (…?clusterId=…&sort=manifestUrl), and applying that gives kubectl nothing to apply.
+    manifest_url = _poll("the registration manifest of '{}'".format(name), lambda: ssh_output(
+        hostname, "curl -sk -H {auth} 'https://{host}/v3/clusterregistrationtokens?clusterId={cid}' "
+                  "| tr ',' '\n' "
+                  "| sed -n 's|.*\"manifestUrl\":\"\\(https[^\"]*/v3/import/[^\"]*\\.yaml\\)\".*|\\1|p' "
+                  "| head -1".format(
+                      auth=shlex.quote("Authorization: Bearer " + token), host=hostname_fqdn,
+                      cid=cluster_id)), IMPORT_MANIFEST_TIMEOUT)
+    if not manifest_url:
+        warn("- Rancher never published a registration manifest for '{}'. Its server URL has to be set first "
+             "(settings/server-url); '{}' is not imported".format(name, name))
+        return ""
+
+    print("# Registering '{}' from {}".format(name, target_node))
+    applied = ssh_run(target_node, "curl -sfk {} | kubectl apply -f -".format(shlex.quote(manifest_url)),
+                      check=False, capture=True)
+    if applied.returncode != 0:
+        warn("- The registration manifest could not be applied on '{}': {}".format(
+            target_node, (getattr(applied, "stderr", "") or applied.stdout or "").strip()[:200]))
+        return ""
+
+    state = _poll("'{}' to go active in Rancher".format(name), lambda: (ssh_output(
+        hostname, "{} -n {} get cluster.provisioning.cattle.io {} -o jsonpath='{{.status.ready}}'".format(
+            kubectl_rancher, shlex.quote(IMPORT_WORKSPACE), shlex.quote(name))) == "true") and "ready" or "",
+        IMPORT_ACTIVE_TIMEOUT)
+    if not state:
+        warn("- '{}' was registered as {} but Rancher has not reported it ready yet; it may still be "
+             "starting its agent".format(name, cluster_id))
+        return cluster_id
+    print("# Cluster '{}' is imported and active in Rancher as {}".format(name, cluster_id))
+    return cluster_id
+
+
+def import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg):
+    """
+    Import every cluster the lab's rancher_import_clusters asks for. Returns {name: cluster id} for those that were
+    imported. An entry naming a kcluster of this lab is reached through that kcluster's own node (k8s.kcluster_node);
+    one naming a node is reached through that node.
+    """
+    entries = cfg.get("rancher_import_clusters") or []
+    if not entries:
+        return {}
+    imported = {}
+    for entry in entries:
+        kcluster = str(entry.get("kcluster") or "").strip()
+        name = str(entry.get("name") or kcluster).strip()
+        target = str(entry.get("node") or "").strip() or (k8s.kcluster_node(definition, kcluster) if kcluster else "")
+        if not name or not target:
+            warn("- rancher_import_clusters: an entry needs a 'kcluster' of this lab or a 'node' to reach the "
+                 "cluster through, and a name; skipping {!r}".format(entry))
+            continue
+        cluster_id = import_cluster(hostname, hostname_fqdn, admin_pwd, name, target,
+                                    insecure_tls=str(entry.get("insecure_tls", "true")).lower() != "false")
+        if cluster_id:
+            imported[name] = cluster_id
+    return imported
+
 def _check(chk):
     """
     What is deployed against the lab's "rancher" section: the Helm release in cattle-system, its chart version
@@ -287,6 +466,21 @@ def _check(chk):
             values = {}
         chk.expect("the hostname Rancher serves", expected_host, str(values.get("hostname", "")))
         chk.expect("the replica count", str(cfg.get("rancher_replicas") or "2"), str(values.get("replicas", "")))
+
+    for entry in cfg.get("rancher_import_clusters") or []:
+        name = str((entry or {}).get("name") or (entry or {}).get("kcluster") or "").strip()
+        if not name:
+            continue
+        state = ssh_run(hostname, "kubectl -n {} get cluster.provisioning.cattle.io {} "
+                                  "-o jsonpath='{{.status.ready}}'".format(
+                                      shlex.quote(IMPORT_WORKSPACE), shlex.quote(name)),
+                        check=False, capture=True)
+        if state.returncode != 0:
+            chk.fail("cluster '{}' is not imported into this Rancher".format(name))
+        elif (state.stdout or "").strip() != "true":
+            chk.fail("cluster '{}' is imported but Rancher does not report it ready".format(name))
+        else:
+            chk.ok("cluster '{}' is imported and ready in Rancher".format(name))
 
     ready = ssh_run(hostname, "kubectl -n cattle-system get deploy rancher "
                               "-o jsonpath='{.status.readyReplicas}/{.spec.replicas}'",

@@ -794,6 +794,26 @@ def first_server_node(definition):
     return None
 
 
+def kcluster_node(definition, clu_name):
+    """
+    The node of `clu_name` that runs kubectl for it: its mgm_node when the lab names one, else its first server
+    node, else its first node at all. "" when the lab has no such cluster or it has no nodes.
+
+    This is where an add-on reaches a kcluster other than the one it was installed on, which is what importing one
+    cluster into another lab's Rancher needs.
+    """
+    clu_cfg = (definition.get("kclusters", {}) or {}).get(clu_name, {}) or {}
+    named = str(clu_cfg.get("mgm_node") or "").strip()
+    if named:
+        return named
+    members = [(name, cfg or {}) for name, cfg in (definition.get("nodes") or {}).items()
+               if (cfg or {}).get("kcluster") == clu_name]
+    for name, cfg in members:
+        if (cfg.get("KUBERNETES_NODE_TYPE") or cfg.get("INSTALL_RKE2_TYPE") or "server") == "server":
+            return name
+    return members[0][0] if members else ""
+
+
 def addon_nodes(definition, addon, vm_name=None):
     """
     Return a list of (vm_name, ssh_cmd) for nodes that have addon in their addons[]

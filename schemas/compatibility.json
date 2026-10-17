@@ -242,7 +242,8 @@
   "addon:rancher": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "An unset rancher_repo_url selects Rancher Prime (https://charts.rancher.com/server-charts/prime) instead of the stable repo, an unset rancher_rel is rancher-prime, an unset rancher_helm_chart is rancher-prime/rancher instead of none, and an unset rancher_initial_pwd lets Rancher generate the bootstrap password.", "migration": "rancher_2_0"},
-   {"version": "2.1", "breaking": false, "changes": "rancher_admin_pwd: the install completes Rancher's first login and sets its server URL, without which no cluster can be imported"}
+   {"version": "2.1", "breaking": false, "changes": "rancher_admin_pwd: the install completes Rancher's first login and sets its server URL, without which no cluster can be imported"},
+   {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"}
   ],
   "addon:seafile": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
