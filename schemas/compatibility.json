@@ -182,7 +182,8 @@
    {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
   "addon:neuvector": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "nv_pvc_access: the controller's volume access mode, ReadWriteOnce by default so every storage class can provide it"}
   ],
   "addon:nextcloud": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

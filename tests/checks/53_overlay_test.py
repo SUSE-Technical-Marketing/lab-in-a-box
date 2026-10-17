@@ -589,12 +589,35 @@ check("named is reloaded where it landed",
       any("reload named" in cmd for host, cmd, _b in calls if host == "10.0.0.53"))
 
 reset()
-scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\n")}
-scripted["192.168.88.73"] = {"cat > ": FakeResult(returncode=255)}
-with tempfile.TemporaryDirectory() as zone_dir:
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"cat > ": FakeResult(returncode=255)}
+with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
     Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
     check("a site that cannot be written to is counted, not fatal",
           overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir) == (0, 1))
+
+# A zone file nothing reloads is a zone nobody serves. Confirmed live on 2026-10-17: a cloud DNS VM with no BIND
+# installed at all took the file, and the push was reported as a success.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"systemctl": FakeResult(returncode=1)}
+with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("a server that took the zone but cannot reload it is a failure, not a success", (synced, failed) == (0, 1))
+check("both unit names are tried, since Debian calls it bind9",
+      any("reload named" in cmd and "bind9" in cmd for _h, cmd, _b in calls))
+
+# This node is where the zone comes from, so pushing it to itself would only rewrite the file with its own content.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\naws 10.0.0.53\n")}
+with tempfile.TemporaryDirectory() as zone_dir, \
+     mock.patch.object(overlay.ipalloc, "local_ips", return_value={"192.168.88.73"}):
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("a site served by this automation node itself is skipped", (synced, failed) == (1, 0))
+check("...and nothing was written to its own address",
+      not any(host == "192.168.88.73" and body for host, _c, body in calls))
 
 reset()
 with tempfile.TemporaryDirectory() as zone_dir:

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -119,7 +120,8 @@ with tempfile.TemporaryDirectory() as tmp:
           r.returncode == 1 and "[GONE]" in r.stdout and "1 missing" in r.stdout)
 
 # ── the add-ons that now have a check of their own ────────────────────────
-for name in ("coredns", "local_path", "longhorn", "fleet", "rancher"):
+for name in ("coredns", "local_path", "longhorn", "fleet", "rancher",
+             "neuvector", "harbor", "keycloak", "gitlab"):
     source = (_REPO / "scripts" / ("install_" + name)).read_text()
     check("{} advertises its check".format(name), '"check": True' in source)
     check("{} implements one".format(name), "def _check(" in source and "check_fn=_check" in source)
@@ -127,6 +129,90 @@ for name in ("coredns", "local_path", "longhorn", "fleet", "rancher"):
                         str(_REPO / "scripts" / ("install_" + name))], stdout=subprocess.PIPE,
                        universal_newlines=True)
     check("{} passes the add-on contract checker".format(name), r.returncode == 0)
+
+
+# ── the shared release check every add-on's own check is built on ─────────
+import addon_common as ac  # noqa: E402
+
+
+class _Cluster:
+    """
+    Answers the two commands Checker.helm_release() runs. The pod list is piped through awk by the helper itself,
+    so this runs that very awk program over `pod_table` rather than pretending to: the filter is the part worth
+    testing, and a POSIX awk has no backreferences, which is how an earlier version of it flagged every pod.
+    """
+
+    def __init__(self, releases="[]", pod_table=""):
+        self.releases = releases
+        self.pod_table = pod_table
+        self.cmds = []
+
+    def __call__(self, hostname, cmd, **kwargs):
+        self.cmds.append(cmd)
+        if "helm" in cmd and "list" in cmd:
+            return mock.Mock(returncode=0, stdout=self.releases)
+        awk = cmd.split("| awk ", 1)[1] if "| awk " in cmd else ""
+        if not awk:
+            return mock.Mock(returncode=0, stdout="")
+        r = subprocess.run("printf '%s' \"$POD_TABLE\" | awk " + awk, shell=True,
+                           env=dict(os.environ, POD_TABLE=self.pod_table),
+                           stdout=subprocess.PIPE, universal_newlines=True)
+        return mock.Mock(returncode=0, stdout=r.stdout)
+
+
+DEPLOYED = json.dumps([{"name": "thing", "chart": "thing-1.2.3", "status": "deployed"}])
+
+
+def _release(releases=DEPLOYED, pods="", version=""):
+    chk = ac.Checker({"thing": {}}, vm_name="n1")
+    with mock.patch.object(ac, "ssh_run", side_effect=_Cluster(releases, pods)):
+        chart = chk.helm_release("n1", "thing", "ns", version=version)
+    return chk, chart
+
+
+chk, chart = _release()
+check("a deployed release is reported with its chart", chart == "thing-1.2.3" and not chk.problems)
+chk, chart = _release(releases="[]")
+check("a release that is not there is a failure, and nothing else is looked at",
+      chart == "" and any("no 'thing' Helm release" in p for p in chk.problems))
+chk, _ = _release(releases=json.dumps([{"name": "thing", "chart": "thing-1.2.3", "status": "failed"}]))
+check("a release that is not deployed is a failure", any("is failed, not deployed" in p for p in chk.problems))
+chk, _ = _release(version="1.2.3")
+check("the chart version is compared with what the lab asked for", not chk.problems)
+chk, _ = _release(version="9.9.9")
+check("...and a different one is a failure", any("chart version" in p for p in chk.problems))
+chk, _ = _release(version="v1.2.3")
+check("a version written with a leading v still matches", not chk.problems)
+
+# Readiness, not phase: a pod is Running from the moment its containers start. Confirmed live on 2026-10-17 with
+# NeuVector, whose pods were all Running while both controllers were still failing their readiness probe.
+chk, _ = _release(pods="a-1 1/1 Running 0 1m\nb-2 2/2 Running 0 1m\njob-x 0/1 Completed 0 1m\n")
+check("ready pods and a completed job are fine", not chk.problems)
+chk, _ = _release(pods="a-1 0/1 Running 0 1m\nb-2 1/2 Running 0 1m\n")
+check("a Running pod whose containers are not ready is a failure",
+      any("2 pod(s) in ns are not ready" in p for p in chk.problems))
+chk, _ = _release(pods="a-1 0/1 CrashLoopBackOff 6 5m\n")
+check("...and so is one that is not running at all", any("CrashLoopBackOff" in p for p in chk.problems))
+chk, _ = _release(pods="a-1 3/3 Running 0 1m\n")
+check("a pod with several ready containers is fine", not chk.problems)
+
+# ── a namespace twice is not an error ────────────────────────────────────
+# A bare `kubectl create namespace` fails when it exists, which killed a second run of an add-on on its own
+# namespace; `|| true` hid every other reason it could fail.
+cmd = ac.namespace_command("mine")
+check("a namespace is applied, not created",
+      "--dry-run=client -o yaml | kubectl apply -f -" in cmd and "|| true" not in cmd and "mine" in cmd)
+check("the name is quoted, since it comes from the lab", ac.namespace_command("a b").count("'") >= 2)
+_body = (_REPO / "libs" / "addon_common.py").read_text().split("def namespace_command")[1].split("def ")[0]
+check("the command is returned rather than run, so the add-on's own ssh_run makes the call",
+      not any("ssh_run(" in line for line in _body.splitlines()))
+check("every add-on that needs a namespace runs that command itself",
+      all("ssh_run(" in line for f in (_REPO / "scripts").glob("install_*") if f.is_file()
+          for line in f.read_text().splitlines() if "ac.namespace_command(" in line))
+check("no add-on creates a namespace the fragile way any more",
+      not any('ssh_run(hostname, "kubectl create namespace {}"'.replace("{}", "") in
+              (_REPO / "scripts" / f.name).read_text()
+              for f in (_REPO / "scripts").glob("install_*") if f.is_file() and f.suffix in ("", ".py")))
 
 check("the installer deploys the driver",
       "check_lab.py" in (_REPO / "install_automation_node_scripts.sh").read_text())

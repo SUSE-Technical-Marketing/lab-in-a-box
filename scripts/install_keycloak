@@ -27,6 +27,7 @@ PLUGIN = {
     "requires_kubernetes": None,
     "requires_cluster": ["storageclass"],
     "aux_services": [],
+    "check": True,
 }
 
 import json
@@ -59,7 +60,7 @@ def setup_keycloak_repo(hostname: str, keycloak_rel: str = None, keycloak_repo_u
 def admin_secret(hostname: str, ns: str, cfg: dict) -> None:
     """keycloak-admin with KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD: replaced when keycloak_password is set, otherwise created
     once with a random password. The password travels in an environment variable."""
-    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    ssh_run(hostname, ac.namespace_command(ns))
     create = ("kubectl create secret generic keycloak-admin -n {} --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME={} "
               "--from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_PASSWORD\"").format(
         shlex.quote(ns), shlex.quote(cfg.get("keycloak_admin") or "admin"))
@@ -98,8 +99,21 @@ def setup_keycloak(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> st
     return fqdn
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "keycloak" section: the Helm release in keycloak_ns, its chart version
+    against keycloak_version, and every pod running.
+    """
+    if "keycloak" not in chk.definition:
+        chk.ok("this lab has no keycloak section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("keycloak", {}) or {}
+    chk.helm_release(chk.vm_name, "keycloak", chk.get("keycloak", "keycloak_ns", "keycloak"),
+                     version=cfg.get("keycloak_version") or "")
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))

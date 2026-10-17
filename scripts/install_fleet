@@ -174,8 +174,7 @@ def setup_fleet(hostname: str, cfg: dict) -> dict:
     if not fleet_available(hostname):
         die("fleet: this cluster has no Fleet CRDs (gitrepos.fleet.cattle.io) — Fleet ships with Rancher, so "
             "install the rancher add-on on this Kubernetes cluster first")
-    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
-        shlex.quote(workspace)))
+    ssh_run(hostname, ac.namespace_command(workspace))
 
     labelled = 0
     for entry in cfg.get("fleet_cluster_labels") or []:

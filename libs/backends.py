@@ -3865,7 +3865,29 @@ BACKENDS = {
 CLOUD_BACKEND_NAMES = frozenset(BACKENDS) - {"libvirt", "harvester"}
 
 
-def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
+# What the cloud DNS VM serves and to whom, inserted into whichever options block the distribution has. The lab's
+# own networks are substituted into the two recursion lines; everything else gets the zone and nothing more.
+_OPTIONS_TEMPLATE = (
+    "\tlisten-on port 53 { any; };",
+    "\tlisten-on-v6 port 53 { none; };",
+    "\tallow-query { any; };",
+    "\tallow-query-cache { __NETWORKS__localhost; localnets; };",
+    "\tallow-recursion { __NETWORKS__localhost; localnets; };",
+    "\tallow-transfer { none; };",
+    "\tallow-update { none; };",
+    "\tversion none;",
+    "\tminimal-responses yes;",
+    # Forward rather than walk the root zone. A cloud instance usually has no IPv6, and BIND chasing the IPv6
+    # addresses of the root's nameservers logs "network unreachable" and stalls (confirmed live on 2026-10-17: the
+    # lab zone answered but nothing external resolved). The cloud's own resolver comes first, then two public ones,
+    # and "forward first" still lets it recurse itself if all three are unreachable.
+    "\tforwarders { 169.254.169.253; 9.9.9.9; 1.1.1.1; };",
+    "\tforward first;",
+    "\trate-limit { responses-per-second 15; window 5; };",
+)
+
+
+def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -> str:
     """
     Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(). It installs BIND and serves
     `mydomain` from the same on-disk path and convention DNSService (libs/services.py) uses for
@@ -3885,6 +3907,9 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
     """
+    _OPTIONS_LINES = [line.replace("__NETWORKS__", "".join("{}; ".format(c) for c in lab_networks or []))
+                      for line in _OPTIONS_TEMPLATE]
+
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
         escaping rule (YAML single-quoted strings don't support backslash escapes at all)."""
@@ -3916,10 +3941,16 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
         "printf '%s\\n' {conf} > \"$BIND_CONF\"".format(conf="'{}'".format(named_conf_line)),
         'if [ "$BIND_CONF" = /etc/named.lab.conf ]; then grep -qF "$BIND_CONF" /etc/named.conf'
         ' || echo \'include "/etc/named.lab.conf";\' >> /etc/named.conf; fi',
-        "if [ -f /etc/named.conf ]; then sed -i"
-        " -e 's/listen-on port 53 { 127.0.0.1; };/listen-on port 53 { any; };/'"
-        " -e 's/allow-query *{ localhost; };/allow-query { any; }; allow-recursion { localnets; localhost; };/'"
-        " /etc/named.conf; fi",
+        # The serving policy is written rather than patched into whatever the distribution shipped, because this
+        # server answers on a public address: it is authoritative for the lab's zone to anyone, recurses only for
+        # the lab's own networks, rate-limits what it answers so it cannot be used to amplify an attack at someone
+        # else, hands out no zone transfers and does not announce its version. The distribution's own conflicting
+        # lines are removed first, so there is one policy and it is this one.
+        'OPTS=/etc/bind/named.conf.options; [ -f "$OPTS" ] || OPTS=/etc/named.conf',
+        'sed -i -e "/^[[:space:]]*\\(recursion\\|allow-query\\|allow-recursion\\|allow-query-cache'
+        '\\|allow-transfer\\|allow-update\\|version\\|listen-on\\|listen-on-v6\\|rate-limit\\|forwarders\\|forward\\)/d" "$OPTS"',
+        'sed -i "/^[[:space:]]*options[[:space:]]*{/a \\' + "\n".join(_OPTIONS_LINES) + '" "$OPTS"',
+        'named-checkconf || { echo "named-checkconf refused the generated configuration" >&2; exit 1; }',
         'chown -R "$BIND_USER:$BIND_USER" /var/lib/named',
         "chmod 0755 /var/lib/named",
         "if command -v selinuxenabled >/dev/null && selinuxenabled; then chcon -R -t named_zone_t /var/lib/named; fi",
@@ -3927,7 +3958,9 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
         " printf '%s\\n' '/var/lib/named/** rw,' > /etc/apparmor.d/local/usr.sbin.named; fi",
         "if [ -f /etc/apparmor.d/usr.sbin.named ] && command -v apparmor_parser >/dev/null; then"
         " apparmor_parser -r /etc/apparmor.d/usr.sbin.named; fi",
-        "systemctl enable --now named",
+        "systemctl enable --now named 2>/dev/null || systemctl enable --now bind9",
+        'systemctl is-active named >/dev/null 2>&1 || systemctl is-active bind9 >/dev/null 2>&1'
+        ' || { echo "BIND did not start" >&2; exit 1; }',
     ]
     runcmd_block = "\n".join("  - {}".format(yq(cmd)) for cmd in commands)
 
@@ -3956,6 +3989,25 @@ def cloud_dns_image(definition, config, vm_name):
     """
     _account, eff_config, _cloudtype = resolve_cloud_account(definition, config, vm_name)
     return str(eff_config.get("CLOUD_DNS_IMAGE") or "")
+
+
+def dns_recursion_networks(backend):
+    """
+    The networks the cloud DNS VM may recurse for, as CIDR strings.
+
+    A lab node resolves through this server, and a node can be in any cloud's private subnet or in the home lab, so
+    the private ranges are what may recurse: every lab network is one of them, and no address on the public internet
+    is, which is what keeps an open port 53 from being an open resolver. The backend's own subnet is named too when
+    it knows it, and the overlay's range for a lab that uses it.
+    """
+    networks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
+    try:
+        own = backend.get_subnet_cidr()
+    except Exception:                                            # noqa: BLE001 - best effort, it only narrows nothing
+        own = None
+    if own and own not in networks:
+        networks.append(own)
+    return networks
 
 
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
@@ -4010,13 +4062,17 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)
     (base / "{}_user-data".format(dns_vm_name)).write_text(
-        _cloud_dns_vm_user_data(root_ssh_key, mydomain))
+        _cloud_dns_vm_user_data(root_ssh_key, mydomain, lab_networks=dns_recursion_networks(backend)))
 
     backend.copy_vm_image(iso_image, dns_vm_name, 8, config_method="cloud-init")
     backend.push_provisioning_files(dns_vm_name, config_method="cloud-init")
+    # DNS, and nothing else. A lab node resolves through this server from whatever network it is in, so 53 has to
+    # be reachable; the server itself answers the lab's own zone to anyone and recurses only for the lab's networks
+    # (see _cloud_dns_vm_user_data), so an open 53 is not an open resolver. SSH is opened by the backend's own rule.
     ip = backend.create_vm(
         dns_vm_name, 1, 512, 8, None,
         config_method="cloud-init", iso_image=iso_image, mymac=None,
+        open_ports=["53/udp", "53/tcp"],
     )
     if not ip:
         die("cloud DNS VM '{}' was created on backend '{}' but create_vm() reported no IP — "

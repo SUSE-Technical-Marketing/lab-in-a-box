@@ -67,9 +67,9 @@ try:
     check("runcmd reloads the AppArmor profile after writing the override, before starting named",
           runcmd.index(next(c for c in runcmd if "/etc/apparmor.d/local/usr.sbin.named" in c))
           < runcmd.index(next(c for c in runcmd if "apparmor_parser -r" in c))
-          < runcmd.index("systemctl enable --now named"))
+          < next(i for i, c in enumerate(runcmd) if c.startswith("systemctl enable --now named")))
     check("runcmd enables and starts named (no alias needed) at the end",
-          runcmd[-1] == "systemctl enable --now named")
+          runcmd[-2].startswith("systemctl enable --now named"))
     detect = runcmd[0]
     check("runcmd first picks the BIND package, user and config file per OS family from /etc/os-release",
           detect.startswith(". /etc/os-release") and "apt-get install -y bind9" in detect
@@ -78,8 +78,9 @@ try:
           "packages" not in parsed)
     check("non-Debian families include the zone stanza from /etc/named.conf",
           any('include "/etc/named.lab.conf";' in c for c in runcmd))
-    check("a localhost-only named.conf is opened to clients, recursion kept to local networks",
-          any("listen-on port 53 { any; };" in c and "allow-recursion { localnets; localhost; };" in c for c in runcmd))
+    check("the server answers on every address, and recursion stays with the lab's own networks",
+          any("listen-on port 53 { any; };" in c and "allow-recursion {" in c and "localnets;" in c
+              for c in runcmd))
 
     # Every runcmd entry must actually be a runnable shell command — real, not just
     # syntactically-plausible-looking text.
@@ -145,8 +146,10 @@ class _FakeBackendCreate:
     def push_provisioning_files(self, vm_name, config_method=""):
         self.calls.append(("push_provisioning_files", vm_name, config_method))
 
-    def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, config_method="", iso_image="", mymac=None):
+    def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, config_method="", iso_image="", mymac=None,
+                  open_ports=None):
         self.calls.append(("create_vm", vm_name, vm_cpu, vm_mem, vm_dsk_gb, config_method, iso_image))
+        self.open_ports = open_ports
         return "203.0.113.101"
 
 
@@ -324,6 +327,59 @@ source = (_REPO / "libs" / "backends.py").read_text() if "_REPO" in dir() else P
     __file__).resolve().parents[2].joinpath("libs", "backends.py").read_text()
 check("the cloud DNS VM is ready only once cloud-init has finished and named is active",
       "/var/lib/cloud/instance/boot-finished && systemctl is-active named" in source)
+
+# ── the cloud DNS VM answers on a public address, so its policy is written, not inherited ─────────────────────────
+# Rebuilt live on 2026-10-17 after the one in the aws-tmm account turned out to have no BIND at all and no port 53
+# open in its security group: it could never have served anything.
+# The policy is asserted against the generated user-data as text: the suite's interpreter may have no PyYAML, and
+# these properties are the ones that keep a public port 53 safe.
+_ud_text = backends._cloud_dns_vm_user_data("ssh-rsa AAAA key", "mydemo.lab", lab_networks=["172.31.80.0/20"])
+check("it writes a serving policy of its own", "rate-limit" in _ud_text and "options" in _ud_text)
+check("the lab's zone is answered to anyone, since a lab node can be on any network",
+      "allow-query { any; }" in _ud_text)
+check("recursion is only for the networks the lab is on, so an open 53 is not an open resolver",
+      "allow-recursion { 172.31.80.0/20;" in _ud_text and "allow-query-cache { 172.31.80.0/20;" in _ud_text)
+check("it cannot be used to amplify an attack",
+      "rate-limit { responses-per-second 15; window 5; }" in _ud_text)
+check("it hands out no zone transfers and takes no updates",
+      "allow-transfer { none; }" in _ud_text and "allow-update { none; }" in _ud_text)
+check("it does not announce its version", "version none;" in _ud_text)
+check("it answers on every address but listens on no IPv6",
+      "listen-on port 53 { any; }" in _ud_text and "listen-on-v6 port 53 { none; }" in _ud_text)
+# A cloud instance usually has no IPv6, and BIND chasing the root's IPv6 nameservers stalls: confirmed live on
+# 2026-10-17, when the lab zone answered while nothing external resolved at all.
+check("it forwards rather than walking the root zone",
+      "forwarders { 169.254.169.253; 9.9.9.9; 1.1.1.1; }" in _ud_text and "forward first" in _ud_text)
+check("the distribution's own conflicting directives are removed first, so there is one policy",
+      all(d in _ud_text for d in ("recursion", "allow-query", "allow-transfer", "version", "listen-on",
+                                  "rate-limit", "forwarders"))
+      and "sed -i -e" in _ud_text)
+check("a configuration named refuses is a failure, not a VM that quietly serves nothing",
+      "named-checkconf" in _ud_text and "refused the generated configuration" in _ud_text)
+check("the service is started by either of its names, and a failure to start is an error",
+      "enable --now named" in _ud_text and "enable --now bind9" in _ud_text and "BIND did not start" in _ud_text)
+check("port 53 is opened for it, which is what it exists for",
+      'open_ports=["53/udp", "53/tcp"]' in (_REPO / "libs" / "backends.py").read_text())
+
+
+class _Subnetted:
+    def get_subnet_cidr(self):
+        return "172.31.80.0/20"
+
+
+_nets = backends.dns_recursion_networks(_Subnetted())
+check("the networks allowed to recurse are the private ones plus the backend's own subnet",
+      "10.0.0.0/8" in _nets and "192.168.0.0/16" in _nets and "172.31.80.0/20" in _nets)
+check("no public range may recurse", not any(n.startswith(("0.", "1.", "8.", "18.")) for n in _nets))
+
+
+class _NoSubnet:
+    def get_subnet_cidr(self):
+        raise RuntimeError("no subnet configured")
+
+
+check("a backend that cannot say what its subnet is still gets the private ranges",
+      len(backends.dns_recursion_networks(_NoSubnet())) >= 4)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

@@ -52,10 +52,10 @@ PLUGIN = {
     "requires_kubernetes": None,
     "requires_cluster": ["storageclass"],
     "aux_services": [],
+    "check": True,
 }
 
 import os
-import secrets
 import shlex
 import sys
 import time
@@ -229,7 +229,7 @@ def setup_gitlab_kubernetes(hostname, cfg):
     helm_repo_add(hostname, cfg.get("gitlab_rel") or "gitlab", cfg.get("gitlab_repo_url") or
                   "https://charts.gitlab.io/")
 
-    ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(ns), check=False)
+    ssh_run(hostname, ac.namespace_command(ns))
 
     set_args = [
         "--set global.edition={}".format(edition),
@@ -267,8 +267,25 @@ def setup_gitlab_kubernetes(hostname, cfg):
     return ["{}.{}".format(sub, domain) for sub in _CHART_HOSTS]
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "gitlab" section, in Kubernetes mode: the Helm release in its namespace, its
+    chart version against gitlab_chart_version, and every pod running. A podman-mode GitLab is not a Helm release,
+    so it is reported as not checked rather than as a failure.
+    """
+    if "gitlab" not in chk.definition:
+        chk.ok("this lab has no gitlab section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("gitlab", {}) or {}
+    if str(cfg.get("gitlab_deployment") or "").strip().lower() == "podman":
+        chk.ok("this lab runs GitLab in podman, which this check does not look at")
+        return
+    chk.helm_release(chk.vm_name, "gitlab", chk.get("gitlab", "gitlab_ns", "gitlab"),
+                     version=cfg.get("gitlab_chart_version") or "")
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))

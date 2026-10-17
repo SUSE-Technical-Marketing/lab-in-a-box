@@ -26,7 +26,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -512,6 +511,9 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
 
     lc.log("Rebooting kept cluster nodes")
     lc._level += 1
+    # Each node's boot id before it is rebooted, so the wait below has evidence the reboot happened rather than a
+    # guess at how long a node takes to stop answering.
+    boot_ids = {}
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if not node_cfg.get("kcluster"):
             continue
@@ -522,15 +524,20 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
             lc._RED, vm_name, lc._RESET, lc._RED, node_cfg["kcluster"], lc._RESET))
         # These are existing (kept) VMs — locate_kvm_host(), not resolve_kvm_host().
         remote_host, virt_srv = lc.locate_kvm_host(definition, vm_name, config)
+        boot_ids[vm_name] = lc.boot_id(vm_name)
         lc.reboot_vm(virt_srv, vm_name, remote_host=remote_host)
     lc._level -= 1
 
-    time.sleep(5)
     lc.log("Waiting for cluster nodes to come back online")
     lc._level += 1
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if not node_cfg.get("kcluster"):
             continue
+        # The node's own boot id is the evidence that it has rebooted; the port alone answered on the way down,
+        # which is why this used to sleep first and then poll. Without a boot id to compare (it could not be read
+        # before the reboot), the port is still the only thing left to wait for.
+        if boot_ids.get(vm_name):
+            lc.wait_for_reboot(vm_name, boot_ids[vm_name])
         lc.check_ssh_conn(vm_name)
     lc._level -= 1
 
@@ -628,9 +635,14 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
             _report.add_error(msg)
             continue
 
-        total_wait = 2 + delay_min
-        lc.log("Wait {} min for cluster \"{}{}{}\" to stabilise".format(total_wait, lc._RED, clu_name, lc._RESET))
-        time.sleep(60 * total_wait)
+        # Wait for what "stabilise" means rather than for a number of minutes: install_cluster() has already waited
+        # for every node to report Ready, and what the add-ons actually need is the cluster's own system workloads
+        # up. delay_min is the patience, in minutes, instead of the sleep it used to be.
+        server = k8s.kcluster_node(definition, clu_name)
+        if server:
+            k8s.wait_system_ready(k8s.get_distro(clu_type), server, timeout=60 * (2 + delay_min))
+        else:
+            lc.warn("cluster '{}' has no node to ask whether it has settled".format(clu_name))
 
         _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg)
 
