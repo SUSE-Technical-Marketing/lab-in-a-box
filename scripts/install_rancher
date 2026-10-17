@@ -17,8 +17,10 @@
 #   rancher_admin_pwd      : [OPTIONAL] The password the admin user ends up with. The install completes Rancher's
 #                            first login (without which its server URL stays empty and no cluster can be imported)
 #                            and changes the password to this one. Default: the bootstrap password is kept.
-#   rancher_import_clusters: [OPTIONAL] Kubernetes clusters to import into this Rancher, as
-#                            [{"kcluster": "<name>"}] for another kcluster of this same lab, or
+#   rancher_import_clusters: [OPTIONAL] Kubernetes clusters to import into this Rancher. "all" imports every other
+#                            kcluster of this same lab and needs nothing else named: a kcluster is reached through
+#                            its own node and its own kubeconfig, so no URL, user or password is involved. Otherwise
+#                            a list, as [{"kcluster": "<name>"}] for another kcluster of this same lab, or
 #                            [{"name": "<rancher name>", "node": "<host>"}] for an existing cluster reached by a
 #                            host whose kubectl talks to it. "name" defaults to the kcluster's own name, and
 #                            "insecure_tls": "false" stops the agent being told to accept this Rancher's
@@ -84,7 +86,13 @@ def _validate(v):
     v.vurl("rancher")
     cfg = v.definition.get("rancher", {}) or {}
     kclusters = v.definition.get("kclusters", {}) or {}
-    for entry in cfg.get("rancher_import_clusters") or []:
+    asked = cfg.get("rancher_import_clusters") or []
+    if isinstance(asked, str):
+        if asked.strip().lower() not in ("all", "true", "yes"):
+            v.errors.append("[ERROR] rancher.rancher_import_clusters: {!r} is not understood; use \"all\" or a "
+                            "list of entries".format(asked))
+        asked = []
+    for entry in asked:
         if not isinstance(entry, dict):
             v.errors.append("[ERROR] rancher.rancher_import_clusters: every entry is an object with a 'kcluster' "
                             "of this lab or a 'node' to reach the cluster through")
@@ -229,7 +237,7 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
                                  cfg.get("rancher_admin_pwd") or initial_rancher_pwd)
     print("# Admin password: {}".format(admin_pwd))
 
-    import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg)
+    import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg, own_kcluster=clu_name)
 
 
 def finish_bootstrap(hostname, hostname_fqdn, bootstrap_pwd, admin_pwd):
@@ -404,13 +412,44 @@ def import_cluster(hostname, hostname_fqdn, admin_pwd, name, target_node, insecu
     return cluster_id
 
 
-def import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg):
+def lab_import_entries(definition, own_kcluster):
+    """
+    One import entry per kcluster of this lab other than `own_kcluster`, the one Rancher itself runs on, for
+    rancher_import_clusters: "all". Nothing has to be named: a kcluster of the lab is reached through its own node,
+    with its own kubeconfig, so the lab definition already holds everything the import needs.
+
+    A clu_type harvester cluster is left out and said so: Harvester is an appliance whose own registration goes
+    through its cluster-registration-url setting rather than a plain agent manifest, and that path is untested.
+    """
+    entries = []
+    for clu_name, clu_cfg in (definition.get("kclusters") or {}).items():
+        if clu_name == own_kcluster:
+            continue
+        if str((clu_cfg or {}).get("clu_type") or "") == "harvester":
+            warn("- rancher_import_clusters \"all\": skipping the harvester cluster '{}'. Import it by naming it "
+                 "explicitly once that path has been tried".format(clu_name))
+            continue
+        entries.append({"kcluster": clu_name})
+    return entries
+
+
+def import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg, own_kcluster=""):
     """
     Import every cluster the lab's rancher_import_clusters asks for. Returns {name: cluster id} for those that were
     imported. An entry naming a kcluster of this lab is reached through that kcluster's own node (k8s.kcluster_node);
-    one naming a node is reached through that node.
+    one naming a node is reached through that node. The value "all" imports every other kcluster of this lab, which
+    needs nothing named at all (lab_import_entries()).
     """
-    entries = cfg.get("rancher_import_clusters") or []
+    asked = cfg.get("rancher_import_clusters") or []
+    if isinstance(asked, str):
+        if asked.strip().lower() not in ("all", "true", "yes"):
+            warn("- rancher_import_clusters: {!r} is not understood; use \"all\" or a list of entries".format(asked))
+            return {}
+        entries = lab_import_entries(definition, own_kcluster)
+        if not entries:
+            print("# rancher_import_clusters \"all\": this lab has no other Kubernetes cluster to import")
+    else:
+        entries = asked
     if not entries:
         return {}
     imported = {}

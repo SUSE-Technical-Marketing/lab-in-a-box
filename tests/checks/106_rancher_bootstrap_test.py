@@ -255,9 +255,47 @@ with mock.patch.object(rancher, "import_cluster") as never:
     check("a lab that asks for no import does nothing",
           rancher.import_clusters("r", LAB, "f", "p", {}) == {} and not never.called)
 
+# ── "all": the lab names nothing, because it already holds everything ────
+# A kcluster of the lab is reached through its own node with its own kubeconfig, so an in-lab import needs no URL,
+# user or password of any kind.
+ALL_LAB = {"nodes": {"r1.lab": {"kcluster": "rancherlab"}, "k1.lab": {"kcluster": "kubelab"}},
+           "kclusters": {"rancherlab": {"clu_type": "k3s"}, "kubelab": {"clu_type": "kubeadm"},
+                         "harv": {"clu_type": "harvester"}}}
+with mock.patch.object(rancher, "warn"):
+    entries = rancher.lab_import_entries(ALL_LAB, "rancherlab")
+check("every other kcluster of the lab becomes an entry", entries == [{"kcluster": "kubelab"}])
+check("the cluster Rancher itself runs on is not imported into itself",
+      not any(e["kcluster"] == "rancherlab" for e in entries))
+warned = []
+with mock.patch.object(rancher, "warn", side_effect=lambda m: warned.append(m)):
+    rancher.lab_import_entries(ALL_LAB, "rancherlab")
+check("a harvester cluster is skipped and said so, since that path is untested",
+      warned and "harvester cluster 'harv'" in warned[0])
+
+calls = []
+with mock.patch.object(rancher, "import_cluster",
+                       side_effect=lambda h, f, p, name, target, insecure_tls=True:
+                       calls.append(name) or "c-m-2"), \
+     mock.patch.object(rancher, "warn"):
+    got = rancher.import_clusters("r1.lab", ALL_LAB, "rancher.lab.example", "pw",
+                                  {"rancher_import_clusters": "all"}, own_kcluster="rancherlab")
+check('"all" imports the lab\'s other clusters with nothing named', calls == ["kubelab"] and got == {"kubelab": "c-m-2"})
+
+with mock.patch.object(rancher, "import_cluster") as never, mock.patch.object(rancher, "warn"):
+    check("a lab whose only cluster is Rancher's own imports nothing",
+          rancher.import_clusters("r1.lab", {"kclusters": {"only": {}}}, "f", "p",
+                                  {"rancher_import_clusters": "all"}, own_kcluster="only") == {}
+          and not never.called)
+warned = []
+with mock.patch.object(rancher, "warn", side_effect=lambda m: warned.append(m)), \
+     mock.patch.object(rancher, "import_cluster") as never:
+    rancher.import_clusters("r1.lab", ALL_LAB, "f", "p", {"rancher_import_clusters": "some"}, own_kcluster="rancherlab")
+check("a value that is neither \"all\" nor a list is refused, not guessed at",
+      warned and "is not understood" in warned[0] and not never.called)
+
 check("the install imports after it has bootstrapped, since importing needs the server URL",
       source.index("finish_bootstrap(hostname, hostname_fqdn, initial_rancher_pwd,")
-      < source.index("import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg)"))
+      < source.index("import_clusters(hostname, definition, hostname_fqdn, admin_pwd, cfg,"))
 check("--check looks at every cluster the lab asked to import",
       "is not imported into this Rancher" in source and "does not report it ready" in source)
 
