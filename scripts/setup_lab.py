@@ -441,19 +441,26 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
 
 
 
-def phase_allocate_ips(definition, config):
+def phase_allocate_ips(definition, config, json_file):
     """
     Give every node that has no myip one, from the network the definition already describes. A cloud node is left
     alone, since its provider assigns the address; so is a node whose lab has no mygw and mymask to take one from.
-    The allocation is recorded in the definition and saved beside the lab's own file, never over it.
+
+    Returns the path the rest of the run must use as the lab definition: the sibling file the allocation was saved
+    to, or `json_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
+    file from disk, so a run that kept using the original would hand them a definition with no addresses in it, and
+    anything reading myip there (a service's DNS records, for one) would quietly do nothing.
     """
     missing = [name for name, cfg in (definition.get("nodes") or {}).items()
                if not str((cfg or {}).get("myip") or "").strip()]
     if not missing:
-        return
+        return json_file
     for vm_name in missing:
         backend = backends.get_backend(definition, config, vm_name, for_existing=False)
         backend.check_or_generate_ip(vm_name, "", definition)
+    allocated = str(primary.save_definition(definition))
+    lc.log("The run continues with '{}', which holds the allocated addresses".format(allocated))
+    return allocated
 
 def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
     """
@@ -809,7 +816,7 @@ def main():
     # A node with no myip gets one before anything is validated, so the preflight sees the addresses the run will
     # actually use and the lab's own file can be written without any (see libs/ipalloc.py). Deterministic, so the
     # same definition always resolves to the same addresses.
-    phase_allocate_ips(definition, config)
+    json_file = phase_allocate_ips(definition, config, json_file)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,

@@ -452,6 +452,14 @@ class VMBackend(object):
         """
         return ""
 
+    def resolve_image_name(self, name: str) -> str:
+        """
+        The image `name` as this backend's create_vm() needs it. A provider image ID is returned unchanged; a product
+        name such as "sles16" is looked up, so a lab can ask for an operating system instead of carrying an ID that
+        goes stale and silently becomes a different image. Unchanged by default; AWSBackend overrides it.
+        """
+        return name
+
 
 class LibvirtBackend(VMBackend):
     """
@@ -2091,6 +2099,38 @@ class AWSBackend(VMBackend):
             return ""
         return image.get("id", "")
 
+    _PRODUCT_IMAGES = {"opensuse": 0, "leap": 0}      # handled by opensuse_image(); the value is unused
+
+    def resolve_image_name(self, name: str) -> str:
+        """
+        VMBackend.resolve_image_name() override: "sles16", "sles16.0" or "sles" become the region's newest plain
+        pay-as-you-go SLES AMI of that version, and "opensuse" or "leap" the newest openSUSE Leap one. Anything else,
+        an "ami-…" included, is returned unchanged.
+
+        A lab that names an AMI carries a region-specific ID that ages: SUSE publishes a new build every few weeks,
+        and an ID copied by hand can be a different product altogether (a SLES 15 image has no NetworkManager for
+        RKE2 to configure, which is how one GPU lab failed). Naming the product keeps the lab readable and current.
+        """
+        wanted = str(name or "").strip().lower()
+        if wanted in self._PRODUCT_IMAGES:
+            return self.opensuse_image() or name
+        match = re.match(r"^sles(\d+)?(?:[.-](\d+))?$", wanted)
+        if not match:
+            return name
+        major = int(match.group(1)) if match.group(1) else 0
+        try:
+            image = suse_catalogue.newest_sles(
+                suse_catalogue.active_images("amazon", self.region), "-x86_64", major=major)
+        except (OSError, ValueError) as exc:
+            die("could not read SUSE's public cloud image list for AWS region '{}' to resolve SOURCE_IMAGE "
+                "'{}': {}".format(self.region, name, exc))
+        if not image.get("id"):
+            die("SUSE publishes no plain SLES{} x86_64 image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
+                "instead".format(" " + str(major) if major else "", self.region))
+        _lc.log("- SOURCE_IMAGE '{}' is {} ({}) in {}".format(
+            name, image["id"], image.get("name", ""), self.region))
+        return image["id"]
+
     def disable_source_dest_check(self, vm_name):
         """
         VMBackend.disable_source_dest_check() override — EC2's own
@@ -2260,6 +2300,7 @@ class AWSBackend(VMBackend):
                     "virtualization.".format(
                         instance_type, family, ", ".join(sorted(self._NESTED_VIRT_SUPPORTED_FAMILIES))))
 
+        iso_image = self.resolve_image_name(iso_image)
         image_result = self._aws("ec2", "describe-images", "--image-ids", iso_image)
         images = (image_result or {}).get("Images", [])
         if not images:

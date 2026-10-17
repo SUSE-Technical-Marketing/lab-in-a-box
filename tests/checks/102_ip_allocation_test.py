@@ -208,9 +208,17 @@ check("...and still demands it when there is no network to allocate from",
       "the lab has no 'mygw' and 'mymask' to allocate one" in source)
 check("each previewed address is held against the next node's",
       "_previewed_ips.add(would_get)" in source)
+_setup_lab = (_REPO / "scripts" / "setup_lab.py").read_text()
 check("the run allocates before it validates",
-      "phase_allocate_ips(definition, config)" in (_REPO / "scripts" / "setup_lab.py").read_text()
+      "json_file = phase_allocate_ips(definition, config, json_file)" in _setup_lab
+      and _setup_lab.index("phase_allocate_ips(definition, config, json_file)")
+      < _setup_lab.index("ok = lc.validate_lab_definition(")
       and "check_or_generate_ip" in (_REPO / "scripts" / "setup_vm.py").read_text())
+# Every add-on is its own process reading the lab file from disk, so the run has to continue with the file the
+# allocation was saved to. Confirmed live: with the original file, install_rancher saw no myip and its service DNS
+# record was never written, while the install still reported success.
+check("...and then continues with the file that holds the addresses",
+      "return allocated" in _setup_lab and "primary.save_definition(definition)" in _setup_lab)
 
 # ── the web UI asks the same allocator ────────────────────────────────────
 import discovery  # noqa: E402
@@ -228,13 +236,18 @@ with mock.patch.object(discovery, "libs_dir", return_value=str(_REPO / "libs")):
           discovery.preview_addresses({"common": {}, "nodes": {"n1": {}}}) == {})
 
 app = (_REPO / "webui" / "htdocs" / "app.js").read_text()
-check("the tick box leaves both fields out of the lab it writes",
-      "state.autoAddr" in app and "delete o.myip; delete o.mymac;" in app)
-check("...and stops the builder demanding an address it is not writing",
-      "if (state.autoAddr) return;" in app)
+# Leaving the field blank IS the request: there is no tick box to find, and the builder does not demand an address
+# the run will allocate. It only insists when the lab has no network to take one from.
+check("a blank address does not stop the builder",
+      'errors.push("VM " + n.name + " has no IP address (myip), and the lab has no mygw and mymask' in app)
+check("...and it does insist when there is no network to allocate from",
+      'set(model.common, "mygw") && set(model.common, "mymask")' in app)
+check("no tick box is needed any more",
+      "autoAddr" not in app and "autoAddr" not in (_REPO / "webui" / "htdocs" / "index.html").read_text())
 check("the canvas shows the address the run would use",
-      "refreshPreviewAddresses" in app and "(automatic)" in app)
-check("the tick box is on the page", 'id="autoAddrBox"' in (_REPO / "webui" / "htdocs" / "index.html").read_text())
+      "refreshPreviewAddresses" in app and "(allocated)" in app)
+check("the preview is asked for whenever a VM has no address of its own",
+      'i.type === "node" && i.name && !has(i.cfg, "myip")' in app)
 check("the preview goes through the API, not a copy of the allocator in the browser",
       '"addresses"' in (_REPO / "webui" / "lib" / "api.py").read_text())
 

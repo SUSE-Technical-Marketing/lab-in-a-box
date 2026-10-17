@@ -220,6 +220,13 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   position:fixed;bottom:1.3rem;left:50%;transform:translateX(-50%);
   background:var(--ink);color:var(--bg);padding:.6rem 1.1rem;border-radius:9px;
   box-shadow:var(--shadow);font-size:.86rem;z-index:20;
+  max-width:min(46rem,92vw);white-space:pre-wrap;
+}
+/* An error is not a note: it is the one message a reader must not miss, so it carries its own colour, weight and
+   width rather than the same quiet grey as everything else. */
+.toast-error{
+  background:var(--danger);color:var(--bg);font-weight:650;font-size:.9rem;
+  border:1px solid var(--danger);
 }
 
 @media (max-width:1080px){
@@ -342,12 +349,26 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .dialog-body[hidden],.dialog-msg[hidden],#credPassBox[hidden]{display:none}
 .dialog-body .form-desc{padding:0;margin:0}
 
-/* The lab-actions tick box that hands address allocation to the run (libs/ipalloc.py). */
-.auto-addr {
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  font-size: .85rem;
-  white-space: nowrap;
-  cursor: pointer;
+/* An example lab's row: its name and what it holds, with its own description wrapped underneath, and the Open
+   button kept on the right whatever the text does. */
+.example-row {
+  display: flex;
+  align-items: flex-start;
+  gap: .8rem;
+  padding: .55rem 0;
+  border-bottom: 1px solid var(--line);
 }
+.example-row:last-child { border-bottom: 0; }
+.example-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; }
+.example-row .saved-name { flex: none; overflow: visible; text-overflow: clip; white-space: normal; }
+.example-desc {
+  margin: .1rem 0 0;
+  font-size: .8rem;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.example-row .btn { flex: none; align-self: center; }

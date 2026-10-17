@@ -36,8 +36,11 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": None,
     "aux_services": [],
+    "check": True,
 }
 
+import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -84,8 +87,43 @@ def setup_coredns(hostname, coredns_rel=None, coredns_ns=None, coredns_version=N
     print("CoreDNS standalone instance installed. Namespace: {}".format(ns))
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "coredns" section: the Helm release in its namespace, its chart version
+    against coredns_version, and a ready replica of the deployment. Looks at the cluster's own management node, the
+    one the install ran on.
+    """
+    if "coredns" not in chk.definition:
+        chk.ok("this lab has no coredns section, so there is nothing to check")
+        return
+    ns = chk.get("coredns", "coredns_ns", "coredns")
+    hostname = chk.vm_name
+
+    release = ssh_run(hostname, "helm -n {} list -f '^coredns$' -o json".format(shlex.quote(ns)),
+                      check=False, capture=True)
+    try:
+        entries = json.loads((release.stdout or "").strip() or "[]")
+    except ValueError:
+        entries = []
+    if not entries:
+        chk.fail("there is no 'coredns' Helm release in namespace {}".format(ns))
+        return
+    chk.ok("the 'coredns' Helm release is deployed in {} ({})".format(ns, entries[0].get("chart", "?")))
+
+    wanted = str(chk.get("coredns", "coredns_version", ""))
+    if wanted:
+        chk.expect("the chart version", wanted, str(entries[0].get("chart", "")).rsplit("-", 1)[-1])
+
+    ready = ssh_run(hostname, "kubectl -n {} get deploy coredns -o jsonpath='{{.status.readyReplicas}}'".format(
+        shlex.quote(ns)), check=False, capture=True)
+    if (ready.stdout or "").strip() in ("", "0"):
+        chk.fail("the coredns deployment in {} has no ready replica".format(ns))
+    else:
+        chk.ok("the coredns deployment in {} has {} ready replica(s)".format(ns, (ready.stdout or "").strip()))
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))

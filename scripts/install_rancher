@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
 # JSON section: "rancher" — SUSE Rancher Prime Kubernetes management platform
 #
@@ -14,6 +14,9 @@
 #   rancher_helm_chart     : [OPTIONAL] Helm chart reference                  (default: rancher-prime/rancher)
 #   rancher_version        : [OPTIONAL] Helm chart version                    (empty = latest, e.g. 2.13.3)
 #   rancher_initial_pwd    : [OPTIONAL] Bootstrap admin password; when unset, Rancher generates one and it is printed
+#   rancher_admin_pwd      : [OPTIONAL] The password the admin user ends up with. The install completes Rancher's
+#                            first login (without which its server URL stays empty and no cluster can be imported)
+#                            and changes the password to this one. Default: the bootstrap password is kept.
 #   rancher_replicas       : [OPTIONAL] Number of Rancher replicas            (default: 2)
 #   rancher_cert_repo_name : [OPTIONAL] cert-manager Helm repo alias          (default: jetstack)
 #   rancher_cert_repo_url  : [OPTIONAL] cert-manager Helm repo URL            (default: https://charts.jetstack.io)
@@ -27,6 +30,7 @@ PLUGIN = {
     "layers": ["kubernetes"],
     "requires_kubernetes": None,
     "requires_cluster": ["ingress"],
+    "check": True,
     "aux_services": [],
     # Version matrix (libs/versions.py). Kubernetes ranges: SUSE Rancher Prime support matrix
     # (https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/) and cert-manager's supported releases
@@ -45,6 +49,7 @@ PLUGIN = {
     },
 }
 
+import json
 import os
 import shlex
 import sys
@@ -61,7 +66,7 @@ import k8s  # noqa: E402
 import versions  # noqa: E402
 from lab_creation import (  # noqa: E402
     setup_helm, helm_repo_add, ssh_run, ssh_output, add_service_dns, add_dns_to_named_rr,
-    restart_named, die,
+    restart_named, die, warn,
 )
 
 
@@ -187,11 +192,119 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
     if not initial_rancher_pwd:
         die("Failed to retrieve bootstrap secret")
 
-    print("# Initial password: {}".format(initial_rancher_pwd))
+    admin_pwd = finish_bootstrap(hostname, hostname_fqdn, initial_rancher_pwd,
+                                 cfg.get("rancher_admin_pwd") or initial_rancher_pwd)
+    print("# Admin password: {}".format(admin_pwd))
+
+
+def finish_bootstrap(hostname, hostname_fqdn, bootstrap_pwd, admin_pwd):
+    """
+    Complete Rancher's first login and set its server URL, on `hostname`, for the Rancher served at
+    `hostname_fqdn`. Returns the password the admin user ends up with.
+
+    Until someone logs in once, Rancher leaves settings/server-url empty and never finishes bootstrapping, and
+    without that URL no ClusterRegistrationToken is ever given a manifest URL, so no cluster can be imported and
+    the lab's Rancher is only usable by hand. Confirmed live on 2026-10-17 while importing a kubeadm cluster: with
+    server-url empty, the token stays empty forever.
+
+    Idempotent: a Rancher that is already bootstrapped refuses the bootstrap password, which is not an error here,
+    and the server URL is set to the value it should already have.
+    """
+    print("# Finishing Rancher's bootstrap (first login and server URL)")
+    login = ("curl -sk https://{host}/v3-public/localProviders/local?action=login "
+             "-H 'content-type: application/json' "
+             "-d {payload} | tr ',' '\n' | sed -n 's/.*\"token\":\"\\([^\"]*\\).*/\\1/p' | head -1")
+    token = ssh_output(hostname, login.format(
+        host=hostname_fqdn,
+        payload=shlex.quote(json.dumps({"username": "admin", "password": bootstrap_pwd}))))
+    if not token:
+        # Already bootstrapped: the generated password no longer works. Nothing to finish.
+        token = ssh_output(hostname, login.format(
+            host=hostname_fqdn,
+            payload=shlex.quote(json.dumps({"username": "admin", "password": admin_pwd}))))
+        if not token:
+            warn("- Could not log in to Rancher at https://{} to finish its bootstrap; a cluster cannot be "
+                 "imported until someone logs in once".format(hostname_fqdn))
+            return admin_pwd
+        print("# Rancher was already bootstrapped")
+    elif admin_pwd != bootstrap_pwd:
+        ssh_run(hostname, "curl -sk -o /dev/null https://{host}/v3/users?action=changepassword "
+                          "-H 'content-type: application/json' -H {auth} -d {payload}".format(
+                              host=hostname_fqdn, auth=shlex.quote("Authorization: Bearer " + token),
+                              payload=shlex.quote(json.dumps({"currentPassword": bootstrap_pwd,
+                                                              "newPassword": admin_pwd}))), check=False)
+
+    # The URL every downstream cluster's agent is told to come back to.
+    ssh_run(hostname, "curl -sk -o /dev/null -X PUT https://{host}/v3/settings/server-url "
+                      "-H 'content-type: application/json' -H {auth} -d {payload}".format(
+                          host=hostname_fqdn, auth=shlex.quote("Authorization: Bearer " + token),
+                          payload=shlex.quote(json.dumps({"name": "server-url",
+                                                          "value": "https://" + hostname_fqdn}))), check=False)
+    found = ssh_output(hostname, "kubectl get settings.management.cattle.io server-url -o jsonpath='{.value}'")
+    if found != "https://" + hostname_fqdn:
+        warn("- Rancher's server-url is '{}', not 'https://{}'; importing a cluster will not work until it "
+             "is".format(found or "empty", hostname_fqdn))
+    else:
+        print("# Rancher's server URL is https://{}".format(hostname_fqdn))
+    return admin_pwd
+
+
+def _check(chk):
+    """
+    What is deployed against the lab's "rancher" section: the Helm release in cattle-system, its chart version
+    against rancher_version, the hostname it was installed with against rancher_shorthn and the cluster's domain,
+    the replica count, and that every Rancher pod is ready.
+    """
+    if "rancher" not in chk.definition:
+        chk.ok("this lab has no rancher section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("rancher", {}) or {}
+    hostname = chk.vm_name
+
+    release = ssh_run(hostname, "helm -n cattle-system list -o json", check=False, capture=True)
+    try:
+        entries = [e for e in json.loads((release.stdout or "").strip() or "[]") if e.get("name") == "rancher"]
+    except ValueError:
+        entries = []
+    if not entries:
+        chk.fail("there is no 'rancher' Helm release in cattle-system")
+        return
+    chart = str(entries[0].get("chart", ""))
+    chk.ok("the 'rancher' Helm release is deployed in cattle-system ({})".format(chart or "?"))
+
+    wanted = str(cfg.get("rancher_version") or "")
+    if wanted:
+        chk.expect("the chart version", wanted.lstrip("v"), chart.rsplit("-", 1)[-1])
+
+    clu_cfg = k8s.load_kclu_vars(chk.definition, chk.clu_name) if chk.clu_name else {}
+    mydomain = clu_cfg.get("mydomain") or (chk.definition.get("common", {}) or {}).get("mydomain", "")
+    if chk.clu_name and mydomain:
+        expected_host = "{}.{}.{}".format(cfg.get("rancher_shorthn") or "rancher", chk.clu_name, mydomain)
+        found = ssh_run(hostname, "helm -n cattle-system get values rancher -o json", check=False, capture=True)
+        try:
+            values = json.loads((found.stdout or "").strip() or "{}")
+        except ValueError:
+            values = {}
+        chk.expect("the hostname Rancher serves", expected_host, str(values.get("hostname", "")))
+        chk.expect("the replica count", str(cfg.get("rancher_replicas") or "2"), str(values.get("replicas", "")))
+
+    ready = ssh_run(hostname, "kubectl -n cattle-system get deploy rancher "
+                              "-o jsonpath='{.status.readyReplicas}/{.spec.replicas}'",
+                    check=False, capture=True)
+    state = (ready.stdout or "").strip()
+    if not state or state.startswith(("0/", "/")):
+        chk.fail("the rancher deployment in cattle-system has no ready replica (it reports '{}')".format(
+            state or "nothing"))
+    else:
+        want, _, have = state.partition("/")
+        if want != have:
+            chk.fail("the rancher deployment has {} of {} replicas ready".format(want, have))
+        else:
+            chk.ok("the rancher deployment in cattle-system has {} replica(s) ready".format(want))
 
 
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))

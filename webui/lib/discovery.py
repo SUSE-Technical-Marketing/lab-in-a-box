@@ -365,6 +365,9 @@ def examples():
         owners = list((definition.get("kclusters") or {}).values()) + list((definition.get("nodes") or {}).values())
         if isinstance(definition.get("cluster"), dict):     # the older single-Kubernetes-cluster format
             owners.append(definition["cluster"])
+        # The older format also keeps one shared add-on list at the top level, beside its single "cluster".
+        if isinstance(definition.get("addons"), list):
+            owners.append({"addons": definition["addons"]})
         for owner in owners:
             for entry in (owner or {}).get("addons") or []:
                 addons.add(_apps_lib().addon_entry_name(entry))
@@ -373,7 +376,9 @@ def examples():
             "title": _example_title(name),
             "description": (definition.get("common") or {}).get("lab_description", ""),
             "nodes": len(definition.get("nodes") or {}),
-            "kclusters": len(definition.get("kclusters") or {}),
+            # The older format's single "cluster" counts as one, so an example never reads as having none.
+            "kclusters": len(definition.get("kclusters") or {})
+                         or (1 if isinstance(definition.get("cluster"), dict) else 0),
             "addons": sorted(addons),
         })
     return out

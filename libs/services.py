@@ -290,8 +290,16 @@ class DNSService(AuxService):
             if cfg.get("kcluster") == clu_name and "myip" in cfg
         ]
 
+        if not record_targets:
+            # Every node of the cluster lacks a myip to point at. A lab definition that leaves addresses out is
+            # read from the file the run saved them to (setup_lab.py's phase_allocate_ips), so reaching here means
+            # that did not happen and the service would have no DNS name at all.
+            warn("DNS '{}' NOT added: no node of cluster '{}' has a 'myip' to point it at".format(
+                dns_entry, clu_name))
+            return
         msg = "agent" if agent_nodes else "all"
-        log("DNS '{}' added pointing to {} nodes of cluster '{}'".format(dns_entry, msg, clu_name))
+        log("DNS '{}' added pointing to {} nodes of cluster '{}' ({})".format(
+            dns_entry, msg, clu_name, ", ".join(ip for _n, ip in record_targets)))
 
         zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         with _dns_lock:

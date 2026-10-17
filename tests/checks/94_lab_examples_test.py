@@ -1,6 +1,7 @@
 #!/usr/bin/env python3.11
 # The lab-builder's example labs — see 94_lab_examples.sh.
 import json
+from unittest import mock
 import os
 import sys
 import tempfile
@@ -112,6 +113,32 @@ check("opening one loads it onto the canvas", 'loadLab(await apiGet("example"' i
 static = (_REPO / "scripts" / "build-cube-static.py").read_text()
 check("the static build embeds the examples and answers for them",
       '"examples": examples' in static and 'action === "examples"' in static)
+
+# ── what the dialog shows, and that it can show it ────────────────────────
+# An example's description is a sentence. On the single-line row the examples used to borrow, the name was
+# ellipsised away and the Open button squeezed off the row, so the rows are their own two-line layout now.
+app = (_REPO / "webui" / "htdocs" / "app.js").read_text()
+css = (_REPO / "webui" / "htdocs" / "style.css").read_text()
+check("an example row is its own layout, not the one-line saved-lab row",
+      'el("li", "example-row")' in app and "example-row" in css)
+check("the description wraps under the name rather than beside it",
+      'el("p", "example-desc", ex.description)' in app and ".example-desc" in css)
+check("the name is allowed to wrap instead of being cut off",
+      ".example-row .saved-name" in css and "white-space: normal" in css)
+check("the Open button keeps its place whatever the text does", ".example-row .btn" in css)
+check("a long description is clamped rather than filling the dialog", "-webkit-line-clamp" in css)
+
+# The older format keeps its cluster under "cluster" and one shared add-on list at the top level, so an example in
+# that format used to be listed as having no cluster and no add-ons at all.
+old_format = {"nodes": {"n1": {}, "n2": {}}, "cluster": {"clu_name": "c1", "clu_type": "rke2"},
+              "addons": ["rancher", "longhorn"], "common": {}}
+with tempfile.TemporaryDirectory() as tmp:
+    Path(tmp, "old-format.json").write_text(json.dumps(old_format))
+    with mock.patch.dict(os.environ, {"LABBUILDER_EXAMPLES_DIR": tmp}):
+        listed = discovery.examples()
+check("an older-format example is listed with its cluster and its add-ons",
+      len(listed) == 1 and listed[0]["kclusters"] == 1
+      and listed[0]["addons"] == ["longhorn", "rancher"] and listed[0]["nodes"] == 2)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

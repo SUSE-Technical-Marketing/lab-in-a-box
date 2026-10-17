@@ -1,0 +1,42 @@
+{
+  "nodes": {
+    "kube1.mydemo.lab": {
+      "kcluster": "kubelab",
+      "KUBERNETES_NODE_TYPE": "server"
+    },
+    "kube2.mydemo.lab": {
+      "kcluster": "kubelab",
+      "KUBERNETES_NODE_TYPE": "agent"
+    }
+  },
+  "common": {
+    "lab_name": "Portable upstream Kubernetes",
+    "lab_description": "Upstream Kubernetes built with kubeadm: one control-plane node, one worker, flannel, and a default storage class. No addresses are named, so each node is given one from the network common.mygw and common.mymask describe. Unlike RKE2 and K3s, kubeadm brings neither an ingress controller nor a storage class, so clu_ingress and clu_storage say what supplies them; an add-on that needs either one pulls it in on its own if they are left out.",
+    "SOURCE_IMAGE": "Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
+    "config_method": "cloud-init",
+    "VM_MEM": "4096",
+    "VM_DSK": "40",
+    "VM_CPU": "2",
+    "mymask": "24",
+    "mygw": "192.168.88.1",
+    "mydns": "192.168.88.1",
+    "mydomain": "mydemo.lab"
+  },
+  "kclusters": {
+    "kubelab": {
+      "clu_type": "kubeadm",
+      "clu_rel": "1.33",
+      "clu_cni": "flannel",
+      "clu_storage": "local-path",
+      "mydomain": "mydemo.lab",
+      "addons": ["coredns"]
+    }
+  },
+  "coredns": {
+    "coredns_source": "upstream",
+    "coredns_ns": "coredns"
+  },
+  "local_path": {
+    "local_path_ns": "local-path-storage"
+  }
+}

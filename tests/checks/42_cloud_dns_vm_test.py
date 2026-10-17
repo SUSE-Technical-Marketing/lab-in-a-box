@@ -219,6 +219,65 @@ check("newest_leap(): the arm64 build when asked for it",
 check("newest_leap(): {} when the list has no openSUSE Leap image",
       suse_catalogue.newest_leap(_catalogue[-1:], "-x86_64") == {})
 
+# ── suse_catalogue.newest_sles(): the plain pay-as-you-go SLES, never a BYOS or a different product ──
+# A BYOS image needs a registration code before its zypper installs anything, and chost, sapcal and hardened are
+# other products, so a lab that just wants a SLES node must not be handed one of those.
+_sles = [
+    {"name": "suse-sles-15-7-v20261012-hvm-ssd-x86_64", "id": "ami-157", "publishedon": "20261012"},
+    {"name": "suse-sles-16-0-v20260901-hvm-ssd-x86_64", "id": "ami-16-old", "publishedon": "20260901"},
+    {"name": "suse-sles-16-0-v20261008-hvm-ssd-x86_64", "id": "ami-16-new", "publishedon": "20261008"},
+    {"name": "suse-sles-16-0-byos-v20261013-hvm-ssd-x86_64", "id": "ami-16-byos", "publishedon": "20261013"},
+    {"name": "suse-sles-16-0-chost-byos-v20261014-hvm-ssd-x86_64", "id": "ami-16-chost", "publishedon": "20261014"},
+    {"name": "suse-sles-16-0-sapcal-v20261015-hvm-ssd-x86_64", "id": "ami-16-sap", "publishedon": "20261015"},
+    {"name": "suse-sles-16-0-hardened-byos-v20261016-hvm-ssd-x86_64", "id": "ami-16-hard",
+     "publishedon": "20261016"},
+    {"name": "suse-sles-16-0-v20261009-hvm-ssd-arm64", "id": "ami-16-arm", "publishedon": "20261009"},
+    {"name": "openSUSE-Leap-16-0-v20261015-hvm-ssd-x86_64", "id": "ami-leap", "publishedon": "20261015"},
+]
+check("newest_sles(): the newest plain SLES 16, not the newer-dated BYOS, chost, sapcal or hardened builds",
+      suse_catalogue.newest_sles(_sles, "-x86_64").get("id") == "ami-16-new")
+check("newest_sles(): one major version when asked",
+      suse_catalogue.newest_sles(_sles, "-x86_64", major=15).get("id") == "ami-157")
+check("newest_sles(): the arm64 build when asked for it",
+      suse_catalogue.newest_sles(_sles, "-arm64").get("id") == "ami-16-arm")
+check("newest_sles(): openSUSE Leap is not SLES",
+      suse_catalogue.newest_sles([_sles[-1]], "-x86_64") == {})
+check("newest_sles(): {} when no major matches",
+      suse_catalogue.newest_sles(_sles, "-x86_64", major=12) == {})
+
+# ── a lab can name the product instead of an AMI ID ───────────────────────
+# An ID copied by hand ages: SUSE publishes a new build every few weeks, and the wrong one can be a different
+# product. A SLES 15 AMI has no NetworkManager for RKE2 to configure, which is how a GPU lab failed.
+_res = backends.AWSBackend.__new__(backends.AWSBackend)
+_res.region = "eu-central-1"
+with mock.patch.object(suse_catalogue, "active_images", return_value=_sles):
+    check("'sles16' resolves to the region's newest plain SLES 16 AMI",
+          _res.resolve_image_name("sles16") == "ami-16-new")
+    check("'sles16.0' means the same", _res.resolve_image_name("sles16.0") == "ami-16-new")
+    check("'sles' takes the newest major there is", _res.resolve_image_name("sles") == "ami-16-new")
+    check("the name is case-insensitive", _res.resolve_image_name("SLES16") == "ami-16-new")
+    check("an AMI ID is left exactly as it is",
+          _res.resolve_image_name("ami-0123456789abcdef0") == "ami-0123456789abcdef0")
+    check("a libvirt image name is left alone too, since a lab may hold both",
+          _res.resolve_image_name("SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2")
+          == "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2")
+with mock.patch.object(suse_catalogue, "active_images", return_value=[]):
+    try:
+        _res.resolve_image_name("sles16")
+        check("a region with no such image is an error naming the alternative", False)
+    except SystemExit:
+        pass
+with mock.patch.object(suse_catalogue, "active_images", side_effect=OSError("no route")):
+    try:
+        _res.resolve_image_name("sles16")
+        check("an unreachable catalogue is an error, not a silent wrong image", False)
+    except SystemExit:
+        pass
+check("every other backend passes a name through unchanged",
+      backends.VMBackend.resolve_image_name(None, "sles16") == "sles16")
+check("the resolution happens before the AMI is looked up",
+      "iso_image = self.resolve_image_name(iso_image)" in (_REPO / "libs" / "backends.py").read_text())
+
 
 # ── AWSBackend.opensuse_image(): the region's newest Leap AMI; "" with a warning when unreachable ──
 _aws = backends.AWSBackend.__new__(backends.AWSBackend)
