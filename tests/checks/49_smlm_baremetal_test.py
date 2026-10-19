@@ -550,6 +550,28 @@ check("main(): podman mode never touches any Kubernetes/Helm-chart setup functio
       k8s_setup_touched == [])
 
 
+def _main_with(smlm):
+    """Run main() on a podman definition whose smlm section is *smlm*; the exit code, or None."""
+    ism.primary.load_definition = lambda path: {"smlm": smlm, "nodes": {"sol.mydemo.lab": {"addons": ["smlm"]}}}
+    podman_calls.clear()
+    old = sys.argv
+    sys.argv = ["install_smlm", "lab.json"]
+    try:
+        ism.main()
+    except SystemExit as e:
+        return e.code
+    finally:
+        sys.argv = old
+    return None
+
+
+check("main(): podman mode without a regcode exits 1",
+      _main_with({"smlm_deployment": "podman"}) == 1 and podman_calls == [])
+check("main(): a pre-built image (smlm_preinstalled) needs no regcode",
+      _main_with({"smlm_deployment": "podman", "smlm_preinstalled": "true"}) is None
+      and podman_calls == [("sol.mydemo.lab", "hypervisor1")])
+
+
 # ── _validate(): Agama profiles and distribution ISOs ───────────────────────
 def _errors(extra):
     v = ac.Validator({"smlm": dict(podman_def["smlm"], **extra)})
