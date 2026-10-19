@@ -392,6 +392,8 @@ footer.site {
 <p>オーバーレイに参加するのは各サイトのゲートウェイだけで、個々のラボノードは参加しません。「サイト」とは自宅の libvirt ラボ、または 1 つのクラウドアカウントです。ゲートウェイは、自宅サイトではそのオートメーション VM（<code>/etc/lab_creation.cfg</code> の <code>mysource</code>）、クラウドアカウントではそこに自動作成または再利用される小さな専用 VM（<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>、クラウド DNS VM と同じ命名規則）です。それ以外のノードは、自サイトのゲートウェイ経由で他の各サイトの実サブネットへの永続的なローカルルートを受け取るだけです。仕組みはこれだけで、ノード単位の WireGuard 参加はありません。</p>
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必須、<code>/etc/lab_creation.cfg</code>）は、ゲートウェイ VM がハブになるクラウドアカウントを指定します。ハブは、他のすべてのサイトが接続する固定パブリック IP を持つ唯一のサイトです。<code>OVERLAY_CIDR</code>（デフォルト <code>10.99.0.0/16</code>）はトンネル上のゲートウェイ自身のアドレスにのみ使われ、実際のトラフィックのルーティングには使われません。<code>OVERLAY_WG_PORT</code>（デフォルト <code>51820</code>）はハブの待ち受けポートです。参加、離脱、ルートの配布は <code>setup_vm.py</code> の中で自動的に行われ、手動で実行するものはありません。</p>
 <p><strong>既知の制限：</strong>DNS は変更されません（ノードの実ホスト名で到達できるのは、その名前がルーティング済みのサブネットに解決されるようになってからです）。後から新しいリモートサイトが参加しても、サイト内の既存ノードのルートはさかのぼって更新されず、各ノードのプロビジョニング時にのみ更新されます。AWS ではトラフィックを転送するためにサイトゲートウェイの「送信元/送信先チェック」を無効にする必要があり（自動で処理されます）、他の 7 つのクラウドバックエンドにはまだ同等の処理がありません。</p>
+<p><strong>既知のギャップ:</strong> AWS ではサイトゲートウェイの source/dest チェックを無効にしないと転送できず、これは自動で行われますが、他の 7 つのクラウドバックエンドには相当する処理がまだありません。一方で、先に用意されていたサイトのノードは、あとから別のサイトが参加したときに<em>再び</em>経路が設定されます。ハブは経路を向けているノードをすべて記録しており、サイトの参加時と撤去時にそれぞれを更新します。<code>overlay_ctl.py --hub &lt;host&gt;</code> は同じことを手動で行い、<code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code>、<code>forget &lt;node&gt;</code> を備えます。サイトを撤去すると、そのゲートウェイはハブのピアから外れ、ハブはその subnet への経路をやめ、サイト・アドレス・ノードの各台帳が整理され、他のすべてのサイトのノードから当該経路が削除されます。VM には触れません。サイトのマシンを破棄するのは <code>destroy_lab.py</code> の仕事です。</p>
+<p><strong>サイト間の DNS:</strong> ラボの DNS サーバーはどれも、この自動化ノード自身の BIND も各クラウドアカウントの DNS VM も、同じゾーンのマスターであり、レコードはそのゾーンファイルに書き込まれることで届きます。したがってノードは、そのレコードを他サイトのサーバーにも書き込むことで、そこから名前解決できるようになります。各サイトは自分の DNS サーバーをハブに登録し、プロビジョニングはノードのレコードを他のすべてのサイトのサーバーにも書き込みます。レコード単位の書き込みはその時点で稼働していたサーバーにしか届かないため、ずれが二種類残ります。サーバーが停止している間にそのサイトが取りこぼしたレコードと、あとで破棄されたノードのレコード（撤去処理は自分の実行が知っているサーバーにしか届きません）です。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> は各サイトのゾーンのコピーを、全サイトのレコードを持つこの自動化ノードのものに置き換え、どちらも解消します。</p>
 <h3 id="library-loading-order">ライブラリの読み込み順序</h3>
 <p>各スクリプトは次の順序で設定を読み込みます。</p>
 <ol>
@@ -594,6 +596,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。 <code>examples/suse-multiproduct.json.template</code> は複数製品を組み合わせたラボの実例です。1 つの RKE2 クラスタに SUSE Rancher Prime、SUSE Storage、SUSE Application Collection からの SUSE AI、SUSE Security を、SUSE が示す順序で導入します。<code>suse-multiproduct-gpu.json.template</code> は同じラボを NVIDIA GPU 上の SUSE AI で構成したもので、ラボ定義に PCI パススルーがないため <code>existing</code> ノードを使います。</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p><code>.yaml</code>/<code>.yml</code> ファイルも使えます。形式は拡張子から判別され（有効な JSON でなければ YAML として試行）、<code>setup_lab.py</code> の事前チェック、<code>install_&lt;addon&gt; --validate</code>、各アドオンの読み込み処理のいずれでも同じように扱われます。YAML の入力にはオートメーション VM 上に <code>pyyaml</code>（<code>pip install pyyaml</code>）が必要です。ない場合は、JSON だけを受け付けて黙って失敗するのではなく、インストールを促す明確なエラーが表示されます。</p></aside>
+<aside class="callout callout-note"><p><code>myip</code> と <code>mymac</code> は省略できます。省略すると、<code>common.mygw</code> と <code>common.mymask</code> がすでに表しているネットワークからアドレスが割り当てられるため、ゲートウェイや DNS サーバーと整合させるべきアドレス範囲を別に持つ必要はありません。割り当てはノード名から決まるので、同じ定義からは常に同じアドレスになり、作り直したラボも DNS レコード、PXE エントリ、kubeconfig をそのまま保てます。ゲートウェイ、DNS サーバー、この自動化ノード自身のアドレス、ラボの他のノード、ラボ DNS にレコードがあるアドレス、ping に応答するものは、いずれも先に除外されます。選ばれたアドレスはラボのファイルに上書きせず、その隣に書き出されます。プリフライトは何も作る前に各ノードのアドレスを示し、lab-builder の <em>Addresses automatically</em> チェックボックスはブラウザーで同じことを行います。アドレスを持たないラボ定義はどこでも動き、それが <code>examples/</code> のファイルを拠点間で持ち運べるものにしています。</p></aside>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
     &quot;node101.mydemo.lab&quot;: {
@@ -1091,7 +1094,7 @@ install_longhorn --schema yaml      # ...or YAML
 <tbody>
 <tr>
 <td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
-<td>SUSE Rancher Prime Kubernetes 管理プラットフォーム</td>
+<td>SUSE Rancher Prime Kubernetes 管理プラットフォーム。インストール時に Rancher の初回ログインを完了し、サーバー URL を設定します（これがないと何もインポートできません）。<code>rancher_import_clusters</code> は、ラボが指定したクラスターをインポートします。<code>"all"</code> にすると、同じラボの他のすべての kcluster を、ほかに何も指定せずにインポートします。同じラボの別の kcluster でも、指定したホスト経由で到達できる既存のクラスターでもかまいません</td>
 </tr>
 <tr>
 <td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>

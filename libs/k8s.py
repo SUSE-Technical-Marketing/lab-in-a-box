@@ -112,6 +112,11 @@ class K8sDistro(object):
     bundled_choice = {}
     can_disable_bundled = True
 
+    # Where this distribution's container runtime listens. An add-on whose workload talks to the runtime directly,
+    # such as a security scanner's enforcer, needs the right path: K3s and RKE2 keep their own containerd under
+    # /run/k3s, while an upstream Kubernetes node uses the system one.
+    containerd_socket = "/run/containerd/containerd.sock"
+
     ready_timeout = 1200
 
     def install_cluster(self, definition, clu_name, clu_ctx):
@@ -173,6 +178,7 @@ class K3sDistro(K8sDistro):
 
     bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # traefik and local-path
     bundled_choice = {apps.CLUSTER_INGRESS: "traefik", apps.CLUSTER_STORAGECLASS: "local-path"}
+    containerd_socket = "/run/k3s/containerd/containerd.sock"
 
     def kubeconfig_path(self):
         return "/etc/rancher/k3s/k3s.yaml"
@@ -273,6 +279,7 @@ class RKE2Distro(K8sDistro):
 
     bundled = (apps.CLUSTER_INGRESS,)                            # rke2-ingress-nginx
     bundled_choice = {apps.CLUSTER_INGRESS: "nginx"}
+    containerd_socket = "/run/k3s/containerd/containerd.sock"
 
     def kubeconfig_path(self):
         return "/etc/rancher/rke2/rke2.yaml"
@@ -603,6 +610,7 @@ class HarvesterDistro(K8sDistro):
 
     bundled = (apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS)  # its own RKE2 ingress and Longhorn
     bundled_choice = {apps.CLUSTER_INGRESS: "nginx", apps.CLUSTER_STORAGECLASS: "longhorn"}
+    containerd_socket = "/run/k3s/containerd/containerd.sock"
     # Harvester is an appliance: its own ingress and Longhorn are part of the product and are not replaced.
     can_disable_bundled = False
 
@@ -663,6 +671,23 @@ _CLUSTER_CHOICES = (
     (apps.CLUSTER_INGRESS, "clu_ingress", INGRESS_ADDONS, DEFAULT_INGRESS),
     (apps.CLUSTER_STORAGECLASS, "clu_storage", STORAGE_ADDONS, DEFAULT_STORAGE),
 )
+
+
+def wait_system_ready(distro, server, timeout=300):
+    """
+    Wait until every pod of `server`'s kube-system namespace is ready, which is what a cluster being settled
+    actually means, and return True. False when some are still not ready after `timeout` seconds.
+
+    install_cluster() already waits for every NODE to report Ready; a node is Ready before its CNI, CoreDNS and the
+    rest of the control plane's own workloads are, which is the gap a blanket sleep used to paper over.
+    """
+    check = "{} wait --for=condition=Ready pods --all -n kube-system --timeout={}s".format(
+        distro.kubectl_command(), int(timeout))
+    if ssh_run(server, check, check=False, capture=True).returncode == 0:
+        log("  Every kube-system pod of the cluster is ready")
+        return True
+    warn("some kube-system pods were still not ready after {}s; the add-ons run anyway".format(timeout))
+    return False
 
 
 def kcluster_node_count(definition, clu_name):
@@ -792,6 +817,26 @@ def first_server_node(definition):
             return vm_name, ssh_cmd
     warn("No server node found in definition")
     return None
+
+
+def kcluster_node(definition, clu_name):
+    """
+    The node of `clu_name` that runs kubectl for it: its mgm_node when the lab names one, else its first server
+    node, else its first node at all. "" when the lab has no such cluster or it has no nodes.
+
+    This is where an add-on reaches a kcluster other than the one it was installed on, which is what importing one
+    cluster into another lab's Rancher needs.
+    """
+    clu_cfg = (definition.get("kclusters", {}) or {}).get(clu_name, {}) or {}
+    named = str(clu_cfg.get("mgm_node") or "").strip()
+    if named:
+        return named
+    members = [(name, cfg or {}) for name, cfg in (definition.get("nodes") or {}).items()
+               if (cfg or {}).get("kcluster") == clu_name]
+    for name, cfg in members:
+        if (cfg.get("KUBERNETES_NODE_TYPE") or cfg.get("INSTALL_RKE2_TYPE") or "server") == "server":
+            return name
+    return members[0][0] if members else ""
 
 
 def addon_nodes(definition, addon, vm_name=None):

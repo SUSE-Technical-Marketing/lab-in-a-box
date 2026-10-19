@@ -365,6 +365,9 @@ def examples():
         owners = list((definition.get("kclusters") or {}).values()) + list((definition.get("nodes") or {}).values())
         if isinstance(definition.get("cluster"), dict):     # the older single-Kubernetes-cluster format
             owners.append(definition["cluster"])
+        # The older format also keeps one shared add-on list at the top level, beside its single "cluster".
+        if isinstance(definition.get("addons"), list):
+            owners.append({"addons": definition["addons"]})
         for owner in owners:
             for entry in (owner or {}).get("addons") or []:
                 addons.add(_apps_lib().addon_entry_name(entry))
@@ -373,7 +376,9 @@ def examples():
             "title": _example_title(name),
             "description": (definition.get("common") or {}).get("lab_description", ""),
             "nodes": len(definition.get("nodes") or {}),
-            "kclusters": len(definition.get("kclusters") or {}),
+            # The older format's single "cluster" counts as one, so an example never reads as having none.
+            "kclusters": len(definition.get("kclusters") or {})
+                         or (1 if isinstance(definition.get("cluster"), dict) else 0),
             "addons": sorted(addons),
         })
     return out
@@ -429,6 +434,50 @@ def _lab_creation_lib():
         import lab_creation  # noqa: E402  (loaded from libs_dir)
         _lab_creation = lab_creation
     return _lab_creation
+
+
+_libs_cache = {}
+
+
+def _lib(name):
+    """libs/<name>.py, imported from libs_dir() once and kept — the same lazy-cached pattern as _primary_lib(), for
+    the libraries that need no wrapper of their own."""
+    if name not in _libs_cache:
+        d = libs_dir()
+        if d not in sys.path:
+            sys.path.insert(0, d)
+        _libs_cache[name] = __import__(name)
+    return _libs_cache[name]
+
+
+def preview_addresses(definition):
+    """
+    What address each node with no myip would be given, as {node: ip}, using the same allocator the run itself uses
+    (libs/ipalloc.py). Deterministic, so what this shows is what the run will do, and the ping gate is off because a
+    browser cannot wait for it: the run's own probe and its preflight still have the last word.
+
+    A node whose lab has no network to take an address from, and a cloud node whose provider assigns one, are left
+    out of the answer rather than guessed at.
+    """
+    ipalloc = _lib("ipalloc")
+    common = definition.get("common", {}) or {}
+    if ipalloc.lab_network(common) is None:
+        return {}
+    cloud = set(_lib("backends").CLOUD_BACKEND_NAMES)
+    out, taken = {}, set()
+    for name, cfg in (definition.get("nodes") or {}).items():
+        cfg = cfg or {}
+        if str(cfg.get("myip") or "").strip():
+            continue
+        backend = str(cfg.get("backend") or common.get("backend") or "")
+        if backend in cloud or cfg.get("cloud_account"):
+            continue
+        address = ipalloc.allocate(name, definition, used=taken,
+                                   mydomain=str(common.get("mydomain") or ""), probe=False)
+        if address:
+            out[name] = address
+            taken.add(address)
+    return out
 
 
 def validate_lab(definition):

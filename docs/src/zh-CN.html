@@ -199,6 +199,8 @@
 <p>只有每个站点的网关会加入覆盖网络，单个实验室节点从不加入。“站点”指家里的 libvirt 实验室或一个云账户；其网关要么是家庭站点自己的自动化虚拟机（<code>/etc/lab_creation.cfg</code> 中的 <code>mysource</code>），要么是在云账户中自动创建或复用的一台小型专用虚拟机（<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>，与云 DNS 虚拟机命名规则相同）。所有其他节点只会获得一条经由本站点网关、通往其他各站点真实子网的持久本地路由：整个机制就是这样，节点本身不加入 WireGuard。</p>
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必填，位于 <code>/etc/lab_creation.cfg</code>）指定网关虚拟机作为中心的云账户，即拥有固定公网 IP、所有其他站点都连接到它的那个站点。<code>OVERLAY_CIDR</code>（默认 <code>10.99.0.0/16</code>）只用于网关在隧道上的地址，不用于路由实际流量；<code>OVERLAY_WG_PORT</code>（默认 <code>51820</code>）是中心的监听端口。加入、退出和路由下发都在 <code>setup_vm.py</code> 中自动完成，无需手动运行其他命令。</p>
 <p><strong>已知限制：</strong>不会修改 DNS（只有当节点名称解析到已路由的子网后，才能通过真实主机名访问它）；之后有新的远程站点加入时，站点中已预配的节点不会被追溯更新路由，只会在各节点自己预配时刷新；AWS 需要禁用站点网关的“源/目标检查”才能转发流量（会自动处理），其他 7 个云后端尚无对应处理。</p>
+<p><strong>已知差距：</strong>AWS 需要关闭站点网关的源/目的检查才能转发流量，这一步是自动完成的，但其余 7 个云后端尚无对应处理。相反，站点中先前已部署的节点在另一个站点后来加入时<em>确实</em>会重新配置路由：中心节点会记录它所路由到的每个节点，并在有站点加入或被撤除时逐一刷新。<code>overlay_ctl.py --hub &lt;host&gt;</code> 可以手动完成同样的事，提供 <code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code> 和 <code>forget &lt;node&gt;</code>。撤除一个站点会把它的网关从中心节点的对等列表中移除，停止路由它的子网，清理站点、地址和节点三份记录，并从其他所有站点的节点上删除该路由；不会触碰任何虚拟机，销毁站点的机器是 <code>destroy_lab.py</code> 的工作。</p>
+<p><strong>跨站点 DNS：</strong>实验室中的每个 DNS 服务器，无论是本自动化节点自己的 BIND，还是各云账号的 DNS 虚拟机，都是同一个区域的主服务器，记录是通过写入其区域文件而到达的。因此，只要把某个节点的记录同时写入其他站点的服务器，它在那些站点就能被解析：每个站点都会把自己的 DNS 服务器登记到中心节点，预配时也会把该节点的记录写入其他所有站点的服务器。仍会留下两类偏差，因为逐条记录的写入只能到达当时在运行的服务器：某站点在其服务器停机期间漏掉的记录，以及此后被销毁的节点的记录（销毁只会到达它自己那次运行所知道的服务器）。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> 会用本自动化节点的副本（即持有所有站点记录的那一份）替换每个站点的区域副本，从而同时修正这两类偏差。</p>
 <h3 id="library-loading-order">库加载顺序</h3>
 <p>每个脚本按以下顺序加载配置：</p>
 <ol>
@@ -415,6 +417,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
     Nodes -. &quot;addons&quot; .-&gt; AddonSections
 </pre>
 <aside class="callout callout-note"><p><code>.yaml</code>/<code>.yml</code> 文件同样可用：格式根据扩展名识别（如果文件不是有效的 JSON，则尝试按 YAML 解析），在 <code>setup_lab.py</code> 的预检、<code>install_&lt;addon&gt; --validate</code> 以及每个附加组件自身的加载过程中都相同。YAML 输入需要在自动化虚拟机上安装 <code>pyyaml</code>（<code>pip install pyyaml</code>）；缺少它时会得到提示安装的明确错误，而不是只接受 JSON 的静默失败。</p></aside>
+<aside class="callout callout-note"><p><code>myip</code> 和 <code>mymac</code> 可以省略。省略时，地址取自 <code>common.mygw</code> 与 <code>common.mymask</code> 已经描述的网络，因此无需另外维护一个要与网关和 DNS 服务器保持一致的地址范围。选择由节点自身的名称决定，所以同一份定义总会解析出相同的地址，重建的实验室也能保留其 DNS 记录、PXE 条目和 kubeconfig。网关、DNS 服务器、本自动化节点自身的地址、实验室中的其他节点、实验室 DNS 中已有记录的地址以及任何响应 ping 的地址，都会被事先排除；运行会把所选地址写在实验室文件旁边，而不是覆盖它。预检在创建任何东西之前就会说明每个节点将获得的地址，lab-builder 的 <em>Addresses automatically</em> 复选框在浏览器中做同样的事。没有地址的实验室定义可以在任何地方运行，这正是 <code>examples/</code> 下的文件能够在不同站点之间迁移的原因。</p></aside>
 <pre><code class="language-jsonc">{
   &quot;nodes&quot;: {
     &quot;node101.mydemo.lab&quot;: {
@@ -909,7 +912,7 @@ install_longhorn --schema yaml      # ...or YAML
 <tbody>
 <tr>
 <td><a href="https://www.rancher.com/"><code>rancher</code></a></td>
-<td>SUSE Rancher Prime Kubernetes 管理平台</td>
+<td>SUSE Rancher Prime Kubernetes 管理平台。安装会完成 Rancher 自身的首次登录并设置其服务器 URL，没有它就无法向其中导入任何集群；<code>rancher_import_clusters</code> 会导入实验室指定的集群；设为 <code>"all"</code> 时，会导入同一实验室中其余所有 kcluster，无需再指定任何内容：同一实验室中的另一个 kcluster，或通过指定主机可访问的现有集群</td>
 </tr>
 <tr>
 <td><a href="https://github.com/rancher/local-path-provisioner"><code>local_path</code></a></td>

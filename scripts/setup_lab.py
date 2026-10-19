@@ -26,7 +26,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -440,6 +439,28 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
             lc.set_log_prefix(None)
 
 
+
+def phase_allocate_ips(definition, config, json_file):
+    """
+    Give every node that has no myip one, from the network the definition already describes. A cloud node is left
+    alone, since its provider assigns the address; so is a node whose lab has no mygw and mymask to take one from.
+
+    Returns the path the rest of the run must use as the lab definition: the sibling file the allocation was saved
+    to, or `json_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
+    file from disk, so a run that kept using the original would hand them a definition with no addresses in it, and
+    anything reading myip there (a service's DNS records, for one) would quietly do nothing.
+    """
+    missing = [name for name, cfg in (definition.get("nodes") or {}).items()
+               if not str((cfg or {}).get("myip") or "").strip()]
+    if not missing:
+        return json_file
+    for vm_name in missing:
+        backend = backends.get_backend(definition, config, vm_name, for_existing=False)
+        backend.check_or_generate_ip(vm_name, "", definition)
+    allocated = str(primary.save_definition(definition))
+    lc.log("The run continues with '{}', which holds the allocated addresses".format(allocated))
+    return allocated
+
 def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
     """
     Create the VMs for all nodes.
@@ -490,6 +511,9 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
 
     lc.log("Rebooting kept cluster nodes")
     lc._level += 1
+    # Each node's boot id before it is rebooted, so the wait below has evidence the reboot happened rather than a
+    # guess at how long a node takes to stop answering.
+    boot_ids = {}
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if not node_cfg.get("kcluster"):
             continue
@@ -500,15 +524,20 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
             lc._RED, vm_name, lc._RESET, lc._RED, node_cfg["kcluster"], lc._RESET))
         # These are existing (kept) VMs — locate_kvm_host(), not resolve_kvm_host().
         remote_host, virt_srv = lc.locate_kvm_host(definition, vm_name, config)
+        boot_ids[vm_name] = lc.boot_id(vm_name)
         lc.reboot_vm(virt_srv, vm_name, remote_host=remote_host)
     lc._level -= 1
 
-    time.sleep(5)
     lc.log("Waiting for cluster nodes to come back online")
     lc._level += 1
     for vm_name, node_cfg in definition.get("nodes", {}).items():
         if not node_cfg.get("kcluster"):
             continue
+        # The node's own boot id is the evidence that it has rebooted; the port alone answered on the way down,
+        # which is why this used to sleep first and then poll. Without a boot id to compare (it could not be read
+        # before the reboot), the port is still the only thing left to wait for.
+        if boot_ids.get(vm_name):
+            lc.wait_for_reboot(vm_name, boot_ids[vm_name])
         lc.check_ssh_conn(vm_name)
     lc._level -= 1
 
@@ -606,9 +635,14 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
             _report.add_error(msg)
             continue
 
-        total_wait = 2 + delay_min
-        lc.log("Wait {} min for cluster \"{}{}{}\" to stabilise".format(total_wait, lc._RED, clu_name, lc._RESET))
-        time.sleep(60 * total_wait)
+        # Wait for what "stabilise" means rather than for a number of minutes: install_cluster() has already waited
+        # for every node to report Ready, and what the add-ons actually need is the cluster's own system workloads
+        # up. delay_min is the patience, in minutes, instead of the sleep it used to be.
+        server = k8s.kcluster_node(definition, clu_name)
+        if server:
+            k8s.wait_system_ready(k8s.get_distro(clu_type), server, timeout=60 * (2 + delay_min))
+        else:
+            lc.warn("cluster '{}' has no node to ask whether it has settled".format(clu_name))
 
         _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg)
 
@@ -790,6 +824,11 @@ def main():
         cpu, mem, disk, ncount))
 
     phase_fetch_images(definition, config, iso_loc)
+
+    # A node with no myip gets one before anything is validated, so the preflight sees the addresses the run will
+    # actually use and the lab's own file can be written without any (see libs/ipalloc.py). Deterministic, so the
+    # same definition always resolves to the same addresses.
+    json_file = phase_allocate_ips(definition, config, json_file)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,

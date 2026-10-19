@@ -67,9 +67,9 @@ try:
     check("runcmd reloads the AppArmor profile after writing the override, before starting named",
           runcmd.index(next(c for c in runcmd if "/etc/apparmor.d/local/usr.sbin.named" in c))
           < runcmd.index(next(c for c in runcmd if "apparmor_parser -r" in c))
-          < runcmd.index("systemctl enable --now named"))
+          < next(i for i, c in enumerate(runcmd) if c.startswith("systemctl enable --now named")))
     check("runcmd enables and starts named (no alias needed) at the end",
-          runcmd[-1] == "systemctl enable --now named")
+          runcmd[-2].startswith("systemctl enable --now named"))
     detect = runcmd[0]
     check("runcmd first picks the BIND package, user and config file per OS family from /etc/os-release",
           detect.startswith(". /etc/os-release") and "apt-get install -y bind9" in detect
@@ -78,8 +78,9 @@ try:
           "packages" not in parsed)
     check("non-Debian families include the zone stanza from /etc/named.conf",
           any('include "/etc/named.lab.conf";' in c for c in runcmd))
-    check("a localhost-only named.conf is opened to clients, recursion kept to local networks",
-          any("listen-on port 53 { any; };" in c and "allow-recursion { localnets; localhost; };" in c for c in runcmd))
+    check("the server answers on every address, and recursion stays with the lab's own networks",
+          any("listen-on port 53 { any; };" in c and "allow-recursion {" in c and "localnets;" in c
+              for c in runcmd))
 
     # Every runcmd entry must actually be a runnable shell command — real, not just
     # syntactically-plausible-looking text.
@@ -145,8 +146,10 @@ class _FakeBackendCreate:
     def push_provisioning_files(self, vm_name, config_method=""):
         self.calls.append(("push_provisioning_files", vm_name, config_method))
 
-    def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, config_method="", iso_image="", mymac=None):
+    def create_vm(self, vm_name, vm_cpu, vm_mem, vm_dsk_gb, network, config_method="", iso_image="", mymac=None,
+                  open_ports=None):
         self.calls.append(("create_vm", vm_name, vm_cpu, vm_mem, vm_dsk_gb, config_method, iso_image))
+        self.open_ports = open_ports
         return "203.0.113.101"
 
 
@@ -219,6 +222,65 @@ check("newest_leap(): the arm64 build when asked for it",
 check("newest_leap(): {} when the list has no openSUSE Leap image",
       suse_catalogue.newest_leap(_catalogue[-1:], "-x86_64") == {})
 
+# ── suse_catalogue.newest_sles(): the plain pay-as-you-go SLES, never a BYOS or a different product ──
+# A BYOS image needs a registration code before its zypper installs anything, and chost, sapcal and hardened are
+# other products, so a lab that just wants a SLES node must not be handed one of those.
+_sles = [
+    {"name": "suse-sles-15-7-v20261012-hvm-ssd-x86_64", "id": "ami-157", "publishedon": "20261012"},
+    {"name": "suse-sles-16-0-v20260901-hvm-ssd-x86_64", "id": "ami-16-old", "publishedon": "20260901"},
+    {"name": "suse-sles-16-0-v20261008-hvm-ssd-x86_64", "id": "ami-16-new", "publishedon": "20261008"},
+    {"name": "suse-sles-16-0-byos-v20261013-hvm-ssd-x86_64", "id": "ami-16-byos", "publishedon": "20261013"},
+    {"name": "suse-sles-16-0-chost-byos-v20261014-hvm-ssd-x86_64", "id": "ami-16-chost", "publishedon": "20261014"},
+    {"name": "suse-sles-16-0-sapcal-v20261015-hvm-ssd-x86_64", "id": "ami-16-sap", "publishedon": "20261015"},
+    {"name": "suse-sles-16-0-hardened-byos-v20261016-hvm-ssd-x86_64", "id": "ami-16-hard",
+     "publishedon": "20261016"},
+    {"name": "suse-sles-16-0-v20261009-hvm-ssd-arm64", "id": "ami-16-arm", "publishedon": "20261009"},
+    {"name": "openSUSE-Leap-16-0-v20261015-hvm-ssd-x86_64", "id": "ami-leap", "publishedon": "20261015"},
+]
+check("newest_sles(): the newest plain SLES 16, not the newer-dated BYOS, chost, sapcal or hardened builds",
+      suse_catalogue.newest_sles(_sles, "-x86_64").get("id") == "ami-16-new")
+check("newest_sles(): one major version when asked",
+      suse_catalogue.newest_sles(_sles, "-x86_64", major=15).get("id") == "ami-157")
+check("newest_sles(): the arm64 build when asked for it",
+      suse_catalogue.newest_sles(_sles, "-arm64").get("id") == "ami-16-arm")
+check("newest_sles(): openSUSE Leap is not SLES",
+      suse_catalogue.newest_sles([_sles[-1]], "-x86_64") == {})
+check("newest_sles(): {} when no major matches",
+      suse_catalogue.newest_sles(_sles, "-x86_64", major=12) == {})
+
+# ── a lab can name the product instead of an AMI ID ───────────────────────
+# An ID copied by hand ages: SUSE publishes a new build every few weeks, and the wrong one can be a different
+# product. A SLES 15 AMI has no NetworkManager for RKE2 to configure, which is how a GPU lab failed.
+_res = backends.AWSBackend.__new__(backends.AWSBackend)
+_res.region = "eu-central-1"
+with mock.patch.object(suse_catalogue, "active_images", return_value=_sles):
+    check("'sles16' resolves to the region's newest plain SLES 16 AMI",
+          _res.resolve_image_name("sles16") == "ami-16-new")
+    check("'sles16.0' means the same", _res.resolve_image_name("sles16.0") == "ami-16-new")
+    check("'sles' takes the newest major there is", _res.resolve_image_name("sles") == "ami-16-new")
+    check("the name is case-insensitive", _res.resolve_image_name("SLES16") == "ami-16-new")
+    check("an AMI ID is left exactly as it is",
+          _res.resolve_image_name("ami-0123456789abcdef0") == "ami-0123456789abcdef0")
+    check("a libvirt image name is left alone too, since a lab may hold both",
+          _res.resolve_image_name("SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2")
+          == "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2")
+with mock.patch.object(suse_catalogue, "active_images", return_value=[]):
+    try:
+        _res.resolve_image_name("sles16")
+        check("a region with no such image is an error naming the alternative", False)
+    except SystemExit:
+        pass
+with mock.patch.object(suse_catalogue, "active_images", side_effect=OSError("no route")):
+    try:
+        _res.resolve_image_name("sles16")
+        check("an unreachable catalogue is an error, not a silent wrong image", False)
+    except SystemExit:
+        pass
+check("every other backend passes a name through unchanged",
+      backends.VMBackend.resolve_image_name(None, "sles16") == "sles16")
+check("the resolution happens before the AMI is looked up",
+      "iso_image = self.resolve_image_name(iso_image)" in (_REPO / "libs" / "backends.py").read_text())
+
 
 # ── AWSBackend.opensuse_image(): the region's newest Leap AMI; "" with a warning when unreachable ──
 _aws = backends.AWSBackend.__new__(backends.AWSBackend)
@@ -257,6 +319,67 @@ with mock.patch.object(backends, "die",
 check("ensure_cloud_dns_vm() dies clearly when create_vm() reports no IP at all",
       any("no IP" in m for m in died))
 
+
+
+# The bind9 package starts named before cloud-init has written the zone, so named being active is not enough on its
+# own: add_to_dns()'s later append would find no zone file to append to.
+source = (_REPO / "libs" / "backends.py").read_text() if "_REPO" in dir() else Path(
+    __file__).resolve().parents[2].joinpath("libs", "backends.py").read_text()
+check("the cloud DNS VM is ready only once cloud-init has finished and named is active",
+      "/var/lib/cloud/instance/boot-finished && systemctl is-active named" in source)
+
+# ── the cloud DNS VM answers on a public address, so its policy is written, not inherited ─────────────────────────
+# Rebuilt live on 2026-10-17 after the one in the aws-tmm account turned out to have no BIND at all and no port 53
+# open in its security group: it could never have served anything.
+# The policy is asserted against the generated user-data as text: the suite's interpreter may have no PyYAML, and
+# these properties are the ones that keep a public port 53 safe.
+_ud_text = backends._cloud_dns_vm_user_data("ssh-rsa AAAA key", "mydemo.lab", lab_networks=["172.31.80.0/20"])
+check("it writes a serving policy of its own", "rate-limit" in _ud_text and "options" in _ud_text)
+check("the lab's zone is answered to anyone, since a lab node can be on any network",
+      "allow-query { any; }" in _ud_text)
+check("recursion is only for the networks the lab is on, so an open 53 is not an open resolver",
+      "allow-recursion { 172.31.80.0/20;" in _ud_text and "allow-query-cache { 172.31.80.0/20;" in _ud_text)
+check("it cannot be used to amplify an attack",
+      "rate-limit { responses-per-second 15; window 5; }" in _ud_text)
+check("it hands out no zone transfers and takes no updates",
+      "allow-transfer { none; }" in _ud_text and "allow-update { none; }" in _ud_text)
+check("it does not announce its version", "version none;" in _ud_text)
+check("it answers on every address but listens on no IPv6",
+      "listen-on port 53 { any; }" in _ud_text and "listen-on-v6 port 53 { none; }" in _ud_text)
+# A cloud instance usually has no IPv6, and BIND chasing the root's IPv6 nameservers stalls: confirmed live on
+# 2026-10-17, when the lab zone answered while nothing external resolved at all.
+check("it forwards rather than walking the root zone",
+      "forwarders { 169.254.169.253; 9.9.9.9; 1.1.1.1; }" in _ud_text and "forward first" in _ud_text)
+check("the distribution's own conflicting directives are removed first, so there is one policy",
+      all(d in _ud_text for d in ("recursion", "allow-query", "allow-transfer", "version", "listen-on",
+                                  "rate-limit", "forwarders"))
+      and "sed -i -e" in _ud_text)
+check("a configuration named refuses is a failure, not a VM that quietly serves nothing",
+      "named-checkconf" in _ud_text and "refused the generated configuration" in _ud_text)
+check("the service is started by either of its names, and a failure to start is an error",
+      "enable --now named" in _ud_text and "enable --now bind9" in _ud_text and "BIND did not start" in _ud_text)
+check("port 53 is opened for it, which is what it exists for",
+      'open_ports=["53/udp", "53/tcp"]' in (_REPO / "libs" / "backends.py").read_text())
+
+
+class _Subnetted:
+    def get_subnet_cidr(self):
+        return "172.31.80.0/20"
+
+
+_nets = backends.dns_recursion_networks(_Subnetted())
+check("the networks allowed to recurse are the private ones plus the backend's own subnet",
+      "10.0.0.0/8" in _nets and "192.168.0.0/16" in _nets and "172.31.80.0/20" in _nets)
+check("no public range may recurse", not any(n.startswith(("0.", "1.", "8.", "18.")) for n in _nets))
+
+
+class _NoSubnet:
+    def get_subnet_cidr(self):
+        raise RuntimeError("no subnet configured")
+
+
+check("a backend that cannot say what its subnet is still gets the private ranges",
+      len(backends.dns_recursion_networks(_NoSubnet())) >= 4)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

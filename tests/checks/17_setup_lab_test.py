@@ -685,7 +685,8 @@ with mock.patch.object(setup_lab.lc, "reboot_vm") as reboot, \
         mock.patch.object(setup_lab.lc, "locate_kvm_host", return_value=("hv1", "qemu+ssh://hv1/system")), \
         mock.patch.object(setup_lab.targets, "is_existing_node", side_effect=lambda cfg: bool(cfg.get("existing"))), \
         mock.patch.object(setup_lab.harvester, "cluster_of", return_value=None), \
-        mock.patch.object(setup_lab.time, "sleep"):
+        mock.patch.object(setup_lab.lc, "boot_id", return_value="boot-before") as read_boot, \
+        mock.patch.object(setup_lab.lc, "wait_for_reboot", return_value=True) as waited:
     setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=False)
     check("phase_reboot_and_wait_kept_nodes: does nothing without --keep", not reboot.called and not wait_ssh.called)
     setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=True)
@@ -693,6 +694,12 @@ with mock.patch.object(setup_lab.lc, "reboot_vm") as reboot, \
           [c[0][1] for c in reboot.call_args_list] == ["k1"] and reboot.call_args[1]["remote_host"] == "hv1")
     check("phase_reboot_and_wait_kept_nodes: waits for SSH on every kcluster node",
           sorted(c[0][0] for c in wait_ssh.call_args_list) == ["k1", "k2"])
+    # The node answers its SSH port on the way down, so the wait needs evidence the reboot happened: its boot id,
+    # read before the reboot and compared afterwards, instead of the 5 s guess this used to be.
+    check("phase_reboot_and_wait_kept_nodes: reads each node's boot id before rebooting it",
+          read_boot.called and "k1" in [c[0][0] for c in read_boot.call_args_list])
+    check("phase_reboot_and_wait_kept_nodes: waits for that boot id to change",
+          waited.called and waited.call_args[0] == ("k1", "boot-before"))
 
 # ── phase_install_k8s_and_addons: Kubernetes per kcluster, then its add-ons; a failed install skips that cluster's ─
 k8s_lab = {"kclusters": {"good": {"clu_type": "rke2"}, "bad": {"clu_type": "k3s"}},
@@ -711,14 +718,18 @@ setup_lab._report = setup_lab._RunReport()
 with mock.patch.object(setup_lab.k8s, "get_distro", return_value=FakeDistro()), \
         mock.patch.object(setup_lab, "_install_cluster_addons",
                           side_effect=lambda d, c, df, j, clu, cfg: addon_runs.append(clu)), \
-        mock.patch.object(setup_lab.time, "sleep") as slept:
+        mock.patch.object(setup_lab.k8s, "kcluster_node", return_value="g1"), \
+        mock.patch.object(setup_lab.k8s, "wait_system_ready", return_value=True) as settled:
     setup_lab.phase_install_k8s_and_addons(k8s_lab, {}, {}, "lab.json")
 check("phase_install_k8s_and_addons: installs Kubernetes on every kcluster", sorted(installed) == ["bad", "good"])
 check("phase_install_k8s_and_addons: installs add-ons only on the kcluster whose Kubernetes install worked",
       addon_runs == ["good"])
 check("phase_install_k8s_and_addons: records ok and FAILED per kcluster and the error",
       sorted(setup_lab._report.clusters) == [("bad", "FAILED"), ("good", "ok")] and len(setup_lab._report.errors) == 1)
-check("phase_install_k8s_and_addons: waits 2 + delay_min minutes before the add-ons", slept.call_args[0][0] == 120)
+# What the add-ons need is the cluster's own system workloads up, which install_cluster's node-Ready wait does not
+# cover; delay_min is how long to wait for that, not how long to sleep regardless.
+check("phase_install_k8s_and_addons: waits for the cluster's kube-system pods, with delay_min as the patience",
+      settled.called and settled.call_args[1]["timeout"] == 120)
 
 # ── setup_lab(): the phases in order; Kubernetes phases only for a lab with kclusters ─────────────────────────────
 order = []

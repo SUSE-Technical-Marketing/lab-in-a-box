@@ -34,7 +34,9 @@ import ipaddress
 import shlex
 from pathlib import Path
 
-from lab_creation import ssh_run, ssh_output, log, die, wait_for_ssh_command
+from lab_creation import ssh_run, ssh_output, log, warn, die, wait_for_ssh_command
+import ipalloc
+from services import NAMED_ZONE_DIR as _NAMED_ZONE_DIR
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -46,6 +48,8 @@ _WG_PUBKEY_PATH = _WG_KEY_DIR + "/wg0.pub"
 _WG_CONF_PATH = _WG_KEY_DIR + "/wg0.conf"
 _ALLOC_PATH = _WG_KEY_DIR + "/overlay_allocations"
 _SITE_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_sites"
+_NODE_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_nodes"
+_DNS_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_dns"
 
 _ROUTES_SCRIPT_PATH = "/etc/lab-overlay-routes.sh"
 _ROUTES_UNIT_PATH = "/etc/systemd/system/lab-overlay-routes.service"
@@ -284,6 +288,221 @@ def add_peer_to_hub(hub_host, peer_name, peer_pubkey, allowed_cidrs):
     log("- Registered site gateway '{}' as a peer on the overlay hub, routing {}".format(
         peer_name, allowed_csv))
 
+
+
+
+def remove_peer_from_hub(hub_host, peer_name):
+    """
+    Removal of `peer_name`'s peer entry from the hub, both the live wg0 interface state (`wg set ... remove`) and the
+    persisted wg0.conf block. Looked up entirely from the hub's own recorded state (the marker comment and the
+    PublicKey line under it), never from the peer itself, which may be gone. Best effort: a hub that is unreachable,
+    or a peer that was never registered, is a silent no-op. Called by retire_site().
+    """
+    marker = "# peer: {}".format(peer_name)
+    script = (
+        "ln=$(grep -nxF {marker} {conf} 2>/dev/null | head -1 | cut -d: -f1); "
+        "if [ -n \"$ln\" ]; then "
+        "pubkey=$(sed -n \"$((ln+2))p\" {conf} | awk '{{print $3}}'); "
+        "[ -n \"$pubkey\" ] && wg set wg0 peer \"$pubkey\" remove 2>/dev/null; "
+        "end=$(awk -v start=\"$ln\" 'NR>start && /^$/{{print NR; exit}}' {conf}); "
+        "[ -z \"$end\" ] && end=$(wc -l < {conf}); "
+        "sed -i \"${{ln}},${{end}}d\" {conf}; "
+        "fi"
+    ).format(marker=shlex.quote(marker), conf=shlex.quote(_WG_CONF_PATH))
+    ssh_run(hub_host, script, check=False)
+    log("- Removed site gateway '{}' from the overlay hub (best-effort)".format(peer_name))
+
+def register_node(hub_host, site_name, node_host, gateway_lan_ip):
+    """
+    Record, on the hub, that `node_host` at `site_name` reaches the overlay through `gateway_lan_ip`. Idempotent
+    upsert of one line per node, the same shape as _register_site()'s.
+
+    The hub already knows the sites and the overlay addresses it handed out; it did not know the ordinary nodes, and
+    without them a node provisioned before another site joined could never be told about that site's subnet, and a
+    retired site's routes could never be taken off the nodes that hold them.
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_NODE_REGISTRY_PATH)))
+    existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_NODE_REGISTRY_PATH)))
+    kept = [line for line in existing.splitlines()
+            if line.split()[1:2] != [node_host] and line.strip()]
+    kept.append("{} {} {}".format(site_name, node_host, gateway_lan_ip))
+    ssh_run(hub_host, "cat > {}".format(shlex.quote(_NODE_REGISTRY_PATH)),
+            input_text="\n".join(kept) + "\n")
+
+
+def list_nodes(hub_host, site_name=None):
+    """
+    Returns [(site_name, node_host, gateway_lan_ip), ...] for every node registered on the hub, or only `site_name`'s
+    when given. A hub with no registry yet answers with nothing.
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_NODE_REGISTRY_PATH)))
+    raw = ssh_output(hub_host, "cat {}".format(shlex.quote(_NODE_REGISTRY_PATH)))
+    out = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and (site_name is None or parts[0] == site_name):
+            out.append((parts[0], parts[1], parts[2]))
+    return out
+
+
+def forget_node(hub_host, node_host):
+    """Drop `node_host` from the hub's node registry, for a node that is being destroyed."""
+    ssh_run(hub_host, "test -f {f} && sed -i {expr} {f} || true".format(
+        f=shlex.quote(_NODE_REGISTRY_PATH),
+        expr=shlex.quote("/[[:space:]]{}[[:space:]]/d".format(node_host.replace(".", "\\.")))), check=False)
+
+
+
+def register_dns_server(hub_host, site_name, dns_ip):
+    """
+    Record, on the hub, which DNS server serves `site_name`. Idempotent upsert of one "site address" line.
+
+    Every DNS server in this project is a master of the same zone and records reach them by being written to each
+    one's zone file (libs/services.py's add_to_dns, through its remote_dns_servers list), so a site's nodes become
+    resolvable at another site by writing their records there too. The hub is where a run finds the other sites'
+    servers, exactly as it finds their subnets.
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
+    existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
+    kept.append("{} {}".format(site_name, dns_ip))
+    ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
+            input_text="\n".join(kept) + "\n")
+
+
+def list_dns_servers(hub_host, exclude_site=None):
+    """
+    Returns [(site_name, dns_ip), ...] for every site that registered a DNS server, excluding `exclude_site` (the
+    caller's own, whose server the local write already reached).
+    """
+    ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
+        d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
+    raw = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    out = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] != exclude_site:
+            out.append((parts[0], parts[1]))
+    return out
+
+
+def sync_zone_to_sites(hub_host, mydomain, zone_dir=None):
+    """
+    Replace every registered site's copy of `mydomain`'s zone with this automation node's own, and reload named
+    there.
+
+    Per-record writes reach the servers that were up at the time, which leaves two kinds of drift: a record a site
+    missed while its server was down, and a record for a node that has since been destroyed, since a teardown only
+    reaches the servers its own run knows about. Pushing the whole zone fixes both, because the file is replaced
+    rather than appended to. This automation node holds the record of every node of every site, so it is the copy
+    worth having.
+
+    Returns (synced, failed) as counts.
+    """
+    # Where this node keeps the zone (zone_dir only moves the local copy, for a test), and where every DNS server
+    # keeps it, which is the one convention _cloud_dns_vm_user_data() builds them with.
+    local_path = "{}/{}.lan".format((zone_dir or str(_NAMED_ZONE_DIR)).rstrip("/"), mydomain)
+    remote_path = "{}/{}.lan".format(str(_NAMED_ZONE_DIR).rstrip("/"), mydomain)
+    try:
+        content = Path(local_path).read_text()
+    except OSError as exc:
+        die("this automation node has no zone for '{}' at {} to push ({})".format(mydomain, local_path, exc))
+
+    # This node's own addresses: it is the source of the zone, so pushing to itself would only rewrite the file
+    # with its own content.
+    own = ipalloc.local_ips()
+
+    synced = failed = 0
+    for site_name, dns_ip in list_dns_servers(hub_host):
+        if dns_ip in own:
+            log("- Site '{}' is served by this automation node itself, which is where the zone comes from".format(
+                site_name))
+            continue
+        written = ssh_run(dns_ip, "cat > {}".format(shlex.quote(remote_path)), input_text=content, check=False)
+        if written.returncode != 0:
+            warn("- Could not push the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
+            failed += 1
+            continue
+        # A zone file nothing reloads is a zone nobody serves, and the unit is named bind9 on Debian and named
+        # elsewhere. Confirmed live on 2026-10-17: a cloud DNS VM with no BIND installed at all took the file and
+        # the push was reported as a success, which it was not.
+        reloaded = ssh_run(dns_ip, "systemctl reload named 2>/dev/null || systemctl restart named 2>/dev/null "
+                                   "|| systemctl reload bind9 2>/dev/null || systemctl restart bind9", check=False)
+        if reloaded.returncode != 0:
+            warn("- Site '{}' ({}) took the '{}' zone but has no BIND to reload: it serves nothing. Check that "
+                 "its DNS VM finished installing bind".format(site_name, dns_ip, mydomain))
+            failed += 1
+            continue
+        log("- Pushed the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
+        synced += 1
+    return synced, failed
+
+def refresh_routes(hub_host, only_site=None):
+    """
+    Re-push the overlay routes of every node the hub knows about, so a node provisioned before another site joined
+    learns that site's subnet, and a node still holding a retired site's subnet forgets it.
+
+    ensure_route_via_site_gateway() rewrites the whole route script, so re-running it with the sites that exist now
+    is both the way a route is added and the way one is removed. A node that cannot be reached is reported and
+    skipped: it will pick the routes up at its own next provisioning run anyway.
+
+    Returns (refreshed, unreachable) as counts.
+    """
+    nodes = list_nodes(hub_host, site_name=only_site)
+    if not nodes:
+        return 0, 0
+    sites = {name: cidr for name, cidr in list_other_sites(hub_host)}
+    refreshed = unreachable = 0
+    for site_name, node_host, gateway_lan_ip in nodes:
+        remote = [cidr for name, cidr in sites.items() if name != site_name]
+        if ssh_run(node_host, "true", check=False).returncode != 0:
+            warn("- Overlay routes not refreshed on '{}' (unreachable); its next provisioning run will "
+                 "do it".format(node_host))
+            unreachable += 1
+            continue
+        if remote:
+            ensure_route_via_site_gateway(node_host, gateway_lan_ip, remote)
+        else:
+            # The last other site is gone: the node keeps no overlay route at all.
+            ssh_run(node_host, "systemctl disable --now lab-overlay-routes.service 2>/dev/null; rm -f {} {}".format(
+                shlex.quote(_ROUTES_SCRIPT_PATH), shlex.quote(_ROUTES_UNIT_PATH)), check=False)
+            log("- Removed the overlay routes of '{}': no other site is left".format(node_host))
+        refreshed += 1
+    return refreshed, unreachable
+
+
+def retire_site(hub_host, site_name):
+    """
+    Take `site_name` out of the overlay: its gateway stops being a peer of the hub, the hub stops routing its subnet,
+    its lines go from the site, allocation and node registries, and every node still routing toward it is refreshed
+    so the route goes away.
+
+    The site's own VMs are not touched. Destroying them is destroy_lab's job, and a site is retired exactly when its
+    lab is gone, so this is about the shared hub rather than the lab.
+
+    Returns the site's CIDR, or "" when the hub had no such site.
+    """
+    sites = dict(list_other_sites(hub_host))
+    site_cidr = sites.get(site_name, "")
+    if not site_cidr:
+        warn("- The overlay hub has no site '{}' to retire".format(site_name))
+        return ""
+
+    remove_peer_from_hub(hub_host, site_name)
+    ssh_run(hub_host, "ip route del {} dev wg0 2>/dev/null || true".format(shlex.quote(site_cidr)), check=False)
+
+    for path, pattern in ((_SITE_REGISTRY_PATH, "^{} "), (_ALLOC_PATH, "^{} "),
+                          (_NODE_REGISTRY_PATH, "^{} "), (_DNS_REGISTRY_PATH, "^{} ")):
+        ssh_run(hub_host, "test -f {f} && sed -i {expr} {f} || true".format(
+            f=shlex.quote(path), expr=shlex.quote("/{}/d".format(pattern.format(site_name)))), check=False)
+
+    refreshed, unreachable = refresh_routes(hub_host)
+    log("- Retired overlay site '{}' ({}): peer and hub route removed, registries cleaned, {} node(s) "
+        "re-routed, {} unreachable".format(site_name, site_cidr, refreshed, unreachable))
+    return site_cidr
 
 def ensure_overlay_hub_ready(hub_host, wg_port=DEFAULT_WG_PORT, overlay_cidr=DEFAULT_OVERLAY_CIDR,
                               site_name=None, site_cidr=None):

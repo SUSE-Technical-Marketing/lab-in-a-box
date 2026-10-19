@@ -63,7 +63,7 @@ def setup_istio(hostname, istio_rel=None, istio_ns=None, istio_gateway_ns=None, 
 
     if str(istio_install_gateway or "true") != "false":
         print("# Installing Istio ingress gateway")
-        ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(gw_ns), check=False)
+        ssh_run(hostname, ac.namespace_command(gw_ns))
         ssh_run(hostname, "helm upgrade -i istio-ingress {}/gateway --namespace {} {}".format(rel, gw_ns, ver_arg))
         print("Istio ingress gateway installed. Namespace: {}".format(gw_ns))
 

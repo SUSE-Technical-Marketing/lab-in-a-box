@@ -160,7 +160,7 @@ def setup_postgresql_k8s(hostname: str, cfg: dict) -> None:
     """Run PostgreSQL as a StatefulSet; the password goes to the "postgresql" secret through an environment variable."""
     ns = cfg.get("postgresql_ns") or "postgresql"
     user = cfg.get("postgresql_user") or "postgres"
-    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    ssh_run(hostname, ac.namespace_command(ns))
     cmd = ("kubectl create secret generic postgresql -n {} --from-literal=password=\"$PG_PASSWORD\" --dry-run=client -o yaml "
            "| kubectl apply -f -").format(shlex.quote(ns))
     ssh_run(hostname, "PG_PASSWORD={} bash -c {}".format(shlex.quote(cfg.get("postgresql_password") or "postgres123"),

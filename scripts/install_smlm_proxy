@@ -129,7 +129,7 @@ def setup_smlm_proxy_prereqs(hostname, cfg):
         k8s.set_longhorn_overprovisioning(hostname, cfg.get("smlm_proxy_lh_overprovision") or "500")
 
     print("# Creating namespace and secrets in '{}'".format(ns))
-    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(ns))
+    ssh_run(hostname, ac.namespace_command(ns))
 
     ssh_run(hostname,
             "kubectl create secret docker-registry scc-secret "

@@ -32,7 +32,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, warn  # noqa: E402
 
 
 def _validate(v):
@@ -54,7 +54,27 @@ def setup_nginx(hostname, nginx_rel=None, nginx_ns=None, nginx_version=None):
     ssh_run(hostname,
             "helm upgrade -i ingress-nginx {}/ingress-nginx --namespace {} --create-namespace {}".format(
                 rel, ns, ver_arg))
-    print("nginx Ingress Controller installed. Namespace: {}".format(ns))
+
+    # Wait for the controller and its admission webhook before returning. The chart registers a
+    # ValidatingWebhookConfiguration at once, so every Ingress created from this moment on is sent to a webhook that
+    # refuses connections until the controller is actually serving. Confirmed live on 2026-10-17: an add-on
+    # installed straight after this one died with "failed calling webhook validate.nginx.ingress.kubernetes.io ...
+    # connection refused", and this is exactly the order a kcluster's clu_ingress creates (the controller first,
+    # then the add-ons that need it).
+    rollout = ssh_run(hostname, "kubectl -n {} rollout status deploy/ingress-nginx-controller "
+                                "--timeout=300s".format(ns), check=False)
+    if rollout.returncode != 0:
+        warn("- the nginx controller in {} did not become available within 300s; an Ingress created now may be "
+             "refused by its admission webhook".format(ns))
+    endpoints = ssh_run(hostname, "for i in $(seq 1 60); do "
+                                  "[ -n \"$(kubectl -n {ns} get endpoints ingress-nginx-controller-admission "
+                                  "-o jsonpath='{{.subsets[*].addresses[*].ip}}' 2>/dev/null)\" ] && exit 0; "
+                                  "sleep 5; done; exit 1".format(ns=ns), check=False)
+    if endpoints.returncode != 0:
+        warn("- the nginx admission webhook in {} has no endpoint yet; an Ingress created now may be refused "
+             "by it".format(ns))
+    else:
+        print("nginx Ingress Controller installed and serving. Namespace: {}".format(ns))
 
 
 def main():

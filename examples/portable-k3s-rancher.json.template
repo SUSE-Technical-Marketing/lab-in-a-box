@@ -1,0 +1,34 @@
+{
+  "nodes": {
+    "rancher1.mydemo.lab": {
+      "kcluster": "rancherlab",
+      "KUBERNETES_NODE_TYPE": "server"
+    }
+  },
+  "common": {
+    "lab_name": "Portable K3s with Rancher Prime",
+    "lab_description": "One node, one K3s cluster, SUSE Rancher Prime on it. The definition names no addresses: myip and mymac are left out, so each node is given one from the network common.mygw and common.mymask describe, the same address every time for a given node name. Change mygw, mymask, mydns and the domain to your own network and the lab runs anywhere, which is what the other examples cannot do.",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "VM_MEM": "8192",
+    "VM_DSK": "60",
+    "VM_CPU": "4",
+    "mymask": "24",
+    "mygw": "192.168.88.1",
+    "mydns": "192.168.88.1",
+    "mydomain": "mydemo.lab"
+  },
+  "kclusters": {
+    "rancherlab": {
+      "clu_type": "k3s",
+      "clu_rel": "stable",
+      "mydomain": "mydemo.lab",
+      "addons": [
+        "rancher"
+      ]
+    }
+  },
+  "rancher": {
+    "rancher_shorthn": "rancher",
+    "rancher_initial_pwd": "??rancher_initial_pwd"
+  }
+}

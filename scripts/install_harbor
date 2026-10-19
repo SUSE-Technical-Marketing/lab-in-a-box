@@ -35,6 +35,7 @@ PLUGIN = {
     "requires_kubernetes": None,
     "requires_cluster": ["ingress", "storageclass"],
     "aux_services": [],
+    "check": True,
 }
 
 import sys
@@ -93,8 +94,30 @@ def setup_harbor(hostname, clu_name, mydomain, harbor_rel=None, harbor_ns=None, 
     return fqdn
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "harbor" section: the Helm release in harbor_ns, its chart version against
+    harbor_version, every pod running, and the hostname its own ingress serves, which is what a lab points a
+    client at.
+    """
+    if "harbor" not in chk.definition:
+        chk.ok("this lab has no harbor section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("harbor", {}) or {}
+    ns = chk.get("harbor", "harbor_ns", "harbor")
+    if not chk.helm_release(chk.vm_name, "harbor", ns, version=cfg.get("harbor_version") or ""):
+        return
+    host = ssh_run(chk.vm_name, "kubectl -n {} get ingress -o jsonpath='{{.items[0].spec.rules[0].host}}'".format(
+        ns), check=False, capture=True)
+    found = (host.stdout or "").strip()
+    if not found:
+        chk.fail("Harbor has no ingress host in {}".format(ns))
+    else:
+        chk.ok("Harbor's ingress serves {}".format(found))
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))

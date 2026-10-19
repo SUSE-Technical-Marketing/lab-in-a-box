@@ -55,6 +55,20 @@ lab_version() {
 	echo "${_v:-unknown}"
 }
 
+# True when $1 is a file this repository tracks, so the deploying loops below can leave a stray file alone. A tree
+# without git (packaged by setup_lab_automation.sh, which writes .lab-versions instead) tracks nothing and deploys
+# everything, as it always did: what is in such a tree was put there deliberately. LAB_DEPLOY_UNTRACKED=1 deploys an
+# untracked file too, for working on an add-on before committing it.
+_in_checkout=$(git rev-parse --is-inside-work-tree 2>/dev/null)
+_skipped_untracked=()
+deploy_this() {
+	[[ "${_in_checkout}" == "true" ]] || return 0
+	[[ "${LAB_DEPLOY_UNTRACKED:-}" == "1" ]] && return 0
+	git ls-files --error-unmatch "$1" >/dev/null 2>&1 && return 0
+	_skipped_untracked+=("$1")
+	return 1
+}
+
 if [[ "$_templ_addons_loc" == "" ]]
 then
 	_templ_addons_loc=/usr/share/lab_creation/templates/addons/
@@ -88,6 +102,7 @@ chmod 0600 /etc/lab_creation.cfg.example
 for i in libs/*
 do
     [[ -d "${i}" ]] && continue
+    deploy_this "${i}" || continue
     cp "${i}" /usr/local/lib/lab_creation/
 done
 
@@ -102,7 +117,9 @@ cp schemas/compatibility.json /usr/share/lab_creation/schemas/compatibility.json
 mkdir -p /usr/share/lab_creation/examples
 for i in examples/*.json examples/*.json.template examples/*.yaml examples/*.yml
 do
-    [[ -f "${i}" ]] && cp "${i}" /usr/share/lab_creation/examples/
+    [[ -f "${i}" ]] || continue
+    deploy_this "${i}" || continue
+    cp "${i}" /usr/share/lab_creation/examples/
 done
 
 
@@ -115,6 +132,7 @@ done
 for i in scripts/install_*
 do
         [[ -f "${i}" ]] || continue
+        deploy_this "${i}" || continue
         _name="${i##*/}"
         _name="${_name%%.*}"
         _dst="/usr/local/bin/${_name}"
@@ -139,7 +157,7 @@ do
 done
 
 # Non-addon, non-orchestration tooling.
-for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py check_addon.py migrate_config.py
+for i in pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
     sed -i "s/__LABVERSION__/$(lab_version "scripts/${i}")/" "/usr/local/bin/${i}"
@@ -183,7 +201,8 @@ rm -f /usr/local/lib/lab_creation/lab_creation.bash /usr/local/lib/lab_creation/
 
 for i in templates/salt/*
 do
-  cp $i /srv/www/htdocs/lab_creation/salt/
+  deploy_this "${i}" || continue
+  cp "${i}" /srv/www/htdocs/lab_creation/salt/
 done
 
 for i in combustion.template ignition.template cloud-init.template_meta-data cloud-init.template_network-config cloud-init.template_network-config-dhcp cloud-init.template_network-config-dhcp-nomac cloud-init.template_user-data \
@@ -772,4 +791,14 @@ CTLEOF
             fi
         fi
     fi
+fi
+
+# What was left behind, and how to deploy it anyway. A file that is not in the repository is usually a leftover of
+# earlier work, and deploying it means setup_lab and the web UI offer it as if it were part of the project.
+if [[ ${#_skipped_untracked[@]} -gt 0 ]]
+then
+    echo
+    echo "Not deployed, because this checkout does not track them (${#_skipped_untracked[@]} file(s)):"
+    printf '  %s\n' "${_skipped_untracked[@]}"
+    echo "  Commit them, delete them, or re-run with LAB_DEPLOY_UNTRACKED=1 to deploy them as well."
 fi

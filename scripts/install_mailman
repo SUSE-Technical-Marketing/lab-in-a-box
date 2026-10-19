@@ -70,7 +70,7 @@ def _get_or_create_secret_value(hostname, ns, key, length=32):
 def setup_mailman(hostname, templ_addons_loc, cfg):
     """Deploy Mailman 3 (core + web + postgres)."""
     ns = cfg.get("mailman_ns") or "mailman"
-    ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(shlex.quote(ns)), check=False)
+    ssh_run(hostname, ac.namespace_command(ns))
 
     db_password = _get_or_create_secret_value(hostname, ns, "db_password")
     hyperkitty_api_key = _get_or_create_secret_value(hostname, ns, "hyperkitty_api_key")

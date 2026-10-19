@@ -432,6 +432,223 @@ check("ensure_route_via_site_gateway: no remote CIDRs at all -> complete no-op (
 
 
 print()
+# ── the node registry: who the hub routes to ───────────────────────────────
+# Gaps closed here: a node provisioned before another site joined never learned that site's subnet, and a retired
+# site's routes could never be taken off the nodes holding them, because the hub knew its sites but not their nodes.
+reset()
+overlay.register_node("hub", "aws-tmm", "n1.lab", "10.0.0.9")
+written = [body for host, cmd, body in calls if body is not None and "overlay_nodes" in cmd]
+check("a node is recorded on the hub, one line per node",
+      written and written[-1].strip() == "aws-tmm n1.lab 10.0.0.9")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_nodes": FakeResult(stdout="aws-tmm n1.lab 10.0.0.9\n")}
+overlay.register_node("hub", "aws-tmm", "n1.lab", "10.0.0.250")
+written = [body for host, cmd, body in calls if body is not None and "overlay_nodes" in cmd]
+check("recording the same node again replaces its line rather than adding one",
+      written and written[-1].strip() == "aws-tmm n1.lab 10.0.0.250")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_nodes":
+                   FakeResult(stdout="home n0.lab 192.168.88.73\naws-tmm n1.lab 10.0.0.9\n")}
+check("every node is listed", overlay.list_nodes("hub")
+      == [("home", "n0.lab", "192.168.88.73"), ("aws-tmm", "n1.lab", "10.0.0.9")])
+check("one site's nodes can be asked for on their own",
+      overlay.list_nodes("hub", site_name="home") == [("home", "n0.lab", "192.168.88.73")])
+
+reset()
+overlay.forget_node("hub", "n1.lab")
+check("forgetting a node edits the registry by that node's own name",
+      any("overlay_nodes" in cmd and "n1\\.lab" in cmd for _h, cmd, _b in calls))
+
+# ── a node learns about a site that joined after it ───────────────────────
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout="home n0.lab 192.168.88.73\naws-tmm n1.lab 10.0.0.9\n"),
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\naws-tmm 10.0.0.0/16\n"),
+}
+refreshed, unreachable = overlay.refresh_routes("hub")
+check("every registered node is refreshed", (refreshed, unreachable) == (2, 0))
+home_script = [body for host, cmd, body in calls
+               if host == "n0.lab" and body and "ip route replace" in body]
+check("the home node is routed to the other site's subnet, via its own gateway",
+      home_script and "ip route replace 10.0.0.0/16 via 192.168.88.73" in home_script[-1])
+check("...and not to its own site's subnet",
+      home_script and "192.168.88.0/24" not in home_script[-1])
+cloud_script = [body for host, cmd, body in calls
+                if host == "n1.lab" and body and "ip route replace" in body]
+check("the cloud node is routed the other way, via its own gateway",
+      cloud_script and "ip route replace 192.168.88.0/24 via 10.0.0.9" in cloud_script[-1])
+check("one site's nodes can be refreshed alone",
+      overlay.refresh_routes("hub", only_site="home")[0] == 1)
+
+# A node that is not answering is reported, not retried forever: its own next provisioning run routes it anyway.
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout="home n0.lab 192.168.88.73\n"),
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\naws-tmm 10.0.0.0/16\n"),
+}
+scripted["n0.lab"] = {"true": FakeResult(returncode=255)}
+check("an unreachable node is counted, and nothing is written to it",
+      overlay.refresh_routes("hub") == (0, 1)
+      and not any(host == "n0.lab" and body for host, _c, body in calls))
+
+# The last other site going away leaves a node with no overlay route at all, not a stale one.
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout="home n0.lab 192.168.88.73\n"),
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\n"),
+}
+overlay.refresh_routes("hub")
+check("the route script and its unit are removed when no other site is left",
+      any(host == "n0.lab" and "rm -f /etc/lab-overlay-routes.sh" in cmd for host, cmd, _b in calls))
+
+# ── retiring a site ───────────────────────────────────────────────────────
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\naws-tmm 10.0.0.0/16\n"),
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout="home n0.lab 192.168.88.73\naws-tmm n1.lab 10.0.0.9\n"),
+}
+cidr = overlay.retire_site("hub", "aws-tmm")
+hub_cmds = "\n".join(cmd for host, cmd, _b in calls if host == "hub")
+check("the site's CIDR is reported back", cidr == "10.0.0.0/16")
+check("its gateway stops being a peer of the hub", "# peer: aws-tmm" in hub_cmds and "wg set wg0 peer" in hub_cmds)
+check("the hub stops routing its subnet", "ip route del 10.0.0.0/16 dev wg0" in hub_cmds)
+for registry in ("overlay_sites", "overlay_allocations", "overlay_nodes"):
+    check("its line goes out of {}".format(registry),
+          any(registry in cmd and "aws-tmm" in cmd and "sed -i" in cmd for _h, cmd, _b in calls))
+check("no VM is created, started or destroyed",
+      not any(k in hub_cmds for k in ("virsh", "virt-install", "run-instances", "terminate-instances")))
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\n")}
+check("retiring a site the hub does not have changes nothing",
+      overlay.retire_site("hub", "nope") == ""
+      and not any("ip route del" in cmd for _h, cmd, _b in calls))
+
+# ── the command that exposes all of it ────────────────────────────────────
+import subprocess  # noqa: E402
+
+r = subprocess.run([sys.executable, str(_REPO / "scripts" / "overlay_ctl.py"), "--help"],
+                   stdout=subprocess.PIPE, universal_newlines=True)
+check("overlay_ctl.py explains itself", r.returncode == 0 and "retire" in r.stdout and "--hub" in r.stdout)
+r = subprocess.run([sys.executable, str(_REPO / "scripts" / "overlay_ctl.py"), "list"],
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+check("it refuses to guess which hub to talk to", r.returncode != 0)
+source = (_REPO / "scripts" / "overlay_ctl.py").read_text()
+check("retiring a site asks first, since the hub is shared with every other lab",
+      "Retire it? [y/N]" in source and "--yes" in source)
+check("the installer deploys it",
+      "overlay_ctl.py" in (_REPO / "install_automation_node_scripts.sh").read_text())
+
+# ── a new site's arrival routes the nodes that are already there ──────────
+setup_vm_source = (_REPO / "scripts" / "setup_vm.py").read_text()
+check("provisioning records the node on the hub",
+      "overlay.register_node(hub_host, this_site, vm_name, gateway_lan_ip)" in setup_vm_source)
+check("...and refreshes the nodes of every other site, which is what closes the gap",
+      "overlay.refresh_routes(hub_host)" in setup_vm_source)
+
+
+# ── cross-site DNS: the record is written where it has to resolve ─────────
+# Every DNS server here is a master of the same zone and a record arrives by being written into its zone file
+# (libs/services.py), so a node becomes resolvable at another site by writing it there as well. The hub is where a
+# run learns the other sites' servers.
+reset()
+overlay.register_dns_server("hub", "home", "192.168.88.73")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a site's DNS server is recorded on the hub", written and written[-1].strip() == "home 192.168.88.73")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\n")}
+overlay.register_dns_server("hub", "home", "192.168.88.9")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("registering the same site again replaces its line", written and written[-1].strip() == "home 192.168.88.9")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="home 192.168.88.73\naws-tmm 10.0.0.53\n")}
+check("every site's server is listed",
+      overlay.list_dns_servers("hub") == [("home", "192.168.88.73"), ("aws-tmm", "10.0.0.53")])
+check("a site's own server is left out when it asks, since the local write already reached it",
+      overlay.list_dns_servers("hub", exclude_site="home") == [("aws-tmm", "10.0.0.53")])
+
+# ── the whole zone, for the drift per-record writes cannot fix ────────────
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="home 192.168.88.73\naws-tmm 10.0.0.53\n")}
+with tempfile.TemporaryDirectory() as zone_dir:
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\nn1         IN  A       192.168.88.5\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("the zone reaches every registered site", (synced, failed) == (2, 0))
+pushed = [(host, body) for host, cmd, body in calls if "cat > " in cmd and body and "IN  A" in body]
+check("the file is replaced, not appended to",
+      pushed and all("cat > /var/lib/named/mydemo.lab.lan" in cmd
+                     for _h, cmd, body in calls if body and "IN  A" in body))
+check("it goes to both servers", sorted(host for host, _b in pushed) == ["10.0.0.53", "192.168.88.73"])
+check("named is reloaded where it landed",
+      any("reload named" in cmd for host, cmd, _b in calls if host == "10.0.0.53"))
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"cat > ": FakeResult(returncode=255)}
+with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    check("a site that cannot be written to is counted, not fatal",
+          overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir) == (0, 1))
+
+# A zone file nothing reloads is a zone nobody serves. Confirmed live on 2026-10-17: a cloud DNS VM with no BIND
+# installed at all took the file, and the push was reported as a success.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"systemctl": FakeResult(returncode=1)}
+with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("a server that took the zone but cannot reload it is a failure, not a success", (synced, failed) == (0, 1))
+check("both unit names are tried, since Debian calls it bind9",
+      any("reload named" in cmd and "bind9" in cmd for _h, cmd, _b in calls))
+
+# This node is where the zone comes from, so pushing it to itself would only rewrite the file with its own content.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\naws 10.0.0.53\n")}
+with tempfile.TemporaryDirectory() as zone_dir, \
+     mock.patch.object(overlay.ipalloc, "local_ips", return_value={"192.168.88.73"}):
+    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
+    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
+check("a site served by this automation node itself is skipped", (synced, failed) == (1, 0))
+check("...and nothing was written to its own address",
+      not any(host == "192.168.88.73" and body for host, _c, body in calls))
+
+reset()
+with tempfile.TemporaryDirectory() as zone_dir:
+    try:
+        overlay.sync_zone_to_sites("hub", "absent.lab", zone_dir=zone_dir)
+        check("pushing a zone this node does not have is an error", False)
+    except SystemExit:
+        pass
+
+# A retired site stops receiving records, which is the same cleanup as its routes.
+reset()
+scripted["hub"] = {
+    "cat /etc/wireguard/overlay_sites": FakeResult(stdout="home 192.168.88.0/24\naws-tmm 10.0.0.0/16\n"),
+    "cat /etc/wireguard/overlay_nodes": FakeResult(stdout=""),
+}
+overlay.retire_site("hub", "aws-tmm")
+check("retiring a site also drops its DNS server",
+      any("overlay_dns" in cmd and "aws-tmm" in cmd and "sed -i" in cmd for _h, cmd, _b in calls))
+
+setup_vm_source = (_REPO / "scripts" / "setup_vm.py").read_text()
+check("provisioning registers this site's DNS server",
+      "overlay.register_dns_server(hub_host, this_site, site_dns_server)" in setup_vm_source)
+check("...and writes the node's record into the other sites' servers",
+      "overlay.list_dns_servers(hub_host, exclude_site=this_site)" in setup_vm_source
+      and "remote_dns_servers=other_dns" in setup_vm_source)
+check("a libvirt or harvester site is served by this automation node's own BIND",
+      'site_dns_server = env.get("mydns", "")' in setup_vm_source)
+ctl = (_REPO / "scripts" / "overlay_ctl.py").read_text()
+check("the command can push the zone", "dns-sync" in ctl and "sync_zone_to_sites" in ctl)
+
+
 if failures:
     print("{} check(s) FAILED:".format(len(failures)))
     for f in failures:
