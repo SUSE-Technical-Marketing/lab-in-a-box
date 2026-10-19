@@ -22,8 +22,9 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
     if Path(_candidate).is_dir() and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 
+import ipalloc  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import load_vm_vars, del_from_dns, warn  # noqa: E402
+from lab_creation import load_vm_vars, del_from_dns, warn, log  # noqa: E402
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
 
@@ -62,6 +63,13 @@ def destroy_vm(definition, config, defaults, vm_name):
     backend_name = backends.effective_backend_name(definition, config, vm_name)
     myip = env.get("myip", "")
     remote_dns_servers = env.get("REMOTE_DNS_SERVERS", "").split()
+    if not myip and backend_name not in backends.CLOUD_BACKEND_NAMES:
+        # A lab may leave myip out and let the run allocate one (libs/ipalloc.py). The address was registered in the
+        # lab DNS before the VM was created, so the zone still knows it and the records can be removed; without this
+        # they would be orphaned, since a libvirt host cannot be asked what address a VM was given.
+        myip = ipalloc.dns_address(vm_name, env.get("mydomain", ""))
+        if myip:
+            log("- No myip in the lab for \"{}\" — the lab DNS has {}".format(vm_name, myip))
     if backend_name in backends.CLOUD_BACKEND_NAMES:
         if not myip:
             myip = backend.get_ip(vm_name) or ""

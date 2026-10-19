@@ -552,6 +552,35 @@ async function urlParamChecks() {
   check("a group whose only field is hidden is dropped, heading and all", form3.childNodes.length === 0);
 }
 
+
+// ── errors are visible, and a second Create shows the running job ─────────
+// An error used to arrive as the same quiet grey note as a confirmation and vanish in 2.6 s. The create dialog
+// also offered Create again while a job was already running for that lab, so the refusal only arrived as a toast
+// after the password had been typed.
+{
+  const css = fs.readFileSync("webui/htdocs/style.css", "utf8");
+  const html = fs.readFileSync("webui/htdocs/index.html", "utf8");
+  check("an error has its own toast kind", /function toastError\(/.test(src) && /toast-error/.test(src));
+  check("it is announced to a screen reader", /"role", kind === "error" \? "alert"/.test(src));
+  check("it is held long enough to read a sentence", /kind === "error" \? 9000/.test(src));
+  check("it is styled as an error, not as a note",
+        /\.toast-error\{/.test(css) && /background:var\(--danger\)/.test(css));
+  check("its text takes the page's own background colour, which contrasts in both themes",
+        /\.toast-error\{[^}]*color:var\(--bg\)/.test(css));
+  check("a long message wraps instead of being clipped",
+        /white-space:pre-wrap/.test(css) && /max-width:min/.test(css));
+  check("no failure path still reports as a plain note",
+        !/catch \(e\) \{\s*toast\(/.test(src) && !/=> toast\(/.test(src));
+  check("every message raised from a failure is an error",
+        (src.match(/toastError\(/g) || []).length > 15);
+  check("the create dialog looks for a job already running for this lab",
+        /job\.lab === name \+ "\.json" && job\.state === "running"/.test(src));
+  check("...and watches it instead of offering Create again", /watchJob\(running\.job/.test(src));
+  check("a failed start is shown in the dialog too, where the reader is looking",
+        /createMsg/.test(src) && /The lab was not started/.test(src));
+  check("the dialog has somewhere to show it", /id="createMsg"/.test(html));
+}
+
 urlParamChecks().then(() => {
   if (failures) {
     console.error(failures + " check(s) failed");

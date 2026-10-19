@@ -417,7 +417,7 @@ def setup_nextcloud_kubernetes(hostname, cfg):
 
     helm_repo_add(hostname, cfg.get("nextcloud_rel") or "nextcloud",
                   cfg.get("nextcloud_repo_url") or "https://nextcloud.github.io/helm/")
-    ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(ns), check=False)
+    ssh_run(hostname, ac.namespace_command(ns))
 
     set_args = ["--set nextcloud.host={}".format(domain)]
     for key, value in (cfg.get("nextcloud_extra_values") or {}).items():

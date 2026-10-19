@@ -174,8 +174,7 @@ def setup_fleet(hostname: str, cfg: dict) -> dict:
     if not fleet_available(hostname):
         die("fleet: this cluster has no Fleet CRDs (gitrepos.fleet.cattle.io) — Fleet ships with Rancher, so "
             "install the rancher add-on on this Kubernetes cluster first")
-    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
-        shlex.quote(workspace)))
+    ssh_run(hostname, ac.namespace_command(workspace))
 
     labelled = 0
     for entry in cfg.get("fleet_cluster_labels") or []:
@@ -227,7 +226,7 @@ def _check(chk):
             if r.returncode != 0:
                 chk.fail("{} '{}' is not in workspace {}".format(kind, name, workspace))
             elif kind == "gitrepo" and entry.get("repo"):
-                chk.expect("gitrepo '{}' points at".format(name), entry["repo"], (r.stdout or "").strip())
+                chk.expect("the repository of gitrepo '{}'".format(name), entry["repo"], (r.stdout or "").strip())
             else:
                 chk.ok("{} '{}' exists in workspace {}".format(kind, name, workspace))
 

@@ -4,6 +4,7 @@ import shlex
 import socket
 import subprocess
 import sys
+from unittest import mock
 import tempfile
 from pathlib import Path
 
@@ -1052,6 +1053,32 @@ _setup_vm_src = (_REPO / "scripts" / "setup_vm.py").read_text()
 check("setup_vm.py: cloud_dns_image() reaches ensure_cloud_dns_vm() as preferred_image, the lab's image as iso_image",
       "preferred_image=backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
       and "env.get(\"SOURCE_IMAGE\") or env.get(\"ISO_IMAGE\", \"\"), lab_setup_path" in _setup_vm_src)
+
+# ── waiting for a condition, not for the clock ───────────────────────────
+# Two fixed waits were removed: a 5 s guess before polling a rebooted node's port, which the node answered on its
+# way down, and a blanket "2 + delay_min minutes for the cluster to stabilise" after an install that already waits
+# for every node to report Ready.
+_lab = (_REPO / "scripts" / "setup_lab.py").read_text()
+check("the reboot wait compares the node's own boot id",
+      "lc.boot_id(vm_name)" in _lab and "lc.wait_for_reboot(vm_name, boot_ids[vm_name])" in _lab)
+check("the boot id is taken before the node is rebooted",
+      _lab.index("boot_ids[vm_name] = lc.boot_id(vm_name)") < _lab.index("lc.reboot_vm(virt_srv, vm_name"))
+check("the cluster is waited for by its own system workloads",
+      "k8s.wait_system_ready(" in _lab and "delay_min" in _lab)
+check("setup_lab no longer sleeps at all", "time.sleep(" not in _lab)
+check("delay_min became the patience, not the sleep", "timeout=60 * (2 + delay_min)" in _lab)
+
+import k8s as _k8s  # noqa: E402
+
+_waited = []
+with mock.patch.object(_k8s, "ssh_run", side_effect=lambda h, c, **k: _waited.append(c) or mock.Mock(returncode=0)):
+    ok = _k8s.wait_system_ready(_k8s.get_distro("k3s"), "n1", timeout=120)
+check("it asks kubectl to wait for every kube-system pod",
+      ok is True and _waited and "wait --for=condition=Ready pods --all -n kube-system --timeout=120s" in _waited[0])
+with mock.patch.object(_k8s, "ssh_run", side_effect=lambda h, c, **k: mock.Mock(returncode=1)), \
+     mock.patch.object(_k8s, "warn") as warned:
+    check("pods that never become ready are a warning, not a dead run",
+          _k8s.wait_system_ready(_k8s.get_distro("k3s"), "n1", timeout=5) is False and warned.called)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

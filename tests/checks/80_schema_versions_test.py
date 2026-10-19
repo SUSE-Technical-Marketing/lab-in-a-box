@@ -52,7 +52,10 @@ check("every add-on in scripts/ is a schema", len([n for n in current if n.start
 check("the lab definition and five configuration files are schemas",
       {"lab", "config:lab_creation.cfg", "config:lab_creation.defaults", "config:lab.cfg",
        "config:harvester-cluster.json", "config:credentials"} <= set(current))
-check("rancher declares 2.0", current["addon:rancher"]["version"] == "2.0")
+# The exact version is not pinned: any later change to the add-on raises it again. What must hold is that it is a
+# recorded schema at or past the 2.0 that its own migration step belongs to.
+check("rancher is a recorded schema, at 2.0 or later",
+      tuple(int(p) for p in current["addon:rancher"]["version"].split(".")) >= (2, 0))
 
 # ── check(): what it catches ───────────────────────────────────────────────────────────────────────────────────────
 a = {"type": "string", "required": False}
@@ -125,7 +128,8 @@ check("needed_changes leaves the definition unchanged",
       migrations.needed_changes("lab", d, record) and "rancher_repo_url" not in d["rancher"])
 migrations.stamp("lab", d, record)
 check("stamp records the current versions of the schemas a lab uses",
-      d["schema_versions"] == {"lab": record["lab"][-1]["version"], "addon:rancher": "2.0"})
+      d["schema_versions"] == {"lab": record["lab"][-1]["version"],
+                               "addon:rancher": record["addon:rancher"][-1]["version"]})
 
 # ── kagent_2_0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
 d = {"kagent": {"kagent_rel": "kagent", "kagent_repo_url": "https://kagent-ai.github.io/helm-charts", "kagent_ns": "k"},
@@ -195,7 +199,8 @@ out = work / "lab.json.system_modified.json"
 check("migrate_config.py writes the migrated copy next to the file", r.returncode == 0 and out.is_file())
 migrated = json.loads(out.read_text())
 check("the migrated copy has the change and records the versions",
-      migrated["rancher"]["rancher_repo_url"] == STABLE and migrated["schema_versions"]["addon:rancher"] == "2.0")
+      migrated["rancher"]["rancher_repo_url"] == STABLE
+      and migrated["schema_versions"]["addon:rancher"] == record["addon:rancher"][-1]["version"])
 check("migrate_config.py never changes the original", "rancher_repo_url" not in json.loads(path.read_text())["rancher"])
 r = subprocess.run(tool + ["--check", str(out)], stdout=subprocess.PIPE, universal_newlines=True)
 check("the migrated copy is up to date", r.returncode == 0 and "up to date" in r.stdout)

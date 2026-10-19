@@ -3,13 +3,17 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
 # JSON section: "neuvector" — SUSE NeuVector container security platform
 #
 #   nv_shorthn   : [OPTIONAL] Short hostname for the manager UI ingress (default: neuvector)
 #   nv_rel       : [OPTIONAL] Helm repo alias                           (default: neuvector)
 #   nv_repo_url  : [OPTIONAL] Helm repo URL                            (default: https://neuvector.github.io/neuvector-helm)
+#   nv_pvc_access        : [OPTIONAL] Access mode of the controller's own volume: ReadWriteOnce (the default, which
+#                          every storage class provides) or ReadWriteMany, which needs a replicated one such as
+#                          Longhorn. The chart's own default is ReadWriteMany, which a local-path provisioner
+#                          refuses.
 #   nv_version   : [OPTIONAL] Helm chart version                        (empty = latest)
 
 __version__ = "__LABVERSION__"
@@ -21,6 +25,7 @@ PLUGIN = {
     "requires_kubernetes": None,
     "requires_cluster": ["ingress"],
     "aux_services": [],
+    "check": True,
     # Version matrix (libs/versions.py): core chart versions; 2.11 is NeuVector 5.6, 2.10 is 5.5, 2.9 is 5.4
     # (appVersion in https://neuvector.github.io/neuvector-helm/index.yaml). Kubernetes range of 5.6:
     # https://open-docs.neuvector.com/basics/requirements
@@ -46,6 +51,8 @@ import primary  # noqa: E402
 import k8s  # noqa: E402
 from lab_creation import setup_helm, helm_repo_add, ssh_run  # noqa: E402
 
+NV_NAMESPACE = "cattle-neuvector-system"
+
 
 def _validate(v):
     v.vns("neuvector")
@@ -58,19 +65,38 @@ def setup_nv_repo(hostname, nv_rel=None, nv_repo_url=None):
     helm_repo_add(hostname, nv_rel or "neuvector", nv_repo_url or "https://neuvector.github.io/neuvector-helm")
 
 
-def setup_nv(hostname, clu_name, mydomain, rancher_shorthn, nv_shorthn=None):
-    """Install SUSE NeuVector. Mirrors setup_nv (bash)."""
+def setup_nv(hostname, clu_name, mydomain, rancher_shorthn, nv_shorthn=None, clu_type="",
+             node_count=0, pvc_access=""):
+    """
+    Install SUSE NeuVector. Mirrors setup_nv (bash).
+
+    The enforcer talks to the node's container runtime directly, so the chart is told where that socket is. K3s and
+    RKE2 keep their own containerd under /run/k3s, which is what the chart's k3s option is for; an upstream
+    Kubernetes node uses the system containerd and needs the containerd option instead. Confirmed live on
+    2026-10-17: the k3s path hardcoded here was simply absent on a kubeadm node.
+    """
     fqdn = "{}.{}.{}".format(nv_shorthn or "neuvector", clu_name, mydomain)
     rancher_url = "https://{}.{}.{}".format(rancher_shorthn, clu_name, mydomain)
+    socket = k8s.get_distro(clu_type).containerd_socket if clu_type else "/run/k3s/containerd/containerd.sock"
+    # The chart wants three controllers, which a smaller lab cannot place, and a ReadWriteMany volume for the
+    # controller's own data, which only a replicated storage class provides. Confirmed live on 2026-10-17: on a
+    # two-node cluster with the local-path provisioner, three controllers stayed Pending and the claim was refused
+    # with "NodePath only supports ReadWriteOnce". Both are sized to the cluster rather than left to fail.
+    replicas = max(1, min(int(node_count or 1), 3))
+    access = pvc_access or "ReadWriteOnce"
+    runtime = ("--set k3s.enabled=true --set k3s.runtimePath={} ".format(socket)
+               if socket.startswith("/run/k3s/")
+               else "--set containerd.enabled=true --set containerd.path={} ".format(socket))
 
-    ssh_run(hostname, "kubectl create namespace cattle-neuvector-system")
+    ssh_run(hostname, ac.namespace_command("cattle-neuvector-system"))
     ssh_run(hostname,
             "helm upgrade -i neuvector neuvector/core --namespace cattle-neuvector-system "
-            "--set k3s.enabled=true "
-            "--set k3s.runtimePath=/run/k3s/containerd/containerd.sock "
+            + runtime +
             "--set manager.ingress.enabled=true "
             "--set manager.svc.type=ClusterIP "
             "--set controller.pvc.enabled=true "
+            "--set controller.replicas={} ".format(replicas) +
+            "--set controller.pvc.accessModes[0]={} ".format(access) +
             "--set manager.ingress.host={} "
             "--set global.cattle.url={} "
             "--set controller.ranchersso.enabled=true "
@@ -79,8 +105,31 @@ def setup_nv(hostname, clu_name, mydomain, rancher_shorthn, nv_shorthn=None):
     return fqdn
 
 
+def _check(chk):
+    """
+    What is deployed against the lab's "neuvector" section: the Helm release in cattle-neuvector-system, its chart
+    version against nv_version, every pod running, and SUSE Security's own controller and enforcer, without which
+    it is installed but not protecting anything.
+    """
+    if "neuvector" not in chk.definition:
+        chk.ok("this lab has no neuvector section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("neuvector", {}) or {}
+    if not chk.helm_release(chk.vm_name, "neuvector", NV_NAMESPACE, version=cfg.get("nv_version") or ""):
+        return
+    for kind, name, what in (("deploy", "neuvector-controller-pod", "the controller"),
+                             ("ds", "neuvector-enforcer-pod", "the enforcer")):
+        ready = ssh_run(chk.vm_name, "kubectl -n {} get {} {} -o jsonpath='{{.status.{}}}'".format(
+            NV_NAMESPACE, kind, name, "readyReplicas" if kind == "deploy" else "numberReady"),
+            check=False, capture=True)
+        if (ready.stdout or "").strip() in ("", "0"):
+            chk.fail("{} ({}/{}) has no ready instance".format(what, kind, name))
+        else:
+            chk.ok("{} is running ({} ready)".format(what, (ready.stdout or "").strip()))
+
+
 def main():
-    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
         print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
@@ -109,6 +158,9 @@ def main():
         setup_helm(vm_name, clu_name, online=online)
         setup_nv_repo(vm_name, nv_rel=nv_cfg.get("nv_rel"), nv_repo_url=nv_cfg.get("nv_repo_url"))
         fqdn = setup_nv(vm_name, clu_name, clu_cfg.get("mydomain", ""), rancher_shorthn,
+                        clu_type=clu_cfg.get("clu_type", ""),
+                        node_count=k8s.kcluster_node_count(definition, clu_name),
+                        pvc_access=(definition.get("neuvector", {}) or {}).get("nv_pvc_access", ""),
                         nv_shorthn=nv_cfg.get("nv_shorthn"))
         ac.register_service_dns(definition, clu_name, fqdn)
         time.sleep(60)

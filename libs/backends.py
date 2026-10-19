@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import ipalloc
 import primary
 import provisioning
 import suse_catalogue
@@ -132,6 +133,10 @@ def _cloud_no_mac(mymac):
 # critical section.
 _mac_lock = threading.Lock()
 
+# The same reason the MAC lock exists: picking an address, recording it in the shared definition and saving it are
+# one decision, and two nodes being created at once must not reach the same one.
+_ip_lock = threading.Lock()
+
 
 def _reachable_for_keep(vm_name: str, myip: str) -> bool:
     """
@@ -155,6 +160,42 @@ def _reachable_for_keep(vm_name: str, myip: str) -> bool:
         log("  {}KEEP CHECK{} \"{}{}{}\": SSH not accessible — will recreate".format(_YELLOW, _RESET, _RED, vm_name, _RESET))
         return False
     return True
+
+
+def _cloud_no_ip(myip):
+    """
+    A cloud backend's check_or_generate_ip(): the provider assigns the address, so there is nothing to allocate and
+    an empty myip is not a gap. Returns myip unchanged, exactly as _cloud_no_mac() does for MACs.
+    """
+    return myip or ""
+
+
+def _check_or_generate_ip(used_ips, vm_name, myip, definition):
+    """
+    The address `vm_name` will have, allocating one when the definition gives none.
+
+    `myip` set is used as it is: the lab asked for that address by name, and the preflight already warns when
+    something answers on it. `myip` empty is allocated by libs/ipalloc.py from the network the definition already
+    describes, deterministically from the node's name, and written into the definition in memory so that everything
+    downstream (DNS registration, provisioning files, the node's own configuration) sees one answer. The definition
+    is then saved the same way a regenerated MAC is: through primary.save_definition(), a sibling file, never over
+    the lab's own source.
+
+    Returns the address, or die()s when the lab has no network to take one from or every address in it is taken.
+    """
+    if not _empty(myip):
+        return myip
+
+    allocated = ipalloc.allocate(vm_name, definition, used=used_ips)
+    if not allocated:
+        die("No address could be allocated for \"{}{}{}\": set 'myip' on it, or give the lab a 'mygw' and "
+            "'mymask' with a free address in that network".format(_RED, vm_name, _RESET))
+
+    definition["nodes"][vm_name]["myip"] = allocated
+    output_path = primary.save_definition(definition)
+    log("- No IP specified for \"{}{}{}\" — allocated {}; '{}' left untouched, the run's copy is '{}'".format(
+        _RED, vm_name, _RESET, allocated, definition.source_path, output_path))
+    return allocated
 
 
 def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model):
@@ -190,7 +231,7 @@ def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm
     used_macs = set(mac_by_domain.values())
 
     if _empty(mymac):
-        mymac = _lc._generate_unused_mac(used_macs)
+        mymac = _lc._generate_unused_mac(used_macs, vm_name=vm_name)
         log("- No MAC specified for \"{}{}{}\" — generated {}".format(_RED, vm_name, _RESET, mymac))
     else:
         mymac_lower = mymac.lower()
@@ -203,6 +244,7 @@ def _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm
             print("  Generate a new MAC and update {}? [y/N] ".format(definition.source_path), end="", flush=True)
             answer = _read_conflict_confirmation()
             if re.match(r"^[Yy]$", answer):
+                # A conflict is resolved at random: the address derived from this name is the one already taken.
                 mymac = _lc._generate_unused_mac(used_macs)
                 definition["nodes"][vm_name]["mymac"] = mymac
                 output_path = primary.save_definition(definition)
@@ -337,6 +379,18 @@ class VMBackend(object):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         raise NotImplementedError
 
+    def list_used_ips(self):
+        """
+        The addresses this backend can see in use and nothing else can: a set of strings. Empty by default, which
+        leaves ipalloc with the definition, the lab DNS, this node's own addresses and its ping gate.
+        """
+        return set()
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        """Validate or allocate the address of a VM — see _check_or_generate_ip()."""
+        with _ip_lock:
+            return _check_or_generate_ip(self.list_used_ips(), vm_name, myip, definition)
+
     def host_resources(self):
         raise NotImplementedError
 
@@ -397,6 +451,14 @@ class VMBackend(object):
         the provider publishes none or it cannot be looked up. "" by default; AWSBackend overrides it.
         """
         return ""
+
+    def resolve_image_name(self, name: str) -> str:
+        """
+        The image `name` as this backend's create_vm() needs it. A provider image ID is returned unchanged; a product
+        name such as "sles16" is looked up, so a lab can ask for an operating system instead of carrying an ID that
+        goes stale and silently becomes a different image. Unchanged by default; AWSBackend overrides it.
+        """
+        return name
 
 
 class LibvirtBackend(VMBackend):
@@ -507,6 +569,25 @@ class LibvirtBackend(VMBackend):
         with _mac_lock:
             _, mac_by_domain = self.list_used_macs()
             return _check_or_generate_mac(mac_by_domain, vm_name, mymac, definition, bridge, vm_net_model)
+
+    def list_used_ips(self):
+        """
+        The addresses this hypervisor can see: the leases of every libvirt network it serves, and the neighbour
+        table of the host itself, which holds whatever its bridges have been talking to. Best effort, since a
+        hypervisor that answers neither still leaves ipalloc its other sources.
+        """
+        found = set()
+        networks = self._virsh("net-list", "--name", capture_output=True, text=True, check=False)
+        for net in (getattr(networks, "stdout", "") or "").split():
+            leases = self._virsh("net-dhcp-leases", net, capture_output=True, text=True, check=False)
+            found.update(ipalloc.ips_in_text(getattr(leases, "stdout", "") or ""))
+        if self.remote_host:
+            neighbours = ssh_run(self.remote_host, "ip -4 neigh show", capture=True, check=False)
+        else:
+            neighbours = subprocess.run(["ip", "-4", "neigh", "show"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, universal_newlines=True)
+        found.update(ipalloc.ips_in_text(getattr(neighbours, "stdout", "") or ""))
+        return found
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """
@@ -1516,6 +1597,9 @@ class HetznerBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # Hetzner assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate. Checks
         the server's own status (running), then falls through to the same DNS/SSH checks — MAC is
@@ -1849,6 +1933,9 @@ class AWSBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # EC2 assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
         instance = self._find_instance(vm_name)
@@ -2011,6 +2098,38 @@ class AWSBackend(VMBackend):
             _lc.warn("could not read SUSE's public cloud image list for AWS region '{}': {}".format(self.region, exc))
             return ""
         return image.get("id", "")
+
+    _PRODUCT_IMAGES = {"opensuse": 0, "leap": 0}      # handled by opensuse_image(); the value is unused
+
+    def resolve_image_name(self, name: str) -> str:
+        """
+        VMBackend.resolve_image_name() override: "sles16", "sles16.0" or "sles" become the region's newest plain
+        pay-as-you-go SLES AMI of that version, and "opensuse" or "leap" the newest openSUSE Leap one. Anything else,
+        an "ami-…" included, is returned unchanged.
+
+        A lab that names an AMI carries a region-specific ID that ages: SUSE publishes a new build every few weeks,
+        and an ID copied by hand can be a different product altogether (a SLES 15 image has no NetworkManager for
+        RKE2 to configure, which is how one GPU lab failed). Naming the product keeps the lab readable and current.
+        """
+        wanted = str(name or "").strip().lower()
+        if wanted in self._PRODUCT_IMAGES:
+            return self.opensuse_image() or name
+        match = re.match(r"^sles(\d+)?(?:[.-](\d+))?$", wanted)
+        if not match:
+            return name
+        major = int(match.group(1)) if match.group(1) else 0
+        try:
+            image = suse_catalogue.newest_sles(
+                suse_catalogue.active_images("amazon", self.region), "-x86_64", major=major)
+        except (OSError, ValueError) as exc:
+            die("could not read SUSE's public cloud image list for AWS region '{}' to resolve SOURCE_IMAGE "
+                "'{}': {}".format(self.region, name, exc))
+        if not image.get("id"):
+            die("SUSE publishes no plain SLES{} x86_64 image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
+                "instead".format(" " + str(major) if major else "", self.region))
+        _lc.log("- SOURCE_IMAGE '{}' is {} ({}) in {}".format(
+            name, image["id"], image.get("name", ""), self.region))
+        return image["id"]
 
     def disable_source_dest_check(self, vm_name):
         """
@@ -2181,6 +2300,7 @@ class AWSBackend(VMBackend):
                     "virtualization.".format(
                         instance_type, family, ", ".join(sorted(self._NESTED_VIRT_SUPPORTED_FAMILIES))))
 
+        iso_image = self.resolve_image_name(iso_image)
         image_result = self._aws("ec2", "describe-images", "--image-ids", iso_image)
         images = (image_result or {}).get("Images", [])
         if not images:
@@ -2382,6 +2502,9 @@ class GCPBackend(VMBackend):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # GCE assigns its own networking — see _cloud_no_mac()'s docstring
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
@@ -2641,6 +2764,9 @@ class AlibabaBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)  # ECS assigns its own networking — see _cloud_no_mac()'s docstring
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         """Same intent as the other backends': True = keep, False = destroy and recreate."""
         instance = self._find_instance(vm_name)
@@ -2879,6 +3005,9 @@ class ScalewayBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         server = self._find_server(vm_name)
         state = (server or {}).get("state")
@@ -3114,6 +3243,9 @@ class UpCloudBackend(VMBackend):
 
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
+
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
 
     def vm_is_reusable(self, vm_name, mymac, myip):
         server = self._find_server(vm_name)
@@ -3379,6 +3511,9 @@ class OVHcloudBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         instance = self._find_instance(vm_name)
         status = (instance or {}).get("status")
@@ -3590,6 +3725,9 @@ class ExoscaleBackend(VMBackend):
     def check_or_generate_mac(self, vm_name, mymac, definition, bridge="br0", vm_net_model="virtio"):
         return _cloud_no_mac(mymac)
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        return _cloud_no_ip(myip)  # the provider assigns the address — see _cloud_no_ip()
+
     def vm_is_reusable(self, vm_name, mymac, myip):
         instance = self._find_instance(vm_name)
         state = (instance or {}).get("state")
@@ -3727,7 +3865,29 @@ BACKENDS = {
 CLOUD_BACKEND_NAMES = frozenset(BACKENDS) - {"libvirt", "harvester"}
 
 
-def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
+# What the cloud DNS VM serves and to whom, inserted into whichever options block the distribution has. The lab's
+# own networks are substituted into the two recursion lines; everything else gets the zone and nothing more.
+_OPTIONS_TEMPLATE = (
+    "\tlisten-on port 53 { any; };",
+    "\tlisten-on-v6 port 53 { none; };",
+    "\tallow-query { any; };",
+    "\tallow-query-cache { __NETWORKS__localhost; localnets; };",
+    "\tallow-recursion { __NETWORKS__localhost; localnets; };",
+    "\tallow-transfer { none; };",
+    "\tallow-update { none; };",
+    "\tversion none;",
+    "\tminimal-responses yes;",
+    # Forward rather than walk the root zone. A cloud instance usually has no IPv6, and BIND chasing the IPv6
+    # addresses of the root's nameservers logs "network unreachable" and stalls (confirmed live on 2026-10-17: the
+    # lab zone answered but nothing external resolved). The cloud's own resolver comes first, then two public ones,
+    # and "forward first" still lets it recurse itself if all three are unreachable.
+    "\tforwarders { 169.254.169.253; 9.9.9.9; 1.1.1.1; };",
+    "\tforward first;",
+    "\trate-limit { responses-per-second 15; window 5; };",
+)
+
+
+def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -> str:
     """
     Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(). It installs BIND and serves
     `mydomain` from the same on-disk path and convention DNSService (libs/services.py) uses for
@@ -3747,6 +3907,9 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
     """
+    _OPTIONS_LINES = [line.replace("__NETWORKS__", "".join("{}; ".format(c) for c in lab_networks or []))
+                      for line in _OPTIONS_TEMPLATE]
+
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
         escaping rule (YAML single-quoted strings don't support backslash escapes at all)."""
@@ -3778,10 +3941,16 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
         "printf '%s\\n' {conf} > \"$BIND_CONF\"".format(conf="'{}'".format(named_conf_line)),
         'if [ "$BIND_CONF" = /etc/named.lab.conf ]; then grep -qF "$BIND_CONF" /etc/named.conf'
         ' || echo \'include "/etc/named.lab.conf";\' >> /etc/named.conf; fi',
-        "if [ -f /etc/named.conf ]; then sed -i"
-        " -e 's/listen-on port 53 { 127.0.0.1; };/listen-on port 53 { any; };/'"
-        " -e 's/allow-query *{ localhost; };/allow-query { any; }; allow-recursion { localnets; localhost; };/'"
-        " /etc/named.conf; fi",
+        # The serving policy is written rather than patched into whatever the distribution shipped, because this
+        # server answers on a public address: it is authoritative for the lab's zone to anyone, recurses only for
+        # the lab's own networks, rate-limits what it answers so it cannot be used to amplify an attack at someone
+        # else, hands out no zone transfers and does not announce its version. The distribution's own conflicting
+        # lines are removed first, so there is one policy and it is this one.
+        'OPTS=/etc/bind/named.conf.options; [ -f "$OPTS" ] || OPTS=/etc/named.conf',
+        'sed -i -e "/^[[:space:]]*\\(recursion\\|allow-query\\|allow-recursion\\|allow-query-cache'
+        '\\|allow-transfer\\|allow-update\\|version\\|listen-on\\|listen-on-v6\\|rate-limit\\|forwarders\\|forward\\)/d" "$OPTS"',
+        'sed -i "/^[[:space:]]*options[[:space:]]*{/a \\' + "\n".join(_OPTIONS_LINES) + '" "$OPTS"',
+        'named-checkconf || { echo "named-checkconf refused the generated configuration" >&2; exit 1; }',
         'chown -R "$BIND_USER:$BIND_USER" /var/lib/named',
         "chmod 0755 /var/lib/named",
         "if command -v selinuxenabled >/dev/null && selinuxenabled; then chcon -R -t named_zone_t /var/lib/named; fi",
@@ -3789,7 +3958,9 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
         " printf '%s\\n' '/var/lib/named/** rw,' > /etc/apparmor.d/local/usr.sbin.named; fi",
         "if [ -f /etc/apparmor.d/usr.sbin.named ] && command -v apparmor_parser >/dev/null; then"
         " apparmor_parser -r /etc/apparmor.d/usr.sbin.named; fi",
-        "systemctl enable --now named",
+        "systemctl enable --now named 2>/dev/null || systemctl enable --now bind9",
+        'systemctl is-active named >/dev/null 2>&1 || systemctl is-active bind9 >/dev/null 2>&1'
+        ' || { echo "BIND did not start" >&2; exit 1; }',
     ]
     runcmd_block = "\n".join("  - {}".format(yq(cmd)) for cmd in commands)
 
@@ -3818,6 +3989,25 @@ def cloud_dns_image(definition, config, vm_name):
     """
     _account, eff_config, _cloudtype = resolve_cloud_account(definition, config, vm_name)
     return str(eff_config.get("CLOUD_DNS_IMAGE") or "")
+
+
+def dns_recursion_networks(backend):
+    """
+    The networks the cloud DNS VM may recurse for, as CIDR strings.
+
+    A lab node resolves through this server, and a node can be in any cloud's private subnet or in the home lab, so
+    the private ranges are what may recurse: every lab network is one of them, and no address on the public internet
+    is, which is what keeps an open port 53 from being an open resolver. The backend's own subnet is named too when
+    it knows it, and the overlay's range for a lab that uses it.
+    """
+    networks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
+    try:
+        own = backend.get_subnet_cidr()
+    except Exception:                                            # noqa: BLE001 - best effort, it only narrows nothing
+        own = None
+    if own and own not in networks:
+        networks.append(own)
+    return networks
 
 
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
@@ -3872,25 +4062,31 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)
     (base / "{}_user-data".format(dns_vm_name)).write_text(
-        _cloud_dns_vm_user_data(root_ssh_key, mydomain))
+        _cloud_dns_vm_user_data(root_ssh_key, mydomain, lab_networks=dns_recursion_networks(backend)))
 
     backend.copy_vm_image(iso_image, dns_vm_name, 8, config_method="cloud-init")
     backend.push_provisioning_files(dns_vm_name, config_method="cloud-init")
+    # DNS, and nothing else. A lab node resolves through this server from whatever network it is in, so 53 has to
+    # be reachable; the server itself answers the lab's own zone to anyone and recurses only for the lab's networks
+    # (see _cloud_dns_vm_user_data), so an open 53 is not an open resolver. SSH is opened by the backend's own rule.
     ip = backend.create_vm(
         dns_vm_name, 1, 512, 8, None,
         config_method="cloud-init", iso_image=iso_image, mymac=None,
+        open_ports=["53/udp", "53/tcp"],
     )
     if not ip:
         die("cloud DNS VM '{}' was created on backend '{}' but create_vm() reported no IP — "
             "cannot continue".format(dns_vm_name, backend_name))
 
     # create_vm() returns once the provider has assigned an IP, but cloud-init still needs time to
-    # install and start bind9. Wait here until named answers, so add_to_dns()'s later SSH append
-    # does not race it. Because the DNS VM is a secondary server, check=False would otherwise hide
-    # that race completely.
+    # install bind9 and write the zone. Wait until cloud-init has finished and named is active, so
+    # add_to_dns()'s later SSH append finds the zone file. Installing the bind9 package starts named
+    # before the zone exists, so named being active alone is not enough. Because the DNS VM is a
+    # secondary server, check=False would otherwise hide that race completely.
     log("- Waiting for \"{}{}{}\" to finish installing and starting BIND".format(_RED, dns_vm_name, _RESET))
-    if not _lc.wait_for_ssh_command(ip, "systemctl is-active named", timeout=240):
-        die("cloud DNS VM '{}' ({}) never reported 'named' active within 240s — check it "
+    if not _lc.wait_for_ssh_command(
+            ip, "test -f /var/lib/cloud/instance/boot-finished && systemctl is-active named", timeout=240):
+        die("cloud DNS VM '{}' ({}) never finished cloud-init with 'named' active within 240s — check it "
             "manually (SSH in and inspect cloud-init's own log, /var/log/cloud-init-output.log)"
             .format(dns_vm_name, ip))
 

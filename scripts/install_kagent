@@ -98,7 +98,7 @@ def setup_kagent(hostname: str, clu_name: str, mydomain: str, cfg: dict) -> str:
     ver_arg = " --version {}".format(shlex.quote(cfg["kagent_version"])) if cfg.get("kagent_version") else ""
     fqdn = "{}.{}.{}".format(cfg.get("kagent_shorthn") or "kagent", clu_name, mydomain)
 
-    ssh_run(hostname, "kubectl create namespace {0} --dry-run=client -o yaml | kubectl apply -f -".format(shlex.quote(ns)))
+    ssh_run(hostname, ac.namespace_command(ns))
     has_key = api_key_secret(hostname, ns, cfg)
     ssh_run(hostname, "helm upgrade --install kagent-crds {}/kagent-crds --namespace {}{}".format(
         registry, shlex.quote(ns), ver_arg))

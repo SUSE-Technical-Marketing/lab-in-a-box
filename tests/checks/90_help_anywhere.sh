@@ -20,7 +20,7 @@ done < <(git -c safe.directory="${_repo}" ls-files 'scripts/install_*' | sort)
 
 _entry_points=(setup_lab.py setup_vm.py destroy_vm.py destroy_lab.py lab_schema refresh_hypervisor_status.py
                setup_harvester_cluster.py build_lab_usb.py setup_credentials.py vm_power.py check_addon.py
-               migrate_config.py schema_versions.py lab_builder_helper.py pushDockerImage.sh)
+               migrate_config.py schema_versions.py lab_builder_helper.py pushDockerImage.sh overlay_ctl.py check_lab.py)
 
 failed=0
 run_case() {

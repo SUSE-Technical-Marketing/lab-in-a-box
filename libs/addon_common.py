@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 from importlib.machinery import SourceFileLoader
@@ -25,6 +26,21 @@ from pathlib import Path
 
 import primary
 import versions
+from lab_creation import ssh_run
+
+
+def namespace_command(namespace):
+    """
+    The command that makes `namespace` exist whether it does already or not, for an add-on to run on its target.
+
+    `kubectl create namespace` fails when the namespace is there, which makes a second run of an add-on die on its
+    own namespace, and `create ... || true` hides every other reason it could fail. Applying it does neither.
+
+    The command rather than the call, so the add-on runs it through its own ssh_run: that is the name its own tests
+    stand in for, and a library that reached around them would be tested by nobody.
+    """
+    return "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
+        shlex.quote(str(namespace)))
 
 
 # ── Field validators ──────────────────────────────────────────────────────────
@@ -196,6 +212,60 @@ class Checker:
             self.problems.append("[FAIL] {}".format(what))
         else:
             self.problems.append("[FAIL] {}: expected {!r}, found {!r}".format(what, expected, found))
+
+    def helm_release(self, hostname, release, namespace, version="", pods=True):
+        """
+        The three things nearly every Kubernetes add-on's check wants to know about what it installed: that the Helm
+        release is there, that its chart version is the one the lab asked for, and that its pods are running.
+
+        hostname  : the node to ask, which is the one the install ran on (self.vm_name).
+        release   : the Helm release name.
+        namespace : where it was installed.
+        version   : the version the lab asked for, "" when it asked for none (then nothing is compared).
+        pods      : check that every pod in `namespace` is Running or Succeeded.
+
+        Returns the release's chart ("name-version") when it is deployed, "" when it is not, so a caller can add
+        whatever else only it knows how to look at.
+        """
+        listed = ssh_run(hostname, "helm -n {} list -o json".format(shlex.quote(namespace)),
+                         check=False, capture=True)
+        try:
+            entries = [e for e in json.loads((listed.stdout or "").strip() or "[]")
+                       if e.get("name") == release]
+        except ValueError:
+            entries = []
+        if not entries:
+            self.fail("there is no '{}' Helm release in namespace {}".format(release, namespace))
+            return ""
+        chart = str(entries[0].get("chart", ""))
+        status = str(entries[0].get("status", ""))
+        if status and status != "deployed":
+            self.fail("the '{}' Helm release in {} is {}, not deployed".format(release, namespace, status))
+        else:
+            self.ok("the '{}' Helm release is deployed in {} ({})".format(release, namespace, chart or "?"))
+
+        if version:
+            self.expect("the chart version of '{}'".format(release),
+                        str(version).lstrip("v"), chart.rsplit("-", 1)[-1])
+
+        if pods:
+            # Readiness, not the pod's phase: a pod is Running from the moment its containers start, so phase alone
+            # calls a workload healthy while its own readiness probe is still failing. Confirmed live on
+            # 2026-10-17, when every NeuVector pod was Running and both controllers were not ready.
+            # awk is POSIX ERE and has no backreferences, so "ready out of total" is compared by splitting the
+            # field rather than matched with a pattern.
+            bad = ssh_run(hostname, "kubectl -n {} get pods --no-headers 2>/dev/null "
+                                    "| awk '$3 == \"Completed\" || $3 == \"Succeeded\" {{next}} "
+                                    "{{split($2, a, \"/\"); if (a[1] != a[2] || a[2] == 0) "
+                                    "print $1\"(\"$2\",\"$3\")\"}}'".format(
+                                        shlex.quote(namespace)), check=False, capture=True)
+            not_ready = (bad.stdout or "").split()
+            if not_ready:
+                self.fail("{} pod(s) in {} are not ready: {}".format(
+                    len(not_ready), namespace, ", ".join(not_ready[:6])))
+            else:
+                self.ok("every pod in {} is ready".format(namespace))
+        return chart
 
     def expect(self, what, expected, found):
         """ok() when `found` equals `expected`, fail() otherwise. Values are compared as text, trimmed."""

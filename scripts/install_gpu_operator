@@ -74,7 +74,7 @@ def setup_gpu_operator(hostname, gpu_operator_ns=None, gpu_operator_version=None
     ver_arg = "--version {}".format(shlex.quote(gpu_operator_version)) if gpu_operator_version else ""
     driver_enabled = "false" if str(gpu_operator_driver_enabled) == "false" else "true"
 
-    ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(shlex.quote(ns)), check=False)
+    ssh_run(hostname, ac.namespace_command(ns))
 
     time_slicing_arg = ""
     if gpu_operator_time_slicing_replicas:

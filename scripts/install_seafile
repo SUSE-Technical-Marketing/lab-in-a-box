@@ -294,7 +294,7 @@ def setup_seafile_kubernetes(hostname, cfg):
     rel = cfg.get("seafile_rel") or "seafile"
 
     helm_repo_add(hostname, rel, cfg.get("seafile_repo_url") or "https://haiwen.github.io/seafile-helm-chart/repo")
-    ssh_run(hostname, "kubectl create namespace {} 2>/dev/null || true".format(ns), check=False)
+    ssh_run(hostname, ac.namespace_command(ns))
 
     jwt_key = cfg.get("seafile_jwt_private_key") or secrets.token_hex(20)
     db_password = cfg.get("seafile_db_password") or secrets.token_urlsafe(18)

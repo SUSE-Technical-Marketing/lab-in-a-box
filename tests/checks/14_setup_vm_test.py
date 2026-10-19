@@ -42,6 +42,10 @@ class _FakeBackend:
         order.append("check_or_generate_mac")
         return "aa:bb:cc:dd:ee:ff", "network=default,model=virtio"
 
+    def check_or_generate_ip(self, vm_name, myip, definition):
+        order.append("check_or_generate_ip")
+        return myip
+
     def copy_vm_image(self, *a, **kw):
         order.append("copy_vm_image")
 

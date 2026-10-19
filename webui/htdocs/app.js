@@ -41,6 +41,7 @@ const state = {
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
   sel: "common", editing: null, base: null, schemaCache: {},
   textError: "",   // why the lab.json text does not parse, "" when it does
+  previewAddr: {},   // {vm: ip} the run would allocate for a VM with no address (api "addresses")
 };
 
 // ---- tiny DOM helpers ------------------------------------------------------
@@ -51,9 +52,20 @@ function el(tag, cls, txt) {
   if (txt != null) e.textContent = txt;
   return e;
 }
-function toast(msg) {
-  const t = $("#toast"); t.textContent = msg; t.hidden = false;
-  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 2600);
+/* A message at the bottom of the window. `kind` "error" makes it an error: red, announced to a screen reader, and
+   held long enough to read a sentence rather than the 2.6 s a confirmation gets. toastError() is the short way. */
+function toast(msg, kind) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast" + (kind === "error" ? " toast-error" : "");
+  t.setAttribute("role", kind === "error" ? "alert" : "status");
+  t.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (t.hidden = true), kind === "error" ? 9000 : 2600);
+}
+
+function toastError(msg) {
+  toast(msg, "error");
 }
 
 // ---- API -------------------------------------------------------------------
@@ -353,6 +365,9 @@ function cleanObj(o) {
   return r;
 }
 
+/* The lab a model describes. A VM with no myip or mymac written in is simply left without one: the run allocates
+   both, deterministically, from the network the lab already describes (libs/ipalloc.py, backends.py), so a
+   definition with no addresses is portable between sites. */
 function compileLab(model) {
   const lab = {};
   const common = cleanObj(model.common);
@@ -617,7 +632,12 @@ function lintLab(model) {
     });
     nodes.forEach((n) => {
       const backend = has(n.cfg, "backend") ? n.cfg.backend : (model.common.backend || "");
-      if (!has(n.cfg, "myip") && LOCAL_BACKENDS.has(backend)) errors.push("VM " + n.name + " has no IP address (myip).");
+      // No myip is not a mistake: the run allocates one from the lab's own network and the preflight names it.
+      // It is only a problem when the lab has no network to take an address from.
+      if (!has(n.cfg, "myip") && LOCAL_BACKENDS.has(backend)
+          && !(set(model.common, "mygw") && set(model.common, "mymask"))) {
+        errors.push("VM " + n.name + " has no IP address (myip), and the lab has no mygw and mymask to allocate one from.");
+      }
     });
     clusters.forEach((c) => {
       secs.kclusters.fields.filter((f) => f.required && !has(c.cfg, f.name)).forEach((f) => {
@@ -757,7 +777,7 @@ async function handleDrop(targetId) {
   try {
     if (d.from === "palette") { item = await createItem(d.spec); m.items.push(item); }
     else item = m.items.find((i) => i.id === d.id);
-  } catch (e) { toast("Could not add: " + e.message); return; }
+  } catch (e) { toastError("Could not add: " + e.message); return; }
   if (!item) return;
   item.parent = where.parent;
   state.sel = item.id;
@@ -817,7 +837,10 @@ function blockEl(item, mini) {
     sub = bits.length ? bits.join(" · ") : "defaults for every VM — double-click to set";
     letter = "C";
   } else if (type === "node") {
-    name = item.name || "unnamed VM"; sub = item.cfg.myip || "no IP yet"; letter = "V";
+    name = item.name || "unnamed VM";
+    sub = item.cfg.myip
+      || (state.previewAddr[item.name] ? state.previewAddr[item.name] + " (allocated)" : "address allocated at creation");
+    letter = "V";
   } else if (type === "cluster") {
     name = item.name || "unnamed Kubernetes cluster"; sub = item.cfg.clu_type || "Kubernetes cluster"; letter = "K";
   } else {
@@ -968,7 +991,7 @@ async function openEditor(id) {
       const frag = m.addonCfg[item.section] || {};
       form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
     }
-  } catch (e) { toast("Load error: " + e.message); return; }
+  } catch (e) { toastError("Load error: " + e.message); return; }
   state.editing = id;
   $("#editorKind").textContent = kind;
   $("#editorTitle").textContent = title;
@@ -1558,6 +1581,7 @@ function refreshLab(fromText) {
   $("#sectionCount").textContent = `${n} section${n === 1 ? "" : "s"}`;
   $("#validateResult").hidden = true;
   renderIssues();
+  refreshPreviewAddresses();
   if (!$("#labDiagram").hidden) renderDiagram();
 }
 
@@ -1611,7 +1635,7 @@ function openLabFile(file) {
     loadLab(parseLab(text));
     $("#labName").value = file.name.replace(/\.(json|ya?ml)$/i, "");
     toast("Opened " + file.name);
-  }).catch((e) => toast("Cannot open " + file.name + ": " + e.message));
+  }).catch((e) => toastError("Cannot open " + file.name + ": " + e.message));
 }
 
 // ---- refresh available images without losing the form ---------------------
@@ -1661,7 +1685,26 @@ async function refreshImages() {
     toast(targets.length
       ? `Image list refreshed (${images.length} available).`
       : "Image list refreshed — no source-image field on this form.");
-  } catch (e) { toast("Refresh error: " + e.message); }
+  } catch (e) { toastError("Refresh error: " + e.message); }
+}
+
+/* Which address each VM with no myip would be given, asked of the same allocator the run uses, so the canvas shows
+   what will actually happen rather than a guess of its own. Silent on failure: it is a label, not a gate. */
+async function refreshPreviewAddresses() {
+  // The static page has no server to ask (its shim answers GETs only), so the canvas says an address is allocated
+  // at creation rather than naming one.
+  if (window.LAB_STATIC) { state.previewAddr = {}; renderCanvas(); return; }
+  if (!state.model.items.some((i) => i.type === "node" && i.name && !has(i.cfg, "myip"))) {
+    state.previewAddr = {};
+    return;
+  }
+  try {
+    const r = await apiPost("addresses", { config: state.lab });
+    state.previewAddr = (r && r.addresses) || {};
+  } catch (e) {
+    state.previewAddr = {};
+  }
+  renderCanvas();
 }
 
 // ---- lab actions -----------------------------------------------------------
@@ -1675,7 +1718,7 @@ async function validateLab() {
     box.textContent = r.ok
       ? "✓ Valid lab definition." + (r.output ? "\n" + r.output : "")
       : (r.output || "Validation failed.");
-  } catch (e) { toast("Validate error: " + e.message); }
+  } catch (e) { toastError("Validate error: " + e.message); }
 }
 function downloadLab() {
   if ($("#downloadBtn").disabled) return;
@@ -1693,7 +1736,7 @@ async function saveLab() {
     // returns it) — show it, not just the basename, so it's actually
     // findable (reported live 2026-09-01: the toast never said where).
     toast("Saved: " + (r.path || r.saved));
-  } catch (e) { toast("Save error: " + e.message); }
+  } catch (e) { toastError("Save error: " + e.message); }
 }
 
 // ---- URL prefill and embedding (Rodeo Builder hand-off) --------------------
@@ -1770,12 +1813,12 @@ async function applyUrlParams() {
   const q = new URLSearchParams(location.search);
   if (q.get("lab")) {
     try { loadLab(decodeLabParam(q.get("lab"))); toast("Opened the lab from the link"); }
-    catch (e) { toast("Cannot open the lab from the link: " + e.message); }
+    catch (e) { toastError("Cannot open the lab from the link: " + e.message); }
   }
   const names = (q.get("addons") || "").split(",").map((n) => n.trim()).filter(Boolean);
   if (names.length) {
     const unknown = await prefillAddons(names);
-    if (unknown.length) toast("Unknown add-ons, not added: " + unknown.join(", "));
+    if (unknown.length) toastError("Unknown add-ons, not added: " + unknown.join(", "));
   }
 }
 
@@ -1798,11 +1841,11 @@ function setupEmbed(origin) {
   ["#saveBtn", "#savedBtn", "#createBtn", "#credBtn"].forEach((b) => { const btn = $(b); if (btn) btn.hidden = true; });
   const btn = el("button", "btn primary", "Send this lab to " + new URL(origin).host);
   btn.id = "sendBtn"; btn.type = "button"; btn.title = "Sends this lab to " + origin;
-  btn.addEventListener("click", () => sendLab(origin).catch((e) => toast("Send error: " + e.message)));
+  btn.addEventListener("click", () => sendLab(origin).catch((e) => toastError("Send error: " + e.message)));
   $("#downloadBtn").after(btn);
   window.addEventListener("message", (ev) => {
     if (ev.origin !== origin || ev.source !== window.parent || !ev.data || ev.data.type !== "labinabox:load") return;
-    if (!ev.data.lab || typeof ev.data.lab !== "object") { toast("The lab sent by " + origin + " is not a lab definition"); return; }
+    if (!ev.data.lab || typeof ev.data.lab !== "object") { toastError("The lab sent by " + origin + " is not a lab definition"); return; }
     loadLab(ev.data.lab);
     toast("Opened the lab from " + origin);
   });
@@ -1817,12 +1860,17 @@ async function openExamplesDialog() {
     const r = await apiGet("examples");
     if (!r.examples.length) list.appendChild(el("li", "muted", "No example lab was found."));
     r.examples.forEach((ex) => {
-      const li = el("li", "saved-row");
-      li.appendChild(el("span", "saved-name", ex.title || ex.name));
+      // An example's own description is a sentence, not a label, so it wraps under the name instead of sharing a
+      // line with it: on one line the name was ellipsised away and the button squeezed off the row.
+      const li = el("li", "example-row");
+      const text = el("div", "example-text");
+      text.appendChild(el("div", "saved-name", ex.title || ex.name));
       const parts = [ex.nodes + (ex.nodes === 1 ? " VM" : " VMs")];
       if (ex.kclusters) parts.push(ex.kclusters + (ex.kclusters === 1 ? " Kubernetes cluster" : " Kubernetes clusters"));
       if (ex.addons.length) parts.push(ex.addons.join(", "));
-      li.appendChild(el("span", "muted", ex.description || parts.join(" · ")));
+      text.appendChild(el("div", "muted", parts.join(" · ")));
+      if (ex.description) text.appendChild(el("p", "example-desc", ex.description));
+      li.appendChild(text);
       const b = el("button", "btn", "Open");
       b.type = "button";
       b.addEventListener("click", async () => {
@@ -1831,7 +1879,7 @@ async function openExamplesDialog() {
           $("#labName").value = (ex.title || ex.name).replace(/\s+/g, "-");
           closeDialog("#examplesDialog");
           toast("Opened the " + (ex.title || ex.name) + " example");
-        } catch (e) { toast("Cannot open " + ex.name + ": " + e.message); }
+        } catch (e) { toastError("Cannot open " + ex.name + ": " + e.message); }
       });
       li.appendChild(b);
       list.appendChild(li);
@@ -1860,7 +1908,7 @@ async function openSavedDialog() {
           $("#labName").value = l.name.replace(/\.json$/, "");
           closeDialog("#savedDialog");
           toast("Opened " + l.name);
-        } catch (e) { toast("Cannot open " + l.name + ": " + e.message); }
+        } catch (e) { toastError("Cannot open " + l.name + ": " + e.message); }
       });
       li.appendChild(b);
       list.appendChild(li);
@@ -1979,7 +2027,7 @@ async function addCredential() {
     ["#credAccount", "#credPass", "#credPass2"].forEach((s) => { $(s).value = ""; });
     renderCredFields();
     loadCredentials();
-  } catch (e) { toast("Not saved: " + e.message); }
+  } catch (e) { toastError("Not saved: " + e.message); }
 }
 
 async function encryptCredential(c) {
@@ -1992,7 +2040,7 @@ async function encryptCredential(c) {
     const r = await adminCall("credentials-encrypt", { file: c.file, passphrase: pw });
     toast("Wrote " + r.file + ". Delete " + c.file + " once you have checked it.");
     loadCredentials();
-  } catch (e) { toast("Not encrypted: " + e.message); }
+  } catch (e) { toastError("Not encrypted: " + e.message); }
 }
 
 async function deleteCredential(c) {
@@ -2001,7 +2049,7 @@ async function deleteCredential(c) {
     await adminCall("credentials-delete", { file: c.file });
     toast("Deleted " + c.file);
     loadCredentials();
-  } catch (e) { toast("Not deleted: " + e.message); }
+  } catch (e) { toastError("Not deleted: " + e.message); }
 }
 
 // ---- Create lab (login, HTTPS) ----------------------------------------------------
@@ -2016,7 +2064,7 @@ function labSummary(lab) {
   return lines.join("\n");
 }
 
-function openCreate() {
+async function openCreate() {
   if ($("#createBtn").disabled) return;
   const name = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
   $("#createTitle").textContent = name;
@@ -2025,11 +2073,26 @@ function openCreate() {
   $("#createJob").hidden = true;
   $("#createGo").hidden = false;
   $("#createPass").value = "";
+  $("#createMsg").hidden = true;
   showDialog("#createDialog");
+
+  // A lab already being created cannot be started again, and the server says so only after the password has been
+  // typed and Create pressed. Showing its running job instead is the useful answer to a second Create.
+  try {
+    const running = (await adminCall("jobs")).jobs
+      .find((job) => job.lab === name + ".json" && job.state === "running");
+    if (running) {
+      $("#createConfirm").hidden = true;
+      $("#createGo").hidden = true;
+      $("#createJob").hidden = false;
+      watchJob(running.job || running.id);
+    }
+  } catch (e) { /* the jobs list is a courtesy here: startCreate() reports anything that matters */ }
 }
 
 async function startCreate() {
   const filename = ($("#labName").value.trim() || "lab").replace(/\.json$/, "");
+  $("#createMsg").hidden = true;
   try {
     await adminCall("save", { filename, config: state.lab });
     // The passphrase goes to this one request and is dropped straight away: it is never kept in state.
@@ -2041,7 +2104,14 @@ async function startCreate() {
     $("#createGo").hidden = true;
     $("#createJob").hidden = false;
     watchJob(r.job);
-  } catch (e) { toast("Not started: " + e.message); }
+  } catch (e) {
+    // In the dialog, where the reader is looking, as well as in a toast: a failure here is the end of what they
+    // were trying to do, not a passing note.
+    const msg = $("#createMsg");
+    msg.textContent = "The lab was not started: " + e.message;
+    msg.hidden = false;
+    toastError("The lab was not started: " + e.message);
+  }
 }
 
 // Polls job `id` every 3 s and shows its state and log until it ends.
@@ -2116,7 +2186,7 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshLab();
   if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
   loadComponents().then(applyUrlParams)
-    .catch((e) => { $("#countNum").textContent = "!"; toast("Load error: " + e.message); });
+    .catch((e) => { $("#countNum").textContent = "!"; toastError("Load error: " + e.message); });
   loadBase().then(() => { renderCanvas(); renderIssues(); }).catch(() => { /* shown on first edit */ });
   loadStatus();
 });
