@@ -3885,12 +3885,14 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
             "cannot continue".format(dns_vm_name, backend_name))
 
     # create_vm() returns once the provider has assigned an IP, but cloud-init still needs time to
-    # install and start bind9. Wait here until named answers, so add_to_dns()'s later SSH append
-    # does not race it. Because the DNS VM is a secondary server, check=False would otherwise hide
-    # that race completely.
+    # install bind9 and write the zone. Wait until cloud-init has finished and named is active, so
+    # add_to_dns()'s later SSH append finds the zone file. Installing the bind9 package starts named
+    # before the zone exists, so named being active alone is not enough. Because the DNS VM is a
+    # secondary server, check=False would otherwise hide that race completely.
     log("- Waiting for \"{}{}{}\" to finish installing and starting BIND".format(_RED, dns_vm_name, _RESET))
-    if not _lc.wait_for_ssh_command(ip, "systemctl is-active named", timeout=240):
-        die("cloud DNS VM '{}' ({}) never reported 'named' active within 240s — check it "
+    if not _lc.wait_for_ssh_command(
+            ip, "test -f /var/lib/cloud/instance/boot-finished && systemctl is-active named", timeout=240):
+        die("cloud DNS VM '{}' ({}) never finished cloud-init with 'named' active within 240s — check it "
             "manually (SSH in and inspect cloud-init's own log, /var/log/cloud-init-output.log)"
             .format(dns_vm_name, ip))
 

@@ -504,7 +504,9 @@ def ensure_salt_auto_accept(hostname):
     script = ("mkdir -p /etc/salt/master.d && "
               "printf 'auto_accept: True\\n' > /etc/salt/master.d/zz-lab-auto-accept.conf && "
               "systemctl restart salt-master")
-    ssh_run(hostname, "mgrctl exec -- sh -c {}".format(shlex.quote(script)), check=False)
+    # mgrctl exec joins its arguments without quoting, so `sh -c '<script>'` would run only its first word: the script
+    # goes in over stdin instead.
+    ssh_run(hostname, "echo {} | mgrctl exec -i -- bash -s".format(shlex.quote(script)), check=False)
 
 
 def ensure_bootstrap_scripts(hostname, scripts):
@@ -695,12 +697,19 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
     scc_user = cfg.get("smlm_scc_user")
     scc_password = cfg.get("smlm_scc_password")
     # A pre-built image (smlm_preinstalled) already contains the registered tooling and the installed server, so SCC
-    # registration is skipped and no regcode is needed.
+    # registration is skipped and no regcode is needed. The uyuni-server unit creates its container when it starts, which
+    # can be after SSH answers on a freshly booted image, so the unit is started (it returns once the container runs)
+    # before the container is looked for.
     preinstalled = _is_true(cfg.get("smlm_preinstalled")) and ssh_run(
-        hostname, "podman container exists uyuni-server", check=False).returncode == 0
+        hostname, "systemctl cat uyuni-server.service >/dev/null 2>&1 && systemctl start uyuni-server.service; "
+                  "podman container exists uyuni-server", check=False).returncode == 0
     if preinstalled:
         print("- smlm_preinstalled: uyuni-server already present — skipping SCC registration "
               "and mgradm tooling install")
+    elif not regcode:
+        print("ERROR: smlm_preinstalled is set but '{}' has no uyuni-server container, and no "
+              "smlm_scc_regcode is set to install one".format(hostname), file=sys.stderr)
+        sys.exit(1)
     elif _is_true(cfg.get("smlm_byos")):
         _register_byos_image(hostname, virt_srv, regcode)
         _registry_login(hostname, scc_user, scc_password)
@@ -1951,9 +1960,9 @@ def main():
     # install_uyuni's own main() — NOT k8s.first_server_node(), which only
     # makes sense for the Kubernetes/Helm-chart deployment below.
     if (cfg.get("smlm_deployment") or "kubernetes") == "podman":
-        if not cfg.get("smlm_scc_regcode"):
+        if not cfg.get("smlm_scc_regcode") and not _is_true(cfg.get("smlm_preinstalled")):
             print("ERROR: smlm_scc_regcode is required in the 'smlm' JSON section "
-                  "when smlm_deployment is 'podman'", file=sys.stderr)
+                  "when smlm_deployment is 'podman' and smlm_preinstalled is not set", file=sys.stderr)
             sys.exit(1)
 
         config = primary.load_config()

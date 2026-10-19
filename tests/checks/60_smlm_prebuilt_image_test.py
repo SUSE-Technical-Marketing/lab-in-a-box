@@ -102,6 +102,8 @@ check("preinstalled: no tooling install", not any("install -y" in c for c in cal
 check("preinstalled: no mgradm install", guard == [])
 check("preinstalled: no mgr-sync when channels are present", not any("mgr-sync" in c for c in calls))
 check("preinstalled: declarative steps still run", "ensure_activation_keys" in sc_calls)
+check("preinstalled: the uyuni-server unit is started before its container is looked for",
+      any("systemctl start uyuni-server.service; podman container exists uyuni-server" in c for c in calls))
 
 # ── pre-built image: one channel missing -> needs mirror credentials ───────
 try:
@@ -121,6 +123,12 @@ calls, guard, _ = run({"smlm_preinstalled": "true", "smlm_scc_regcode": "R"}, co
 check("preinstalled without a container falls back to a full install",
       any("SUSEConnect -r" in c for c in calls) and len(guard) == 1)
 
+try:
+    run({"smlm_preinstalled": "true"}, container_exists=False)
+    check("preinstalled without a container and without a regcode exits", False)
+except SystemExit as e:
+    check("preinstalled without a container and without a regcode exits 1", e.code == 1)
+
 # ── SSL subject flags ──────────────────────────────────────────────────────
 _, guard, _ = run({"smlm_scc_regcode": "R", "smlm_ssl_country": "CH", "smlm_ssl_org": "Chameleon Air"},
                   container_exists=False)
@@ -135,6 +143,8 @@ calls, _, _ = run({"smlm_preinstalled": "true", "smlm_salt_auto_accept": "true",
                   container_exists=True)
 check("auto_accept drop-in written and salt-master restarted",
       any("zz-lab-auto-accept.conf" in c and "restart salt-master" in c for c in calls))
+check("auto_accept script reaches the container over stdin, not as a mgrctl argument",
+      any("zz-lab-auto-accept.conf" in c and "| mgrctl exec -i -- bash -s" in c and "sh -c" not in c for c in calls))
 check("bootstrap script copied into /pub/bootstrap",
       any("mgrctl cp" in c and "/srv/www/htdocs/pub/bootstrap/generic_bootstrap.sh" in c for c in calls))
 calls, _, _ = run({"smlm_preinstalled": "true"}, container_exists=True)
