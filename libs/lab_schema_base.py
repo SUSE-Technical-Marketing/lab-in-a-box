@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.5"
+LAB_SCHEMA_VERSION = "2.6"
 
 
 def base_lab_schema():
@@ -37,8 +37,8 @@ def base_lab_schema():
             "common": {
                 "description": "Shared settings applied to every VM in the lab",
                 "fields": [
-                    {"name": "SOURCE_IMAGE", "required": True, "type": "string", "description": "Source image: local filename (in ISO_LOC), URL (http://, https://, ftp://, nfs://), or local file path"},
-                    {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "Checksum or URL: inline hex checksum (32/40/64/128 chars), URL to fetch checksum from, or local checksum file path"},
+                    {"name": "SOURCE_IMAGE", "required": True, "type": "string", "description": "Source image: local filename (in ISO_LOC), local file path, or URL (http://, https://, ftp://, file://; mirrors separated by spaces), downloaded once into ISO_LOC on each KVM host and only used once it matches SOURCE_SHA256"},
+                    {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "sha256 of the source image (required when SOURCE_IMAGE is a URL): the 64-character hex digest, a URL publishing it, or a local file holding it"},
                     {"name": "ISO_IMAGE", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_IMAGE instead"},
                     {"name": "VM_MEM", "required": True, "type": "integer", "min": 256, "description": "RAM in MiB (e.g. 8192)"},
                     {"name": "VM_DSK", "required": True, "type": "integer", "min": 1, "description": "Disk size in GiB (e.g. 80)"},
@@ -72,6 +72,8 @@ def base_lab_schema():
                     {"name": "open_ports", "required": False, "type": "array", "description": "Cloud backends: ports reachable from anywhere on each VM (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — aws: security-group rules (needs AWS_SECURITY_GROUP_ID); gcp: a firewall rule + network tag; alibaba: ALIBABA_SECURITY_GROUP_ID rules; exoscale: a per-VM security group; hetzner/scaleway/upcloud/ovhcloud: open by default"},
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "backend aws (older form of open_ports): ports opened to 0.0.0.0/0 in the security group (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — needs AWS_SECURITY_GROUP_ID"},
                     {"name": "ISO_SHA256", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_SHA256 instead"},
+                    {"name": "ISO_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_IMAGE instead"},
+                    {"name": "ISO_SHA256_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_SHA256 instead"},
                     {"name": "ssh_pwauth", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "config_method=cloud-init only: \"true\" enables SSH password login (cloud-init ssh_pwauth) and root login — for labs whose exercises log in or bootstrap clients with the root password"},
                     {"name": "lab_name", "required": False, "type": "string", "description": "Human-readable lab name shown in log output"},
                     {"name": "lab_description", "required": False, "type": "string", "description": "One line saying what this lab is for, shown where a lab is listed (the lab-builder's example and saved-lab lists)"},
@@ -124,6 +126,8 @@ def base_lab_schema():
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "Overrides common.aws_open_ports for this node only"},
                     {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "Overrides common.SOURCE_SHA256 for this node — checksum value, URL, or local file path"},
                     {"name": "ISO_SHA256", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_SHA256 instead"},
+                    {"name": "ISO_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_IMAGE instead"},
+                    {"name": "ISO_SHA256_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_SHA256 instead"},
                     {"name": "config_method", "required": False, "type": "string",
                      "enum": [{"value": "", "label": "(default) Ignition+Combustion"}, "cloud-init", "virt_customize", "install_iso"],
                      "description": "Overrides common.config_method for this node only"},

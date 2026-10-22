@@ -296,8 +296,8 @@ def validate_addon_configs(definition, json_file, issues_out=None):
 
 def phase_fetch_images(definition, config, iso_loc):
     """
-    Download every base image a node declares with ISO_URL (+ ISO_SHA256 or
-    ISO_SHA256_URL) into ISO_LOC on each KVM host that node can be created on,
+    Download every base image a node declares as a URL (SOURCE_IMAGE, or
+    ISO_URL; see lc.image_download_requests()) into ISO_LOC on each KVM host that node can be created on,
     before the preflight looks for it there. Already-verified copies are kept;
     see lc.fetch_source_image().
     """
