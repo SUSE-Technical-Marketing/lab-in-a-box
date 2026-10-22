@@ -697,7 +697,9 @@ class LibvirtBackend(VMBackend):
 
         iso_image can be:
         - A local filename (looked for in ISO_LOC)
-        - A URL (http://, https://, ftp://, nfs://) — downloaded first
+        - A URL (http://, https://, ftp://, file://; mirrors separated by spaces) — fetched once
+          into ISO_LOC on the hypervisor and checked against source_sha256
+          (lab_creation.fetch_source_image)
         - A local file path — copied directly
 
         source_sha256 can be:
@@ -721,26 +723,18 @@ class LibvirtBackend(VMBackend):
             log("- install_iso: skipping base image copy (disk created by virt-install)")
             return
 
-        from source_utils import is_url, get_source_type, download_and_validate_source
+        from source_utils import is_url
 
         ext = "raw" if disk_format == "raw" else "qcow2"
         dest = "{}/{}.{}".format(self.vm_img_loc, vm_name, ext)
 
         # Handle SOURCE_IMAGE: can be URL, local filename in ISO_LOC, or local file path
         if is_url(iso_image):
-            # Download from URL
-            log("- Downloading SOURCE_IMAGE from URL: {}".format(iso_image))
-            local_img = "{}/{}".format(self.iso_loc, iso_image.split('/')[-1])  # Use filename from URL
-            try:
-                download_and_validate_source(
-                    iso_image,
-                    local_img,
-                    checksum_value=source_sha256 if get_source_type(source_sha256) == "checksum" else None,
-                    checksum_url=source_sha256 if get_source_type(source_sha256) == "url" else None
-                )
-            except Exception as e:
-                die(f"Failed to download SOURCE_IMAGE: {e}")
-            src_q = shlex.quote(local_img)
+            # A verified copy in ISO_LOC on the KVM host (setup_lab.py fetches it first; cached then)
+            image = _lc.image_file_name(iso_image)
+            sha256, sha256_url = _lc.source_checksum(source_sha256)
+            _lc.fetch_source_image(self.remote_host, self.iso_loc, image, iso_image, sha256, sha256_url)
+            src_q = shlex.quote("{}/{}".format(self.iso_loc, image))
         else:
             # Local file handling (backward compatible)
             # Check if it's a local file path or just a filename
