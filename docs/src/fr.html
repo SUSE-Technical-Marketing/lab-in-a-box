@@ -171,6 +171,76 @@
     HB --&gt; KV[&quot;KubeVirt VirtualMachine&lt;br/&gt;on a Harvester cluster&quot;]
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
+<h3 id="the-automation-node-in-a-cloud">Le nœud d'automatisation dans un cloud</h3>
+<p>Le nœud d'automatisation est la machine sur laquelle les commandes s'exécutent. Ce peut être la VM sur un hôte KVM que <code>setup_kvm_node.py</code> construit, un conteneur ou un pod (<code>_automation_node</code> dans <code>lab.cfg</code>), ou une instance cloud. Dans un cloud il est construit par <code>setup_automation_node.py &lt;lab.json&gt; &lt;nœud&gt;</code>, où le nœud est un nœud ordinaire d'une définition de lab sur un backend cloud : il est créé par le même chemin que tout autre nœud, puis le même <code>automation-node-lib.sh configure</code> qu'une VM d'automatisation reçoit s'exécute dessus par SSH.</p>
+<p>La raison d'en vouloir un est la résolution de noms. Un lab dans un compte cloud résout ses propres nœuds via le serveur DNS de ce même compte, et un nœud d'automatisation là-bas sert lui-même la zone du lab, si bien que rien dans le lab ne dépend de l'accessibilité d'une machine à la maison. Son BIND répond de façon autoritative pour le domaine du lab depuis n'importe où et ne résout récursivement que pour les plages privées : une instance dont le port 53 est joignable depuis internet n'est donc pas un résolveur ouvert, car résoudre une VM du lab par son nom demande une réponse autoritative, jamais de la récursion. Le port 53 n'est joignable que si la liste de ports du nœud le dit, par exemple <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
+<p>Diriger quoi que ce soit vers ce serveur vous revient : ajoutez son adresse comme nameserver partout où les noms du lab doivent se résoudre. La commande affiche l'adresse à utiliser quand elle termine.</p>
+<h3 id="naming-an-image-instead-of-an-id">Nommer une image au lieu d'un identifiant</h3>
+<p>Sur un backend cloud, <code>SOURCE_IMAGE</code> accepte un nom de produit au lieu de l'identifiant d'image du fournisseur. Le nom est résolu à la création de la VM, vers l'image actuelle de ce produit chez ce fournisseur pour l'architecture de processeur que fait tourner le type d'instance du nœud : un type d'instance <code>arm64</code> comme <code>t4g.nano</code> reçoit donc l'image <code>arm64</code> du même produit, sans rien d'autre à régler. Un identifiant d'image écrit dans une définition de lab est propre à une région et vieillit : les éditeurs publient une nouvelle version toutes les quelques semaines, et un identifiant recopié à la main peut s'avérer être un tout autre produit.</p>
+<table>
+<thead>
+<tr>
+<th>Nom de produit</th>
+<th>Ce à quoi il se résout</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>Le SUSE Linux Enterprise Server le plus récent, toute version</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>Le SUSE Linux Enterprise Server 16.x le plus récent</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>Le SUSE Linux Micro le plus récent, toute version</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>Le openSUSE Leap le plus récent</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>Ubuntu 24.04 LTS Server, publié par Canonical</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>Debian 13, publié par le projet Debian</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>Amazon Linux 2023, publié par AWS</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>Le Red Hat Enterprise Linux 9.x le plus récent, publié par Red Hat</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>Le Red Hat Enterprise Linux 10.x le plus récent, publié par Red Hat</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>Le AlmaLinux OS 10.x le plus récent, publié par le projet AlmaLinux</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>Le Rocky Linux 10 le plus récent, publié par le projet Rocky</td>
+</tr>
+</tbody>
+</table>
+<p>Les produits SUSE viennent du registre public d'images de SUSE, et les autres du paramètre public AWS Systems Manager de chaque éditeur ou de son propre compte AWS, jamais d'une recherche par nom qu'un autre compte pourrait satisfaire. Une valeur qui n'est pas un nom de produit, identifiant d'image ou nom de fichier d'image compris, est transmise telle quelle.</p>
+<p>Un lab cloud a aussi besoin que ses nœuds se résolvent entre eux. Une petite VM DNS par compte cloud sert le domaine du lab, et le réseau du compte est configuré pour distribuer ce serveur à chaque instance qu'il contient, de sorte qu'un nœud rejoint son cluster Kubernetes par nom d'hôte sans rien configurer dans l'invité. Sur AWS il s'agit d'un jeu d'options DHCP de VPC : il s'applique à tout le VPC, une instance lancée ensuite l'a immédiatement, et une instance déjà en marche le récupère au renouvellement de son bail DHCP.</p>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>
 <p>Une fois les VM démarrées, <code>setup_lab.py</code> installe Kubernetes sur chaque nœud selon la section <code>kclusters</code> du JSON. RKE2 et K3s sont tous deux pris en charge. Quand un cluster est prêt, ses modules s'exécutent les uns après les autres ; les modules de VM (rattachés à un nœud plutôt qu'à un cluster) s'exécutent une fois ce nœud provisionné. Chaque nœud RKE2 et chaque nœud serveur K3s reçoit <code>/etc/profile.d/rke2.sh</code> ou <code>/etc/profile.d/k3s.sh</code>, qui définit <code>KUBECONFIG</code> : <code>kubectl</code> et <code>helm</code> fonctionnent ainsi dans tout shell root du nœud, y compris les commandes SSH. Les modules qui exposent un nom d'hôte web (par exemple <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) l'enregistrent dans le DNS du lab, pointant vers les nœuds du kcluster ; la destruction d'un nœud supprime les enregistrements qui pointent vers lui. <code>clu_type: kubeadm</code> construit Kubernetes upstream avec kubeadm : la version mineure vient de <code>clu_rel</code> et le plugin réseau de <code>clu_cni</code> (flannel par défaut, calico, ou none pour fournir le vôtre). <code>clu_ingress</code> et <code>clu_storage</code> désignent le contrôleur d'entrée (<code>nginx</code>, <code>traefik</code>) et la classe de stockage par défaut (<code>longhorn</code>, <code>local-path</code>) du cluster. Sans valeur, ce que fournit la distribution est conservé — nginx sur RKE2, Traefik et local-path sur K3s, les deux sur Harvester — et sur une distribution qui n'en fournit aucun, l'un est installé dès qu'un module du cluster en a besoin ; en désigner un autre remplace le composant fourni, et <code>none</code> n'installe rien.</p>
 <h3 id="multi-host-labs">Laboratoires multi-hôtes</h3>
@@ -407,6 +477,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">Format de définition du laboratoire</h2>
 <p>Les laboratoires sont définis dans des fichiers JSON ou YAML (détection automatique ; voir la note ci-dessous). Le format actuel prend en charge plusieurs clusters Kubernetes par laboratoire (<code>kclusters</code>) ; voir <code>examples/cluster.json.template</code> pour l'ancien format à un seul cluster (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> est un lab multiproduit complet : un cluster RKE2 avec SUSE Rancher Prime, SUSE Storage, SUSE AI depuis la SUSE Application Collection et SUSE Security, installés dans l'ordre documenté par SUSE. <code>suse-multiproduct-gpu.json.template</code> est le même lab avec SUSE AI sur un GPU NVIDIA, sur un nœud <code>existing</code>, car la définition de lab n'a pas de passthrough PCI.</p>
+<p><code>disabled_nodes</code> prend des entrées exactement dans la forme de <code>nodes</code>, pour des nœuds qui font partie de la conception d'un lab mais ne sont pas déployés. Rien ne les lit : aucune VM n'est créée, aucun enregistrement DNS n'est ajouté et aucun module n'est exécuté. Un nœud y est garé plutôt que supprimé, afin que ce qu'il attend, une image dont le backend n'a pas d'équivalent, une version en fin de vie, du matériel pas encore disponible, puisse être traité en replaçant son entrée dans <code>nodes</code> telle quelle.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -1431,7 +1502,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>Un fichier d'identifiants par type sert à tous les modules qui en ont besoin (par ex. un seul fichier <code>scc</code> couvre les identifiants SCC de n'importe quel module), quel que soit le préfixe des champs JSON de chacun ; voir <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> dans <code>libs/addon_common.py</code> et les fonctions <code>*_service_credential*</code> de <code>libs/primary.py</code> pour le mécanisme sous-jacent.</p>
 <p><strong>Backends cloud (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) et <code>myip</code> :</strong> laissez vide le <code>myip</code> d'un nœud cloud dans le JSON du laboratoire : la vraie IP n'est connue que lorsque le fournisseur l'attribue à la création, ce n'est pas quelque chose que l'on peut fixer à l'avance comme une IP statique libvirt/Harvester. <code>setup_vm.py</code> récupère la vraie IP dans la valeur renvoyée par <code>create_vm()</code> et l'enregistre dans le DNS <em>après</em> la création réelle du nœud, pas avant (un vrai bogue trouvé lors des tests en conditions réelles d'AWSBackend, 2026-09-06 ; voir TODO). <code>mymac</code> n'a pas non plus de sens pour un backend cloud : laissez-le vide ; il est ignoré au lieu d'être généré ou vérifié.</p>
-<p><strong>VM DNS cloud :</strong> la première fois qu'un nœud du laboratoire utilise un backend cloud donné, <code>setup_vm.py</code> provisionne aussi (ou réutilise, si elle existe déjà) une petite VM DNS peu coûteuse dans ce même réseau cloud, <code>lab-dns-&lt;backend&gt;</code>, par ex. <code>lab-dns-aws</code>, qui exécute BIND. Elle démarre à partir de l'image openSUSE Leap la plus récente publiée par le fournisseur (sur AWS, tirée de la liste publique d'images cloud de SUSE), ou de l'image du laboratoire chez un fournisseur qui n'en propose pas ; les images Debian/Ubuntu, SUSE et de la famille Fedora (RHEL, Amazon Linux) sont prises en charge. Définissez <code>CLOUD_DNS_IMAGE</code> dans le compte cloud (ou dans <code>lab_creation.cfg</code>) pour la démarrer plutôt à partir d'une image précise. Elle existe parce que les nœuds cloud ne peuvent généralement pas du tout joindre le serveur BIND de <code>automation.mydemo.lab</code> (il se trouve derrière le NAT/routeur du laboratoire domestique, inaccessible depuis Internet) ; un vrai cluster cloud à plusieurs nœuds a besoin de son propre serveur DNS dans ce même réseau pour que ses nœuds se résolvent entre eux. L'entrée DNS de chaque nœud cloud est enregistrée <em>à la fois</em> dans cette VM DNS et dans la zone centrale de <code>automation.mydemo.lab</code>. <strong>Limites connues :</strong> (1) un nœud cloud tout juste créé n'utilise pas encore automatiquement cette VM DNS pour sa propre résolution, si bien qu'un deuxième nœud cloud du même laboratoire ne peut pas encore résoudre le premier par son nom sans configuration supplémentaire ; (2) les nœuds interrogent cette VM DNS via son IP privée ; les requêtes DNS vers son IP publique depuis l'extérieur du cloud peuvent être interceptées par les réseaux traversés, car certains fournisseurs d'accès et routeurs répondent eux-mêmes à tout le trafic DNS. Voir la docstring de <code>ensure_cloud_dns_vm()</code> dans <code>libs/backends.py</code>.</p>
+<p><strong>VM DNS cloud :</strong> la première fois qu'un nœud du laboratoire utilise un backend cloud donné, <code>setup_vm.py</code> provisionne aussi (ou réutilise, si elle existe déjà) une petite VM DNS peu coûteuse dans ce même réseau cloud, <code>lab-dns-&lt;backend&gt;</code>, par ex. <code>lab-dns-aws</code>, qui exécute BIND. Elle démarre à partir de l'image openSUSE Leap la plus récente publiée par le fournisseur (sur AWS, tirée de la liste publique d'images cloud de SUSE), ou de l'image du laboratoire chez un fournisseur qui n'en propose pas ; les images Debian/Ubuntu, SUSE et de la famille Fedora (RHEL, Amazon Linux) sont prises en charge. Définissez <code>CLOUD_DNS_IMAGE</code> dans le compte cloud (ou dans <code>lab_creation.cfg</code>) pour la démarrer plutôt à partir d'une image précise. Elle existe parce que les nœuds cloud ne peuvent généralement pas du tout joindre le serveur BIND de <code>automation.mydemo.lab</code> (il se trouve derrière le NAT/routeur du laboratoire domestique, inaccessible depuis Internet) ; un vrai cluster cloud à plusieurs nœuds a besoin de son propre serveur DNS dans ce même réseau pour que ses nœuds se résolvent entre eux. L'entrée DNS de chaque nœud cloud est enregistrée <em>à la fois</em> dans cette VM DNS et dans la zone centrale de <code>automation.mydemo.lab</code>. Les nœuds sont dirigés vers ce serveur par le <code>use_dns_server()</code> propre au backend, appelé juste après la mise en place de la VM DNS : il configure le réseau cloud lui-même pour qu'il distribue ce serveur, si bien qu'un nœud résout les autres nœuds de son laboratoire par nom d'hôte sans rien configurer dans l'invité. Sur AWS il s'agit d'un jeu d'options DHCP de VPC désignant la VM DNS comme seul serveur DNS du VPC et le domaine du laboratoire comme domaine de recherche ; il s'applique à tout le VPC, une instance lancée ensuite l'a immédiatement, et une instance déjà en marche le récupère au renouvellement de son bail DHCP. <code>AmazonProvidedDNS</code> ne peut pas figurer à côté d'un serveur personnalisé, aussi la VM DNS résout-elle récursivement tout ce qui est hors du domaine du laboratoire. <strong>Une limite connue :</strong> les nœuds interrogent cette VM DNS via son IP privée ; les requêtes DNS vers son IP publique depuis l'extérieur du cloud peuvent être interceptées par les réseaux traversés, car certains fournisseurs d'accès et routeurs répondent eux-mêmes à tout le trafic DNS. Voir la docstring de <code>ensure_cloud_dns_vm()</code> dans <code>libs/backends.py</code>.</p>
 <p><strong>Dimensionnement des instances cloud :</strong> chaque backend cloud convertit <code>VM_CPU</code>/<code>VM_MEM</code> en le plus petit type d'instance, type de serveur, plan ou flavor suffisant du fournisseur, à partir d'une petite table intégrée (la colonne « Notes » de chacun précise lequel) ; cette table n'a jamais été conçue comme une limite. Deux façons de la remplacer, par ordre de priorité :
 1. <strong><code>cloud_instance_type</code></strong> (dans common ou par nœud ; celui du nœud l'emporte) : le nom exact d'un type d'instance, type de serveur, plan ou flavor, utilisé tel quel sans aucune sélection automatique. Fonctionne de la même façon sur tous les backends cloud, y compris OVHcloud (qui saute son appel en direct à l'API des flavors) et GCP (qui ne construit pas de type personnalisé <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> ; indiquez plutôt un vrai type prédéfini comme <code>n2-standard-4</code>).
 2. <strong>Une clé de configuration <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (voir la ligne de chaque fournisseur ci-dessous) : remplace entièrement la table intégrée, si bien que la sélection automatique par <code>VM_CPU</code>/<code>VM_MEM</code> continue de fonctionner, mais avec votre propre liste. Format : <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, par ex. <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. Cela remplace la table en entier au lieu de la fusionner : répétez les entrées intégrées que vous voulez garder. GCP et OVHcloud n'ont pas cette clé : GCP construit un vrai type de machine personnalisé directement à partir de <code>VM_CPU</code>/<code>VM_MEM</code> (pas de catalogue à remplacer) et OVHcloud interroge déjà en direct sa vraie liste de flavors à la création (voir sa ligne).</p>

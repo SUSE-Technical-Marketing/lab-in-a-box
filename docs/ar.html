@@ -376,6 +376,76 @@ footer.site {
 </tbody>
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<h3 id="the-automation-node-in-a-cloud">عقدة الأتمتة في السحابة</h3>
+<p>عقدة الأتمتة هي الجهاز الذي تعمل عليه الأوامر. وقد تكون الجهاز الظاهري الذي يبنيه <code>setup_kvm_node.py</code> على مضيف KVM، أو حاوية أو جُريبة (<code>_automation_node</code> في <code>lab.cfg</code>)، أو نسخة سحابية. وفي السحابة تُبنى بـ <code>setup_automation_node.py &lt;lab.json&gt; &lt;العقدة&gt;</code>، حيث تكون العقدة عقدةً عادية من تعريف مختبر على خادم خلفي سحابي: تُنشأ بالمسار نفسه الذي تُنشأ به أي عقدة أخرى، ثم يعمل عليها عبر SSH نفس <code>automation-node-lib.sh configure</code> الذي يحصل عليه جهاز أتمتة ظاهري.</p>
+<p>وسبب الحاجة إليها هو حلّ الأسماء. فالمختبر في حساب سحابي يحلّ أسماء عقده عبر خادم DNS في الحساب نفسه، وعقدة الأتمتة هناك تخدم منطقة المختبر بذاتها، فلا يعتمد أي شيء في المختبر على إمكانية الوصول إلى جهاز في المنزل. ويجيب BIND الخاص بها إجابةً مرجعية لنطاق المختبر من أي مكان، ولا يحلّ تعاوديًا إلا للنطاقات الخاصة، فلا تكون النسخة التي يمكن الوصول إلى منفذها 53 من الإنترنت خادمَ حلٍّ مفتوحًا: فحلّ اسم جهاز ظاهري في المختبر يحتاج إجابة مرجعية، لا تعاودًا. ولا يكون المنفذ 53 قابلًا للوصول إلا إذا نصّت قائمة منافذ العقدة على ذلك، مثل <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
+<p>وتوجيه أي شيء إلى ذلك الخادم متروك لك: أضِف عنوانه كخادم أسماء في كل موضع ينبغي أن تُحلّ فيه أسماء المختبر. ويطبع الأمر العنوان الذي يجب استخدامه عند انتهائه.</p>
+<h3 id="naming-an-image-instead-of-an-id">تسمية صورة بدلاً من استخدام مُعرّف</h3>
+<p>على خادم خلفي سحابي، يقبل <code>SOURCE_IMAGE</code> اسم منتج بدلاً من مُعرّف صورة المزوّد. يُحلّ الاسم عند إنشاء الجهاز الظاهري إلى الصورة الحالية لذلك المنتج عند ذلك المزوّد، لمعمارية المعالج التي يعمل عليها نوع نسخة العقدة، فيحصل نوع نسخة <code>arm64</code> مثل <code>t4g.nano</code> على صورة <code>arm64</code> للمنتج نفسه، دون أي ضبط آخر. ومُعرّف الصورة المكتوب في تعريف المختبر خاص بمنطقة واحدة ويتقادم: فالمزوّدون ينشرون بناءً جديداً كل أسابيع قليلة، ومُعرّف منسوخ يدوياً قد يكون منتجاً مختلفاً تماماً.</p>
+<table>
+<thead>
+<tr>
+<th>اسم المنتج</th>
+<th>ما يُحلّ إليه</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>أحدث إصدار من SUSE Linux Enterprise Server، أي إصدار</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>أحدث إصدار من SUSE Linux Enterprise Server 16.x</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>أحدث إصدار من SUSE Linux Micro، أي إصدار</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>أحدث إصدار من openSUSE Leap</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>Ubuntu 24.04 LTS Server، تنشره Canonical</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>Debian 13، ينشره مشروع Debian</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>Amazon Linux 2023، تنشره AWS</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>أحدث إصدار من Red Hat Enterprise Linux 9.x، تنشره Red Hat</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>أحدث إصدار من Red Hat Enterprise Linux 10.x، تنشره Red Hat</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>أحدث إصدار من AlmaLinux OS 10.x، ينشره مشروع AlmaLinux</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>أحدث إصدار من Rocky Linux 10، ينشره مشروع Rocky</td>
+</tr>
+</tbody>
+</table>
+<p>تأتي منتجات SUSE نفسها من متتبّع الصور العام الخاص بـ SUSE، ويأتي الباقي من معامل AWS Systems Manager العام لكل مزوّد أو من حسابه الخاص على AWS، ولا يأتي أبداً من بحث بالاسم قد يطابقه حساب آخر. وأي قيمة ليست اسم منتج، بما في ذلك مُعرّف صورة أو اسم ملف صورة، تُمرّر كما هي.</p>
+<p>يحتاج المختبر السحابي أيضاً إلى أن تحلّ عقده أسماء بعضها. يخدم جهاز ظاهري صغير واحد لـ DNS لكل حساب سحابي نطاق المختبر، وتُضبط شبكة الحساب لتسليم ذلك الخادم إلى كل نسخة فيها، فتنضم العقدة إلى عنقود Kubernetes الخاص بها باسم المضيف دون أي ضبط داخل النظام الضيف. وعلى AWS يكون ذلك مجموعة خيارات DHCP لشبكة VPC: تنطبق على VPC بأكملها، وتسري فوراً على أي نسخة تُطلق بعدها، وتتبنّاها نسخة تعمل بالفعل عند تجديد عقد DHCP الخاص بها.</p>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
 <p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك). يحدّد <code>clu_ingress</code> و<code>clu_storage</code> متحكم الدخول (<code>nginx</code> أو <code>traefik</code>) وفئة التخزين الافتراضية (<code>longhorn</code> أو <code>local-path</code>) للعنقود. وبدون تحديد يبقى ما تأتي به التوزيعة — nginx في RKE2، وTraefik وlocal-path في K3s، وكلاهما في Harvester — أما التوزيعة التي لا تأتي بأيٍّ منهما فيُثبَّت لها واحد بمجرد أن تحتاجه إحدى إضافات العنقود؛ وتحديد غيره يستبدل المكوّن المضمّن، و<code>none</code> لا يثبّت شيئًا.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
@@ -594,6 +664,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">صيغة تعريف المختبر</h2>
 <p>تُعرَّف المختبرات في ملفات JSON أو YAML (يُكتشف النوع تلقائيًا؛ راجع الملاحظة أدناه). تدعم الصيغة الحالية عدة عناقيد Kubernetes في المختبر الواحد (<code>kclusters</code>)؛ وللصيغة القديمة ذات العنقود الواحد (<code>cluster</code>) راجع <code>examples/cluster.json.template</code>. و<code>examples/suse-multiproduct.json.template</code> هو مختبر متكامل يجمع عدة منتجات: عنقود RKE2 واحد يضم SUSE Rancher Prime وSUSE Storage وSUSE AI من SUSE Application Collection وSUSE Security، مثبّتة بالترتيب الذي توثّقه SUSE. و<code>suse-multiproduct-gpu.json.template</code> هو المختبر نفسه مع SUSE AI على وحدة معالجة رسومات NVIDIA، على عقدة <code>existing</code>، لأن تعريف المختبر لا يدعم تمرير PCI.</p>
+<p>يأخذ <code>disabled_nodes</code> مُدخلات بالصيغة نفسها التي يأخذها <code>nodes</code>، للعقد التي هي جزء من تصميم المختبر لكنها لا تُنشَر. لا شيء يقرؤها: لا يُنشأ جهاز ظاهري، ولا يُضاف سجل DNS، ولا تعمل أي إضافة. وتُوقَف العقدة هناك بدلاً من حذفها، حتى إذا تحقق ما تنتظره، صورة لا يملك الخادم الخلفي نظيراً لها، أو إصدار انتهى عمره، أو عتاد غير متوفر بعد، كفى نقل مُدخلها كما هو إلى <code>nodes</code>.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>يعمل ملف <code>.yaml</code>/<code>.yml</code> أيضًا: تُكتشف الصيغة من الامتداد (أو تُجرَّب YAML إن لم يكن الملف JSON صالحًا)، بالطريقة نفسها في الفحص المسبق لـ <code>setup_lab.py</code> وفي <code>install_&lt;addon&gt; --validate</code> وفي مسار التحميل الخاص بكل إضافة. يتطلب إدخال YAML وجود <code>pyyaml</code> (<code>pip install pyyaml</code>) على آلة الأتمتة الافتراضية؛ ودونه تظهر رسالة خطأ واضحة تطلب تثبيته، لا فشل صامت يقبل JSON فقط.</p></aside>
 <aside class="callout callout-note"><p>يمكن حذف <code>myip</code> و<code>mymac</code>. حينها تُؤخذ العنوان من الشبكة التي يصفها <code>common.mygw</code> و<code>common.mymask</code> أصلًا، فلا يوجد مدى عناوين آخر يلزم إبقاؤه متوافقًا مع البوابة وخادم DNS. والاختيار مشتقّ من اسم العقدة نفسه، فالتعريف الواحد يُفضي دائمًا إلى العناوين ذاتها، ويحتفظ المختبر المُعاد بناؤه بسجلات DNS وبمدخلات PXE وبملفات kubeconfig الخاصة به. وتُستثنى مسبقًا البوابة وخادم DNS وعناوين عقدة الأتمتة هذه وبقية عقد المختبر وكل عنوان له سجل في DNS المختبر وكل ما يستجيب لأمر ping؛ ويكتب التشغيل ما اختاره بجانب ملف المختبر لا فوقه. ويذكر التحقق المسبق عنوان كل عقدة قبل إنشاء أي شيء، ويفعل مربع الاختيار <em>Addresses automatically</em> في lab-builder الأمر نفسه في المتصفح. وتعريف المختبر الخالي من العناوين يعمل في أي مكان، وهذا ما يجعل ملفات <code>examples/</code> قابلة للنقل بين المواقع.</p></aside>
@@ -1610,7 +1681,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>يمكن إعادة استخدام ملف بيانات اعتماد واحد لكل نوع في كل إضافة تحتاج إلى ذلك النوع (مثلًا يغطي ملف <code>scc</code> واحد بيانات اعتماد SCC لأي إضافة)، أيًا كانت بادئة حقول JSON في كل إضافة؛ راجع <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> في <code>libs/addon_common.py</code> ودوال <code>*_service_credential*</code> في <code>libs/primary.py</code> للآلية الأساسية.</p>
 <p><strong>الخلفيات السحابية (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) و<code>myip</code>:</strong> اترك <code>myip</code> فارغًا لعقدة الخلفية السحابية في ملف JSON للمختبر: فعنوان IP الحقيقي لا يُعرف إلا حين يعيّنه المزوّد عند الإنشاء، وليس شيئًا يُقرر مسبقًا كعنوان IP ثابت في libvirt/Harvester. يأخذ <code>setup_vm.py</code> عنوان IP الحقيقي من القيمة التي تعيدها <code>create_vm()</code> ويسجّله في DNS <em>بعد</em> وجود العقدة فعلًا لا قبله (خلل حقيقي اكتُشف أثناء الاختبار الفعلي لـ AWSBackend في 2026-09-06؛ راجع TODO). كذلك لا معنى لـ <code>mymac</code> مع خلفية سحابية: اتركه دون ضبط؛ إذ يُتجاهل بدلًا من توليده أو فحص تعارضه.</p>
-<p><strong>آلة DNS السحابية:</strong> في أول مرة تستخدم فيها عقدة من المختبر خلفية سحابية معينة، يجهّز <code>setup_vm.py</code> أيضًا (أو يعيد استخدام الموجودة إن وُجدت) آلة افتراضية صغيرة رخيصة تقدّم DNS داخل الشبكة السحابية نفسها، <code>lab-dns-&lt;backend&gt;</code>، مثل <code>lab-dns-aws</code>، وتشغّل BIND. تُقلع من أحدث صورة openSUSE Leap ينشرها المزوّد (على AWS تُؤخذ من قائمة صور SUSE العامة للسحابة)، أو من صورة المختبر نفسه لدى مزوّد لا يوفّرها؛ وهي تدعم صور Debian/Ubuntu وSUSE وعائلة Fedora (RHEL وAmazon Linux). اضبط <code>CLOUD_DNS_IMAGE</code> في الحساب السحابي (أو في <code>lab_creation.cfg</code>) لإقلاعها من صورة محددة بدلًا من ذلك. وجودها ضروري لأن العقد السحابية لا تستطيع عادةً الوصول إطلاقًا إلى خادم BIND في <code>automation.mydemo.lab</code> (فهو خلف NAT/موجّه المختبر المنزلي ولا يمكن الوصول إليه من الإنترنت)؛ ويحتاج عنقود سحابي حقيقي متعدد العقد إلى خادم DNS خاص به داخل الشبكة نفسها كي تحل عقده أسماء بعضها. يُسجَّل سجل DNS لكل عقدة سحابية في آلة DNS هذه <em>وفي</em> المنطقة المركزية لـ <code>automation.mydemo.lab</code> معًا. <strong>قيود معروفة:</strong> (1) لا تستخدم العقدة السحابية المنشأة حديثًا آلة DNS هذه تلقائيًا بعد لحل الأسماء، فلا تستطيع عقدة سحابية ثانية في المختبر نفسه حل اسم الأولى دون إعداد إضافي؛ (2) تستعلم العقد عن آلة DNS هذه عبر عنوانها الخاص؛ وقد تعترض الشبكات الموجودة على المسار استعلامات DNS الموجّهة إلى عنوانها العام من خارج السحابة، لأن بعض مزوّدي الإنترنت والموجّهات يجيبون بأنفسهم عن كل حركة DNS. راجع سلسلة توثيق <code>ensure_cloud_dns_vm()</code> في <code>libs/backends.py</code>.</p>
+<p><strong>آلة DNS السحابية:</strong> في أول مرة تستخدم فيها عقدة من المختبر خلفية سحابية معينة، يجهّز <code>setup_vm.py</code> أيضًا (أو يعيد استخدام الموجودة إن وُجدت) آلة افتراضية صغيرة رخيصة تقدّم DNS داخل الشبكة السحابية نفسها، <code>lab-dns-&lt;backend&gt;</code>، مثل <code>lab-dns-aws</code>، وتشغّل BIND. تُقلع من أحدث صورة openSUSE Leap ينشرها المزوّد (على AWS تُؤخذ من قائمة صور SUSE العامة للسحابة)، أو من صورة المختبر نفسه لدى مزوّد لا يوفّرها؛ وهي تدعم صور Debian/Ubuntu وSUSE وعائلة Fedora (RHEL وAmazon Linux). اضبط <code>CLOUD_DNS_IMAGE</code> في الحساب السحابي (أو في <code>lab_creation.cfg</code>) لإقلاعها من صورة محددة بدلًا من ذلك. وجودها ضروري لأن العقد السحابية لا تستطيع عادةً الوصول إطلاقًا إلى خادم BIND في <code>automation.mydemo.lab</code> (فهو خلف NAT/موجّه المختبر المنزلي ولا يمكن الوصول إليه من الإنترنت)؛ ويحتاج عنقود سحابي حقيقي متعدد العقد إلى خادم DNS خاص به داخل الشبكة نفسها كي تحل عقده أسماء بعضها. يُسجَّل سجل DNS لكل عقدة سحابية في آلة DNS هذه <em>وفي</em> المنطقة المركزية لـ <code>automation.mydemo.lab</code> معًا. تُوجَّه العقد إلى هذا الخادم عبر <code>use_dns_server()</code> الخاص بكل خادم خلفي، ويُستدعى مباشرة بعد تأمين آلة DNS: فهو يضبط شبكة السحابة نفسها لتسليم ذلك الخادم، فتحلّ العقدة أسماء بقية عقد مختبرها باسم المضيف دون أي ضبط داخل النظام الضيف. وعلى AWS يكون ذلك مجموعة خيارات DHCP لشبكة VPC تسمّي آلة DNS الخادمَ الوحيد لأسماء النطاقات في VPC، ونطاق المختبر نطاقَ البحث؛ وتنطبق على VPC بأكملها، وتسري فوراً على أي نسخة تُطلق بعدها، وتتبنّاها نسخة تعمل بالفعل عند تجديد عقد DHCP الخاص بها. ولا يمكن إدراج <code>AmazonProvidedDNS</code> جنباً إلى جنب مع خادم مخصّص، لذا تحلّ آلة DNS تعاوديًا كل ما هو خارج نطاق المختبر. <strong>يبقى قيد معروف واحد:</strong> تستعلم العقد عن آلة DNS هذه عبر عنوانها الخاص؛ وقد تعترض الشبكات الموجودة على المسار استعلامات DNS الموجّهة إلى عنوانها العام من خارج السحابة، لأن بعض مزوّدي الإنترنت والموجّهات يجيبون بأنفسهم عن كل حركة DNS. راجع سلسلة توثيق <code>ensure_cloud_dns_vm()</code> في <code>libs/backends.py</code>.</p>
 <p><strong>أحجام المثيلات السحابية:</strong> تحوّل كل خلفية سحابية <code>VM_CPU</code>/<code>VM_MEM</code> إلى أصغر نوع مثيل أو نوع خادم أو خطة أو فئة كافية لدى المزوّد، من جدول صغير مدمج (يذكر عمود "ملاحظات" لكل منها أيها)؛ ولم يُقصد بهذا الجدول أن يكون حدًا أعلى. هناك طريقتان لتجاوزه، بترتيب الأولوية:
 1. <strong><code>cloud_instance_type</code></strong> (في common أو لكل عقدة، وتغلب قيمة العقدة): الاسم الدقيق لنوع مثيل أو نوع خادم أو خطة أو فئة، يُستخدم كما هو دون أي اختيار تلقائي. يعمل بالطريقة نفسها في كل الخلفيات السحابية، بما فيها OVHcloud (يتخطى استدعاء API الفوري لقائمة الفئات) وGCP (لا ينشئ نوعًا مخصصًا <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>؛ أعطه بدلًا من ذلك نوعًا محددًا مسبقًا حقيقيًا مثل <code>n2-standard-4</code>).
 2. <strong>مفتاح إعداد <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (راجع صف كل مزوّد أدناه): يستبدل الجدول المدمج بالكامل، فيبقى الاختيار التلقائي حسب <code>VM_CPU</code>/<code>VM_MEM</code> عاملًا لكن على قائمتك. الصيغة: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>، مثل <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. يستبدل هذا الجدول كله ولا يدمجه: كرر أي مدخلات مدمجة ما زلت تريدها. لا يوجد هذا المفتاح لدى GCP وOVHcloud: إذ ينشئ GCP نوع جهاز مخصصًا حقيقيًا مباشرة من <code>VM_CPU</code>/<code>VM_MEM</code> (لا يوجد كتالوج لاستبداله)، ويستعلم OVHcloud أصلًا قائمة فئاته الحقيقية مباشرة عند الإنشاء (راجع صفه).</p>

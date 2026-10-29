@@ -16,32 +16,54 @@ NODE_DIR=/etc/lab_creation/node
 # Shell variables the node needs, written to NODE_DIR/settings by write_node_settings.
 NODE_SETTINGS="AUTOMATION_HOSTNAME MYREG _myip _mymask_cidr _mygw _mydns _mydomain _mynetrev _timezone _virt_srv
 ROOT_SSH_PUB_KEY HOST_SSH_PUB_KEY ROOT_PWD_HASH _host_ip _host_name _host_fqdn myarch _node_kind _node_netstack
-_python_bin"
+_python_bin _kubectl_install"
 
 # sshfs mount options for the hypervisor's source images. accept-new: the node has never connected to the hypervisor
 # before, so its host key is not known yet.
 _SSHFS_OPTS="_netdev,reconnect,identityfile=/root/.ssh/id_rsa,allow_other,default_permissions,StrictHostKeyChecking=accept-new"
 
-# Packages a VM gets on top of the openSUSE Leap image; the container image has them already. kubernetes1.35-client:
-# same kubectl as the hypervisors (libs/kvm_host_profiles.py's KUBECTL_VERSION). Nothing that pulls in a kernel:
-# installing one in the chroot rebuilds the initrd there, and the VM then cannot find its root disk.
-_VM_PACKAGES="vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh ipcalc
-fuse3 sshfs netcat-openbsd python311 python311-cryptography kubernetes1.35-client openssl sudo"
+# Packages a VM or cloud node gets on top of the openSUSE Leap image; the container image has them already. Nothing
+# that pulls in a kernel: installing one in the chroot rebuilds the initrd there, and the VM then cannot find its
+# root disk.
+_VM_PACKAGES="vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh
+fuse3 sshfs netcat-openbsd openssl sudo"
 
-# Writes NODE_DIR/settings (mode 0600) under ROOT from the current values of NODE_SETTINGS.
+# What each Leap version calls its Python, and the interpreter the lab scripts then run under.
+# node_install_packages picks a set by the node's own VERSION_ID. Leap 16 packages no kubernetes client; kubectl
+# comes from _kubectl_install there.
+_LEAP15_PACKAGES="python311 python311-cryptography kubernetes1.35-client"
+_LEAP15_PYTHON="python3.11"
+_LEAP16_PACKAGES="python313 python313-cryptography python313-PyYAML"
+_LEAP16_PYTHON="python3.13"
+
+# Writes NODE_DIR/settings (mode 0600) under ROOT from the current values of NODE_SETTINGS. A setting that is unset
+# is written empty: every optional one, such as _kubectl_install, is absent on the nodes that do not need it.
 function write_node_settings() {
     local _root="$1" _v
     mkdir -p "${_root}${NODE_DIR}"
     for _v in ${NODE_SETTINGS}; do
-        printf '%s=%q\n' "${_v}" "${!_v}"
+        printf '%s=%q\n' "${_v}" "${!_v-}"
     done > "${_root}${NODE_DIR}/settings"
     chmod 0600 "${_root}${NODE_DIR}/settings"
 }
 
+# Networks this node will recurse for. A lab node's address is always one of the private ranges, and no address on
+# the public internet is, which is what stops an automation node whose port 53 is reachable from the internet, as a
+# cloud one's is, from being an open resolver usable for amplification attacks. Outside clients still get
+# authoritative answers for the lab's own zones, which is all resolving a lab VM by name needs. Mirrors
+# dns_recursion_networks() in libs/backends.py, which does the same for the cloud DNS VM.
+_RECURSION_NETWORKS="10.0.0.0/8; 172.16.0.0/12; 192.168.0.0/16; 100.64.0.0/10;"
+
 # Writes the BIND configuration and, unless they exist, the lab zones (labs add records to them) under ROOT.
 function write_dns_files() {
-    local _root="$1"
+    local _root="$1" _host_a="" _host_ptr=""
     mkdir -p "${_root}/etc" "${_root}/var/lib/named"
+    # The KVM host's own records, only when there is a KVM host. A cloud automation node has none, and an empty
+    # name or address here would write a malformed line that named refuses the whole zone over.
+    if [[ -n "${_host_name}" && -n "${_host_ip}" ]]; then
+        _host_a="${_host_name}         IN  A       ${_host_ip}"
+        _host_ptr="${_host_ip##*.}      IN  PTR     ${_host_fqdn}."
+    fi
     cat > "${_root}/etc/named.conf" <<EOF
 options {
         directory "/var/lib/named";
@@ -50,8 +72,14 @@ options {
         statistics-file "/var/log/named.stats";
         listen-on port 53 { any; };
         listen-on-v6 { any; };
-        allow-query { 127.0.0.1; 0.0.0.0/0; };
+        allow-query { any; };
+        allow-query-cache { ${_RECURSION_NETWORKS} localhost; localnets; };
+        allow-recursion { ${_RECURSION_NETWORKS} localhost; localnets; };
+        allow-transfer { none; };
+        allow-update { none; };
+        version none;
         recursion yes;
+        rate-limit { responses-per-second 15; window 5; };
         dnssec-validation no;
         forward only;
         forwarders {
@@ -100,7 +128,7 @@ EOF
         IN  PTR     ${_mydomain}.
 
 ${_myip//*.}      IN  PTR     ${AUTOMATION_HOSTNAME}.
-${_host_ip##*.}      IN  PTR     ${_host_fqdn}.
+${_host_ptr}
 
 EOF
 
@@ -120,7 +148,7 @@ EOF
 ${AUTOMATION_HOSTNAME//.$_mydomain}         IN  A       ${_myip}
 ${MYREG//.$_mydomain}         IN  CNAME   ${AUTOMATION_HOSTNAME}
 bastion          IN  CNAME   ${AUTOMATION_HOSTNAME}.
-${_host_name}         IN  A       ${_host_ip}
+${_host_a}
 
 EOF
     chmod 0644 "${_root}/var/lib/named/${_mydomain}.lan" "${_root}/var/lib/named/${_mynetrev}.db"
@@ -167,6 +195,11 @@ function download_helm_files() {
 # a VM, systemd units in a container or pod (systemd's fstab generator does not run there).
 function write_sshfs_mount() {
     local _root="$1" _what="${_virt_srv:-root@hypervisor}:/var/lib/libvirt/images/sources"
+    # A cloud node has no hypervisor: its labs run on the provider's own images, named in SOURCE_IMAGE, so there is
+    # no source-image directory to mount and nothing on the other end of an sshfs to the home lab.
+    if [[ "${_node_kind}" == cloud ]]; then
+        return
+    fi
     if [[ "${_node_kind}" == vm ]]; then
         grep -qs " /srv/www/htdocs/sources fuse.sshfs " "${_root}/etc/fstab" \
             || echo "${_what} /srv/www/htdocs/sources fuse.sshfs  noauto,x-systemd.automount,${_SSHFS_OPTS} 0 0" >> "${_root}/etc/fstab"
@@ -254,10 +287,21 @@ function write_authorized_keys() {
 
 # Installs the VM's packages and sets which services start at boot.
 function node_install_packages() {
-    local _pkgs="${_VM_PACKAGES}"
+    local _pkgs="${_VM_PACKAGES}" _version=""
+    _version="$(. /etc/os-release && echo "${VERSION_ID%%.*}")"
+    case "${_version}" in
+        16) _pkgs+=" ${_LEAP16_PACKAGES}"; _python_bin="${_python_bin:-${_LEAP16_PYTHON}}" ;;
+        *)  _pkgs+=" ${_LEAP15_PACKAGES}"; _python_bin="${_python_bin:-${_LEAP15_PYTHON}}" ;;
+    esac
     [[ "${_node_netstack}" == wicked ]] || _pkgs+=" NetworkManager"
     # shellcheck disable=SC2086
     zypper --non-interactive --gpg-auto-import-keys install -y ${_pkgs} || return 1
+    # Leap 16 packages no kubernetes client, so the pinned upstream binary is installed instead. The script comes
+    # from libs/kvm_host_profiles.py's kubectl_binary_script(), the same one the container image is built with, so
+    # the version is pinned in exactly one place.
+    if ! command -v kubectl >/dev/null && [[ -n "${_kubectl_install}" ]]; then
+        bash -c "${_kubectl_install}" || { echo "ERROR: installing kubectl failed" >&2; return 1; }
+    fi
     systemctl disable jeos-firstboot.service jeos-firstboot-snapshot.service 2>/dev/null
     systemctl disable --now firewalld.service 2>/dev/null
     if [[ "${_node_netstack}" != wicked ]]; then
@@ -289,6 +333,11 @@ function configure_node() {
         write_resolv_conf /
         write_vm_system /
         node_install_packages || { echo "ERROR: installing the automation node's packages failed" >&2; return 1; }
+    elif [[ "${_node_kind}" == cloud ]]; then
+        # A plain provider image needs the same packages a VM image does, but its address, routes and hostname come
+        # from the provider over DHCP, so write_vm_system's static configuration would break its networking.
+        write_resolv_conf /
+        node_install_packages || { echo "ERROR: installing the automation node's packages failed" >&2; return 1; }
     else
         write_resolv_conf /
     fi
@@ -298,14 +347,18 @@ function configure_node() {
     [[ "${_mode}" == --boot ]] || download_helm_files /srv/www/htdocs/helm
     write_sshfs_mount /
     write_authorized_keys / "${ROOT_SSH_PUB_KEY}" "${HOST_SSH_PUB_KEY}"
-    echo "root:${ROOT_PWD_HASH}" | chpasswd -e
+    # Only when there is a hash to set. "chpasswd -e" with an empty value writes an empty password field,
+    # which is a passwordless root account, not a locked one.
+    [[ -z "${ROOT_PWD_HASH}" ]] || echo "root:${ROOT_PWD_HASH}" | chpasswd -e
     node_ssh_key
     node_install_lab_scripts || { echo "ERROR: install_automation_node_scripts.sh failed" >&2; return 1; }
     if [[ "${_mode}" == --offline ]]; then
         return 0
     fi
     systemctl daemon-reload
-    if [[ "${_node_kind}" == vm ]]; then
+    if [[ "${_node_kind}" == cloud ]]; then
+        :                                     # no hypervisor source images to mount, see write_sshfs_mount
+    elif [[ "${_node_kind}" == vm ]]; then
         systemctl start srv-www-htdocs-sources.automount
     else
         systemctl enable --now srv-www-htdocs-sources.automount

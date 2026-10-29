@@ -171,6 +171,76 @@
     HB --&gt; KV[&quot;KubeVirt VirtualMachine&lt;br/&gt;on a Harvester cluster&quot;]
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
+<h3 id="the-automation-node-in-a-cloud">The automation node in a cloud</h3>
+<p>The automation node is the machine the commands run on. It can be the VM on a KVM host that <code>setup_kvm_node.py</code> builds, a container or a pod (<code>_automation_node</code> in <code>lab.cfg</code>), or a cloud instance. In a cloud it is built by <code>setup_automation_node.py &lt;lab.json&gt; &lt;node&gt;</code>, where the node is an ordinary node of a lab definition on a cloud backend: it is created by the same provisioning path every other node uses, and then the same <code>automation-node-lib.sh configure</code> that a VM automation node gets runs on it over SSH.</p>
+<p>The reason to want one is name resolution. A lab in a cloud account resolves its own nodes through the DNS server in that same account, and an automation node there serves the lab's zone itself, so nothing about the lab depends on a machine at home being reachable. Its BIND answers authoritatively for the lab domain from anywhere and recurses only for the private ranges, so an instance whose port 53 is reachable from the internet is not an open resolver: resolving a lab VM by name needs an authoritative answer, never recursion. Port 53 is only reachable if the node's own open-ports list says so, for example <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
+<p>Pointing anything at that server is left to you: add its address as a nameserver wherever the lab's names should resolve. The command prints the address to use when it finishes.</p>
+<h3 id="naming-an-image-instead-of-an-id">Naming an image instead of an ID</h3>
+<p>On a cloud backend, <code>SOURCE_IMAGE</code> takes a product name instead of a provider image ID. The name is resolved when the VM is created, to that provider's current image of that product for the processor architecture the node's instance type runs — so an <code>arm64</code> instance type such as <code>t4g.nano</code> gets the <code>arm64</code> image of the same product, with nothing else to set. An image ID written into a lab definition is region-specific and ages: vendors publish a new build every few weeks, and an ID copied by hand can turn out to be a different product altogether.</p>
+<table>
+<thead>
+<tr>
+<th>Product name</th>
+<th>What it resolves to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>The newest SUSE Linux Enterprise Server, any version</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>The newest SUSE Linux Enterprise Server 16.x</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>The newest SUSE Linux Micro, any version</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>The newest openSUSE Leap</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>Ubuntu 24.04 LTS Server, published by Canonical</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>Debian 13, published by the Debian project</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>Amazon Linux 2023, published by AWS</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>The newest Red Hat Enterprise Linux 9.x, published by Red Hat</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>The newest Red Hat Enterprise Linux 10.x, published by Red Hat</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>The newest AlmaLinux OS 10.x, published by the AlmaLinux project</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>The newest Rocky Linux 10, published by the Rocky project</td>
+</tr>
+</tbody>
+</table>
+<p>SUSE's own products come from SUSE's public image tracker, and the rest from each vendor's AWS Systems Manager public parameter or its own AWS account, never from a name search that another account could match. A value that is not a product name, an image ID or an image file name included, is passed through untouched.</p>
+<p>A cloud lab also needs its nodes to resolve each other. One small DNS VM per cloud account serves the lab domain, and the account's network is configured to hand that server to every instance in it, so a node joins its Kubernetes cluster by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set: it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews.</p>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
 <p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned. Every RKE2 node and every K3s server node gets <code>/etc/profile.d/rke2.sh</code> or <code>/etc/profile.d/k3s.sh</code>, which sets <code>KUBECONFIG</code>, so <code>kubectl</code> and <code>helm</code> work in any root shell on the node, SSH commands included. Add-ons that expose a web hostname (for example <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) register it in the lab DNS, pointing at the kcluster's nodes; destroying a node removes the records that point at it. <code>clu_type: kubeadm</code> builds upstream Kubernetes with kubeadm instead, taking its Kubernetes minor from <code>clu_rel</code> and its network plugin from <code>clu_cni</code> (flannel by default, calico, or none to bring your own). <code>clu_ingress</code> and <code>clu_storage</code> name the cluster's ingress controller (<code>nginx</code>, <code>traefik</code>) and default storage class (<code>longhorn</code>, <code>local-path</code>). Unset keeps what the distribution brings — nginx on RKE2, Traefik and local-path on K3s, both on Harvester — and installs one on a distribution that brings none, as soon as an add-on on the cluster needs it; naming a different one replaces the bundled component, and <code>none</code> installs nothing.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
@@ -406,6 +476,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">Lab definition format</h2>
 <p>Labs are defined as JSON or YAML files (auto-detected — see the note below). The current format supports multiple Kubernetes clusters per lab (<code>kclusters</code>); see <code>examples/cluster.json.template</code> for the legacy single-cluster format (<code>cluster</code>). <code>examples/suse-multiproduct.json.template</code> is a worked multi-product lab: one RKE2 cluster with SUSE Rancher Prime, SUSE Storage, SUSE AI from the SUSE Application Collection and SUSE Security, installed in the order SUSE documents. <code>suse-multiproduct-gpu.json.template</code> is the same lab with SUSE AI on an NVIDIA GPU, on an <code>existing</code> node, since the lab definition has no PCI passthrough.</p>
+<p><code>disabled_nodes</code> takes entries in exactly the form <code>nodes</code> does, for nodes that are part of a lab's design but are not deployed. Nothing reads them: no VM is created, no DNS record is added and no add-on runs. A node is parked there instead of being deleted, so whatever it is waiting for, an image the backend has no equivalent for, a release that is end of life, hardware that is not available yet, can be answered by moving its entry back into <code>nodes</code> unchanged.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -1484,7 +1555,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>One credential file per kind is reusable across every addon that needs that kind (e.g. a single <code>scc</code> file covers any addon's own SCC credentials), regardless of each addon's own JSON-field prefix — see <code>libs/addon_common.py</code>'s <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> and <code>libs/primary.py</code>'s <code>*_service_credential*</code> functions for the underlying mechanism.</p>
 <p><strong>Cloud backends (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) and <code>myip</code>:</strong> leave a cloud-backend node's <code>myip</code> empty in the lab JSON — the real IP is only known once the provider assigns it at create time, not something you can decide in advance the way a static libvirt/Harvester IP works. <code>setup_vm.py</code> picks up the real IP from <code>create_vm()</code>'s own return value and registers it in DNS <em>after</em> the node actually exists, not before (a real bug found live-testing AWSBackend, 2026-09-06 — see TODO). <code>mymac</code> is similarly meaningless for a cloud backend — leave it unset; it's ignored rather than generated/conflict-checked.</p>
-<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. It boots from the newest openSUSE Leap image the provider publishes (on AWS, taken from SUSE's public cloud image list), or from the lab's own image on a provider without one; Debian/Ubuntu, SUSE and Fedora-family (RHEL, Amazon Linux) images are supported. Set <code>CLOUD_DNS_IMAGE</code> in the cloud account (or <code>lab_creation.cfg</code>) to boot it from a specific image instead. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. <strong>Known gaps:</strong> (1) a freshly created cloud node does not yet automatically point its own resolution at this DNS VM, so a second cloud node in the same lab can't yet resolve a first one by hostname without further wiring; (2) nodes query this DNS VM through its private IP; DNS queries to its public IP from outside the cloud can be intercepted by networks on the path, since some ISPs and routers answer all DNS traffic themselves. See the <code>ensure_cloud_dns_vm()</code> docstring in <code>libs/backends.py</code>.</p>
+<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. It boots from the newest openSUSE Leap image the provider publishes (on AWS, taken from SUSE's public cloud image list), or from the lab's own image on a provider without one; Debian/Ubuntu, SUSE and Fedora-family (RHEL, Amazon Linux) images are supported. Set <code>CLOUD_DNS_IMAGE</code> in the cloud account (or <code>lab_creation.cfg</code>) to boot it from a specific image instead. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. Nodes are pointed at this server by the backend's own <code>use_dns_server()</code>, called right after the DNS VM is ensured: it configures the cloud network itself to hand that server out, so a node resolves its lab peers by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set naming the DNS VM as the VPC's only DNS server and the lab domain as its search domain; it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews. <code>AmazonProvidedDNS</code> cannot be listed alongside a custom server, so the DNS VM recurses for everything outside the lab domain. <strong>One known gap:</strong> nodes query this DNS VM through its private IP; DNS queries to its public IP from outside the cloud can be intercepted by networks on the path, since some ISPs and routers answer all DNS traffic themselves. See the <code>ensure_cloud_dns_vm()</code> docstring in <code>libs/backends.py</code>.</p>
 <p><strong>Cloud instance sizing:</strong> every cloud backend maps <code>VM_CPU</code>/<code>VM_MEM</code> to the provider's own smallest sufficient instance type/server type/plan/flavor from a small built-in table (each one's own "Notes" column below says which) — that table was never meant to be a ceiling. Two ways to override it, in order of precedence:
 1. <strong><code>cloud_instance_type</code></strong> (common or per-node, per-node wins) — an exact instance type/server type/plan/flavor name, used verbatim instead of auto-picking one at all. Works the same way on every cloud backend, including OVHcloud (skips its own live flavor-list API call) and GCP (skips building a custom <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> type — give it a real predefined type like <code>n2-standard-4</code> instead).
 2. <strong>A <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> config key</strong> (see each provider's own row below) — a full replacement of the built-in table itself, so <code>VM_CPU</code>/<code>VM_MEM</code> auto-picking keeps working but against your own list. Format: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, e.g. <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. This replaces the table entirely, not merges with it — repeat any built-in entries you still want. GCP and OVHcloud have no such key: GCP builds a real custom machine type directly from <code>VM_CPU</code>/<code>VM_MEM</code> (no catalog to override), and OVHcloud already queries its own real flavor list live at create time (see its own row).</p>

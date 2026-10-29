@@ -44,7 +44,7 @@ import overlay  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
 
-def provision_vm(definition, config, defaults, vm_name):
+def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
     """
     Provision one VM. Mirrors setup_vm.sh end to end.
 
@@ -220,12 +220,14 @@ def provision_vm(definition, config, defaults, vm_name):
     # Which server serves this site, for the overlay's own DNS registry further down. A site on libvirt or Harvester
     # is served by this automation node's own BIND, which every lab node already resolves through (mydns).
     site_dns_server = env.get("mydns", "")
-    if backend_name in backends.CLOUD_BACKEND_NAMES and not harv_clu:
+    # ensure_cloud_dns=False: the caller is building the server that will serve this network's DNS
+    # itself, so there is nothing to delegate to. setup_automation_node.py passes it: a cloud
+    # automation node runs the lab's own BIND, and a second DNS VM beside it would be one more
+    # instance to pay for and the one the network would actually be pointed at.
+    if ensure_cloud_dns and backend_name in backends.CLOUD_BACKEND_NAMES and not harv_clu:
         # A cloud node generally can't reach automation.mydemo.lab's own BIND (behind the home
         # lab's NAT) — a real multi-node cloud cluster needs a DNS server living inside that same
-        # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring for
-        # exactly what this does and does not yet cover (nodes don't yet point their own
-        # resolution at it — a known, separately tracked follow-up, not silently glossed over).
+        # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring.
         dns_vm_ip = backends.ensure_cloud_dns_vm(
             backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
             env.get("mydomain", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path,
@@ -233,6 +235,10 @@ def provision_vm(definition, config, defaults, vm_name):
         )
         remote_dns_servers.append(dns_vm_ip)
         site_dns_server = dns_vm_ip
+        # Hand that server to the cloud network itself, so each node resolves the others without
+        # anything being configured inside the guest. A node created after this point has it from
+        # first boot, which is what a kcluster's second server needs to join the first by FQDN.
+        backend.use_dns_server(dns_vm_ip, env.get("mydomain", ""))
 
     if env.get("myip"):
         add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
@@ -242,19 +248,25 @@ def provision_vm(definition, config, defaults, vm_name):
 
     clean_ssh_keys(vm_name, env.get("myip", ""))
 
+    # What to poll for SSH. A cloud node is reached at the address its provider just assigned, not at
+    # its name: the name is registered by the line above, and whether it resolves from here depends on
+    # this host serving that lab's domain, which a lab in its own cloud domain does not require. Polling
+    # the name would make creating such a node impossible from a host that is not its DNS server.
+    ssh_target = env.get("myip") or vm_name
+
     # Wait for it to come online, reboot, then wait again — matches bash
     # exactly. check_ssh_conn() already dies internally on timeout (mirrors
     # fail_with_error inside bash's check_ssh_conn), so — as in bash — the
     # "VM failed to come online" messages there are effectively unreachable;
     # any real timeout aborts from inside check_ssh_conn itself.
-    check_ssh_conn(vm_name)
+    check_ssh_conn(ssh_target)
     if harv_clu:
         # The Harvester appliance installs itself at first boot; it is not rebooted, and the cluster is waited for in
         # setup_lab.py's Kubernetes phase (k8s.HarvesterDistro).
         log("\t\tVM \"{}\" created (Harvester cluster \"{}\", VIP {})".format(vm_name, harv_clu, harv_vip))
         return []
     backend.reboot_vm(vm_name)
-    check_ssh_conn(vm_name)
+    check_ssh_conn(ssh_target)
 
     # The VM is up and reachable: run its pre_commands before anything else is done to it (setup_lab.py's Kubernetes
     # and add-on phases come after this returns). A failure is reported and does not stop the rest of the lab.

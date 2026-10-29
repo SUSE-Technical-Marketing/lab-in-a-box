@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.5"
+LAB_SCHEMA_VERSION = "2.6"
 
 
 def base_lab_schema():
@@ -37,7 +37,7 @@ def base_lab_schema():
             "common": {
                 "description": "Shared settings applied to every VM in the lab",
                 "fields": [
-                    {"name": "SOURCE_IMAGE", "required": True, "type": "string", "description": "Source image: local filename (in ISO_LOC), URL (http://, https://, ftp://, nfs://), or local file path"},
+                    {"name": "SOURCE_IMAGE", "required": True, "type": "string", "description": "Source image: local filename (in ISO_LOC), URL (http://, https://, ftp://, nfs://), local file path, a cloud provider's own image ID, or a product name such as \"slmicro6.1\", \"sles16\", \"leap\" or \"ubuntu24.04\". A product name is resolved to that provider's current image for the node's own processor architecture when the VM is created, so a lab definition never carries an image ID that ages out — see libs/cloud_images.py for the full list of names"},
                     {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "Checksum or URL: inline hex checksum (32/40/64/128 chars), URL to fetch checksum from, or local checksum file path"},
                     {"name": "ISO_IMAGE", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_IMAGE instead"},
                     {"name": "VM_MEM", "required": True, "type": "integer", "min": 256, "description": "RAM in MiB (e.g. 8192)"},
@@ -132,7 +132,7 @@ def base_lab_schema():
                      "description": "Overrides common.install_type for this node only (config_method=install_iso only)"},
                     {"name": "network_renderer", "required": False, "type": "string", "enum": ["NetworkManager", "networkd", "sysconfig"],
                      "description": "Overrides common.network_renderer for this node only — set per-node when a lab mixes guest OSes (e.g. SLE Micro nodes on NetworkManager, an Ubuntu/Debian node on networkd, an Alibaba Cloud Linux node on sysconfig)"},
-                    {"name": "SOURCE_IMAGE", "required": False, "type": "string", "description": "Overrides common.SOURCE_IMAGE for this node only — local filename, URL, or file path"},
+                    {"name": "SOURCE_IMAGE", "required": False, "type": "string", "description": "Overrides common.SOURCE_IMAGE for this node only — local filename, URL, file path, provider image ID, or product name"},
                     {"name": "ISO_IMAGE", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_IMAGE instead"},
                     {"name": "kvm_host", "required": False, "type": "string", "description": "Pin this VM to a specific KVM host from KVM_HOSTS; omit to auto-select by resource availability"},
                     {"name": "existing", "required": False, "type": "boolean", "description": "Pre-provisioned host (baremetal or already-running VM) — the tool will not create or destroy it, only SSH to it; omit for today's default (a VM this tool creates)"},
@@ -145,6 +145,12 @@ def base_lab_schema():
                     {"name": "forwarded_ports", "required": False, "type": "array",
                      "description": "Ports to DNAT-forward from the KVM host's real IP to this node's own myip (only used when the \"portforward\" service is enabled via common.services — meant for nodes on a NAT'd network, see lab.cfg's _network_mode). Each entry is \"<external>:<internal>/<protocol>\", e.g. \"8080:80/TCP\"."},
                 ],
+            },
+            "disabled_nodes": {
+                "description": "Map of fully-qualified VM hostname to per-node settings, in exactly the form the nodes section takes, for nodes that are part of the lab's design but are not deployed. Nothing reads these: no VM is created, no DNS record is added and no add-on runs. A node is parked here instead of being deleted so that whatever it is waiting for — an image the backend has no equivalent for, a release that is end of life, hardware that is not available yet — can be answered by moving its entry back into nodes unchanged.",
+                "repeatable": True,
+                "key_label": "hostname (FQDN)",
+                "fields": [],
             },
             "kclusters": {
                 "title": "Kubernetes Clusters",

@@ -171,6 +171,76 @@
     HB --&gt; KV[&quot;KubeVirt VirtualMachine&lt;br/&gt;on a Harvester cluster&quot;]
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
+<h3 id="the-automation-node-in-a-cloud">云端的自动化节点</h3>
+<p>自动化节点就是运行命令的那台机器。它可以是 <code>setup_kvm_node.py</code> 在 KVM 主机上构建的虚拟机，可以是容器或 Pod（<code>lab.cfg</code> 中的 <code>_automation_node</code>），也可以是一个云实例。在云上，它由 <code>setup_automation_node.py &lt;lab.json&gt; &lt;节点&gt;</code> 构建，其中该节点就是云后端上实验室定义里的一个普通节点：它经由与其他任何节点相同的路径创建，随后在其上通过 SSH 执行与虚拟机自动化节点相同的 <code>automation-node-lib.sh configure</code>。</p>
+<p>需要它的理由是名称解析。云账户中的实验室通过同一账户内的 DNS 服务器解析自己的节点，而那里的自动化节点自己提供实验室的区域，于是实验室的任何部分都不再依赖家中某台机器可达。它的 BIND 对实验室域名在任何位置都给出权威应答，而仅对私有地址段做递归解析，因此即使实例的 53 端口可从互联网访问，也不会成为开放解析器：按名称解析实验室虚拟机需要的是权威应答，而非递归。只有在节点自己的开放端口列表中写明时，53 端口才可达，例如 <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>。</p>
+<p>把什么指向这台服务器由您决定：在希望解析实验室名称的地方，将它的地址添加为 nameserver。命令结束时会打印应当使用的地址。</p>
+<h3 id="naming-an-image-instead-of-an-id">用名称而非 ID 指定镜像</h3>
+<p>在云后端上，<code>SOURCE_IMAGE</code> 可以填产品名称，而不是提供商的镜像 ID。该名称在创建虚拟机时解析为该提供商上该产品的当前镜像，并匹配节点实例类型所运行的处理器架构：因此像 <code>t4g.nano</code> 这样的 <code>arm64</code> 实例类型会获得同一产品的 <code>arm64</code> 镜像，无需额外设置。写入实验室定义的镜像 ID 与区域绑定且会过时：厂商每隔几周就发布新构建，手工抄录的 ID 甚至可能是完全不同的产品。</p>
+<table>
+<thead>
+<tr>
+<th>产品名称</th>
+<th>解析结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>最新的 SUSE Linux Enterprise Server，任意版本</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>最新的 SUSE Linux Enterprise Server 16.x</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>最新的 SUSE Linux Micro，任意版本</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>最新的 openSUSE Leap</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>由 Canonical 发布的 Ubuntu 24.04 LTS Server</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>由 Debian 项目发布的 Debian 13</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>由 AWS 发布的 Amazon Linux 2023</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>由 Red Hat 发布的最新 Red Hat Enterprise Linux 9.x</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>由 Red Hat 发布的最新 Red Hat Enterprise Linux 10.x</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>由 AlmaLinux 项目发布的最新 AlmaLinux OS 10.x</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>由 Rocky 项目发布的最新 Rocky Linux 10</td>
+</tr>
+</tbody>
+</table>
+<p>SUSE 自家产品取自 SUSE 的公开镜像追踪服务，其余取自各厂商的 AWS Systems Manager 公开参数或其自有 AWS 账户，绝不使用其他账户也可能匹配的名称搜索。凡不是产品名称的值，包括镜像 ID 和镜像文件名，都原样传递。</p>
+<p>云端实验室还需要节点之间能相互解析。每个云账户有一台小型 DNS 虚拟机提供实验室域名，并将账户网络配置为把该服务器分发给其中的每个实例，于是节点可以按主机名加入其 Kubernetes 集群，无需在客户机内部做任何配置。在 AWS 上这是一个 VPC DHCP 选项集：它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。</p>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
 <p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。 <code>clu_ingress</code> 和 <code>clu_storage</code> 指定集群的入口控制器（<code>nginx</code>、<code>traefik</code>）和默认存储类（<code>longhorn</code>、<code>local-path</code>）。未设置时保留发行版自带的组件：RKE2 为 nginx，K3s 为 Traefik 和 local-path，Harvester 两者兼有；对于都不自带的发行版，一旦集群中的附加组件需要，就会安装一个。指定其他值会替换自带组件，<code>none</code> 则不安装任何组件。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
@@ -407,6 +477,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">实验室定义格式</h2>
 <p>实验室用 JSON 或 YAML 文件定义（自动识别，请参阅下面的说明）。当前格式支持每个实验室包含多个 Kubernetes 集群（<code>kclusters</code>）；旧的单集群格式（<code>cluster</code>）请参阅 <code>examples/cluster.json.template</code>。 <code>examples/suse-multiproduct.json.template</code> 是一个多产品的完整示例：在一个 RKE2 集群上，按 SUSE 文档给出的顺序部署 SUSE Rancher Prime、SUSE Storage、来自 SUSE Application Collection 的 SUSE AI 和 SUSE Security。<code>suse-multiproduct-gpu.json.template</code> 是同一个实验室，但 SUSE AI 运行在 NVIDIA GPU 上，使用 <code>existing</code> 节点，因为实验室定义不支持 PCI 直通。</p>
+<p><code>disabled_nodes</code> 接受与 <code>nodes</code> 完全相同形式的条目，用于属于实验室设计但不予部署的节点。没有任何代码读取它们：不会创建虚拟机，不会添加 DNS 记录，也不会运行任何插件。把节点停放在这里而不是删除，这样当它等待的条件得到满足时（后端没有对应的镜像、某个发行版已终止支持、硬件尚未到位），只需把该条目原样移回 <code>nodes</code> 即可。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -1426,7 +1497,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>每种类型一个凭据文件，即可供所有需要该类型的附加组件重复使用（例如一个 <code>scc</code> 文件即可涵盖任意附加组件的 SCC 凭据），与各附加组件 JSON 字段的前缀无关；底层机制请参阅 <code>libs/addon_common.py</code> 的 <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> 以及 <code>libs/primary.py</code> 的 <code>*_service_credential*</code> 函数。</p>
 <p><strong>云后端（Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale）与 <code>myip</code>：</strong>在实验室 JSON 中让云后端节点的 <code>myip</code> 保持为空：真实 IP 只有在创建时由提供商分配后才能知道，不能像 libvirt/Harvester 的静态 IP 那样预先决定。<code>setup_vm.py</code> 从 <code>create_vm()</code> 的返回值获取真实 IP，并在节点真正存在<em>之后</em>（而不是之前）将其注册到 DNS（这是在实测 AWSBackend 时发现的真实缺陷，2026-09-06；请参阅 TODO）。<code>mymac</code> 对云后端同样没有意义：请不要设置；它会被忽略，而不是被生成或做冲突检查。</p>
-<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。<strong>已知限制：</strong>(1) 新创建的云节点尚不会自动把这台 DNS 虚拟机用于自身的名称解析，因此在没有进一步配置的情况下，同一实验室中的第二个云节点还无法通过主机名解析第一个；(2) 节点通过私有 IP 查询这台 DNS 虚拟机；从云外部向其公网 IP 发出的 DNS 查询可能被路径上的网络拦截，因为一些 ISP 和路由器会自行应答所有 DNS 流量。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。</p>
+<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。节点由各后端自身的 <code>use_dns_server()</code> 指向这台服务器，该方法在确保 DNS 虚拟机就绪后立即调用：它会配置云网络本身来分发该服务器，于是节点无需在客户机内部做任何配置，即可按主机名解析同一实验室的其他节点。在 AWS 上这是一个 VPC DHCP 选项集，将该 DNS 虚拟机设为 VPC 唯一的 DNS 服务器，并将实验室域名设为搜索域；它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。<code>AmazonProvidedDNS</code> 不能与自定义服务器并列，因此该 DNS 虚拟机会递归解析实验室域名之外的一切。<strong>尚存一项已知限制：</strong>节点通过私有 IP 查询这台 DNS 虚拟机；从云外部向其公网 IP 发出的 DNS 查询可能被路径上的网络拦截，因为一些 ISP 和路由器会自行应答所有 DNS 流量。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。</p>
 <p><strong>云实例规格：</strong>每个云后端都会根据一个小型内置表（每行的“备注”列说明使用哪一个），把 <code>VM_CPU</code>/<code>VM_MEM</code> 映射为提供商满足要求的最小实例类型、服务器类型、套餐或规格；该表从来不是上限。有两种覆盖方式，按优先级排列：
 1. <strong><code>cloud_instance_type</code></strong>（在 common 中或按节点设置，节点优先）：实例类型、服务器类型、套餐或规格的确切名称，原样使用，完全不做自动选择。在所有云后端上用法相同，包括 OVHcloud（跳过实时查询规格列表的 API 调用）和 GCP（不创建自定义类型 <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>；请改为指定真实的预定义类型，如 <code>n2-standard-4</code>）。
 2. <strong><code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> 配置键</strong>（见下表中各提供商所在行）：完整替换内置表，因此基于 <code>VM_CPU</code>/<code>VM_MEM</code> 的自动选择仍然有效，但改为针对您自己的列表。格式：<code>name:cores:mem_gb,name:cores:mem_gb,...</code>，例如 <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>。它会整体替换而不是合并该表：如需保留内置条目，请重复写出。GCP 和 OVHcloud 没有此键：GCP 直接根据 <code>VM_CPU</code>/<code>VM_MEM</code> 构建真实的自定义机器类型（没有可替换的目录），OVHcloud 则在创建时实时查询其真实的规格列表（见其所在行）。</p>

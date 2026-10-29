@@ -151,6 +151,10 @@ function derive_node_settings() {
     else
         _python_bin=python3.11 _node_netstack=nm
     fi
+    # The pinned kubectl installer, for a node whose distribution packages no kubernetes client (Leap 16). Same
+    # script the container image is built with, so the version is pinned in libs/kvm_host_profiles.py alone.
+    # shellcheck disable=SC2034  # read through NODE_SETTINGS by write_node_settings
+    _kubectl_install="${LAB_KUBECTL_INSTALL:-}"
 }
 
 # Copies the tracked files of this lab-in-a-box tree (lab.cfg is not tracked) to directory $1, with .lab-versions:

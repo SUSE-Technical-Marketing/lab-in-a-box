@@ -376,6 +376,76 @@ footer.site {
 </tbody>
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
+<h3 id="the-automation-node-in-a-cloud">Der Automatisierungsknoten in einer Cloud</h3>
+<p>Der Automatisierungsknoten ist die Maschine, auf der die Befehle laufen. Das kann die VM auf einem KVM-Host sein, die <code>setup_kvm_node.py</code> baut, ein Container oder ein Pod (<code>_automation_node</code> in <code>lab.cfg</code>), oder eine Cloud-Instanz. In einer Cloud wird er mit <code>setup_automation_node.py &lt;lab.json&gt; &lt;knoten&gt;</code> gebaut, wobei der Knoten ein gewöhnlicher Knoten einer Lab-Definition auf einem Cloud-Backend ist: Er wird über denselben Weg erstellt wie jeder andere Knoten, und danach läuft dasselbe <code>automation-node-lib.sh configure</code> darauf über SSH, das auch eine VM als Automatisierungsknoten erhält.</p>
+<p>Der Grund dafür ist die Namensauflösung. Ein Lab in einem Cloud-Konto löst seine eigenen Knoten über den DNS-Server in genau diesem Konto auf, und ein Automatisierungsknoten dort bedient die Zone des Labs selbst. Damit hängt nichts am Lab davon ab, dass eine Maschine zu Hause erreichbar ist. Sein BIND antwortet für die Lab-Domain von überall autoritativ und löst nur für die privaten Bereiche rekursiv auf. Eine Instanz, deren Port 53 aus dem Internet erreichbar ist, ist damit kein offener Resolver: Eine Lab-VM über den Namen zu finden braucht eine autoritative Antwort, niemals Rekursion. Port 53 ist nur erreichbar, wenn die Portliste des Knotens das sagt, zum Beispiel <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
+<p>Etwas auf diesen Server auszurichten bleibt Ihnen überlassen: Tragen Sie seine Adresse als Nameserver dort ein, wo die Namen des Labs auflösbar sein sollen. Der Befehl gibt die zu verwendende Adresse am Ende aus.</p>
+<h3 id="naming-an-image-instead-of-an-id">Ein Image benennen statt einer ID</h3>
+<p>Auf einem Cloud-Backend nimmt <code>SOURCE_IMAGE</code> einen Produktnamen anstelle einer Provider-Image-ID. Der Name wird beim Erstellen der VM aufgelöst, zum aktuellen Image dieses Produkts bei diesem Provider für die Prozessorarchitektur, die der Instanztyp des Knotens ausführt — ein <code>arm64</code>-Instanztyp wie <code>t4g.nano</code> erhält also das <code>arm64</code>-Image desselben Produkts, ohne weitere Einstellungen. Eine in eine Lab-Definition geschriebene Image-ID ist regionsspezifisch und veraltet: Hersteller veröffentlichen alle paar Wochen einen neuen Build, und eine von Hand kopierte ID kann sich als ganz anderes Produkt erweisen.</p>
+<table>
+<thead>
+<tr>
+<th>Produktname</th>
+<th>Wozu es aufgelöst wird</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>Der neueste SUSE Linux Enterprise Server, beliebige Version</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>Der neueste SUSE Linux Enterprise Server 16.x</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>Das neueste SUSE Linux Micro, beliebige Version</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>Das neueste openSUSE Leap</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>Ubuntu 24.04 LTS Server, veröffentlicht von Canonical</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>Debian 13, veröffentlicht vom Debian-Projekt</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>Amazon Linux 2023, veröffentlicht von AWS</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>Das neueste Red Hat Enterprise Linux 9.x, veröffentlicht von Red Hat</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>Das neueste Red Hat Enterprise Linux 10.x, veröffentlicht von Red Hat</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>Das neueste AlmaLinux OS 10.x, veröffentlicht vom AlmaLinux-Projekt</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>Das neueste Rocky Linux 10, veröffentlicht vom Rocky-Projekt</td>
+</tr>
+</tbody>
+</table>
+<p>SUSEs eigene Produkte kommen aus SUSEs öffentlichem Image-Tracker, die übrigen aus dem öffentlichen AWS-Systems-Manager-Parameter des jeweiligen Herstellers oder aus seinem eigenen AWS-Konto, niemals aus einer Namenssuche, die ein anderes Konto treffen könnte. Ein Wert, der kein Produktname ist, einschließlich einer Image-ID oder eines Image-Dateinamens, wird unverändert durchgereicht.</p>
+<p>Ein Cloud-Lab braucht außerdem, dass seine Knoten einander auflösen. Eine kleine DNS-VM pro Cloud-Konto bedient die Lab-Domain, und das Netzwerk des Kontos wird so konfiguriert, dass es diesen Server an jede Instanz darin ausgibt. So tritt ein Knoten seinem Kubernetes-Cluster über den Hostnamen bei, ohne dass im Gast etwas konfiguriert wird. Auf AWS ist das ein VPC-DHCP-Optionssatz: er gilt für die ganze VPC, eine danach gestartete Instanz hat ihn sofort, und eine bereits laufende übernimmt ihn bei der Erneuerung ihres DHCP-Lease.</p>
 <h3 id="kubernetes-setup">Kubernetes-Einrichtung</h3>
 <p>Sobald die VMs laufen, installiert <code>setup_lab.py</code> Kubernetes auf jedem Knoten gemäß dem Abschnitt <code>kclusters</code> der JSON. RKE2 und K3s werden beide unterstützt. Sobald ein Cluster bereit ist, laufen seine Add-ons nacheinander. VM-Add-ons (einem einzelnen Knoten statt einem Cluster zugeordnet) laufen danach, sobald dieser Knoten bereitgestellt ist. Jeder RKE2-Knoten und jeder K3s-Server-Knoten erhält <code>/etc/profile.d/rke2.sh</code> bzw. <code>/etc/profile.d/k3s.sh</code>, das <code>KUBECONFIG</code> setzt, sodass <code>kubectl</code> und <code>helm</code> in jeder Root-Shell auf dem Knoten funktionieren, auch in SSH-Befehlen. Add-ons, die einen Web-Hostnamen bereitstellen (zum Beispiel <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>), tragen ihn im Lab-DNS ein, mit Verweis auf die Knoten des kclusters; beim Zerstören eines Knotens werden die auf ihn zeigenden Einträge entfernt. <code>clu_type: kubeadm</code> baut stattdessen Upstream-Kubernetes mit kubeadm: die Minor-Version kommt aus <code>clu_rel</code>, das Netzwerk-Plugin aus <code>clu_cni</code> (standardmäßig flannel, calico, oder none für ein eigenes). <code>clu_ingress</code> und <code>clu_storage</code> benennen den Ingress-Controller (<code>nginx</code>, <code>traefik</code>) und die Standard-StorageClass (<code>longhorn</code>, <code>local-path</code>) des Clusters. Ohne Angabe bleibt, was die Distribution mitbringt — nginx bei RKE2, Traefik und local-path bei K3s, beides bei Harvester — und bei einer Distribution ohne eigene Komponente wird eine installiert, sobald ein Add-on des Clusters sie braucht; eine andere Angabe ersetzt die mitgelieferte Komponente, <code>none</code> installiert nichts.</p>
 <h3 id="multi-host-labs">Multi-Host-Labs</h3>
@@ -525,6 +595,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">Format der Lab-Definition</h2>
 <p>Labs werden als JSON- oder YAML-Dateien definiert (automatisch erkannt, siehe Hinweis unten). Das aktuelle Format unterstützt mehrere Kubernetes-Cluster pro Lab (<code>kclusters</code>). Das Format für einen einzelnen Cluster (<code>cluster</code>) finden Sie in <code>examples/cluster.json.template</code>. <code>examples/suse-multiproduct.json.template</code> ist ein ausgearbeitetes Lab mit mehreren Produkten: ein RKE2-Cluster mit SUSE Rancher Prime, SUSE Storage, SUSE AI aus der SUSE Application Collection und SUSE Security, installiert in der von SUSE dokumentierten Reihenfolge. <code>suse-multiproduct-gpu.json.template</code> ist dasselbe Lab mit SUSE AI auf einer NVIDIA-GPU, auf einem <code>existing</code>-Knoten, denn die Lab-Definition kennt keinen PCI-Passthrough.</p>
+<p><code>disabled_nodes</code> nimmt Einträge in genau der Form, die <code>nodes</code> hat, für Knoten, die zum Entwurf eines Labs gehören, aber nicht bereitgestellt werden. Nichts liest sie: Es wird keine VM erstellt, kein DNS-Eintrag hinzugefügt und kein Add-on ausgeführt. Ein Knoten wird dort abgestellt statt gelöscht, damit das, worauf er wartet, ein Image, für das das Backend keine Entsprechung hat, eine Version am Ende ihres Lebenszyklus, noch nicht verfügbare Hardware, beantwortet werden kann, indem sein Eintrag unverändert zurück nach <code>nodes</code> wandert.</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/lab-format.svg" alt="Lab definition format: nodes, common, kclusters and add-on sections that reference each other" loading="lazy"><img class="diagram--dark" src="media/diagrams/lab-format-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <aside class="callout callout-note"><p>Auch eine Datei <code>.yaml</code>/<code>.yml</code> funktioniert. Das Format wird anhand der Dateiendung erkannt (oder, falls eine Datei kein gültiges JSON ist, durch Rückgriff auf YAML). Dasselbe gilt für die Prüfung durch den Preflight von <code>setup_lab.py</code>, für <code>install_&lt;addon&gt; --validate</code> und für den Ladepfad jedes Add-ons. YAML-Eingaben benötigen <code>pyyaml</code> (<code>pip install pyyaml</code>) auf der Automatisierungs-VM. Ohne dieses Paket erhalten Sie eine klare Fehlermeldung mit dem Hinweis, es zu installieren, und keinen stillen Ausfall, der nur JSON versteht.</p></aside>
 <aside class="callout callout-note"><p><code>myip</code> und <code>mymac</code> können weggelassen werden. Die Adresse kommt dann aus dem Netz, das <code>common.mygw</code> und <code>common.mymask</code> bereits beschreiben, es gibt also keinen Adressbereich, der mit Gateway und DNS-Server abgeglichen werden muss. Die Wahl ergibt sich aus dem Namen des Knotens: dieselbe Definition führt immer zu denselben Adressen, und ein neu gebautes Lab behält seine DNS-Einträge, seine PXE-Einträge und seine kubeconfigs. Gateway, DNS-Server, die eigenen Adressen dieses Automatisierungsknotens, die anderen Knoten des Labs, jede Adresse mit einem Eintrag im Lab-DNS und alles, was auf einen Ping antwortet, werden zuvor ausgeschlossen; der Lauf schreibt die gewählten Adressen neben die Lab-Datei, nicht darüber. Der Preflight nennt die Adresse jedes Knotens, bevor etwas erzeugt wird, und das Kontrollkästchen <em>Addresses automatically</em> im Lab-Builder tut dasselbe im Browser. Eine Lab-Definition ohne Adressen läuft überall, und genau das macht die Dateien unter <code>examples/</code> zwischen Standorten übertragbar.</p></aside>
@@ -1508,7 +1579,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>Eine Zugangsdatendatei pro Art kann von jedem Add-on genutzt werden, das diese Art braucht. Eine einzige Datei <code>scc</code> deckt zum Beispiel die SCC-Zugangsdaten jedes Add-ons ab, unabhängig vom JSON-Präfix des jeweiligen Felds. Die zugrunde liegende Logik steht in <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> in <code>libs/addon_common.py</code> und in den Funktionen <code>*_service_credential*</code> in <code>libs/primary.py</code>.</p>
 <p><strong>Cloud-Backends (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) und <code>myip</code>:</strong> Lassen Sie <code>myip</code> bei einem Cloud-Backend-Knoten in der Lab-JSON leer. Die echte IP ist erst bekannt, wenn der Anbieter sie beim Erstellen zuweist. Sie lässt sich nicht im Voraus festlegen, wie eine statische IP bei libvirt oder Harvester. <code>setup_vm.py</code> übernimmt die echte IP aus dem Rückgabewert von <code>create_vm()</code> und registriert sie in DNS, nachdem der Knoten tatsächlich existiert, nicht vorher. (Ein Fehler, der bei der Live-Prüfung des AWSBackend gefunden wurde, 2026-09-06, siehe TODO.) <code>mymac</code> ist für ein Cloud-Backend ebenfalls bedeutungslos. Lassen Sie es leer. Es wird ignoriert und weder erzeugt noch auf Konflikte geprüft.</p>
-<p><strong>Cloud-DNS-VM:</strong> Sobald ein Lab-Knoten zum ersten Mal ein bestimmtes Cloud-Backend nutzt, richtet <code>setup_vm.py</code> außerdem eine kleine, günstige DNS-VM im selben Cloud-Netz ein (oder verwendet eine bereits vorhandene). Sie heißt <code>lab-dns-&lt;backend&gt;</code>, z. B. <code>lab-dns-aws</code>, und betreibt BIND. Sie startet aus dem neuesten openSUSE-Leap-Image, das der Anbieter veröffentlicht (auf AWS aus SUSEs öffentlicher Cloud-Image-Liste), oder bei einem Anbieter ohne ein solches aus dem Image des Labs; unterstützt werden Debian/Ubuntu, SUSE und die Fedora-Familie (RHEL, Amazon Linux). Setzen Sie <code>CLOUD_DNS_IMAGE</code> im Cloud-Konto (oder in <code>lab_creation.cfg</code>), um sie stattdessen aus einem bestimmten Image zu starten. Das ist nötig, weil Cloud-Knoten im Allgemeinen den BIND-Server der Automatisierungs-VM unter <code>automation.mydemo.lab</code> gar nicht erreichen können. Er steht hinter NAT und dem Router des Home-Labs und ist nicht aus dem Internet erreichbar. Ein echter Cloud-Cluster mit mehreren Knoten braucht einen eigenen DNS-Server im selben Cloud-Netz, damit sich seine Knoten gegenseitig auflösen können. Jeder DNS-Eintrag eines Cloud-Knotens wird sowohl in dieser DNS-VM als auch in der zentralen Zone <code>automation.mydemo.lab</code> registriert. <strong>Bekannte Lücken:</strong> (1) Ein frisch erstellter Cloud-Knoten richtet seine eigene Namensauflösung noch nicht automatisch auf diese DNS-VM aus. Ein zweiter Cloud-Knoten im selben Lab kann den ersten deshalb noch nicht über den Hostnamen finden, ohne weitere Verdrahtung. (2) Die Knoten fragen diese DNS-VM über ihre private IP ab. DNS-Anfragen an ihre öffentliche IP von außerhalb der Cloud können von Netzen auf dem Weg abgefangen werden, da manche Internetanbieter und Router jeden DNS-Verkehr selbst beantworten. Siehe die Docstring von <code>ensure_cloud_dns_vm()</code> in <code>libs/backends.py</code>.</p>
+<p><strong>Cloud-DNS-VM:</strong> Sobald ein Lab-Knoten zum ersten Mal ein bestimmtes Cloud-Backend nutzt, richtet <code>setup_vm.py</code> außerdem eine kleine, günstige DNS-VM im selben Cloud-Netz ein (oder verwendet eine bereits vorhandene). Sie heißt <code>lab-dns-&lt;backend&gt;</code>, z. B. <code>lab-dns-aws</code>, und betreibt BIND. Sie startet aus dem neuesten openSUSE-Leap-Image, das der Anbieter veröffentlicht (auf AWS aus SUSEs öffentlicher Cloud-Image-Liste), oder bei einem Anbieter ohne ein solches aus dem Image des Labs; unterstützt werden Debian/Ubuntu, SUSE und die Fedora-Familie (RHEL, Amazon Linux). Setzen Sie <code>CLOUD_DNS_IMAGE</code> im Cloud-Konto (oder in <code>lab_creation.cfg</code>), um sie stattdessen aus einem bestimmten Image zu starten. Das ist nötig, weil Cloud-Knoten im Allgemeinen den BIND-Server der Automatisierungs-VM unter <code>automation.mydemo.lab</code> gar nicht erreichen können. Er steht hinter NAT und dem Router des Home-Labs und ist nicht aus dem Internet erreichbar. Ein echter Cloud-Cluster mit mehreren Knoten braucht einen eigenen DNS-Server im selben Cloud-Netz, damit sich seine Knoten gegenseitig auflösen können. Jeder DNS-Eintrag eines Cloud-Knotens wird sowohl in dieser DNS-VM als auch in der zentralen Zone <code>automation.mydemo.lab</code> registriert. Die Knoten werden auf diesen Server ausgerichtet durch <code>use_dns_server()</code> des jeweiligen Backends, das direkt nach dem Bereitstellen der DNS-VM aufgerufen wird: Es konfiguriert das Cloud-Netz selbst so, dass es diesen Server ausgibt. Ein Knoten löst die anderen Knoten seines Labs damit über den Hostnamen auf, ohne dass im Gast etwas konfiguriert wird. Auf AWS ist das ein VPC-DHCP-Optionssatz, der die DNS-VM als einzigen DNS-Server der VPC und die Lab-Domain als Suchdomain nennt; er gilt für die ganze VPC, eine danach gestartete Instanz hat ihn sofort, und eine bereits laufende übernimmt ihn bei der Erneuerung ihres DHCP-Lease. <code>AmazonProvidedDNS</code> kann nicht neben einem eigenen Server stehen, daher löst die DNS-VM alles außerhalb der Lab-Domain rekursiv auf. <strong>Eine bekannte Lücke:</strong> Die Knoten fragen diese DNS-VM über ihre private IP ab. DNS-Anfragen an ihre öffentliche IP von außerhalb der Cloud können von Netzen auf dem Weg abgefangen werden, da manche Internetanbieter und Router jeden DNS-Verkehr selbst beantworten. Siehe die Docstring von <code>ensure_cloud_dns_vm()</code> in <code>libs/backends.py</code>.</p>
 <p><strong>Dimensionierung von Cloud-Instanzen:</strong> Jedes Cloud-Backend ordnet <code>VM_CPU</code>/<code>VM_MEM</code> dem kleinsten passenden Instanztyp, Servertyp, Plan bzw. Flavor des Anbieters aus einer kleinen eingebauten Tabelle zu (die Spalte „Notes“ unten zeigt jeweils, welche). Diese Tabelle war nie als Obergrenze gedacht. Es gibt zwei Wege, sie zu überschreiben, in dieser Rangfolge:</p>
 <ol>
 <li><strong><code>cloud_instance_type</code></strong> (in <code>common</code> oder pro Knoten, der Knotenwert gewinnt): ein genauer Name für Instanztyp, Servertyp, Plan oder Flavor, der wörtlich statt einer automatischen Auswahl verwendet wird. Das funktioniert auf jedem Cloud-Backend gleich, auch bei OVHcloud (überspringt dessen eigenen Live-Aufruf der Flavor-Liste) und bei GCP (überspringt das Bauen eines benutzerdefinierten Typs <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>. Geben Sie stattdessen einen echten vordefinierten Typ wie <code>n2-standard-4</code> an).</li>

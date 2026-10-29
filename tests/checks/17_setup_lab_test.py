@@ -731,6 +731,28 @@ check("phase_install_k8s_and_addons: records ok and FAILED per kcluster and the 
 check("phase_install_k8s_and_addons: waits for the cluster's kube-system pods, with delay_min as the patience",
       settled.called and settled.call_args[1]["timeout"] == 120)
 
+# A node whose VM was never created has no VM, and install_cluster() reaches each node by hostname — so a cluster
+# holding such a node must not be installed at all. Live on AWS, a security-group error failed both nodes of a
+# cluster and the Kubernetes phase then ran the k3s installer over a same-named libvirt VM an earlier lab had left
+# in DNS.
+installed.clear()
+addon_runs.clear()
+setup_lab._report = setup_lab._RunReport()
+setup_lab._report.add_node("b1", "FAILED")
+setup_lab._report.add_node("g1", "ok")
+with mock.patch.object(setup_lab.k8s, "get_distro", return_value=FakeDistro()), \
+        mock.patch.object(setup_lab, "_install_cluster_addons",
+                          side_effect=lambda d, c, df, j, clu, cfg: addon_runs.append(clu)), \
+        mock.patch.object(setup_lab.k8s, "kcluster_node", return_value="g1"), \
+        mock.patch.object(setup_lab.k8s, "wait_system_ready", return_value=True):
+    setup_lab.phase_install_k8s_and_addons(k8s_lab, {}, {}, "lab.json")
+check("phase_install_k8s_and_addons: never installs Kubernetes on a cluster whose node was not provisioned",
+      installed == ["good"])
+check("phase_install_k8s_and_addons: skips that cluster's add-ons too", addon_runs == ["good"])
+check("phase_install_k8s_and_addons: records the skipped cluster as FAILED, naming the node",
+      ("bad", "FAILED") in setup_lab._report.clusters
+      and any("b1" in e and "never provisioned" in e for e in setup_lab._report.errors))
+
 # ── setup_lab(): the phases in order; Kubernetes phases only for a lab with kclusters ─────────────────────────────
 order = []
 phases = ["phase_services", "phase_dns", "phase_create_vms", "phase_reboot_and_wait_kept_nodes",
