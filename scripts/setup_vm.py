@@ -204,6 +204,9 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
     )
     if created_ip:
         env["myip"] = created_ip
+        # Also on the definition, so every later step reaches the node at the address its provider assigned rather
+        # than at a name only this lab's own DNS server resolves. setup_lab.py shares this dict with provision_vm().
+        definition.setdefault("nodes", {}).setdefault(vm_name, {})["myip"] = created_ip
     if open_ports:
         # Every backend's own firewall/security-group mechanism (VMBackend.open_vm_ports).
         backend.open_vm_ports(vm_name, open_ports)

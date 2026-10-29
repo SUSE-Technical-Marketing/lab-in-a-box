@@ -69,6 +69,31 @@ with mock.patch.object(lc, "ssh_run", side_effect=_fail_second):
 check("a failing command is reported", len(out) == 1 and "own-pre-1" in out[0] and "own.lab" in out[0])
 check("...and the commands after it still run", ran == ["own-pre-1", "own-pre-2"])
 
+# ── which address they run on ─────────────────────────────────────────────────
+# A cloud node is reached at the address its provider assigned: its name resolves only where this lab's own DNS
+# server is consulted, which an automation node outside that domain is not.
+WITH_IP = {"nodes": {"cloud.lab": {"myip": "203.0.113.9", "pre_commands": ["c1"]}}}
+ran = []
+with mock.patch.object(lc, "ssh_run", side_effect=lambda host, cmd, **kw: ran.append((host, cmd))):
+    out = lc.run_node_commands(WITH_IP, "cloud.lab", "pre")
+check("a node with a known address runs there, not on its name",
+      ran == [("203.0.113.9", "c1")] and out == [])
+
+ran = []
+with mock.patch.object(lc, "ssh_run", side_effect=lambda host, cmd, **kw: ran.append((host, cmd))):
+    lc.run_node_commands({"nodes": {"n.lab": {"myip": "", "pre_commands": ["c1"]}}}, "n.lab", "pre")
+check("an empty address falls back to the name", ran == [("n.lab", "c1")])
+
+
+def _fail_on_ip(host, cmd, **kw):
+    raise RuntimeError("exit 1")
+
+
+with mock.patch.object(lc, "ssh_run", side_effect=_fail_on_ip):
+    out = lc.run_node_commands(WITH_IP, "cloud.lab", "pre")
+check("a failure names the node, not the address it was reached at",
+      len(out) == 1 and "cloud.lab" in out[0] and "203.0.113.9" not in out[0])
+
 # ── the schema declares them ──────────────────────────────────────────────────
 BASE = lab_schema_base.base_lab_schema()
 for section in ("common", "nodes"):

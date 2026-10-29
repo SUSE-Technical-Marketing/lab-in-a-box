@@ -166,6 +166,14 @@ feedback than waiting on the full container run.
 > example still deploys into a *working* cluster/VM, not just that
 > `setup_lab.py` exits 0. See [tests/examples/README.md](tests/examples/README.md).
 
+> [!TIP]
+> If your change touches a product name in `libs/cloud_images.py`, run
+> `scripts/check_cloud_images.py` against a real account
+> (`--region`/`--profile`/`--product`). The container checks fake the AWS
+> calls, so they prove the resolution logic and never the catalogue itself: a
+> vendor renaming its images passes every one of them and fails only in a real
+> lab. It exits 0 and checks nothing when no credentials are configured.
+
 ## Commit messages
 
 Short, imperative, factual: `Add X`, `Fix Y`, `Retire Z`. Explain *why* in

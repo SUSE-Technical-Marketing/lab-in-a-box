@@ -76,8 +76,8 @@ AWS_PRODUCTS = {
         "label": "the newest Rocky Linux 10, published by the Rocky project",
         "owner": "792107900819",
         "name": {
-            "x86_64": "Rocky-10-EC2-Base-*.x86_64-*",
-            "arm64": "Rocky-10-EC2-Base-*.aarch64-*",
+            "x86_64": "Rocky-10-EC2-Base-*.x86_64",
+            "arm64": "Rocky-10-EC2-Base-*.aarch64",
         },
     },
 }

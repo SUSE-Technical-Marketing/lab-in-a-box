@@ -919,6 +919,9 @@ def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
     commands = node_commands(definition, vm_name, phase)
     if not commands:
         return []
+    # The same precedence check_ssh_conn() is given: a cloud node is reached at the address its provider assigned,
+    # not at a name whose resolution depends on this host serving the lab's domain.
+    ssh_target = ((definition.get("nodes") or {}).get(vm_name) or {}).get("myip") or vm_name
     log("Running {} \"{}{}_commands{}\" on \"{}{}{}\"".format(
         len(commands), _RED, phase, _RESET, _RED, vm_name, _RESET))
     failures = []
@@ -927,7 +930,7 @@ def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
     try:
         for command in commands:
             try:
-                ssh_run(vm_name, command)
+                ssh_run(ssh_target, command)
             except RuntimeError as exc:
                 message = "{}_commands on '{}': '{}' failed: {}".format(phase, vm_name, command, exc)
                 error(message)
