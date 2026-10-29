@@ -350,7 +350,8 @@
    {"version": "2.3", "breaking": false, "changes": "clu_type kubeadm (upstream Kubernetes built with kubeadm), with clu_cni and clu_pod_cidr for the network plugin it applies."},
    {"version": "2.4", "breaking": false, "changes": "kclusters gains clu_ingress and clu_storage: the ingress controller and default storage class of a cluster, installed as add-ons when its distribution brings none"},
    {"version": "2.5", "breaking": false, "changes": "nodes.myip is optional: an address is allocated from the network the lab already describes when the definition gives none"},
-   {"version": "2.6", "breaking": false, "changes": "A disabled_nodes section, in the same form as nodes, for nodes that are part of a lab's design but are not deployed: nothing reads it, so a node waiting on an image or a release stays in the file instead of being deleted. SOURCE_IMAGE also accepts a product name (\"slmicro6.1\", \"sles16\", \"ubuntu24.04\", see libs/cloud_images.py), resolved to the provider's current image for the node's architecture at create time."}
+   {"version": "2.6", "breaking": false, "changes": "ISO_URL and ISO_SHA256_URL declared again, hidden and deprecated: setup_lab.py still downloads them. A URL in SOURCE_IMAGE is downloaded the same way, once into ISO_LOC on each KVM host and checked against SOURCE_SHA256, which it requires."},
+   {"version": "2.7", "breaking": false, "changes": "A disabled_nodes section, in the same form as nodes, for nodes that are part of a lab's design but are not deployed: nothing reads it, so a node waiting on an image or a release stays in the file instead of being deleted. SOURCE_IMAGE also accepts a cloud provider's own image ID or a product name (\"slmicro6.1\", \"sles16\", \"ubuntu24.04\", see libs/cloud_images.py), resolved to the provider's current image for the node's architecture at create time."}
   ]
  }
 }

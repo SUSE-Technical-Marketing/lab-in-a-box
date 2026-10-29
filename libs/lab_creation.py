@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 
 import provisioning
+from source_utils import is_url
 
 
 # ── Output helpers ────────────────────────────────────────────────────────────
@@ -344,7 +345,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
     # image is valid and never needs a common default at all.
     # SOURCE_IMAGE, or its older name ISO_IMAGE.
     def _image(cfg):
-        return _jq_or(cfg.get("SOURCE_IMAGE")) if not _empty(_jq_or(cfg.get("SOURCE_IMAGE"))) else _jq_or(cfg.get("ISO_IMAGE"))
+        return image_name(cfg)
 
     iso = _image(common)
     if _empty(iso):
@@ -660,18 +661,12 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 if not line.startswith("[WARNING]"):
                     err("addon '{}': {}".format(addon, re.sub(r"^\[ERROR\]\s*", "", line)))
 
-    # ── 5b. Base image downloads (ISO_URL) ────────────────────────────────────
-    if _jq_or(common.get("ISO_URL")):
-        for issue in image_source_issues("common", iso, _jq_or(common.get("ISO_URL")),
-                                         _jq_or(common.get("ISO_SHA256")), _jq_or(common.get("ISO_SHA256_URL"))):
-            err(issue)
-    for node in nodes_to_check:
-        node_cfg = nodes.get(node) or {}
-        if _jq_or(node_cfg.get("ISO_URL")):
-            node_img = _image(node_cfg) or iso
-            for issue in image_source_issues("nodes.{}".format(node), node_img, _jq_or(node_cfg.get("ISO_URL")),
-                                             _jq_or(node_cfg.get("ISO_SHA256")),
-                                             _jq_or(node_cfg.get("ISO_SHA256_URL"))):
+    # ── 5b. Base image downloads (a URL in SOURCE_IMAGE, or ISO_URL) ──────────
+    for label, cfg in [("common", common)] + [("nodes.{}".format(n), nodes.get(n) or {}) for n in nodes_to_check]:
+        source = image_source(cfg)
+        if source:
+            image, url, sha256, sha256_url = source
+            for issue in image_source_issues(label, image or iso, url, sha256, sha256_url):
                 err(issue)
     downloadable = {req[1] for req in image_download_requests(definition)}
 
@@ -711,7 +706,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             if test.returncode != 0 and img in downloadable:
-                warn("{}: image '{}' not yet at {}:{}/{} — setup_lab.py downloads it (ISO_URL)".format(
+                warn("{}: image '{}' not yet at {}:{}/{} — setup_lab.py downloads it".format(
                     label, img, host, iso_loc, img))
                 return
             if test.returncode != 0:
@@ -1411,32 +1406,80 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
 
+def image_file_name(url):
+    """The file name a downloaded base image is stored under in ISO_LOC: the last path segment of its first URL."""
+    first = (url.split() or [""])[0]
+    return first.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+
+
+def image_name(cfg):
+    """
+    The base image file of one common/node section: SOURCE_IMAGE, or its older name ISO_IMAGE; for a URL, the file
+    name it is downloaded under (image_file_name()).
+    """
+    image = _jq_or(cfg.get("SOURCE_IMAGE")) or _jq_or(cfg.get("ISO_IMAGE"))
+    return image_file_name(image) if is_url(image) else image
+
+
+def source_checksum(value):
+    """
+    (sha256, sha256_url) from a SOURCE_SHA256 or ISO_SHA256 value: a URL publishing the digest, a local file holding
+    it (read here, its first word), or the hex digest itself.
+    """
+    value = (value or "").strip()
+    if is_url(value):
+        return "", value
+    if value and not re.match(r"^[0-9A-Fa-f]+$", value):
+        try:
+            words = Path(value).read_text().split()
+        except OSError:
+            return value, ""
+        return (words[0].lower() if words else ""), ""
+    return value.lower(), ""
+
+
+def image_source(cfg):
+    """
+    (image, url, sha256, sha256_url) of the base image one common/node section downloads, or None when it downloads
+    nothing. A URL in SOURCE_IMAGE downloads to image_file_name(); the older ISO_URL downloads SOURCE_IMAGE/ISO_IMAGE
+    ("" when the section names none). The checksum is SOURCE_SHA256 (or ISO_SHA256), else ISO_SHA256_URL.
+    """
+    source = _jq_or(cfg.get("SOURCE_IMAGE"))
+    url = source if is_url(source) else _jq_or(cfg.get("ISO_URL"))
+    if not url:
+        return None
+    sha256, sha256_url = source_checksum(_jq_or(cfg.get("SOURCE_SHA256")) or _jq_or(cfg.get("ISO_SHA256")))
+    return image_name(cfg), url, sha256, sha256_url or _jq_or(cfg.get("ISO_SHA256_URL"))
+
+
 def image_source_issues(label, image, url, sha256, sha256_url):
     """
-    Problems with one ISO_URL/ISO_SHA256/ISO_SHA256_URL triple (an empty list
-    when it is usable). The checksum is mandatory: a downloaded base image is
-    only ever booted once it matches.
+    Problems with one base image download — image file name, URL(s), sha256, sha256 URL — (an empty list when it is
+    usable). The checksum is mandatory: a downloaded base image is only ever booted once it matches.
     """
     issues = []
     if _empty(image) or not _IMAGE_FILE_RE.match(image):
-        issues.append("{}: ISO_URL needs ISO_IMAGE to be a plain file name (got '{}')".format(label, image))
+        issues.append("{}: a downloaded image (SOURCE_IMAGE URL or ISO_URL) needs a plain file name (got '{}')".format(
+            label, image))
     urls = url.split()
-    if not urls or not all(re.match(r"^(https?|file)://", u) for u in urls):
-        issues.append("{}.ISO_URL: each URL must start with http://, https:// or file://".format(label))
+    if not urls or not all(re.match(r"^(https?|ftp|file)://", u) for u in urls):
+        issues.append("{}: each download URL (SOURCE_IMAGE or ISO_URL) must start with http://, https://, ftp:// or "
+                      "file://".format(label))
     if sha256 and not _SHA256_RE.match(sha256.lower()):
-        issues.append("{}.ISO_SHA256: must be a 64-character hex sha256".format(label))
+        issues.append("{}: SOURCE_SHA256 (or ISO_SHA256) must be a 64-character hex sha256".format(label))
     if not sha256 and not sha256_url.startswith("https://"):
-        issues.append("{}: ISO_URL needs ISO_SHA256, or ISO_SHA256_URL (https://)".format(label))
+        issues.append("{}: a downloaded image needs SOURCE_SHA256: its sha256, or an https:// URL publishing it "
+                      "(ISO_SHA256 / ISO_SHA256_URL for ISO_URL)".format(label))
     return issues
 
 
 def image_download_requests(definition):
     """
     (vm_name, image, url, sha256, sha256_url) for every node whose base image
-    has an ISO_URL, on the libvirt backend (cloud and Harvester nodes are skipped:
-    they boot a provider image by name). A node-level ISO_URL belongs to that node's ISO_IMAGE; the
-    common ISO_URL only to common.ISO_IMAGE (a node that sets its own
-    ISO_IMAGE without its own ISO_URL downloads nothing).
+    is downloaded (image_source()), on the libvirt backend (cloud and Harvester nodes are skipped:
+    they boot a provider image by name). A node's own download belongs to that node's image; the
+    common one only to the common image (a node that sets its own
+    SOURCE_IMAGE/ISO_IMAGE without its own download downloads nothing).
     """
     common = definition.get("common") or {}
     requests = []
@@ -1446,15 +1489,13 @@ def image_download_requests(definition):
         cloud_account = _jq_or(node.get("cloud_account")) or _jq_or(common.get("cloud_account"))
         if cloud_account or (backend and backend != "libvirt"):
             continue  # cloud/Harvester nodes boot provider images, never a local qcow2
-        if _jq_or(node.get("ISO_URL")):
-            src = node
-        elif _empty(_jq_or(node.get("ISO_IMAGE"))) and _jq_or(common.get("ISO_URL")):
-            src = common
-        else:
+        source = image_source(node)
+        if source is None and _empty(image_name(node)):
+            source = image_source(common)
+        if source is None:
             continue
-        image = _jq_or(node.get("ISO_IMAGE")) or _jq_or(common.get("ISO_IMAGE"))
-        requests.append((vm_name, image, _jq_or(src.get("ISO_URL")),
-                         _jq_or(src.get("ISO_SHA256")).lower(), _jq_or(src.get("ISO_SHA256_URL"))))
+        image, url, sha256, sha256_url = source
+        requests.append((vm_name, image or image_name(common), url, sha256, sha256_url))
     return requests
 
 

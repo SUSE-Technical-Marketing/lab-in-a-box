@@ -13,6 +13,14 @@
    "required": false,
    "type": "string"
   },
+  "common.ISO_SHA256_URL": {
+   "required": false,
+   "type": "string"
+  },
+  "common.ISO_URL": {
+   "required": false,
+   "type": "string"
+  },
   "common.ROOT_PWD_HASH": {
    "required": false,
    "type": "password"
@@ -345,6 +353,14 @@
    "type": "string"
   },
   "nodes.ISO_SHA256": {
+   "required": false,
+   "type": "string"
+  },
+  "nodes.ISO_SHA256_URL": {
+   "required": false,
+   "type": "string"
+  },
+  "nodes.ISO_URL": {
    "required": false,
    "type": "string"
   },
