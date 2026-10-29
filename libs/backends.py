@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import aws_catalog
 import cloud_images
 import ipalloc
 import primary
@@ -1769,9 +1770,11 @@ class AWSBackend(VMBackend):
         group, which suits a quick lab but not a production setup. AWS_KEY_NAME (an existing EC2 key pair in
         the region) is optional. Cloud-init user-data is the access mechanism on every backend; the key
         pair is an extra access path.
-      - vm_cpu and vm_mem: EC2 sells fixed (vCPU, memory) instance types. The backend picks the smallest
-        sufficient one from INSTANCE_TYPES. vm_dsk_gb maps directly: the root EBS volume is sized at launch
-        with --block-device-mappings, keyed off the AMI's root device name from describe-images.
+      - vm_cpu and vm_mem: EC2 sells fixed (vCPU, memory) instance types. The backend picks the cheapest
+        x86_64 type the region offers that satisfies both, from the live specifications and on-demand prices
+        libs/aws_catalog.py reads, and falls back to the smallest sufficient entry of INSTANCE_TYPES when
+        that lookup is unavailable. vm_dsk_gb maps directly: the root EBS volume is sized at launch with
+        --block-device-mappings, keyed off the AMI's root device name from describe-images.
       - EC2 instances have no native name field. The backend identifies a VM by the Name tag
         (aws ec2 describe-instances --filters Name=tag:Name,Values=<vm_name>).
       - MAC addresses: EC2 does not allow a custom MAC. check_or_generate_mac() and list_used_macs() are
@@ -1788,15 +1791,17 @@ class AWSBackend(VMBackend):
     an EC2 "hypervisor" node. Nothing after create_vm() changes: once setup_kvm_node.py installs libvirt, the
     instance behaves like bare metal. The supported families are listed in _NESTED_VIRT_SUPPORTED_FAMILIES.
     The backend exits with a message that names a supported alternative when the resolved instance family is
-    not in that list. Nested virtualization requires an explicit cloud_instance_type, because the default
-    INSTANCE_TYPES table (T3, burstable) does not support it.
+    not in that list. Nested virtualization requires an explicit cloud_instance_type: no burstable type
+    supports it, and a burstable type is what both the live price lookup and INSTANCE_TYPES settle on for a
+    lab-sized node.
     """
 
-    # Smallest-to-largest by (cores, memory_gb) — the standard burstable general-purpose family,
-    # enough to cover this project's typical lab-sized nodes; extend as needed. Used only when
-    # AWS_INSTANCE_TYPES isn't set — see resolve() and README's Compute backends table for the
-    # override and the real URL to AWS's own current EC2 instance-type catalog.
+    # Smallest-to-largest by (cores, memory_gb), the standard burstable general-purpose family, which every
+    # region offers. Used when AWS_INSTANCE_TYPES isn't set and the live lookup in libs/aws_catalog.py
+    # returns nothing; see resolve() and README's Compute backends table for the override and the URL to
+    # AWS's own current EC2 instance-type catalog.
     INSTANCE_TYPES = [
+        ("t3.micro", 2, 1), ("t3.small", 2, 2),
         ("t3.medium", 2, 4), ("t3.large", 2, 8), ("t3.xlarge", 4, 16), ("t3.2xlarge", 8, 32),
     ]
 
@@ -1860,11 +1865,14 @@ class AWSBackend(VMBackend):
                    subnet_id=config.get("AWS_SUBNET_ID"), security_group_id=config.get("AWS_SECURITY_GROUP_ID"),
                    key_name=config.get("AWS_KEY_NAME"), vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
-    def _aws(self, *args, **kwargs):
+    def _aws(self, *args, region="", **kwargs):
         """One `aws` CLI invocation, region/auth applied uniformly. Returns the parsed JSON stdout
         (or None for a command with no output), raises RuntimeError with the real CLI stderr on a
         non-zero exit — mirrors HetznerBackend._api()'s own contract so callers' die() messages
-        stay meaningful either way."""
+        stay meaningful either way.
+
+        `region` overrides this backend's own region for one call, for an AWS API served only from
+        its own fixed regions rather than from the lab's, such as the Price List API."""
         env = dict(os.environ)
         if self.profile:
             env["AWS_PROFILE"] = self.profile
@@ -1874,7 +1882,7 @@ class AWSBackend(VMBackend):
             env["AWS_SECRET_ACCESS_KEY"] = self.secret_key
         if self.session_token:
             env["AWS_SESSION_TOKEN"] = self.session_token
-        cmd = ["aws", "--region", self.region, "--output", "json"] + list(args)
+        cmd = ["aws", "--region", region or self.region, "--output", "json"] + list(args)
         result = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  universal_newlines=True)
         if result.returncode != 0:
@@ -1919,15 +1927,54 @@ class AWSBackend(VMBackend):
                 return instances[0]
         return None
 
+    # The (specs, prices) mappings libs/aws_catalog.py returns, keyed by (region, architecture) and shared by every
+    # AWSBackend instance in the process. A lab sizes each of its nodes separately, while the two lookups behind one
+    # entry cover several hundred instance types and take seconds, so they run once per region and architecture.
+    _CATALOG_CACHE = {}
+
+    def _region_catalog(self, arch):
+        """
+        The (specs, prices) mappings for `arch` in this backend's region, fetched once per process.
+
+        Either mapping is empty when its own lookup failed, which _pick_instance_type() reads as "size this VM from
+        the built-in table instead". A failure is therefore not fatal: prices need a permission (pricing:GetProducts)
+        and an endpoint that an account restricted to EC2 alone does not have.
+        """
+        key = (self.region, arch)
+        if key not in self._CATALOG_CACHE:
+            try:
+                specs = aws_catalog.region_instance_types(self._aws, arch)
+            except (RuntimeError, OSError, ValueError):
+                specs = {}
+            prices = aws_catalog.region_prices(self._aws, self.region) if specs else {}
+            if not prices:
+                log("AWS returned no live {} instance types with prices for region {}: sizing VMs from the "
+                    "built-in instance-type table instead".format(arch, self.region))
+            self._CATALOG_CACHE[key] = (specs, prices)
+        return self._CATALOG_CACHE[key]
+
     def _pick_instance_type(self, vm_cpu, vm_mem_mb, vm_name):
+        """
+        The instance type for a VM needing `vm_cpu` vCPUs and `vm_mem_mb` MiB of memory: the cheapest x86_64 type the
+        region actually offers, or the smallest sufficient entry of the sizing table when no live prices are
+        available. An AWS_INSTANCE_TYPES table set in the configuration replaces the live lookup outright.
+
+        arm64 is never picked automatically, although it is consistently cheaper: a lab's add-on container images and
+        guest images are not all published for it. Name an arm64 type in cloud_instance_type to run one.
+        """
+        if not self.instance_types:
+            specs, prices = self._region_catalog("x86_64")
+            cheapest = aws_catalog.cheapest_sufficient(vm_cpu, vm_mem_mb, specs, prices)
+            if cheapest:
+                return cheapest
         needed_mem_gb = int(vm_mem_mb) / 1024.0
         table = self.instance_types or self.INSTANCE_TYPES
         for name, cores, mem_gb in table:
             if cores >= int(vm_cpu) and mem_gb >= needed_mem_gb:
                 return name
-        die("AWSBackend has no known instance type big enough for VM '{}' ({} vCPU / {} MiB) — "
-            "extend AWSBackend.INSTANCE_TYPES or set AWS_INSTANCE_TYPES in "
-            "/etc/lab_creation.cfg".format(vm_name, vm_cpu, vm_mem_mb))
+        die("AWSBackend found no instance type big enough for VM '{}' ({} vCPU / {} MiB), neither in region {} "
+            "nor in its sizing table — raise it with AWS_INSTANCE_TYPES in /etc/lab_creation.cfg, or name a type "
+            "outright with cloud_instance_type".format(vm_name, vm_cpu, vm_mem_mb, self.region))
 
     def vm_exists(self, vm_name):
         return self._find_instance(vm_name) is not None

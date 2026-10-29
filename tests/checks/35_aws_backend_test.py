@@ -156,11 +156,15 @@ check("check_or_generate_mac() passes an existing mymac through unchanged (never
       mymac == "aa:bb:cc:dd:ee:ff" and network is None)
 
 
-# ── _pick_instance_type(): smallest SKU that satisfies both cores and memory ─
-check("_pick_instance_type() picks the smallest sufficient SKU (2 vCPU / 2048 MiB)",
-      backend._pick_instance_type(2, 2048, "vm1") == "t3.medium")
+# ── _pick_instance_type(): cheapest region type, else the sizing table ─
+# An empty cache entry is what a region whose live lookup failed leaves behind, so these exercise the table.
+backends.AWSBackend._CATALOG_CACHE[(backend.region, "x86_64")] = ({}, {})
+check("_pick_instance_type() falls back to the smallest sufficient table SKU (2 vCPU / 2048 MiB)",
+      backend._pick_instance_type(2, 2048, "vm1") == "t3.small")
 check("_pick_instance_type() steps up when memory needs more than cores would suggest",
       backend._pick_instance_type(2, 16384, "vm1") == "t3.xlarge")
+check("the sizing table reaches down to a 1 GiB node instead of flooring it at 4 GiB",
+      backend._pick_instance_type(1, 1024, "vm1") == "t3.micro")
 died = []
 with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
     try:
@@ -168,7 +172,22 @@ with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg)
     except SystemExit:
         pass
 check("_pick_instance_type() dies clearly when nothing in the table is big enough",
-      any("INSTANCE_TYPES" in m for m in died))
+      any("AWS_INSTANCE_TYPES" in m and "cloud_instance_type" in m for m in died))
+
+# A populated cache is what a successful live lookup leaves behind: price decides, not table order.
+backends.AWSBackend._CATALOG_CACHE[(backend.region, "x86_64")] = (
+    {"t3.medium": (2, 4.0), "t3a.medium": (2, 4.0), "m7i.large": (2, 8.0)},
+    {"t3.medium": 0.0472, "t3a.medium": 0.0425, "m7i.large": 0.1008})
+check("_pick_instance_type() prefers the cheapest sufficient region type over the table's own entry",
+      backend._pick_instance_type(2, 4096, "vm1") == "t3a.medium")
+check("_pick_instance_type() still honours the memory minimum when picking on price",
+      backend._pick_instance_type(2, 8192, "vm1") == "m7i.large")
+
+# An explicit AWS_INSTANCE_TYPES table replaces the live lookup outright, cache or no cache.
+_b_tbl = backends.AWSBackend("eu-central-1", profile="lab", instance_types=[("c5.large", 2, 4)])
+check("AWS_INSTANCE_TYPES wins over the live price lookup",
+      _b_tbl._pick_instance_type(2, 4096, "vm1") == "c5.large")
+backends.AWSBackend._CATALOG_CACHE.clear()
 
 
 # ── vm_exists() / _find_instance(): describe-instances with the Name-tag filter ─
