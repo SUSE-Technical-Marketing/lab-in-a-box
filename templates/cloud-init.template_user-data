@@ -18,7 +18,10 @@ users:
     lock_passwd: false
     ssh_authorized_keys: ["${ROOT_SSH_KEY}"]
     hashed_passwd: "${ROOT_PWD_HASH}"
-$( if [[ "${ISO_IMAGE,,}" == *ubuntu* ]]; then
+# The netplan block below configures one static address, so it is only written for a node that has
+# one. A cloud backend assigns the address itself and leaves myip empty, and its instance gets its
+# address, gateway and resolver from the provider network over DHCP.
+$( if [[ "${ISO_IMAGE,,}" == *ubuntu* && -n "${myip}" ]]; then
 cat <<CI_UBUNTU
 write_files:
   - path:  /etc/netplan/50-cloud-init.yaml
@@ -56,7 +59,14 @@ cat <<CI_FIREWALL
 runcmd:
   - grep -qF "${_vm_name}" /etc/hosts || echo "127.0.0.1 ${_vm_name} ${_vm_name%%.*}" >> /etc/hosts
   - systemctl disable --now firewalld || true
+CI_FIREWALL
+  # Only a lab that states its gateway gets one written. A cloud backend's network hands the
+  # instance its own gateway over DHCP, and writing an empty one here would leave an unusable
+  # "default  - -" line in wicked's routes file.
+  if [[ -n "${mygw}" ]]; then
+cat <<CI_ROUTE
   - grep -qF "default ${mygw}" /etc/sysconfig/network/routes 2>/dev/null || printf 'default %s - -\n' "${mygw}" >> /etc/sysconfig/network/routes
   - ip route show default | grep -q . || ip route add default via ${mygw} || true
-CI_FIREWALL
+CI_ROUTE
+  fi
 fi )

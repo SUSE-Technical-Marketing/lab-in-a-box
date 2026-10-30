@@ -164,10 +164,15 @@ with tempfile.TemporaryDirectory() as td:
     iso_field = schema_tree["common"]["fields"][0]
     mem_field = schema_tree["common"]["fields"][1]
     src_field = schema_tree["common"]["fields"][2]
+    # The hypervisors' own images come first, then the product names a cloud backend resolves at create time
+    # (discovery.product_choices(), from libs/cloud_images.py), which no hypervisor has to publish.
+    products = discovery.product_choices()
     check("dynamic enum: SOURCE_IMAGE field gets the live image list",
-          src_field.get("enum") == ["a.qcow2", "b.iso"])
+          src_field.get("enum")[:2] == ["a.qcow2", "b.iso"])
     check("dynamic enum: the deprecated ISO_IMAGE field still gets it too",
-          iso_field.get("enum") == ["a.qcow2", "b.iso"])
+          iso_field.get("enum")[:2] == ["a.qcow2", "b.iso"])
+    check("dynamic enum: SOURCE_IMAGE also offers every product name",
+          src_field.get("enum")[2:] == products and "slmicro6.1" in [p["value"] for p in products])
     check("dynamic enum: unrelated fields are untouched", "enum" not in mem_field)
 
     # image_choices(): one entry per host and image, labelled "<host> - <file name>", ordered by host then name.

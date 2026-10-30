@@ -32,6 +32,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import aws_catalog
+import cloud_images
+import dns_zone
 import ipalloc
 import primary
 import provisioning
@@ -427,6 +430,18 @@ class VMBackend(object):
         """
         return None
 
+    def use_dns_server(self, dns_ip, mydomain=""):
+        """
+        Make this backend's network hand `dns_ip` to every VM in it as its DNS server, and `mydomain` as its search
+        domain, so a node resolves the other nodes of its own lab without anything being configured inside the guest.
+
+        A cloud node's resolver comes from the provider's own network, not from the provisioning files, so this is the
+        only place that can set it for every guest operating system at once. Called with the address of the cloud DNS
+        VM (see ensure_cloud_dns_vm()).
+
+        No-op by default. Only AWSBackend overrides it, with a VPC DHCP option set.
+        """
+
     def disable_source_dest_check(self, vm_name):
         """
         Best effort: disable the instance's source/destination check. This is a cloud-provider packet filter that drops
@@ -445,18 +460,22 @@ class VMBackend(object):
         No-op by default; AWSBackend adds a security-group rule whose source is the group itself.
         """
 
-    def opensuse_image(self) -> str:
+    def opensuse_image(self, arch_suffix: str = "-x86_64") -> str:
         """
-        The newest openSUSE Leap image this backend can boot, in the form its create_vm() takes as iso_image, or "" when
-        the provider publishes none or it cannot be looked up. "" by default; AWSBackend overrides it.
+        The newest openSUSE Leap image this backend can boot for `arch_suffix` ("-x86_64", "-arm64"), in the form its
+        create_vm() takes as iso_image, or "" when the provider publishes none or it cannot be looked up. "" by
+        default; AWSBackend overrides it.
         """
         return ""
 
-    def resolve_image_name(self, name: str) -> str:
+    def resolve_image_name(self, name: str, instance_type: str = "") -> str:
         """
         The image `name` as this backend's create_vm() needs it. A provider image ID is returned unchanged; a product
         name such as "sles16" is looked up, so a lab can ask for an operating system instead of carrying an ID that
         goes stale and silently becomes a different image. Unchanged by default; AWSBackend overrides it.
+
+        `instance_type` is the provider instance or plan type the VM will run on, for a provider that publishes a
+        separate image per processor architecture and has to pick the one that instance can boot.
         """
         return name
 
@@ -1746,9 +1765,11 @@ class AWSBackend(VMBackend):
         group, which suits a quick lab but not a production setup. AWS_KEY_NAME (an existing EC2 key pair in
         the region) is optional. Cloud-init user-data is the access mechanism on every backend; the key
         pair is an extra access path.
-      - vm_cpu and vm_mem: EC2 sells fixed (vCPU, memory) instance types. The backend picks the smallest
-        sufficient one from INSTANCE_TYPES. vm_dsk_gb maps directly: the root EBS volume is sized at launch
-        with --block-device-mappings, keyed off the AMI's root device name from describe-images.
+      - vm_cpu and vm_mem: EC2 sells fixed (vCPU, memory) instance types. The backend picks the cheapest
+        x86_64 type the region offers that satisfies both, from the live specifications and on-demand prices
+        libs/aws_catalog.py reads, and falls back to the smallest sufficient entry of INSTANCE_TYPES when
+        that lookup is unavailable. vm_dsk_gb maps directly: the root EBS volume is sized at launch with
+        --block-device-mappings, keyed off the AMI's root device name from describe-images.
       - EC2 instances have no native name field. The backend identifies a VM by the Name tag
         (aws ec2 describe-instances --filters Name=tag:Name,Values=<vm_name>).
       - MAC addresses: EC2 does not allow a custom MAC. check_or_generate_mac() and list_used_macs() are
@@ -1765,15 +1786,17 @@ class AWSBackend(VMBackend):
     an EC2 "hypervisor" node. Nothing after create_vm() changes: once setup_kvm_node.py installs libvirt, the
     instance behaves like bare metal. The supported families are listed in _NESTED_VIRT_SUPPORTED_FAMILIES.
     The backend exits with a message that names a supported alternative when the resolved instance family is
-    not in that list. Nested virtualization requires an explicit cloud_instance_type, because the default
-    INSTANCE_TYPES table (T3, burstable) does not support it.
+    not in that list. Nested virtualization requires an explicit cloud_instance_type: no burstable type
+    supports it, and a burstable type is what both the live price lookup and INSTANCE_TYPES settle on for a
+    lab-sized node.
     """
 
-    # Smallest-to-largest by (cores, memory_gb) — the standard burstable general-purpose family,
-    # enough to cover this project's typical lab-sized nodes; extend as needed. Used only when
-    # AWS_INSTANCE_TYPES isn't set — see resolve() and README's Compute backends table for the
-    # override and the real URL to AWS's own current EC2 instance-type catalog.
+    # Smallest-to-largest by (cores, memory_gb), the standard burstable general-purpose family, which every
+    # region offers. Used when AWS_INSTANCE_TYPES isn't set and the live lookup in libs/aws_catalog.py
+    # returns nothing; see resolve() and README's Compute backends table for the override and the URL to
+    # AWS's own current EC2 instance-type catalog.
     INSTANCE_TYPES = [
+        ("t3.micro", 2, 1), ("t3.small", 2, 2),
         ("t3.medium", 2, 4), ("t3.large", 2, 8), ("t3.xlarge", 4, 16), ("t3.2xlarge", 8, 32),
     ]
 
@@ -1837,11 +1860,14 @@ class AWSBackend(VMBackend):
                    subnet_id=config.get("AWS_SUBNET_ID"), security_group_id=config.get("AWS_SECURITY_GROUP_ID"),
                    key_name=config.get("AWS_KEY_NAME"), vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
-    def _aws(self, *args, **kwargs):
+    def _aws(self, *args, region="", **kwargs):
         """One `aws` CLI invocation, region/auth applied uniformly. Returns the parsed JSON stdout
         (or None for a command with no output), raises RuntimeError with the real CLI stderr on a
         non-zero exit — mirrors HetznerBackend._api()'s own contract so callers' die() messages
-        stay meaningful either way."""
+        stay meaningful either way.
+
+        `region` overrides this backend's own region for one call, for an AWS API served only from
+        its own fixed regions rather than from the lab's, such as the Price List API."""
         env = dict(os.environ)
         if self.profile:
             env["AWS_PROFILE"] = self.profile
@@ -1851,7 +1877,7 @@ class AWSBackend(VMBackend):
             env["AWS_SECRET_ACCESS_KEY"] = self.secret_key
         if self.session_token:
             env["AWS_SESSION_TOKEN"] = self.session_token
-        cmd = ["aws", "--region", self.region, "--output", "json"] + list(args)
+        cmd = ["aws", "--region", region or self.region, "--output", "json"] + list(args)
         result = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  universal_newlines=True)
         if result.returncode != 0:
@@ -1896,15 +1922,54 @@ class AWSBackend(VMBackend):
                 return instances[0]
         return None
 
+    # The (specs, prices) mappings libs/aws_catalog.py returns, keyed by (region, architecture) and shared by every
+    # AWSBackend instance in the process. A lab sizes each of its nodes separately, while the two lookups behind one
+    # entry cover several hundred instance types and take seconds, so they run once per region and architecture.
+    _CATALOG_CACHE = {}
+
+    def _region_catalog(self, arch):
+        """
+        The (specs, prices) mappings for `arch` in this backend's region, fetched once per process.
+
+        Either mapping is empty when its own lookup failed, which _pick_instance_type() reads as "size this VM from
+        the built-in table instead". A failure is therefore not fatal: prices need a permission (pricing:GetProducts)
+        and an endpoint that an account restricted to EC2 alone does not have.
+        """
+        key = (self.region, arch)
+        if key not in self._CATALOG_CACHE:
+            try:
+                specs = aws_catalog.region_instance_types(self._aws, arch)
+            except (RuntimeError, OSError, ValueError):
+                specs = {}
+            prices = aws_catalog.region_prices(self._aws, self.region) if specs else {}
+            if not prices:
+                log("AWS returned no live {} instance types with prices for region {}: sizing VMs from the "
+                    "built-in instance-type table instead".format(arch, self.region))
+            self._CATALOG_CACHE[key] = (specs, prices)
+        return self._CATALOG_CACHE[key]
+
     def _pick_instance_type(self, vm_cpu, vm_mem_mb, vm_name):
+        """
+        The instance type for a VM needing `vm_cpu` vCPUs and `vm_mem_mb` MiB of memory: the cheapest x86_64 type the
+        region actually offers, or the smallest sufficient entry of the sizing table when no live prices are
+        available. An AWS_INSTANCE_TYPES table set in the configuration replaces the live lookup outright.
+
+        arm64 is never picked automatically, although it is consistently cheaper: a lab's add-on container images and
+        guest images are not all published for it. Name an arm64 type in cloud_instance_type to run one.
+        """
+        if not self.instance_types:
+            specs, prices = self._region_catalog("x86_64")
+            cheapest = aws_catalog.cheapest_sufficient(vm_cpu, vm_mem_mb, specs, prices)
+            if cheapest:
+                return cheapest
         needed_mem_gb = int(vm_mem_mb) / 1024.0
         table = self.instance_types or self.INSTANCE_TYPES
         for name, cores, mem_gb in table:
             if cores >= int(vm_cpu) and mem_gb >= needed_mem_gb:
                 return name
-        die("AWSBackend has no known instance type big enough for VM '{}' ({} vCPU / {} MiB) — "
-            "extend AWSBackend.INSTANCE_TYPES or set AWS_INSTANCE_TYPES in "
-            "/etc/lab_creation.cfg".format(vm_name, vm_cpu, vm_mem_mb))
+        die("AWSBackend found no instance type big enough for VM '{}' ({} vCPU / {} MiB), neither in region {} "
+            "nor in its sizing table — raise it with AWS_INSTANCE_TYPES in /etc/lab_creation.cfg, or name a type "
+            "outright with cloud_instance_type".format(vm_name, vm_cpu, vm_mem_mb, self.region))
 
     def vm_exists(self, vm_name):
         return self._find_instance(vm_name) is not None
@@ -2081,49 +2146,101 @@ class AWSBackend(VMBackend):
         subnets = (result or {}).get("Subnets") or []
         return subnets[0].get("CidrBlock") if subnets else None
 
-    def opensuse_image(self) -> str:
+    def opensuse_image(self, arch_suffix: str = "-x86_64") -> str:
         """
-        VMBackend.opensuse_image() override: the newest openSUSE Leap x86_64 AMI SUSE publishes in this region, from the
-        SUSE Public Cloud Information Tracker. "" with a warning when the tracker cannot be reached.
+        VMBackend.opensuse_image() override: the newest openSUSE Leap AMI SUSE publishes in this region for
+        `arch_suffix`, from the SUSE Public Cloud Information Tracker. "" with a warning when the tracker cannot be
+        reached.
         """
         try:
-            image = suse_catalogue.newest_leap(suse_catalogue.active_images("amazon", self.region), "-x86_64")
+            image = suse_catalogue.newest_leap(suse_catalogue.active_images("amazon", self.region), arch_suffix)
         except (OSError, ValueError) as exc:
             _lc.warn("could not read SUSE's public cloud image list for AWS region '{}': {}".format(self.region, exc))
             return ""
         return image.get("id", "")
 
-    _PRODUCT_IMAGES = {"opensuse": 0, "leap": 0}      # handled by opensuse_image(); the value is unused
+    # Instance families that run arm64 (AWS Graviton). An instance type whose family carries a "g" after its
+    # generation digit is a Graviton one (t4g, m7g, m6gd, x2gd, im4gn, g5g), which the GPU x86 families whose "g"
+    # comes before the digit (g4dn, g6e) are not. a1, the first Graviton family, carries no letter at all.
+    _ARM64_FAMILIES = ("a1",)
 
-    def resolve_image_name(self, name: str) -> str:
+    # The SUSE product names resolve_image_name() takes, each with the libs/suse_catalogue.py picker that answers it
+    # and what to call the product in an error. "micro" and "slmicro" are the same product, as are "leap" and
+    # "opensuse".
+    _SUSE_PRODUCTS = {
+        "sles": (suse_catalogue.newest_sles, "SLES"),
+        "slmicro": (suse_catalogue.newest_micro, "SL Micro"),
+        "micro": (suse_catalogue.newest_micro, "SL Micro"),
+        "leap": (suse_catalogue.newest_leap, "openSUSE Leap"),
+        "opensuse": (suse_catalogue.newest_leap, "openSUSE Leap"),
+    }
+
+    @classmethod
+    def instance_arch(cls, instance_type: str) -> str:
         """
-        VMBackend.resolve_image_name() override: "sles16", "sles16.0" or "sles" become the region's newest plain
-        pay-as-you-go SLES AMI of that version, and "opensuse" or "leap" the newest openSUSE Leap one. Anything else,
-        an "ami-…" included, is returned unchanged.
+        The processor architecture `instance_type` runs, "arm64" or "x86_64", so resolve_image_name() picks an image
+        that instance can actually boot. "x86_64" for an empty or unrecognised type, which is what the default
+        INSTANCE_TYPES table offers.
+        """
+        family = str(instance_type or "").split(".")[0].lower()
+        if family in cls._ARM64_FAMILIES:
+            return "arm64"
+        match = re.match(r"^[a-z]+\d+([a-z]*)$", family)
+        return "arm64" if match and "g" in match.group(1) else "x86_64"
+
+    def resolve_image_name(self, name: str, instance_type: str = "") -> str:
+        """
+        VMBackend.resolve_image_name() override. A product name is looked up as the region's newest image of that
+        product, for the architecture `instance_type` runs (see instance_arch()):
+
+          - "sles", "sles16", "sles16.0": the newest plain pay-as-you-go SLES AMI SUSE publishes.
+          - "slmicro", "slmicro6", "slmicro6.1", "micro": the newest pay-as-you-go SUSE Linux Micro AMI.
+          - "opensuse", "leap", "leap16", "leap16.0": the newest openSUSE Leap AMI.
+          - every name in libs/cloud_images.py's AWS_PRODUCTS ("ubuntu24.04", "rhel9", "rocky10", ...): the
+            vendor's own current AMI, from its AWS Systems Manager public parameter or its own AWS account.
+
+        Anything else, an "ami-…" included, is returned unchanged.
 
         A lab that names an AMI carries a region-specific ID that ages: SUSE publishes a new build every few weeks,
         and an ID copied by hand can be a different product altogether (a SLES 15 image has no NetworkManager for
         RKE2 to configure, which is how one GPU lab failed). Naming the product keeps the lab readable and current.
         """
         wanted = str(name or "").strip().lower()
-        if wanted in self._PRODUCT_IMAGES:
-            return self.opensuse_image() or name
-        match = re.match(r"^sles(\d+)?(?:[.-](\d+))?$", wanted)
+        arch = self.instance_arch(instance_type)
+        arch_suffix = "-" + arch
+
+        try:
+            vendor_id = cloud_images.aws_product_image(wanted, arch, self._aws)
+        except (RuntimeError, ValueError) as exc:
+            die("could not resolve SOURCE_IMAGE '{}' to an {} AMI in AWS region '{}': {}".format(
+                name, arch, self.region, exc))
+        if vendor_id:
+            return self._log_resolved(name, vendor_id, wanted)
+
+        match = re.match(r"^(sles|slmicro|micro|leap|opensuse)(\d+)?(?:[.-](\d+))?$", wanted)
         if not match:
             return name
-        major = int(match.group(1)) if match.group(1) else 0
+        product, major, minor = match.group(1), match.group(2), match.group(3)
+        major = int(major) if major else 0
+        minor = int(minor) if minor else -1
+        picker, label = self._SUSE_PRODUCTS[product]
         try:
-            image = suse_catalogue.newest_sles(
-                suse_catalogue.active_images("amazon", self.region), "-x86_64", major=major)
+            image = picker(suse_catalogue.active_images("amazon", self.region), arch_suffix,
+                           major=major, minor=minor)
         except (OSError, ValueError) as exc:
             die("could not read SUSE's public cloud image list for AWS region '{}' to resolve SOURCE_IMAGE "
                 "'{}': {}".format(self.region, name, exc))
         if not image.get("id"):
-            die("SUSE publishes no plain SLES{} x86_64 image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
-                "instead".format(" " + str(major) if major else "", self.region))
-        _lc.log("- SOURCE_IMAGE '{}' is {} ({}) in {}".format(
-            name, image["id"], image.get("name", ""), self.region))
-        return image["id"]
+            die("SUSE publishes no plain {}{} {} image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
+                "instead".format(label, " " + str(major) if major else "", arch, self.region))
+        return self._log_resolved(name, image["id"], image.get("name", ""))
+
+    def _log_resolved(self, name: str, image_id: str, described: str) -> str:
+        """Log which image `name` resolved to, and return `image_id`. One line per resolution, so a lab run records
+        the exact AMI it launched from even though the lab definition names only a product."""
+        if image_id:
+            _lc.log("- SOURCE_IMAGE '{}' is {} ({}) in {}".format(name, image_id, described, self.region))
+        return image_id
 
     def disable_source_dest_check(self, vm_name):
         """
@@ -2216,6 +2333,56 @@ class AWSBackend(VMBackend):
         self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
                   "--protocol", "-1", "--source-group", self.security_group_id)
 
+    def use_dns_server(self, dns_ip, mydomain=""):
+        """
+        VMBackend.use_dns_server() override: a VPC DHCP option set naming `dns_ip` as the VPC's only DNS server and
+        `mydomain` as its search domain, associated with the VPC that holds self.subnet_id.
+
+        This is what lets a lab node resolve its own cluster peers by hostname. EC2 gives a guest its resolver over
+        DHCP, so no provisioning file can set it: a kcluster whose second server joins the first by FQDN
+        (see libs/k8s.py) has nothing to resolve that name with until the VPC itself hands out this server.
+
+        AmazonProvidedDNS cannot be listed alongside a custom server, so the DNS VM is the only resolver the VPC
+        offers, and it recurses for everything outside the lab domain itself (see dns_recursion_networks()).
+
+        Scope and timing, both deliberate: the option set belongs to the VPC, so it applies to every instance in it,
+        this project's or not; and a running instance picks it up only when its DHCP lease renews, while an instance
+        launched afterwards has it immediately. Idempotent: a VPC already handing out exactly this server and domain
+        is left untouched, so no new option set is created per lab run.
+        """
+        if not self.subnet_id or not dns_ip:
+            return
+        subnets = (self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id) or {}).get("Subnets") or []
+        if not subnets:
+            die("backend 'aws': subnet '{}' not found while pointing the VPC at DNS server {}".format(
+                self.subnet_id, dns_ip))
+        vpc_id = subnets[0]["VpcId"]
+
+        wanted = {"domain-name-servers": [dns_ip]}
+        if mydomain:
+            wanted["domain-name"] = [mydomain]
+
+        vpcs = (self._aws("ec2", "describe-vpcs", "--vpc-ids", vpc_id) or {}).get("Vpcs") or []
+        current_id = (vpcs[0].get("DhcpOptionsId") if vpcs else "") or ""
+        if current_id and current_id != "default":
+            opts = (self._aws("ec2", "describe-dhcp-options", "--dhcp-options-ids", current_id)
+                    or {}).get("DhcpOptions") or []
+            current = {c["Key"]: [v["Value"] for v in c.get("Values", [])]
+                       for c in (opts[0].get("DhcpConfigurations", []) if opts else [])}
+            if all(current.get(key) == value for key, value in wanted.items()):
+                _lc.log("- VPC {} already hands out DNS server {} for '{}'".format(vpc_id, dns_ip, mydomain))
+                return
+
+        _lc.log("- Pointing VPC {} at DNS server {} (search domain '{}') so its nodes resolve each "
+                "other".format(vpc_id, dns_ip, mydomain))
+        configs = ["Key={},Values={}".format(key, ",".join(value)) for key, value in sorted(wanted.items())]
+        created = self._aws("ec2", "create-dhcp-options", "--dhcp-configurations", *configs)
+        options_id = ((created or {}).get("DhcpOptions") or {}).get("DhcpOptionsId")
+        if not options_id:
+            die("backend 'aws': could not create a DHCP option set for VPC {} naming DNS server {}".format(
+                vpc_id, dns_ip))
+        self._aws("ec2", "associate-dhcp-options", "--dhcp-options-id", options_id, "--vpc-id", vpc_id)
+
     def _ensure_internet_gateway(self):
         """
         Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and
@@ -2294,7 +2461,7 @@ class AWSBackend(VMBackend):
                     "virtualization.".format(
                         instance_type, family, ", ".join(sorted(self._NESTED_VIRT_SUPPORTED_FAMILIES))))
 
-        iso_image = self.resolve_image_name(iso_image)
+        iso_image = self.resolve_image_name(iso_image, instance_type=instance_type)
         image_result = self._aws("ec2", "describe-images", "--image-ids", iso_image)
         images = (image_result or {}).get("Images", [])
         if not images:
@@ -3909,16 +4076,11 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -
         escaping rule (YAML single-quoted strings don't support backslash escapes at all)."""
         return "'" + s.replace("'", "''") + "'"
 
-    zone_lines = [
-        "$TTL 300",
-        "@ IN SOA ns.{d}. admin.{d}. ( 1 3600 900 604800 300 )".format(d=mydomain),
-        "@ IN NS ns.{d}.".format(d=mydomain),
-        "ns IN A 127.0.0.1",
-    ]
+    # The same zone shape libs/services.py creates and compares, at a low TTL because a cloud node's address
+    # changes whenever it is recreated.
+    zone_lines = dns_zone.forward_header(mydomain, ttl=300)
     zone_printf_args = " ".join("'{}'".format(line) for line in zone_lines)
-    named_conf_line = (
-        'zone "{d}" {{ type master; file "/var/lib/named/{d}.lan"; allow-update {{ none; }}; }};'
-    ).format(d=mydomain)
+    named_conf_line = dns_zone.stanza(mydomain, "/var/lib/named/{}".format(dns_zone.forward_file(mydomain)))
 
     # Each entry is one shell command, run through runcmd after cloud-init's own modules.
     commands = [
@@ -4015,9 +4177,9 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     cloud network, and its nodes resolve each other through it. See provision_vm() in setup_vm.py for how this plugs
     into add_to_dns()'s remote_dns_servers mechanism.
 
-    Known limitation: a freshly created cloud node does not point its own DNS resolution (/etc/resolv.conf or the
-    provider's VPC DHCP option set) at this DNS VM. A second cloud node in the same lab therefore cannot resolve a
-    first one by hostname until that wiring is added.
+    Nodes are pointed at this server by the backend's own use_dns_server(), called right after this returns, which
+    configures the cloud network to hand it out. A node created after that resolves its lab peers by hostname from
+    first boot; a node already running picks the server up when its DHCP lease renews.
 
     With multiple cloud accounts (backend.account set, see resolve_cloud_account()), each account is an isolated
     cloud network, so the DNS VM is per account: "lab-dns-<backend>-<account>". The unnamed or "default" account

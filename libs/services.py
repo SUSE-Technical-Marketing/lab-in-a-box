@@ -40,15 +40,22 @@ Services:
     adds no new dependency.
 """
 
+import re
+import shlex
 import shutil
 import subprocess
 import threading
 import urllib.request
 from pathlib import Path
 
-from lab_creation import log, warn, die, ssh_run
+import dns_zone
+from lab_creation import log, warn, die, ssh_run, clean_ssh_keys
 
 NAMED_ZONE_DIR = Path("/var/lib/named")
+NAMED_CONF = Path("/etc/named.conf")
+
+# Shell-quoting for the zone lines and named.conf stanzas written over SSH, which carry quotes and braces.
+_quote = shlex.quote
 
 # Serializes every DNS zone-file mutation (add_to_dns, del_from_dns, add_service_dns and add_dns_to_named_rr). The helpers read the
 # whole zone file, change it and write it back, so two nodes writing the same zone file would lose an entry. One process-wide lock
@@ -108,8 +115,8 @@ class DNSService(AuxService):
 
     # ── record management (moved from lab_creation.py) ──────────────────────
 
-    def _remote(self, hostname, cmd, check=True):
-        return ssh_run(hostname, cmd, check=check)
+    def _remote(self, hostname, cmd, check=True, capture=False):
+        return ssh_run(hostname, cmd, check=check, capture=capture)
 
     def _remote_dns_add(self, server, zone_file, record):
         # check=False: a secondary DNS server being unreachable must not
@@ -122,6 +129,237 @@ class DNSService(AuxService):
                       "grep -qF '{}' {} 2>/dev/null || echo '{}' >> {}".format(
                           record, zone_file, record, zone_file),
                       check=False)
+
+    # ── masters: which DNS servers a write reaches ──────────────────────────
+
+    # Whether each remote master answered, probed once per process. A master that is paused or destroyed would
+    # otherwise cost an SSH connect per record, per node, on every write.
+    _reachable_cache = {}
+
+    def _reachable(self, server: str) -> bool:
+        """
+        Whether `server` answers SSH, probed once per process and reported once when it does not.
+
+        A first failure drops the host's known_hosts entry and probes once more: a cloud lab's DNS VM is recreated
+        under a reused address, and the key of the server that held it before makes every write to the new one fail
+        without saying so. This is the same stale-key handling clean_ssh_keys() does for a recreated VM.
+        """
+        if server not in self._reachable_cache:
+            reachable = self._remote(server, "true", check=False).returncode == 0
+            if not reachable:
+                clean_ssh_keys(server, server)
+                reachable = self._remote(server, "true", check=False).returncode == 0
+            self._reachable_cache[server] = reachable
+            if not reachable:
+                warn("- DNS server '{}' is not reachable: its zone is left untouched and will be brought back in "
+                     "step by the next run that reaches it".format(server))
+        return self._reachable_cache[server]
+
+    def masters(self, remote_dns_servers=None) -> list:
+        """
+        The remote DNS masters a write should reach: those of `remote_dns_servers` that answer.
+
+        The caller's list is built per run, never stored, so a cloud lab's own DNS VM joins it at its current
+        address and simply is not in it while it does not exist.
+        """
+        return [s for s in (remote_dns_servers or []) if self._reachable(s)]
+
+    # ── zones: a master holds one before any record is written to it ────────
+
+    def _zone_declared(self, server, zone: str) -> bool:
+        """Whether `server` (None for this host) already declares `zone` as a master."""
+        pattern = 'zone "{}"'.format(zone)
+        if server is None:
+            return NAMED_CONF.exists() and pattern in NAMED_CONF.read_text()
+        found = self._remote(server, "grep -rqF {} /etc/named.conf /etc/named.lab.conf /etc/bind/named.conf.local "
+                                     "2>/dev/null".format(_quote(pattern)), check=False)
+        return found.returncode == 0
+
+    def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "") -> bool:
+        """
+        Make `server` (None for this host) a master of `mydomain`, and of its reverse zone when `mynet_reverse` is
+        given, creating the zone file with the header BIND needs and declaring it in named.conf.
+
+        Returns True when a zone had to be created, which tells the caller this master holds none of the lab's
+        records yet and needs sync_zone() rather than one appended line. Returns False when every zone was already
+        there, which is the normal path and does nothing.
+
+        A record appended to a zone that is not declared, or to a file with no SOA, is silently never answered:
+        this is what stops that happening.
+        """
+        created = False
+        wanted = [(mydomain, dns_zone.forward_file(mydomain), dns_zone.forward_header(mydomain))]
+        if mynet_reverse:
+            wanted.append((dns_zone.reverse_zone(mynet_reverse), dns_zone.reverse_file(mynet_reverse),
+                           dns_zone.reverse_header(mydomain, mynet_reverse)))
+        for zone, file_name, header in wanted:
+            if self._zone_declared(server, zone):
+                continue
+            log("- DNS server '{}' is not a master of '{}' yet: creating the zone".format(server or "this host", zone))
+            if server is None:
+                self._create_local_zone(zone, file_name, header)
+            else:
+                self._create_remote_zone(server, zone, file_name, header)
+            created = True
+        if created:
+            self.restart_named(remote_servers=[server] if server else None)
+        return created
+
+    def _create_local_zone(self, zone: str, file_name: str, header: list) -> None:
+        """Write the zone file under NAMED_ZONE_DIR and declare it in this host's named.conf."""
+        path = NAMED_ZONE_DIR / file_name
+        if not path.exists() or not path.read_text().strip():
+            path.write_text("\n".join(header) + "\n")
+            path.chmod(0o644)
+        with NAMED_CONF.open("a") as conf:
+            conf.write("\n" + dns_zone.stanza(zone, file_name) + "\n")
+
+    def _create_remote_zone(self, server: str, zone: str, file_name: str, header: list) -> None:
+        """
+        The counterpart of _create_local_zone() over SSH, finding the server's own BIND layout the same way
+        ensure_cloud_dns_vm() does: a dedicated include file on SUSE and the Fedora family, named.conf.local on
+        Debian and Ubuntu.
+        """
+        lines = " ".join(_quote(line) for line in header)
+        self._remote(server, "; ".join([
+            '. /etc/os-release; case " $ID $ID_LIKE " in'
+            ' *" debian "*|*" ubuntu "*) BIND_CONF=/etc/bind/named.conf.local;;'
+            ' *) BIND_CONF=/etc/named.lab.conf;;'
+            ' esac',
+            "mkdir -p /var/lib/named",
+            "[ -s /var/lib/named/{f} ] || printf '%s\\n' {lines} > /var/lib/named/{f}".format(
+                f=file_name, lines=lines),
+            "printf '%s\\n' {stanza} >> \"$BIND_CONF\"".format(
+                stanza=_quote(dns_zone.stanza(zone, file_name))),
+            'if [ "$BIND_CONF" = /etc/named.lab.conf ]; then grep -qF "$BIND_CONF" /etc/named.conf'
+            ' || echo \'include "/etc/named.lab.conf";\' >> /etc/named.conf; fi',
+        ]), check=False)
+
+    # ── sync: every master answers the same records ─────────────────────────
+
+    def zone_records(self, server, file_name: str) -> set:
+        """The comparable records `server` (None for this host) holds in `file_name`; empty when it has no such zone."""
+        if server is None:
+            path = NAMED_ZONE_DIR / file_name
+            return dns_zone.records(path.read_text()) if path.exists() else set()
+        result = self._remote(server, "cat /var/lib/named/{} 2>/dev/null".format(file_name),
+                              check=False, capture=True)
+        return dns_zone.records(result.stdout if result.returncode == 0 else "")
+
+    def _zone_files(self, mydomain: str, mynet_reverse: str = "") -> list:
+        """The zone files of `mydomain`: its forward zone, and its reverse zone when the lab states one."""
+        files = [dns_zone.forward_file(mydomain)]
+        if mynet_reverse:
+            files.append(dns_zone.reverse_file(mynet_reverse))
+        return files
+
+    def _compare_zone(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> list:
+        """
+        What the reachable masters of `mydomain` disagree on, as a list of
+        (zone file, server, records missing from it, records only it holds).
+
+        `server` is None for this host. Both sets are empty for a master that already agrees, and such a master is
+        still listed, so a caller can report how many were compared.
+        """
+        servers = [None] + self.masters(remote_dns_servers)
+        out = []
+        for file_name in self._zone_files(mydomain, mynet_reverse):
+            held = {server: self.zone_records(server, file_name) for server in servers}
+            union = set().union(*held.values())
+            for server, records in held.items():
+                others = set().union(*(r for s, r in held.items() if s != server)) if len(held) > 1 else records
+                out.append((file_name, server, union - records, records - others))
+        return out
+
+    @staticmethod
+    def _difference_messages(comparison: list) -> list:
+        """One message per real difference in a _compare_zone() result, in the order it was compared."""
+        messages = []
+        for file_name, server, missing, alone in comparison:
+            name = server or "this host"
+            if missing:
+                messages.append("DNS server '{}' is missing {} record(s) of '{}': {}".format(
+                    name, len(missing), file_name, ", ".join(sorted(missing))))
+            if alone:
+                messages.append("DNS server '{}' holds {} record(s) of '{}' no other master has, which is either a "
+                                "record the others have not been written yet or one deleted from them: {}".format(
+                                    name, len(alone), file_name, ", ".join(sorted(alone))))
+        return messages
+
+    def report_zone(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> list:
+        """
+        What the reachable masters of `mydomain` disagree on, reported and returned as one message per difference,
+        changing nothing. Empty when they already hold the same records.
+        """
+        with _dns_lock:
+            messages = self._difference_messages(
+                self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers))
+        for message in messages:
+            warn("- " + message)
+        return messages
+
+    def sync_zone(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> list:
+        """
+        Bring every reachable master of `mydomain` into step and report what differed, returning one message per
+        difference found (empty when they already agreed).
+
+        Records are only ever added: a record one master holds alone is either not written to the others yet or
+        deleted from them, and the record sets cannot tell those apart. Adding is correct for the first and
+        harmless for the second, while removing would silently undo a deletion, so what one master holds alone is
+        reported for pruning rather than acted on. prune_zone() is the deliberate counterpart.
+        """
+        with _dns_lock:
+            comparison = self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            messages = self._difference_messages(comparison)
+            wrote = False
+            for file_name, server, missing, _alone in comparison:
+                if missing:
+                    self._write_records(server, file_name, sorted(missing))
+                    wrote = True
+            if wrote:
+                self.restart_named(remote_servers=self.masters(remote_dns_servers) or None)
+        for message in messages:
+            warn("- " + message)
+        return messages
+
+    def _write_records(self, server, file_name: str, records: list) -> None:
+        """Append `records` to `server`'s (None for this host) copy of `file_name`."""
+        if server is None:
+            path = NAMED_ZONE_DIR / file_name
+            for record in records:
+                self._dns_append_line(path, record)
+            return
+        for record in records:
+            self._remote_dns_add(server, "/var/lib/named/{}".format(file_name), record)
+
+    def prune_zone(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> list:
+        """
+        Remove, from every reachable master of `mydomain`, each record no other master holds, and report what was
+        removed.
+
+        This is what sync_zone() deliberately does not do. A record held by one master alone is as likely to be one
+        the others have not been written yet as one deleted from them, so this is only correct when a human has
+        read sync_zone()'s report and decided which it is.
+        """
+        messages = []
+        with _dns_lock:
+            comparison = self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            # One master on its own has nothing to compare against, so every record it holds it holds alone.
+            if len({server for _f, server, _m, _a in comparison}) < 2:
+                return []
+            for file_name, server, _missing, alone in comparison:
+                for record in sorted(alone):
+                    messages.append("removed '{}' from DNS server '{}' ({})".format(
+                        record, server or "this host", file_name))
+                    if server is None:
+                        self._dns_remove_record(NAMED_ZONE_DIR / file_name, record)
+                    else:
+                        self._remote_dns_remove_record(server, "/var/lib/named/{}".format(file_name), record)
+            if messages:
+                self.restart_named(remote_servers=self.masters(remote_dns_servers) or None)
+        for message in messages:
+            log("- " + message)
+        return messages
 
     def _dns_add_line(self, zone_file, record):
         """
@@ -181,6 +419,20 @@ class DNSService(AuxService):
         can't match '142' while removing '14'."""
         self._remote(server, "sed -i '/^{}[[:space:]]/d' {}".format(last_octet, zone_file), check=False)
 
+    def _remote_dns_remove_record(self, server, zone_file, record):
+        """Remove `record` from `server`'s zone file, matched as a whole line so node1 cannot delete node10."""
+        self._remote(server, "sed -Ei {} {}".format(
+            _quote("\\|{}|d".format(dns_zone.pattern(record))), zone_file), check=False)
+
+    def _dns_remove_record(self, zone_file, record):
+        """The local counterpart of _remote_dns_remove_record(), matching the same whitespace-tolerant line."""
+        path = Path(zone_file)
+        if not path.exists():
+            return
+        matcher = re.compile(dns_zone.pattern(record).replace("[[:space:]]", r"\s"))
+        kept = [line for line in path.read_text().splitlines() if not matcher.match(line)]
+        path.write_text("\n".join(kept) + "\n")
+
     def restart_named(self, remote_servers=None):
         """Restart the local BIND named service and optionally on remote servers."""
         for server in (remote_servers or []):
@@ -227,7 +479,16 @@ class DNSService(AuxService):
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
         with _dns_lock:
-            for server in (remote_dns_servers or []):
+            # Every master holds the zone before a record is appended to it, and one that had to have it created
+            # holds none of this lab's earlier records: it is brought into step with the others rather than left
+            # with the one record below. A master that does not answer is left out entirely. Under the same lock as
+            # the records, because creating a zone writes the very file the appends below read and rewrite.
+            servers = self.masters(remote_dns_servers)
+            resync = self.ensure_zone(None, mydomain, mynet_reverse)
+            for server in servers:
+                resync = self.ensure_zone(server, mydomain, mynet_reverse) or resync
+
+            for server in servers:
                 if mynet_reverse:
                     self._remote_dns_remove_ptr_for_octet(server, rev_file, last_octet)
                 self._remote_dns_add(server, lan_file, a_record)
@@ -244,6 +505,9 @@ class DNSService(AuxService):
             self._update_hosts_file(vm_name, myip)
             self.restart_named()
 
+        if resync:
+            self.sync_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
         """Remove a VM's forward and reverse DNS records and every service record pointing at its IP. Without `mynet_reverse`
         the PTR record is left alone."""
@@ -256,8 +520,18 @@ class DNSService(AuxService):
         lan_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
+        # A removal that does not reach a master cannot be repaired later: sync_zone() only ever adds records, since
+        # a record one master holds alone is indistinguishable from one not yet written to the others. So an
+        # unreachable master is reported here by name, rather than passing silently as an append would.
         with _dns_lock:
+            servers = self.masters(remote_dns_servers)
             for server in (remote_dns_servers or []):
+                if server not in servers:
+                    warn("- '{}' was NOT removed from DNS server '{}', which did not answer: that server still "
+                         "resolves it, and no later run will remove it. Re-run this once it is reachable, or prune "
+                         "it with dns_sync.py --prune".format(vm_name, server))
+
+            for server in servers:
                 # check=False: same non-fatal-secondary-server rationale as
                 # _remote_dns_add above.
                 if mynet_reverse:
@@ -303,9 +577,13 @@ class DNSService(AuxService):
 
         zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         with _dns_lock:
+            servers = self.masters(remote_dns_servers)
+            resync = self.ensure_zone(None, mydomain)
+            for server in servers:
+                resync = self.ensure_zone(server, mydomain) or resync
             for _, ip in record_targets:
                 record = "{}\tIN A  {}".format(dns_entry, ip)
-                for server in (remote_dns_servers or []):
+                for server in servers:
                     # check=False: same non-fatal-secondary-server rationale as
                     # DNSService.add_to_dns above.
                     self._remote(server, "sed '/{}\tIN A  {}/d' -i {}".format(dns_entry, ip, zone_file), check=False)
@@ -316,6 +594,9 @@ class DNSService(AuxService):
 
             self.restart_named()
 
+        if resync:
+            self.sync_zone(mydomain, remote_dns_servers=remote_dns_servers)
+
     def add_dns_to_named_rr(self, definition, dns_entry, node_name, mydomain, remote_dns_servers=None):
         """Add a single round-robin A record (dns_entry -> node_name's own myip)."""
         myip = (definition.get("nodes", {}).get(node_name, {}) or {}).get("myip", "")
@@ -323,18 +604,26 @@ class DNSService(AuxService):
         zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
 
         with _dns_lock:
+            servers = self.masters(remote_dns_servers)
+            resync = self.ensure_zone(None, mydomain)
+            for server in servers:
+                resync = self.ensure_zone(server, mydomain) or resync
+
             existing = zone_file.read_text().splitlines() if zone_file.exists() else []
-            if record in existing:
+            if record in existing and not resync:
                 log("- DNS entry \"{} → {}\" already correct, skipping".format(dns_entry, myip))
                 return
 
             log("- add DNS entry \"{}.{}\"".format(dns_entry, mydomain))
 
-            for server in (remote_dns_servers or []):
+            for server in servers:
                 self._remote_dns_add(server, zone_file, record)
                 self._remote(server, "systemctl restart named", check=False)
 
             self._dns_add_line(zone_file, record)
+
+        if resync:
+            self.sync_zone(mydomain, remote_dns_servers=remote_dns_servers)
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────

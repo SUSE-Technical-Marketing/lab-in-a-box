@@ -279,7 +279,8 @@ with mock.patch.object(suse_catalogue, "active_images", side_effect=OSError("no 
 check("every other backend passes a name through unchanged",
       backends.VMBackend.resolve_image_name(None, "sles16") == "sles16")
 check("the resolution happens before the AMI is looked up",
-      "iso_image = self.resolve_image_name(iso_image)" in (_REPO / "libs" / "backends.py").read_text())
+      "iso_image = self.resolve_image_name(iso_image, instance_type=instance_type)"
+      in (_REPO / "libs" / "backends.py").read_text())
 
 
 # ── AWSBackend.opensuse_image(): the region's newest Leap AMI; "" with a warning when unreachable ──

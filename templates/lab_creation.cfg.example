@@ -1,4 +1,4 @@
-# Schema version: 1.1
+# Schema version: 1.2
 #################################
 #### What you should change: ####
 #################################
@@ -155,3 +155,11 @@ mysource='automation.mydemo.lab'
 # (e.g. /etc/hosts) when it's registered in DNS — for an automation node that
 # doesn't run BIND itself. Unset (the default): off.
 #LAB_HOSTS_FILE=/etc/hosts
+
+# REMOTE_DNS_SERVERS: space-separated addresses of other DNS servers that are
+# masters of the same zone as this node's BIND. Every record this node adds or
+# removes is written into each one's own zone file as well; there is no zone
+# transfer between them. A server that doesn't answer is skipped and reported,
+# and dns_sync.py brings it back into step once it does. A lab's own cloud DNS
+# VM is not listed here: it is created per run and found at its current address.
+#REMOTE_DNS_SERVERS="192.168.88.2 10.0.0.2"

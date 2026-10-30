@@ -499,6 +499,28 @@ cloud_no_myip = _lab_def({
 check("validate_lab_definition: an aws-backend node with no myip at all still passes preflight",
       lc.validate_lab_definition(cloud_no_myip, single_host_cfg, "/iso", "/lab") is True)
 
+# A cloud node has no KVM host, so the preflight must not ask a hypervisor whether a VM of that name exists there.
+# Live on AWS, that question hit a same-named libvirt VM an earlier lab had left on the hypervisor and the preflight
+# announced it would be "destroyed and recreated", which was never true of the node being validated.
+_asked = []
+
+
+def _record_virsh(cmd, *a, **k):
+    _asked.append(cmd)
+    return img_check_ok(cmd, *a, **k)
+
+
+lc.subprocess.run = _record_virsh
+cloud_host_check = _lab_def({
+    "common": dict(base_common),
+    "nodes": {"vm1": {"backend": "aws", "config_method": "cloud-init"}},
+})
+lc.validate_lab_definition(cloud_host_check, single_host_cfg, "/iso", "/lab")
+check("validate_lab_definition: never asks a hypervisor about a cloud node's VM name",
+      not any("dominfo" in " ".join(str(x) for x in c) for c in _asked))
+check("validate_lab_definition: never pings a cloud node's address either",
+      not any("ping" in " ".join(str(x) for x in c) for c in _asked))
+
 lc.subprocess.run = img_check_ok
 cloud_no_myip_via_common = _lab_def({
     "common": dict(base_common, backend="hetzner"),

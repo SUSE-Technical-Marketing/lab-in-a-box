@@ -171,6 +171,76 @@
     HB --&gt; KV[&quot;KubeVirt VirtualMachine&lt;br/&gt;on a Harvester cluster&quot;]
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
+<h3 id="the-automation-node-in-a-cloud">クラウド上の自動化ノード</h3>
+<p>自動化ノードとは、コマンドを実行するマシンです。<code>setup_kvm_node.py</code> が KVM ホスト上に作る VM でも、コンテナーやポッド（<code>lab.cfg</code> の <code>_automation_node</code>）でも、クラウドインスタンスでもかまいません。クラウドでは <code>setup_automation_node.py &lt;lab.json&gt; &lt;ノード&gt;</code> で構築します。ここでのノードはクラウドバックエンド上のラボ定義に含まれる普通のノードであり、他のノードとまったく同じ経路で作成され、その後 VM の自動化ノードと同じ <code>automation-node-lib.sh configure</code> が SSH 経由で実行されます。</p>
+<p>これが必要になる理由は名前解決です。クラウドアカウント内のラボは同じアカウント内の DNS サーバーで自身のノードを解決し、そこにある自動化ノードがラボのゾーンそのものを提供します。したがってラボのどの部分も、自宅のマシンに到達できることを前提としません。その BIND はラボのドメインに対してはどこからでも権威応答を返し、再帰はプライベートな範囲に対してのみ行います。つまりポート 53 がインターネットから到達可能なインスタンスでもオープンリゾルバーにはなりません。ラボの VM を名前で解決するのに必要なのは権威応答であって、再帰ではないからです。ポート 53 が到達可能になるのは、ノード自身の公開ポート一覧にそう書いた場合だけです（例: <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>）。</p>
+<p>そのサーバーを参照させる設定はご自身で行ってください。ラボの名前を解決したい場所に、そのアドレスをネームサーバーとして追加します。コマンドは終了時に使用すべきアドレスを表示します。</p>
+<h3 id="naming-an-image-instead-of-an-id">ID ではなくイメージを名前で指定する</h3>
+<p>クラウドバックエンドでは、<code>SOURCE_IMAGE</code> にプロバイダーのイメージ ID ではなく製品名を指定できます。名前は VM 作成時に、ノードのインスタンスタイプが動作するプロセッサーアーキテクチャ向けの、そのプロバイダーにおけるその製品の現在のイメージへと解決されます。したがって <code>t4g.nano</code> のような <code>arm64</code> インスタンスタイプでは、他に何も設定せずに同じ製品の <code>arm64</code> イメージが選ばれます。ラボ定義に書き込まれたイメージ ID はリージョン固有で古くなります。ベンダーは数週間ごとに新しいビルドを公開し、手で写した ID はまったく別の製品であることもあります。</p>
+<table>
+<thead>
+<tr>
+<th>製品名</th>
+<th>解決される内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sles</code></td>
+<td>最新の SUSE Linux Enterprise Server（バージョン指定なし）</td>
+</tr>
+<tr>
+<td><code>sles16</code></td>
+<td>最新の SUSE Linux Enterprise Server 16.x</td>
+</tr>
+<tr>
+<td><code>sles15.7</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7</td>
+</tr>
+<tr>
+<td><code>slmicro</code></td>
+<td>最新の SUSE Linux Micro（バージョン指定なし）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1</code></td>
+<td>SUSE Linux Micro 6.1</td>
+</tr>
+<tr>
+<td><code>leap</code></td>
+<td>最新の openSUSE Leap</td>
+</tr>
+<tr>
+<td><code>ubuntu24.04</code></td>
+<td>Canonical が公開する Ubuntu 24.04 LTS Server</td>
+</tr>
+<tr>
+<td><code>debian13</code></td>
+<td>Debian プロジェクトが公開する Debian 13</td>
+</tr>
+<tr>
+<td><code>amazonlinux2023</code></td>
+<td>AWS が公開する Amazon Linux 2023</td>
+</tr>
+<tr>
+<td><code>rhel9</code></td>
+<td>Red Hat が公開する最新の Red Hat Enterprise Linux 9.x</td>
+</tr>
+<tr>
+<td><code>rhel10</code></td>
+<td>Red Hat が公開する最新の Red Hat Enterprise Linux 10.x</td>
+</tr>
+<tr>
+<td><code>alma10</code></td>
+<td>AlmaLinux プロジェクトが公開する最新の AlmaLinux OS 10.x</td>
+</tr>
+<tr>
+<td><code>rocky10</code></td>
+<td>Rocky プロジェクトが公開する最新の Rocky Linux 10</td>
+</tr>
+</tbody>
+</table>
+<p>SUSE 自身の製品は SUSE の公開イメージトラッカーから、それ以外は各ベンダーの AWS Systems Manager 公開パラメーターまたはそのベンダー自身の AWS アカウントから取得されます。別のアカウントが一致しうる名前検索は決して使いません。製品名でない値は、イメージ ID やイメージファイル名も含めて、そのまま渡されます。</p>
+<p>クラウドラボでは、ノードが互いの名前を解決できることも必要です。クラウドアカウントごとに 1 台の小さな DNS VM がラボのドメインを提供し、アカウントのネットワークはその中のすべてのインスタンスにそのサーバーを配布するよう構成されます。これにより、ゲスト内で何も設定せずに、ノードはホスト名で Kubernetes クラスターに参加できます。AWS では VPC の DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。</p>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
 <p>VM が起動すると、<code>setup_lab.py</code> は JSON の <code>kclusters</code> セクションに従って各ノードに Kubernetes をインストールします。RKE2 と K3s の両方に対応しています。クラスターの準備ができると、そのアドオンが順に実行されます。VM レベルのアドオン（クラスターではなく単一ノードに紐づくもの）は、そのノードのプロビジョニング後に実行されます。すべての RKE2 ノードとすべての K3s サーバーノードには <code>KUBECONFIG</code> を設定する <code>/etc/profile.d/rke2.sh</code> または <code>/etc/profile.d/k3s.sh</code> が置かれるため、SSH 経由のコマンドを含め、ノード上のどの root シェルでも <code>kubectl</code> と <code>helm</code> が動作します。Web ホスト名を公開するアドオン（例: <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）は、そのホスト名を kcluster のノードを指すようにラボの DNS に登録します。ノードを削除すると、そのノードを指すレコードも削除されます。 <code>clu_type: kubeadm</code> は kubeadm でアップストリームの Kubernetes を構築します。マイナーバージョンは <code>clu_rel</code>、ネットワークプラグインは <code>clu_cni</code>（既定は flannel、calico、独自のものを使う場合は none）で指定します。 <code>clu_ingress</code> と <code>clu_storage</code> は、クラスターの Ingress コントローラー（<code>nginx</code>、<code>traefik</code>）と既定のストレージクラス（<code>longhorn</code>、<code>local-path</code>）を指定します。未設定ならディストリビューションが備えるもの（RKE2 は nginx、K3s は Traefik と local-path、Harvester は両方）がそのまま使われ、どちらも備えないディストリビューションでは、クラスターのアドオンが必要とした時点で導入されます。別のものを指定すると同梱のコンポーネントを置き換え、<code>none</code> は何も導入しません。</p>
 <h3 id="multi-host-labs">マルチホストラボ</h3>
@@ -200,7 +270,7 @@
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必須、<code>/etc/lab_creation.cfg</code>）は、ゲートウェイ VM がハブになるクラウドアカウントを指定します。ハブは、他のすべてのサイトが接続する固定パブリック IP を持つ唯一のサイトです。<code>OVERLAY_CIDR</code>（デフォルト <code>10.99.0.0/16</code>）はトンネル上のゲートウェイ自身のアドレスにのみ使われ、実際のトラフィックのルーティングには使われません。<code>OVERLAY_WG_PORT</code>（デフォルト <code>51820</code>）はハブの待ち受けポートです。参加、離脱、ルートの配布は <code>setup_vm.py</code> の中で自動的に行われ、手動で実行するものはありません。</p>
 <p><strong>既知の制限：</strong>DNS は変更されません（ノードの実ホスト名で到達できるのは、その名前がルーティング済みのサブネットに解決されるようになってからです）。後から新しいリモートサイトが参加しても、サイト内の既存ノードのルートはさかのぼって更新されず、各ノードのプロビジョニング時にのみ更新されます。AWS ではトラフィックを転送するためにサイトゲートウェイの「送信元/送信先チェック」を無効にする必要があり（自動で処理されます）、他の 7 つのクラウドバックエンドにはまだ同等の処理がありません。</p>
 <p><strong>既知のギャップ:</strong> AWS ではサイトゲートウェイの source/dest チェックを無効にしないと転送できず、これは自動で行われますが、他の 7 つのクラウドバックエンドには相当する処理がまだありません。一方で、先に用意されていたサイトのノードは、あとから別のサイトが参加したときに<em>再び</em>経路が設定されます。ハブは経路を向けているノードをすべて記録しており、サイトの参加時と撤去時にそれぞれを更新します。<code>overlay_ctl.py --hub &lt;host&gt;</code> は同じことを手動で行い、<code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code>、<code>forget &lt;node&gt;</code> を備えます。サイトを撤去すると、そのゲートウェイはハブのピアから外れ、ハブはその subnet への経路をやめ、サイト・アドレス・ノードの各台帳が整理され、他のすべてのサイトのノードから当該経路が削除されます。VM には触れません。サイトのマシンを破棄するのは <code>destroy_lab.py</code> の仕事です。</p>
-<p><strong>サイト間の DNS:</strong> ラボの DNS サーバーはどれも、この自動化ノード自身の BIND も各クラウドアカウントの DNS VM も、同じゾーンのマスターであり、レコードはそのゾーンファイルに書き込まれることで届きます。したがってノードは、そのレコードを他サイトのサーバーにも書き込むことで、そこから名前解決できるようになります。各サイトは自分の DNS サーバーをハブに登録し、プロビジョニングはノードのレコードを他のすべてのサイトのサーバーにも書き込みます。レコード単位の書き込みはその時点で稼働していたサーバーにしか届かないため、ずれが二種類残ります。サーバーが停止している間にそのサイトが取りこぼしたレコードと、あとで破棄されたノードのレコード（撤去処理は自分の実行が知っているサーバーにしか届きません）です。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> は各サイトのゾーンのコピーを、全サイトのレコードを持つこの自動化ノードのものに置き換え、どちらも解消します。</p>
+<p><strong>サイト間の DNS:</strong> ラボの DNS サーバーはどれも、この自動化ノード自身の BIND も各クラウドアカウントの DNS VM も、同じゾーンのマスターであり、レコードはそのゾーンファイルに書き込まれることで届きます。したがってノードは、そのレコードを他サイトのサーバーにも書き込むことで、そこから名前解決できるようになります。各サイトは自分の DNS サーバーをハブに登録し、プロビジョニングはノードのレコードを他のすべてのサイトのサーバーにも書き込みます。レコード単位の書き込みはその時点で稼働していたサーバーにしか届かないため、ずれが二種類残ります。サーバーが停止している間にそのサイトが取りこぼしたレコードと、あとで破棄されたノードのレコード（撤去処理は自分の実行が知っているサーバーにしか届きません）です。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> は各サイトのゾーンのコピーを、全サイトのレコードを持つこの自動化ノードのものに置き換え、どちらも解消します。 これは 1 つの自動化ノードが全サイトを運用している場合にのみ正しいです。各サイトが独自のノードを持つ場合、このノードのコピーは他サイトのレコードを持ったことがありません。そのため <code>dns_sync.py &lt;lab.json&gt;</code> は各マスターを比較します。各マスターに不足しているレコードと、そのマスターだけが持つレコードを報告し、不足分を各マスターに書き込み、削除は一切行いません。1 つのマスターだけが持つレコードは、他へまだ書かれていないものである可能性と、他から削除されたものである可能性が同じだからです。<code>--check</code> は書き込まずに報告し、<code>--prune</code> は報告を読んだうえでもう一方の判断を下します。また、レコードを書き込む前に各マスターをそのゾーンのマスターにします。サーバーが宣言していないゾーンや SOA のないファイルに追記されたレコードは、何も告げずに応答されないままでした。</p>
 <h3 id="library-loading-order">ライブラリの読み込み順序</h3>
 <p>各スクリプトは次の順序で設定を読み込みます。</p>
 <ol>
@@ -407,6 +477,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <hr />
 <h2 id="lab-definition-format">ラボ定義の形式</h2>
 <p>ラボは JSON または YAML ファイルで定義します（自動判別。後述の注記を参照）。現在の形式では 1 つのラボに複数の Kubernetes クラスター（<code>kclusters</code>）を定義できます。単一クラスターの旧形式（<code>cluster</code>）については <code>examples/cluster.json.template</code> を参照してください。 <code>examples/suse-multiproduct.json.template</code> は複数製品を組み合わせたラボの実例です。1 つの RKE2 クラスタに SUSE Rancher Prime、SUSE Storage、SUSE Application Collection からの SUSE AI、SUSE Security を、SUSE が示す順序で導入します。<code>suse-multiproduct-gpu.json.template</code> は同じラボを NVIDIA GPU 上の SUSE AI で構成したもので、ラボ定義に PCI パススルーがないため <code>existing</code> ノードを使います。</p>
+<p><code>disabled_nodes</code> は <code>nodes</code> とまったく同じ形式のエントリーを取り、ラボの設計には含まれるが配備しないノードを記述します。これを読むものは何もありません。VM は作成されず、DNS レコードも追加されず、アドオンも実行されません。削除せずにここへ置いておくことで、バックエンドに相当するイメージがない、提供終了したリリースである、ハードウェアがまだ用意できていないといった待機理由が解消したときに、そのエントリーをそのまま <code>nodes</code> へ戻すだけで済みます。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
     Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
@@ -1429,8 +1500,8 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>種類ごとの認証情報ファイル 1 つを、その種類を必要とするすべてのアドオンで再利用できます（例：1 つの <code>scc</code> ファイルで、どのアドオンの SCC 認証情報もまかなえます）。各アドオンの JSON フィールドの接頭辞には関係ありません。仕組みについては <code>libs/addon_common.py</code> の <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> と、<code>libs/primary.py</code> の <code>*_service_credential*</code> 関数を参照してください。</p>
 <p><strong>クラウドバックエンド（Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale）と <code>myip</code>：</strong>クラウドバックエンドのノードでは、ラボ JSON の <code>myip</code> を空にしておきます。実際の IP は作成時にプロバイダーが割り当てて初めてわかるもので、libvirt/Harvester の固定 IP のように事前に決められるものではありません。<code>setup_vm.py</code> は <code>create_vm()</code> の戻り値から実際の IP を受け取り、ノードが実際に存在するようになった<em>後で</em> DNS に登録します（AWSBackend の実機テストで見つかった実際のバグ、2026-09-06。TODO を参照）。<code>mymac</code> もクラウドバックエンドでは意味がないので未設定のままにします。生成や重複チェックはされず、無視されます。</p>
-<p><strong>クラウド DNS VM：</strong>ラボのノードが特定のクラウドバックエンドを初めて使うとき、<code>setup_vm.py</code> は同じクラウドネットワーク内に、BIND を実行する小さく安価な DNS 用 VM（<code>lab-dns-&lt;backend&gt;</code>、例：<code>lab-dns-aws</code>）もプロビジョニングします（既にあれば再利用します）。この VM はプロバイダーが公開している最新の openSUSE Leap イメージ（AWS では SUSE の公開クラウドイメージ一覧から取得）から起動し、それがないプロバイダーではラボ自身のイメージから起動します。Debian/Ubuntu、SUSE、Fedora 系（RHEL、Amazon Linux）のイメージに対応しています。代わりに特定のイメージから起動するには、クラウドアカウント（または <code>lab_creation.cfg</code>）で <code>CLOUD_DNS_IMAGE</code> を設定します。クラウドのノードは通常 <code>automation.mydemo.lab</code> の BIND サーバーにまったく到達できない（自宅ラボの NAT/ルーターの内側にあり、インターネットから到達できない）ためです。複数ノードからなる実際のクラウドクラスターでは、ノード同士が名前解決できるよう、同じクラウドネットワーク内に独自の DNS サーバーが必要です。各クラウドノードの DNS エントリーは、この DNS VM と中央の <code>automation.mydemo.lab</code> のゾーンの<em>両方</em>に登録されます。<strong>既知の制限：</strong>(1) 新しく作成したクラウドノードは、まだ自動ではこの DNS VM を名前解決に使わないため、同じラボの 2 台目のクラウドノードは追加の設定なしでは 1 台目をホスト名で解決できません。(2) ノードはこの DNS VM にプライベート IP 経由で問い合わせます。クラウドの外からパブリック IP への DNS 問い合わせは、経路上のネットワークに横取りされることがあります。一部の ISP やルーターはすべての DNS 通信に自ら応答するためです。<code>libs/backends.py</code> の <code>ensure_cloud_dns_vm()</code> の docstring を参照してください。</p>
-<p><strong>クラウドインスタンスのサイズ：</strong>各クラウドバックエンドは、小さな組み込みテーブル（各行の「備考」列に記載）から、<code>VM_CPU</code>/<code>VM_MEM</code> を満たすプロバイダーの最小のインスタンスタイプ、サーバータイプ、プラン、フレーバーを選びます。このテーブルは上限として意図されたものではありません。優先順位の順に、2 つの方法で上書きできます。
+<p><strong>クラウド DNS VM：</strong>ラボのノードが特定のクラウドバックエンドを初めて使うとき、<code>setup_vm.py</code> は同じクラウドネットワーク内に、BIND を実行する小さく安価な DNS 用 VM（<code>lab-dns-&lt;backend&gt;</code>、例：<code>lab-dns-aws</code>）もプロビジョニングします（既にあれば再利用します）。この VM はプロバイダーが公開している最新の openSUSE Leap イメージ（AWS では SUSE の公開クラウドイメージ一覧から取得）から起動し、それがないプロバイダーではラボ自身のイメージから起動します。Debian/Ubuntu、SUSE、Fedora 系（RHEL、Amazon Linux）のイメージに対応しています。代わりに特定のイメージから起動するには、クラウドアカウント（または <code>lab_creation.cfg</code>）で <code>CLOUD_DNS_IMAGE</code> を設定します。クラウドのノードは通常 <code>automation.mydemo.lab</code> の BIND サーバーにまったく到達できない（自宅ラボの NAT/ルーターの内側にあり、インターネットから到達できない）ためです。複数ノードからなる実際のクラウドクラスターでは、ノード同士が名前解決できるよう、同じクラウドネットワーク内に独自の DNS サーバーが必要です。各クラウドノードの DNS エントリーは、この DNS VM と中央の <code>automation.mydemo.lab</code> のゾーンの<em>両方</em>に登録されます。ノードは、DNS VM を用意した直後に呼ばれるバックエンド自身の <code>use_dns_server()</code> によってこのサーバーへ向けられます。これはクラウドネットワーク自体がそのサーバーを配布するよう構成するものなので、ゲスト内で何も設定せずにノードは同じラボの他ノードをホスト名で解決できます。AWS では、DNS VM を VPC の唯一の DNS サーバーとし、ラボのドメインを検索ドメインとする VPC DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。<code>AmazonProvidedDNS</code> は独自サーバーと併記できないため、DNS VM がラボのドメイン以外のすべてを再帰的に解決します。<strong>既知の制限は 1 つです：</strong>ノードはこの DNS VM にプライベート IP 経由で問い合わせます。クラウドの外からパブリック IP への DNS 問い合わせは、経路上のネットワークに横取りされることがあります。一部の ISP やルーターはすべての DNS 通信に自ら応答するためです。<code>libs/backends.py</code> の <code>ensure_cloud_dns_vm()</code> の docstring を参照してください。</p>
+<p><strong>クラウドインスタンスのサイズ：</strong>各クラウドバックエンドは、小さな組み込みテーブル（各行の「備考」列に記載）から、<code>VM_CPU</code>/<code>VM_MEM</code> を満たすプロバイダーの最小のインスタンスタイプ、サーバータイプ、プラン、フレーバーを選びます。このテーブルは上限として意図されたものではありません。AWS は例外で、自身のリージョンが実際に提供するインスタンスタイプとそのオンデマンド価格を読み取り、<code>VM_CPU</code> と <code>VM_MEM</code> の両方を満たす最も安価な x86_64 タイプを選びます。テーブルを使うのは、この照会が利用できない場合だけです。優先順位の順に、2 つの方法で上書きできます。
 1. <strong><code>cloud_instance_type</code></strong>（common またはノードごと。ノードの値が優先）：インスタンスタイプ、サーバータイプ、プラン、フレーバーの正確な名前で、自動選択は行わずそのまま使われます。OVHcloud（フレーバー一覧 API のその場での呼び出しを省略）や GCP（カスタムタイプ <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> を作らない。代わりに <code>n2-standard-4</code> のような実在の事前定義タイプを指定）を含め、すべてのクラウドバックエンドで同じように機能します。
 2. <strong><code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> 設定キー</strong>（下の各プロバイダーの行を参照）：組み込みテーブル自体を完全に置き換えます。<code>VM_CPU</code>/<code>VM_MEM</code> による自動選択は引き続き機能しますが、対象は独自のリストになります。形式：<code>name:cores:mem_gb,name:cores:mem_gb,...</code>（例：<code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>）。テーブルはマージされず丸ごと置き換わるので、残したい組み込みエントリーも書き直してください。GCP と OVHcloud にはこのキーがありません。GCP は <code>VM_CPU</code>/<code>VM_MEM</code> から実際のカスタムマシンタイプを直接作り（置き換えるカタログがない）、OVHcloud は作成時に実際のフレーバー一覧をその場で問い合わせるためです（各行を参照）。</p>
 <table>
@@ -1455,7 +1526,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <tr>
 <td><code>aws</code></td>
 <td><code>AWS_REGION</code>（必須）に加え、<code>AWS_PROFILE</code> または <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code>（必須）。<code>AWS_SESSION_TOKEN</code>（STS が発行する一時キー、つまり <code>AKIA</code> ではなく <code>ASIA</code> で始まるキー、例：SSO/IAM Identity Center や引き受けたロールのキーでは実質的に必須。そのキーの種類で欠けていると <code>resolve()</code> が明確なメッセージで終了します）。<code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code>（いずれも任意。未設定の場合はアカウントのデフォルト VPC とセキュリティグループを使いますが、多くの実際のアカウントにはそれがありません。TODO の実機テストの結果を参照）。<code>AWS_INSTANCE_TYPES</code>（任意、組み込みのインスタンスタイプテーブルを上書き。前述を参照）</td>
-<td>オートメーション VM に実際の <code>aws</code> CLI が必要です。<code>config_method: cloud-init</code> のみ。ISO_IMAGE は qcow2/ISO のファイル名ではなく実在する AMI ID である必要があります。VM_CPU/VM_MEM は条件を満たす最小の EC2 インスタンスタイプに対応付けられますが、vm_dsk_gb は（Hetzner と異なり）AMI の実際のルート EBS ボリュームを通じてそのまま反映されます。現在のインスタンスタイプ：<a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>。ノードごとまたは common の <code>aws_nested_virtualization: "true"</code>（任意、デフォルトはオフ）を指定すると、AWS の実際のネストされた KVM 機能（<code>--cpu-options "NestedVirtualization=enabled"</code>、ドキュメント：<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>）でインスタンスを起動し、本物の Harvester HCI ISO のインストールを含むこのプロジェクトの kickstart/combustion の流れを、物理マシンと同じようにクラウド上の「ハイパーバイザー」ノードで実行できます。対応する実在のファミリー（M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i とその <code>-flex</code> 版）の <code>cloud_instance_type</code> の明示が必要です（組み込みのデフォルトの T3 テーブルは対応していないため、解決したインスタンスタイプがこれらに含まれない場合は正確な一覧を示す明確なメッセージで終了します）。組み込みテーブルと制限の全一覧は <code>libs/backends.py</code> の <code>AWSBackend</code> クラスの docstring を参照してください</td>
+<td>オートメーション VM に実際の <code>aws</code> CLI が必要です。<code>config_method: cloud-init</code> のみ。ISO_IMAGE は qcow2/ISO のファイル名ではなく実在する AMI ID である必要があります。VM_CPU/VM_MEM は、そのリージョンが実際に提供する条件を満たす最も安価な x86_64 EC2 インスタンスタイプに対応付けられます（<code>describe-instance-types</code> と Price List API からその場で読み取り、リージョンごとにキャッシュします。どちらかの照会が利用できない場合は組み込みテーブルにフォールバックします。arm64 は安価ですが自動で選ばれることはなく、使う場合は <code>cloud_instance_type</code> で指定します）が、vm_dsk_gb は（Hetzner と異なり）AMI の実際のルート EBS ボリュームを通じてそのまま反映されます。現在のインスタンスタイプ：<a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>。ノードごとまたは common の <code>aws_nested_virtualization: "true"</code>（任意、デフォルトはオフ）を指定すると、AWS の実際のネストされた KVM 機能（<code>--cpu-options "NestedVirtualization=enabled"</code>、ドキュメント：<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>）でインスタンスを起動し、本物の Harvester HCI ISO のインストールを含むこのプロジェクトの kickstart/combustion の流れを、物理マシンと同じようにクラウド上の「ハイパーバイザー」ノードで実行できます。対応する実在のファミリー（M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i とその <code>-flex</code> 版）の <code>cloud_instance_type</code> の明示が必要です（バースト可能なタイプはいずれも対応しておらず、ラボ規模のノードではライブの価格照会も組み込みテーブルもバースト可能なタイプに落ち着くため、解決したインスタンスタイプがこれらに含まれない場合は正確な一覧を示す明確なメッセージで終了します）。組み込みテーブルと制限の全一覧は <code>libs/backends.py</code> の <code>AWSBackend</code> クラスの docstring を参照してください</td>
 </tr>
 <tr>
 <td><code>gcp</code></td>

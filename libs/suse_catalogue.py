@@ -15,12 +15,17 @@ import urllib.request
 API_URL = "https://susepubliccloudinfo.suse.com/v1"
 TIMEOUT = 30
 
-_LEAP_VERSION = re.compile(r"leap-(\d+)-(\d+)-", re.IGNORECASE)
-_SLES_VERSION = re.compile(r"^suse-sles-(\d+)-(\d+)-", re.IGNORECASE)
+_LEAP_VERSION = re.compile(r"^opensuse-leap-(\d+)-(\d+)-", re.IGNORECASE)
+_SLES_VERSION = re.compile(r"^suse-sles-(\d+)-(?:sp)?(\d+)-", re.IGNORECASE)
+_MICRO_VERSION = re.compile(r"^suse-sle-micro-(\d+)-(\d+)-", re.IGNORECASE)
 
 # Variants that are not a plain pay-as-you-go SLES: BYOS wants a registration code before zypper
-# works, chost is the container host, and sapcal and hardened are their own products.
-_SLES_VARIANTS = ("byos", "chost", "sapcal", "hardened", "sap")
+# works, chost is the container host, ecs is built for another cloud, and sapcal, hardened and
+# tomcat are their own products.
+_SLES_VARIANTS = ("byos", "chost", "sapcal", "hardened", "sap", "ecs", "tomcat")
+
+# SL Micro ships only a plain and a BYOS variant; the BYOS one is excluded for the same reason.
+_MICRO_VARIANTS = ("byos",)
 
 
 def active_images(provider: str, region: str = "") -> list:
@@ -30,37 +35,72 @@ def active_images(provider: str, region: str = "") -> list:
         return json.loads(response.read().decode("utf-8")).get("images", [])
 
 
-def newest_leap(images: list, arch_suffix: str) -> dict:
-    """The image of `images` with the highest openSUSE Leap version, then the latest publish date, whose name ends in
-    `arch_suffix`; {} when there is none."""
-    leap = []
-    for image in images:
-        name = image.get("name", "")
-        match = _LEAP_VERSION.search(name)
-        if match and name.lower().startswith("opensuse-leap-") and name.endswith(arch_suffix):
-            leap.append(((int(match.group(1)), int(match.group(2))), image.get("publishedon", ""), image))
-    return max(leap, key=lambda entry: entry[:2])[2] if leap else {}
-
-
-def newest_sles(images: list, arch_suffix: str, major: int = 0) -> dict:
+def arch_matches(name: str, arch_suffix: str) -> bool:
     """
-    The newest plain SLES image of `images` whose name ends in `arch_suffix`: the highest version, then the latest
-    publish date. `major` limits it to one major version (16 for SLES 16.x); 0 takes the highest there is.
+    Whether image `name` is for the architecture `arch_suffix` ("-x86_64", "-arm64").
 
-    Only the pay-as-you-go images are considered. A BYOS image needs a registration code before its zypper can
-    install anything, and chost, sapcal and hardened are different products, so none of them is what a lab that
-    just wants "a SLES node" should be handed.
+    The name either ends in the suffix, as the SLES and Leap images do, or carries it as its second-to-last segment
+    followed by a billing-entity suffix, as the SL Micro images do ("...-hvm-ssd-x86_64-ltd").
+    """
+    if name.endswith(arch_suffix):
+        return True
+    head, _, tail = name.rpartition("-")
+    return bool(tail) and head.endswith(arch_suffix)
+
+
+def _newest(images: list, arch_suffix: str, version_re, variants: tuple,
+            major: int = 0, minor: int = -1) -> dict:
+    """
+    The newest image of `images` whose name `version_re` matches with its major and minor version as the two groups,
+    for `arch_suffix`, excluding every name carrying one of `variants`: the highest version, then the latest publish
+    date, then the name, so a choice between two images differing only in a trailing suffix is stable. `major` and
+    `minor` limit the result to one version; 0 and -1 take the highest there is. {} when there is none.
     """
     found = []
     for image in images:
         name = image.get("name", "")
-        match = _SLES_VERSION.match(name)
-        if not match or not name.endswith(arch_suffix):
+        match = version_re.match(name)
+        if not match or not arch_matches(name, arch_suffix):
             continue
-        if any("-{}-".format(variant) in name or name.endswith("-" + variant) for variant in _SLES_VARIANTS):
+        if any("-{}-".format(variant) in name or name.endswith("-" + variant) for variant in variants):
             continue
         version = (int(match.group(1)), int(match.group(2)))
         if major and version[0] != major:
             continue
-        found.append((version, image.get("publishedon", ""), image))
-    return max(found, key=lambda entry: entry[:2])[2] if found else {}
+        if minor >= 0 and version[1] != minor:
+            continue
+        found.append((version, image.get("publishedon", ""), name, image))
+    return max(found, key=lambda entry: entry[:3])[3] if found else {}
+
+
+def newest_leap(images: list, arch_suffix: str, major: int = 0, minor: int = -1) -> dict:
+    """
+    The newest openSUSE Leap image of `images` for `arch_suffix`. `major` and `minor` limit it to one version
+    (16 and 0 for Leap 16.0); 0 and -1 take the highest there is.
+    """
+    return _newest(images, arch_suffix, _LEAP_VERSION, (), major=major, minor=minor)
+
+
+def newest_sles(images: list, arch_suffix: str, major: int = 0, minor: int = -1) -> dict:
+    """
+    The newest plain SLES image of `images` for `arch_suffix`. `major` limits it to one major version (16 for
+    SLES 16.x) and `minor` to one service pack or minor release (7 for SLES 15 SP7); 0 and -1 take the highest there
+    is. A SLES 15 name spells its minor version "sp7" and a SLES 16 one "0", and both are read as the minor version
+    here.
+
+    Only the pay-as-you-go images are considered. A BYOS image needs a registration code before its zypper can
+    install anything, and chost, ecs, sapcal, hardened and tomcat are different products, so none of them is what a
+    lab that just wants "a SLES node" should be handed.
+    """
+    return _newest(images, arch_suffix, _SLES_VERSION, _SLES_VARIANTS, major=major, minor=minor)
+
+
+def newest_micro(images: list, arch_suffix: str, major: int = 0, minor: int = -1) -> dict:
+    """
+    The newest pay-as-you-go SUSE Linux Micro (SLE Micro) image of `images` for `arch_suffix`. `major` and `minor`
+    limit it to one version (6 and 1 for SL Micro 6.1); 0 and -1 take the highest there is.
+
+    The BYOS images are excluded: their zypper needs a registration code before it can install anything, which is the
+    same reason newest_sles() excludes them.
+    """
+    return _newest(images, arch_suffix, _MICRO_VERSION, _MICRO_VARIANTS, major=major, minor=minor)

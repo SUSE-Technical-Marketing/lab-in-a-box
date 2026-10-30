@@ -355,28 +355,38 @@ def forget_node(hub_host, node_host):
 
 
 
-def register_dns_server(hub_host, site_name, dns_ip):
+def register_dns_server(hub_host, site_name, dns_ip, mydomain=""):
     """
-    Record, on the hub, which DNS server serves `site_name`. Idempotent upsert of one "site address" line.
+    Record, on the hub, which DNS server serves `site_name` and which zone it is a master of. Idempotent upsert of
+    one "site address domain" line.
 
     Every DNS server in this project is a master of the same zone and records reach them by being written to each
     one's zone file (libs/services.py's add_to_dns, through its remote_dns_servers list), so a site's nodes become
     resolvable at another site by writing their records there too. The hub is where a run finds the other sites'
     servers, exactly as it finds their subnets.
+
+    The zone is recorded because one hub serves every lab that joins it. A server registered for another lab's
+    domain is a master of a zone this lab has no records in, so writing to it would put this lab's names on a
+    server no node of it ever queries — see list_dns_servers().
     """
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
     kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
-    kept.append("{} {}".format(site_name, dns_ip))
+    kept.append(" ".join(part for part in (site_name, dns_ip, mydomain) if part))
     ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
             input_text="\n".join(kept) + "\n")
 
 
-def list_dns_servers(hub_host, exclude_site=None):
+def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
     """
-    Returns [(site_name, dns_ip), ...] for every site that registered a DNS server, excluding `exclude_site` (the
-    caller's own, whose server the local write already reached).
+    Returns [(site_name, dns_ip), ...] for the sites whose DNS server this lab's records belong on: every site that
+    registered one, excluding `exclude_site` (the caller's own, whose server the local write already reached) and
+    excluding any registered for a domain other than `mydomain`.
+
+    A line with no domain predates that field. It is included rather than dropped, because excluding it would stop
+    an existing overlay resolving across sites until every site had run again, and register_dns_server() rewrites
+    its own line on each run, so such a line disappears as each site is next used.
     """
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
@@ -384,8 +394,18 @@ def list_dns_servers(hub_host, exclude_site=None):
     out = []
     for line in raw.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[0] != exclude_site:
-            out.append((parts[0], parts[1]))
+        if len(parts) < 2 or parts[0] == exclude_site:
+            continue
+        site, dns_ip = parts[0], parts[1]
+        domain = parts[2] if len(parts) > 2 else ""
+        if domain and mydomain and domain != mydomain:
+            log("- site '{}' serves domain '{}', not '{}': its DNS server is left out of this lab's "
+                "records".format(site, domain, mydomain))
+            continue
+        if not domain:
+            warn("- site '{}' registered its DNS server before the domain was recorded: including it for "
+                 "'{}', which is wrong if it serves another lab".format(site, mydomain or "this lab"))
+        out.append((site, dns_ip))
     return out
 
 
@@ -416,7 +436,7 @@ def sync_zone_to_sites(hub_host, mydomain, zone_dir=None):
     own = ipalloc.local_ips()
 
     synced = failed = 0
-    for site_name, dns_ip in list_dns_servers(hub_host):
+    for site_name, dns_ip in list_dns_servers(hub_host, mydomain=mydomain):
         if dns_ip in own:
             log("- Site '{}' is served by this automation node itself, which is where the zone comes from".format(
                 site_name))

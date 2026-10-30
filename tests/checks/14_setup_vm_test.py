@@ -152,6 +152,9 @@ class _FakeCloudBackend(_FakeBackend):
     def allow_internal_traffic(self):
         order.append("allow_internal_traffic:" + self.account)
 
+    def use_dns_server(self, dns_ip, mydomain=""):
+        order.append("use_dns_server:{}:{}:{}".format(self.account, dns_ip, mydomain))
+
 
 for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway")):
     order.clear()
@@ -170,6 +173,8 @@ for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway"
         ov.site_name_for.side_effect = lambda backend_name, account: "aws-" + account
         ov.list_other_sites.return_value = [("home", "192.168.88.0/24")]
         setup_vm.provision_vm(definition, config, defaults, "vm1")
+    check("provision_vm ({}): the cloud network is pointed at the lab's own DNS VM".format(branch),
+          "use_dns_server:{}:10.0.0.53:mydemo.lab".format(node_account) in order)
     check("provision_vm overlay ({}): traffic between the account's own VMs is allowed".format(branch),
           "allow_internal_traffic:" + node_account in order)
     check("provision_vm overlay ({}): the node is routed through its site gateway".format(branch),
