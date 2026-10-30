@@ -83,6 +83,10 @@ def cmd_dns_sync(hub, mydomain):
     A record written while a site's server was down never reached it, and a node destroyed later was only removed
     from the servers its own teardown knew about. Both are drift in one direction: the site's copy is wrong and this
     node's is right, so the fix is to replace the file rather than to append to it.
+
+    That holds only where this automation node drives every site, and so holds every record. Where each site has
+    its own automation node, this node's copy never held the other sites' records and replacing theirs with it
+    would delete them: dns_sync.py compares the masters instead, and is the one to use there.
     """
     synced, failed = overlay.sync_zone_to_sites(hub, mydomain)
     print("Pushed the '{}' zone to {} site(s); {} failed".format(mydomain, synced, failed))

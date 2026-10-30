@@ -30,6 +30,7 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import services  # noqa: E402
+import dns_zone  # noqa: E402
 import backends  # noqa: E402
 import lab_creation as lc  # noqa: E402
 import mgradm_common  # noqa: E402
@@ -96,7 +97,14 @@ def _dying_ssh(hostname, cmd, **kwargs):
 
 services.ssh_run = _dying_ssh
 svc = services.DNSService()
-svc.restart_named = lambda: None  # avoid a real local `systemctl restart named`
+# avoid a real local `systemctl restart named`; add_to_dns also restarts the masters it reached
+svc.restart_named = lambda remote_servers=None: None
+# add_to_dns makes each master a master of the zone first, so the zone files and the named.conf it would
+# declare them in are this check's own, not the container's /etc and /var/lib/named.
+_zone_dir = tempfile.mkdtemp()
+services.NAMED_ZONE_DIR = Path(_zone_dir)
+services.NAMED_CONF = Path(_zone_dir) / "named.conf"
+services.NAMED_CONF.write_text("")
 
 try:
     svc.add_to_dns("vm1.mydemo.lab", "192.168.88.199", "mydemo.lab", "88.168.192",
@@ -128,6 +136,9 @@ check("DNSService.add_service_dns: an unreachable secondary DNS server does not 
 # explicitly opt out of raising.
 fake = FakeSSH()
 services.ssh_run = fake
+# The block above left 1.2.3.4 recorded as unreachable, and that is remembered for the whole process on purpose:
+# a master is probed once, not once per record. This check gives it a working SSH instead, so it has to forget.
+services.DNSService._reachable_cache = {}
 svc.add_to_dns("vm1.mydemo.lab", "192.168.88.199", "mydemo.lab", "88.168.192",
                 remote_dns_servers=["1.2.3.4"])
 remote_calls = [kw for h, c, kw in fake.calls if h == "1.2.3.4"]
@@ -138,7 +149,7 @@ check("DNSService.add_to_dns: every remote-server call passes check=False",
 # The reverse zone keeps one PTR record per IP. A new hostname for an IP replaces the stale record.
 services.ssh_run = lambda *a, **kw: FakeResult()
 ptr_svc = services.DNSService()
-ptr_svc.restart_named = lambda: None
+ptr_svc.restart_named = lambda remote_servers=None: None
 services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
 
 ptr_svc.add_to_dns("node1a.mydemo.lab", "192.168.88.142", "mydemo.lab", "88.168.192")
@@ -997,7 +1008,7 @@ Path.read_text = _slow_read_text
 
 services.ssh_run = lambda *a, **kw: FakeResult()
 stress_svc = services.DNSService()
-stress_svc.restart_named = lambda: None  # avoid a real local `systemctl restart named`
+stress_svc.restart_named = lambda remote_servers=None: None  # avoid a real local `systemctl restart named`
 services.NAMED_ZONE_DIR = Path(tempfile.mkdtemp())
 
 N_WORKERS = 12
@@ -1024,9 +1035,12 @@ check("DNSService.add_to_dns under real concurrent threads (artificially widened
       all(any("host{}".format(i) in line for line in lan_lines) for i in range(N_WORKERS)))
 check("DNSService.add_to_dns under real concurrent threads: every single PTR record survives too",
       all(any("host{}.paralleltest.lab".format(i) in line for line in rev_lines) for i in range(N_WORKERS)))
+host_lines = [line for line in lan_lines if "host" in line]
 check("DNSService.add_to_dns under real concurrent threads: no duplicate/corrupted lines "
       "(exactly {} A record lines, not more or fewer)".format(N_WORKERS),
-      len(lan_lines) == N_WORKERS)
+      len(host_lines) == N_WORKERS)
+check("...on top of the header the zone was created with, written once for all 12 threads",
+      len(lan_lines) == N_WORKERS + len(dns_zone.forward_header("paralleltest.lab")))
 
 
 # ── every backend's copy_vm_image takes source_sha256 ──────────────────────

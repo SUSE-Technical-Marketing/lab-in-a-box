@@ -76,7 +76,17 @@ with tempfile.TemporaryDirectory() as tmp:
     dns.restart_named = lambda remote_servers=None: None
     dns._update_hosts_file = lambda vm_name: None
     remote = []
-    dns._remote = lambda host, cmd, check=True: remote.append((host, cmd))
+
+    class _Ran(object):
+        """What ssh_run() returns: del_from_dns() probes each master before writing to it."""
+        returncode = 0
+        stdout = ""
+
+    def _remote(host, cmd, check=True, capture=False):
+        remote.append((host, cmd))
+        return _Ran()
+
+    dns._remote = _remote
     dns.del_from_dns("node1.mydemo.lab", "192.168.88.23", "mydemo.lab", "", remote_dns_servers=["dns2"])
     left = zone.read_text().splitlines()
     check("del_from_dns: the node's A record and its service records are removed",

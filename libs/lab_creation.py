@@ -891,7 +891,11 @@ def _generate_unused_mac(used_macs, vm_name=""):
 
 # ── SSH helpers ───────────────────────────────────────────────────────────────
 
-_SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
+# ConnectTimeout bounds how long a host that does not answer costs. Without it the connect waits for the TCP
+# default, around two minutes, and a step that touches several hosts in a loop, such as writing a DNS record
+# to every master, stalls for that long per host per record. It bounds reaching the host, not the command,
+# so a long-running remote command is unaffected. Same value as the preflight's own probes.
+_SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-q"]
 
 
 def node_commands(definition: dict, vm_name: str, phase: str) -> list:
@@ -1018,7 +1022,7 @@ def scp_to(hostname, local_path, remote_path, user="root"):
     returncode (no `check` param here — every current caller wants to
     handle a transfer failure with its own message, not a generic one).
     """
-    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-q",
+    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-q",
             local_path, "{}@{}:{}".format(user, hostname, remote_path)]
     return subprocess.run(args, capture_output=True, text=True)
 
@@ -1652,11 +1656,19 @@ def locate_kvm_host(definition, vm_name, config):
 # ── VM management ─────────────────────────────────────────────────────────────
 
 def clean_ssh_keys(vm_name, myip):
-    """Remove stale SSH known-hosts entries for a VM (mirrors clean_ssh_keys)."""
+    """
+    Remove stale SSH known-hosts entries for a VM (mirrors clean_ssh_keys).
+
+    Best effort: a host with no ssh-keygen, such as a container running only this library, has no known_hosts worth
+    pruning either, so its absence is not an error.
+    """
     known = str(Path.home() / ".ssh" / "known_hosts")
     for host in (vm_name, myip):
-        subprocess.run(["ssh-keygen", "-f", known, "-R", host],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        try:
+            subprocess.run(["ssh-keygen", "-f", known, "-R", host],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except OSError:
+            return
 
 
 def ensure_lab_ssh_key(lab_host_ip, key_path="/root/.ssh/id_lab_ed25519", key_comment="lab-in-a-box"):

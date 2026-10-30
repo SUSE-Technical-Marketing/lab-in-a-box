@@ -638,10 +638,12 @@ check("retiring a site also drops its DNS server",
       any("overlay_dns" in cmd and "aws-tmm" in cmd and "sed -i" in cmd for _h, cmd, _b in calls))
 
 setup_vm_source = (_REPO / "scripts" / "setup_vm.py").read_text()
+check("the site's DNS server is registered with the zone it serves, so another lab's is not written to",
+      'mydomain=env.get("mydomain", "")' in setup_vm_source)
 check("provisioning registers this site's DNS server",
-      "overlay.register_dns_server(hub_host, this_site, site_dns_server)" in setup_vm_source)
+      "overlay.register_dns_server(hub_host, this_site, site_dns_server," in setup_vm_source)
 check("...and writes the node's record into the other sites' servers",
-      "overlay.list_dns_servers(hub_host, exclude_site=this_site)" in setup_vm_source
+      "overlay.list_dns_servers(" in setup_vm_source and "exclude_site=this_site" in setup_vm_source
       and "remote_dns_servers=other_dns" in setup_vm_source)
 check("a libvirt or harvester site is served by this automation node's own BIND",
       'site_dns_server = env.get("mydns", "")' in setup_vm_source)

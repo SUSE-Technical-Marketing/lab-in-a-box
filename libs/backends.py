@@ -34,6 +34,7 @@ from pathlib import Path
 
 import aws_catalog
 import cloud_images
+import dns_zone
 import ipalloc
 import primary
 import provisioning
@@ -4075,16 +4076,11 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -
         escaping rule (YAML single-quoted strings don't support backslash escapes at all)."""
         return "'" + s.replace("'", "''") + "'"
 
-    zone_lines = [
-        "$TTL 300",
-        "@ IN SOA ns.{d}. admin.{d}. ( 1 3600 900 604800 300 )".format(d=mydomain),
-        "@ IN NS ns.{d}.".format(d=mydomain),
-        "ns IN A 127.0.0.1",
-    ]
+    # The same zone shape libs/services.py creates and compares, at a low TTL because a cloud node's address
+    # changes whenever it is recreated.
+    zone_lines = dns_zone.forward_header(mydomain, ttl=300)
     zone_printf_args = " ".join("'{}'".format(line) for line in zone_lines)
-    named_conf_line = (
-        'zone "{d}" {{ type master; file "/var/lib/named/{d}.lan"; allow-update {{ none; }}; }};'
-    ).format(d=mydomain)
+    named_conf_line = dns_zone.stanza(mydomain, "/var/lib/named/{}".format(dns_zone.forward_file(mydomain)))
 
     # Each entry is one shell command, run through runcmd after cloud-init's own modules.
     commands = [

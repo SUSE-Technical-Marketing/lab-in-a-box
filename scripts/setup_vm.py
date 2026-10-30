@@ -361,8 +361,9 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
             # site's server as well. add_to_dns() skips a line that is already there, so this is a re-run of the
             # same write with a wider list, not a second record.
             if site_dns_server:
-                overlay.register_dns_server(hub_host, this_site, site_dns_server)
-            other_dns = [ip for _site, ip in overlay.list_dns_servers(hub_host, exclude_site=this_site)]
+                overlay.register_dns_server(hub_host, this_site, site_dns_server, env.get("mydomain", ""))
+            other_dns = [ip for _site, ip in overlay.list_dns_servers(
+                hub_host, exclude_site=this_site, mydomain=env.get("mydomain", ""))]
             if other_dns and env.get("myip"):
                 add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
                            remote_dns_servers=other_dns)
