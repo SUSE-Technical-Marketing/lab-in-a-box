@@ -270,12 +270,17 @@ def _version_key(version: str) -> tuple:
     return tuple(int(p) for p in version.split("."))
 
 
+# The lab definition's own sections, which schemas_of() must not mistake for add-on sections: every one of them is
+# a mapping at the top level of a lab file, exactly as an add-on's own configuration section is.
+_BASE_SECTIONS = {"common", "nodes", "disabled_nodes", "kclusters", "cluster", "pxe"}
+
+
 def schemas_of(kind: str, data) -> list:
     """The schema names file `data` of kind `kind` ("lab" or a config:<file> schema name) is written against."""
     if kind != "lab":
         return [kind]
     names = set(apps.collect_addon_names(data)) | {k for k in data if isinstance(data.get(k), dict)}
-    return ["lab"] + sorted("addon:" + n for n in names - {"common", "nodes", "kclusters", LAB_VERSIONS_KEY})
+    return ["lab"] + sorted("addon:" + n for n in names - _BASE_SECTIONS - {LAB_VERSIONS_KEY})
 
 
 def recorded_versions(kind: str, data) -> dict:

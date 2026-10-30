@@ -14,6 +14,7 @@ SKIP = ("tests", "legacy_bash", "python_migration", ".git")
 EXTRA = ("scripts/lab_schema",)
 DYNAMIC = {
     ("primary", "validate_definition"): "webui/lib/discovery.py calls it on the module _primary_lib() loads",
+    ("cloud_images", "product_names"): "webui/lib/discovery.py calls it on the module _lib() loads",
 }
 TEST_HOOKS = {
     ("primary", "clear_passphrase_cache"): "tests reset the cached credential passphrase between cases",

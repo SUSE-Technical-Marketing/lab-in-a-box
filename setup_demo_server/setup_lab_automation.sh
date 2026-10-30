@@ -151,6 +151,10 @@ function derive_node_settings() {
     else
         _python_bin=python3.11 _node_netstack=nm
     fi
+    # The pinned kubectl installer, for a node whose distribution packages no kubernetes client (Leap 16). Same
+    # script the container image is built with, so the version is pinned in libs/kvm_host_profiles.py alone.
+    # shellcheck disable=SC2034  # read through NODE_SETTINGS by write_node_settings
+    _kubectl_install="${LAB_KUBECTL_INSTALL:-}"
 }
 
 # Copies the tracked files of this lab-in-a-box tree (lab.cfg is not tracked) to directory $1, with .lab-versions:
@@ -168,16 +172,17 @@ function stage_lab_tree() {
     ( set -o pipefail
       git -C "${_src}" ls-files -z | tar -C "${_src}" --null --ignore-failed-read -T - -cf - | tar -C "${_dest}" -xf - ) \
         || return 1
-    git -C "${_src}" log --format='@%h' --name-only | awk '
-        /^@/ { h = substr($0, 2); next }
-        NF {
-            if (!($0 in seen)) { seen[$0] = 1; print h, $0 }
-            n = split($0, part, "/"); dir = part[1]
-            for (i = 1; i < n; i++) {
-                if (i > 1) dir = dir "/" part[i]
-                if (!(dir in seen)) { seen[dir] = 1; print h, dir }
-            }
-        }' > "${_dest}/.lab-versions"
+    # One "git log -1" per tracked file and per directory holding one: the same value
+    # install_automation_node_scripts.sh's lab_version() reads from git. A single --name-only walk cannot reproduce
+    # it, because such a walk lists no paths for a merge commit and a merge that resolves a conflict is the last
+    # commit to change that file.
+    ( cd "${_src}" && git ls-files | awk '{
+          print
+          n = split($0, part, "/"); dir = part[1]
+          for (i = 1; i < n; i++) { if (i > 1) dir = dir "/" part[i]; print dir }
+      }' | sort -u | while IFS= read -r _path; do
+          printf '%s %s\n' "$(git log -1 --format=%h -- "${_path}")" "${_path}"
+      done ) > "${_dest}/.lab-versions"
     [[ -z "${_clone}" ]] || rm -rf "${_clone}"
 }
 

@@ -203,6 +203,22 @@ _IMAGE_CONFIG_METHOD_SUPPORT = (
 )
 
 
+def _is_image_file_name(iso_image) -> bool:
+    """
+    Whether `iso_image` names an image file, rather than a provider image ID ("ami-0123456789abcdef0",
+    "img-…") or one of the product names a cloud backend resolves at create time (see
+    libs/cloud_images.py's product_names()). A URL counts as a file name: it ends in one.
+    """
+    import cloud_images
+
+    value = str(iso_image or "").strip()
+    if not value:
+        return False
+    if re.match(r"^(ami|img|image|snap)-[0-9a-z]+$", value, re.IGNORECASE):
+        return False
+    return value.lower() not in cloud_images.product_names()
+
+
 def _supported_config_methods(iso_image):
     """
     Best-effort (ISO_IMAGE filename) -> (label, supported config_methods)
@@ -211,7 +227,17 @@ def _supported_config_methods(iso_image):
     patterns and the SLE Micro/Debian-nocloud patterns before their broader
     families' rules), first match wins. Returns None when nothing matches —
     an unrecognized image is left alone, never warned about.
+
+    Also None for anything that is not an image file name: a provider image
+    ID or a product name names an image built for that provider, which takes
+    cloud-init whatever the same product's downloadable file takes. The SL
+    Micro qcow2 is provisioned with Ignition and Combustion while the SL
+    Micro AMI of the same version is provisioned with cloud-init, so
+    matching a product name against this table would warn about the one
+    method that does work there.
     """
+    if not _is_image_file_name(iso_image):
+        return None
     iso_lower = (iso_image or "").lower()
     for pattern, label, supported in _IMAGE_CONFIG_METHOD_SUPPORT:
         if re.search(pattern, iso_lower):
@@ -516,8 +542,10 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             continue
 
         # Hypervisor: VM name must not already exist on the host it would be
-        # (re)created on
-        node_host, node_virt_srv = resolved_host_for(node) if host_checks else (None, None)
+        # (re)created on. A cloud node has no KVM host: its VM is identified in the provider's own account, so
+        # asking a hypervisor about it says nothing, and a name that an earlier libvirt lab left on that
+        # hypervisor is not this node and must not be reported as it.
+        node_host, node_virt_srv = (None, None) if (is_cloud_node or not host_checks) else resolved_host_for(node)
         if node_virt_srv:
             dominfo = run_libvirt_tool(
                 "virsh", node_host, node_virt_srv, ["dominfo", node],
@@ -527,8 +555,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 warn("nodes.{}: a VM with this name already exists on KVM host '{}' "
                      "(will be destroyed and recreated)".format(node, node_host))
 
-        # IP reachability (informational)
-        if host_checks and not _empty(myip):
+        # IP reachability (informational). Not for a cloud node: its address comes from the provider at create
+        # time, so any address in the JSON is not the one this node will have.
+        if host_checks and not is_cloud_node and not _empty(myip):
             ping = subprocess.run(["ping", "-c1", "-W1", str(myip)],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if ping.returncode == 0:
@@ -862,7 +891,11 @@ def _generate_unused_mac(used_macs, vm_name=""):
 
 # ── SSH helpers ───────────────────────────────────────────────────────────────
 
-_SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-q"]
+# ConnectTimeout bounds how long a host that does not answer costs. Without it the connect waits for the TCP
+# default, around two minutes, and a step that touches several hosts in a loop, such as writing a DNS record
+# to every master, stalls for that long per host per record. It bounds reaching the host, not the command,
+# so a long-running remote command is unaffected. Same value as the preflight's own probes.
+_SSH_BASE = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-q"]
 
 
 def node_commands(definition: dict, vm_name: str, phase: str) -> list:
@@ -890,6 +923,9 @@ def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
     commands = node_commands(definition, vm_name, phase)
     if not commands:
         return []
+    # The same precedence check_ssh_conn() is given: a cloud node is reached at the address its provider assigned,
+    # not at a name whose resolution depends on this host serving the lab's domain.
+    ssh_target = ((definition.get("nodes") or {}).get(vm_name) or {}).get("myip") or vm_name
     log("Running {} \"{}{}_commands{}\" on \"{}{}{}\"".format(
         len(commands), _RED, phase, _RESET, _RED, vm_name, _RESET))
     failures = []
@@ -898,7 +934,7 @@ def run_node_commands(definition: dict, vm_name: str, phase: str) -> list:
     try:
         for command in commands:
             try:
-                ssh_run(vm_name, command)
+                ssh_run(ssh_target, command)
             except RuntimeError as exc:
                 message = "{}_commands on '{}': '{}' failed: {}".format(phase, vm_name, command, exc)
                 error(message)
@@ -986,7 +1022,7 @@ def scp_to(hostname, local_path, remote_path, user="root"):
     returncode (no `check` param here — every current caller wants to
     handle a transfer failure with its own message, not a generic one).
     """
-    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-q",
+    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-q",
             local_path, "{}@{}:{}".format(user, hostname, remote_path)]
     return subprocess.run(args, capture_output=True, text=True)
 
@@ -1620,11 +1656,19 @@ def locate_kvm_host(definition, vm_name, config):
 # ── VM management ─────────────────────────────────────────────────────────────
 
 def clean_ssh_keys(vm_name, myip):
-    """Remove stale SSH known-hosts entries for a VM (mirrors clean_ssh_keys)."""
+    """
+    Remove stale SSH known-hosts entries for a VM (mirrors clean_ssh_keys).
+
+    Best effort: a host with no ssh-keygen, such as a container running only this library, has no known_hosts worth
+    pruning either, so its absence is not an error.
+    """
     known = str(Path.home() / ".ssh" / "known_hosts")
     for host in (vm_name, myip):
-        subprocess.run(["ssh-keygen", "-f", known, "-R", host],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        try:
+            subprocess.run(["ssh-keygen", "-f", known, "-R", host],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except OSError:
+            return
 
 
 def ensure_lab_ssh_key(lab_host_ip, key_path="/root/.ssh/id_lab_ed25519", key_comment="lab-in-a-box"):
@@ -1787,6 +1831,9 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
     An empty or omitted `myip` selects template_network-config-dhcp, instead of the static template. That is used for the
     USB-delivery lab-host VM, whose IP is not known when it is built.
 
+    ISO_IMAGE is set from SOURCE_IMAGE when only the newer name is given, because the templates branch on it to pick
+    a guest's network configuration.
+
     `_vm_name` is always set from the vm_name argument. It overrides any value the caller passed, so the templates' ${_vm_name}
     references resolve. Without it, the instance-id, local-hostname, fqdn and hostname render empty.
     """
@@ -1796,6 +1843,9 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
     render_vars["_vm_name"] = vm_name
     render_vars["ROOT_SSH_KEY"] = Path("/root/.ssh/id_rsa.pub").read_text().strip()
     render_vars["network_renderer"] = render_vars.get("network_renderer") or "NetworkManager"
+    # The templates still branch on ISO_IMAGE, SOURCE_IMAGE's older name, so a lab that names only
+    # SOURCE_IMAGE gets the same branch a lab written the old way does.
+    render_vars["ISO_IMAGE"] = render_vars.get("ISO_IMAGE") or render_vars.get("SOURCE_IMAGE") or ""
     dhcp = not (render_vars.get("myip") or "").strip()
     # A cloud backend leaves both myip and mymac empty. template_network-config-dhcp matches its NIC by mac address, which an empty
     # value would not match. In that case a name-glob template is used instead. A node that has a mymac keeps the mac-matched template.

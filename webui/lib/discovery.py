@@ -243,13 +243,34 @@ def host_choices(snapshot=None):
         {"value": h["host"], "label": h["host"] + (" (unreachable)" if h.get("error") else "")} for h in hosts]
 
 
+def product_choices():
+    """
+    The product names a SOURCE_IMAGE may carry instead of an image file or a provider image ID, as the renderer's
+    {value, label} enum entries. A cloud backend resolves one of these to that provider's current image for the
+    node's own architecture at deploy time, so a lab never stores an ID that ages.
+
+    These do not depend on any hypervisor, so they are listed whether or not a status snapshot exists. See
+    libs/cloud_images.py's product_names(), which is where the list itself lives.
+
+    Empty when that module cannot be loaded, which is what a partially deployed install looks like. The field then
+    falls back to free text, the same way it does when no status snapshot names any image.
+    """
+    try:
+        names = _lib("cloud_images").product_names()
+    except ImportError:
+        return []
+    return [{"value": name, "label": "{} - {}".format(name, meaning)}
+            for name, meaning in sorted(names.items())]
+
+
 def dynamic_enums(snapshot=None):
     """
     Live `enum` choices by field name, for the fields whose options are whatever the hypervisors currently have rather
-    than anything the schema can state: the source image and the KVM host.
+    than anything the schema can state: the source image and the KVM host. The source image also offers the product
+    names a cloud backend resolves for itself (product_choices()), after the images the hypervisors hold.
     """
     snap = status() if snapshot is None else snapshot
-    images = image_choices(snap)
+    images = image_choices(snap) + product_choices()
     return {"SOURCE_IMAGE": images, "ISO_IMAGE": images, "kvm_host": host_choices(snap)}
 
 
@@ -322,8 +343,10 @@ def discover():
     return sorted(items, key=lambda it: it["name"])
 
 
-# Base-schema sections every lab has; the others are optional infrastructure services.
-CORE_SECTIONS = ("common", "nodes", "kclusters")
+# Base-schema sections that describe the lab's own VMs and clusters; the others are optional infrastructure
+# services the catalogue offers. disabled_nodes belongs here: it holds nodes in the lab's own form, and is not
+# something to add to a lab.
+CORE_SECTIONS = ("common", "nodes", "disabled_nodes", "kclusters")
 
 
 EXAMPLES_DIR_ENV = "LABBUILDER_EXAMPLES_DIR"

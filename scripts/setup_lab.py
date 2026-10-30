@@ -618,9 +618,25 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
 
 def phase_install_k8s_and_addons(definition, config, defaults, json_file):
     delay_min = int(definition.get("common", {}).get("delay_min", defaults.get("delay_min", 2)))
+    # A node whose VM creation failed has no VM, and install_cluster() reaches every node of a cluster by its
+    # hostname. Installing Kubernetes on such a cluster would SSH to whatever that name currently resolves to,
+    # which for a name left in DNS by an earlier lab is a machine this run never created. There is no safe subset:
+    # the cluster's membership comes from the definition, so one unprovisioned node is one unintended target.
+    failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
     for clu_name in k8s.list_kclusters(definition):
         clu_cfg = k8s.load_kclu_vars(definition, clu_name)
         clu_type = clu_cfg.get("clu_type", "")
+
+        missing = sorted(name for name, node_cfg in (definition.get("nodes") or {}).items()
+                         if (node_cfg or {}).get("kcluster") == clu_name and name in failed_nodes)
+        if missing:
+            msg = ("Kubernetes install for cluster '{}' skipped (skipping its addons too): its node(s) {} were "
+                   "never provisioned, so the cluster cannot be built and nothing is installed over whatever "
+                   "their names resolve to".format(clu_name, ", ".join(missing)))
+            lc.error(msg)
+            _report.add_cluster(clu_name, "FAILED")
+            _report.add_error(msg)
+            continue
 
         # Same resilience as phase_create_vms' per-node handling: one cluster's
         # Kubernetes install blowing up should be recorded and skipped, not take
