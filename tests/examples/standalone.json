@@ -3,7 +3,7 @@
     "standalone.mydemo.lab": { "myip": "192.168.88.50" }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
   }

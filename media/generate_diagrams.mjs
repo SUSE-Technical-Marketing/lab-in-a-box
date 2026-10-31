@@ -249,7 +249,7 @@ const DIAGRAMS = {
     b += k.box(20, 170, 150, 80, 'lab.json', { c: 'teal', fill: T.tint, stroke: T.teal, sub: 'or lab.yaml' });
     const kids = [
       [30, 'nodes', 'per VM: myip, mymac, kcluster, addons…', 'navy'],
-      [130, 'common', 'shared defaults: ISO_IMAGE, VM_MEM, VM_DSK…', 'sand'],
+      [130, 'common', 'shared defaults: SOURCE_IMAGE, VM_MEM, VM_DSK…', 'sand'],
       [230, 'kclusters', 'clu_type, clu_rel, mydomain, addons', 'coral'],
       [330, 'add-on sections', 'one per add-on, e.g. rancher, longhorn', 'teal'],
     ];

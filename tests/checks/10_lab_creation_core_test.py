@@ -337,7 +337,7 @@ def _lab_def(data):
     return primary.LabDefinition(data, f.name, "json")
 
 
-base_common = {"ISO_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2"}
+base_common = {"SOURCE_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2"}
 single_host_cfg = {"REMOTE_HOST": "hv1", "VIRT_SRV": "qemu+ssh://root@hv1/system?keyfile=.ssh/id_rsa"}
 
 # All node fixtures below use config_method="virt_customize" to sidestep
@@ -457,8 +457,8 @@ existing_reachable = _lab_def({
 check("validate_lab_definition: reachable 'existing' node passes",
       lc.validate_lab_definition(existing_reachable, single_host_cfg, "/iso", "/lab") is True)
 
-# ── backend-aware ISO_IMAGE check ───────────────────────────────────────────
-# The ISO_IMAGE existence check applies only to libvirt. Other backends resolve images in their own environment.
+# ── backend-aware SOURCE_IMAGE check ───────────────────────────────────────────
+# The SOURCE_IMAGE existence check applies only to libvirt. Other backends resolve images in their own environment.
 img_check_missing = FakeRun(responses=[
     ("echo ok", FakeCompleted(returncode=0, stdout="ok")),
     ("test -f", FakeCompleted(returncode=1)),
@@ -469,7 +469,7 @@ libvirt_missing_image = _lab_def({
     "common": dict(base_common),
     "nodes": {"vm1": {"myip": "192.168.1.60", "config_method": "virt_customize"}},
 })
-check("validate_lab_definition: libvirt node with a missing ISO_IMAGE still fails (baseline)",
+check("validate_lab_definition: libvirt node with a missing SOURCE_IMAGE still fails (baseline)",
       lc.validate_lab_definition(libvirt_missing_image, single_host_cfg, "/iso", "/lab") is False)
 
 lc.subprocess.run = img_check_missing
@@ -477,7 +477,7 @@ harvester_missing_image = _lab_def({
     "common": dict(base_common),
     "nodes": {"vm1": {"myip": "192.168.1.61", "backend": "harvester", "config_method": "virt_customize"}},
 })
-check("validate_lab_definition: harvester-backend node skips the libvirt-only ISO_IMAGE check",
+check("validate_lab_definition: harvester-backend node skips the libvirt-only SOURCE_IMAGE check",
       lc.validate_lab_definition(harvester_missing_image, single_host_cfg, "/iso", "/lab") is True)
 
 lc.subprocess.run = img_check_missing
@@ -587,10 +587,10 @@ check("validate_lab_definition: cloud_account cloudtype vs. an explicit disagree
 primary.try_load_cloud_account = _orig_try_acct
 
 
-# ── common.ISO_IMAGE is required only when a node lacks its own override ────
-# A lab whose nodes all set their own ISO_IMAGE needs no common default. virt_customize is used on every node, so the test covers only the ISO_IMAGE rule.
+# ── common.SOURCE_IMAGE is required only when a node lacks its own override ────
+# A lab whose nodes all set their own SOURCE_IMAGE needs no common default. virt_customize is used on every node, so the test covers only the SOURCE_IMAGE rule.
 common_no_iso = dict(base_common)
-common_no_iso["ISO_IMAGE"] = ""
+common_no_iso["SOURCE_IMAGE"] = ""
 # "echo ok" -> SSH reachability check for the image-exists-on-hypervisor
 # check; everything else (the "test -f" image check itself) falls through
 # to the default FakeCompleted(returncode=0) — succeeds.
@@ -599,21 +599,21 @@ lc.subprocess.run = FakeRun(responses=[("echo ok", FakeCompleted(returncode=0, s
 lab_all_nodes_override_iso = _lab_def({
     "common": common_no_iso,
     "nodes": {
-        "vm1": {"myip": "192.168.1.70", "ISO_IMAGE": "vm1.qcow2", "config_method": "virt_customize"},
-        "vm2": {"myip": "192.168.1.71", "ISO_IMAGE": "vm2.qcow2", "config_method": "virt_customize"},
+        "vm1": {"myip": "192.168.1.70", "SOURCE_IMAGE": "vm1.qcow2", "config_method": "virt_customize"},
+        "vm2": {"myip": "192.168.1.71", "SOURCE_IMAGE": "vm2.qcow2", "config_method": "virt_customize"},
     },
 })
-check("validate_lab_definition: empty common.ISO_IMAGE passes when every node overrides it",
+check("validate_lab_definition: empty common.SOURCE_IMAGE passes when every node overrides it",
       lc.validate_lab_definition(lab_all_nodes_override_iso, single_host_cfg, "/iso", "/lab") is True)
 
 lab_one_node_missing_iso = _lab_def({
     "common": common_no_iso,
     "nodes": {
-        "vm1": {"myip": "192.168.1.72", "ISO_IMAGE": "vm1.qcow2", "config_method": "virt_customize"},
+        "vm1": {"myip": "192.168.1.72", "SOURCE_IMAGE": "vm1.qcow2", "config_method": "virt_customize"},
         "vm2": {"myip": "192.168.1.73", "config_method": "virt_customize"},
     },
 })
-check("validate_lab_definition: empty common.ISO_IMAGE still fails when a node has no override",
+check("validate_lab_definition: empty common.SOURCE_IMAGE still fails when a node has no override",
       lc.validate_lab_definition(lab_one_node_missing_iso, single_host_cfg, "/iso", "/lab") is False)
 
 
@@ -626,7 +626,7 @@ from contextlib import redirect_stdout as _redirect_stdout
 lc.subprocess.run = FakeRun(responses=[("echo ok", FakeCompleted(returncode=0, stdout="ok"))])
 
 lab_ignition_non_micro = _lab_def({
-    "common": dict(base_common, **{"ISO_IMAGE": "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2"}),
+    "common": dict(base_common, **{"SOURCE_IMAGE": "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2"}),
     "nodes": {"vm1": {"myip": "192.168.1.80"}},  # config_method omitted -> Ignition+Combustion
 })
 buf = _io.StringIO()
@@ -640,25 +640,25 @@ with _redirect_stdout(buf):
     # a WARNING (not folded into/blocked by that unrelated error).
     lc.validate_lab_definition(lab_ignition_non_micro, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: config_method='' + non-Micro image warns about the mismatch",
-      "is likely unsupported on ISO_IMAGE" in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" in buf.getvalue())
 check("validate_lab_definition: the mismatch is reported as a WARNING, not an ERROR",
-      "[WARN]" in buf.getvalue().split("is likely unsupported on ISO_IMAGE")[0].splitlines()[-1])
+      "[WARN]" in buf.getvalue().split("is likely unsupported on SOURCE_IMAGE")[0].splitlines()[-1])
 
 lab_ignition_micro = _lab_def({
-    "common": dict(base_common, **{"ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2"}),
+    "common": dict(base_common, **{"SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2"}),
     "nodes": {"vm1": {"myip": "192.168.1.81"}},
 })
 buf = _io.StringIO()
 with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_ignition_micro, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: config_method='' + a genuine SLE Micro image warns about nothing",
-      "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" not in buf.getvalue())
 
 # cloud-init is not supported on the kvm-and-xen Minimal-VM image family, which uses JeOS Firstboot. The test expects a warning
 # for cloud-init on that image. Only virt_customize works for this family.
 lab_cloudinit_non_micro = _lab_def({
     "common": dict(base_common, **{
-        "ISO_IMAGE": "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2",
+        "SOURCE_IMAGE": "SLES15-SP6-Minimal-VM.x86_64-kvm-and-xen-GM.qcow2",
         "config_method": "cloud-init",
     }),
     "nodes": {"vm1": {"myip": "192.168.1.82"}},
@@ -667,14 +667,14 @@ buf = _io.StringIO()
 with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_cloudinit_non_micro, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: cloud-init on a kvm-and-xen Minimal-VM image also warns (JeOS Firstboot, not cloud-init)",
-      "is likely unsupported on ISO_IMAGE" in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" in buf.getvalue())
 
 # ... but an image this heuristic doesn't recognize at all is left alone,
 # regardless of config_method — "if distribution is not in the list then
 # just continue" (explicit design requirement, not an oversight).
 lab_cloudinit_unknown_image = _lab_def({
     "common": dict(base_common, **{
-        "ISO_IMAGE": "some-completely-unrecognized-image.qcow2",
+        "SOURCE_IMAGE": "some-completely-unrecognized-image.qcow2",
         "config_method": "cloud-init",
     }),
     "nodes": {"vm1": {"myip": "192.168.1.83"}},
@@ -682,14 +682,14 @@ lab_cloudinit_unknown_image = _lab_def({
 buf = _io.StringIO()
 with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_cloudinit_unknown_image, single_host_cfg, "/iso", "/lab")
-check("validate_lab_definition: an unrecognized ISO_IMAGE is never warned about",
-      "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
+check("validate_lab_definition: an unrecognized SOURCE_IMAGE is never warned about",
+      "is likely unsupported on SOURCE_IMAGE" not in buf.getvalue())
 
 # The Debian nocloud pattern requires "debian" as well as "nocloud". Alibaba's nocloud images use the same word for another
 # purpose and do ship cloud-init, so "nocloud" alone must not match them.
 lab_cloudinit_aliyun = _lab_def({
     "common": dict(base_common, **{
-        "ISO_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
+        "SOURCE_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
         "config_method": "cloud-init",
     }),
     "nodes": {"vm1": {"myip": "192.168.1.84"}},
@@ -699,13 +699,13 @@ with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_cloudinit_aliyun, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: Alibaba Cloud Linux's own \"nocloud\" filename quirk doesn't "
       "false-positive as Debian's nocloud (no-cloud-init) variant",
-      "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" not in buf.getvalue())
 
 # ... but the real Debian nocloud variant still correctly warns (guards
 # against the fix above being too permissive in the other direction).
 lab_cloudinit_debian_nocloud = _lab_def({
     "common": dict(base_common, **{
-        "ISO_IMAGE": "debian-12-nocloud-amd64.qcow2",
+        "SOURCE_IMAGE": "debian-12-nocloud-amd64.qcow2",
         "config_method": "cloud-init",
     }),
     "nodes": {"vm1": {"myip": "192.168.1.85"}},
@@ -714,7 +714,7 @@ buf = _io.StringIO()
 with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_cloudinit_debian_nocloud, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: Debian's own nocloud variant (no cloud-init) still warns",
-      "is likely unsupported on ISO_IMAGE" in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" in buf.getvalue())
 
 
 # ── config_method enum validation ────────────────────────────────────────────
@@ -728,12 +728,12 @@ check("validate_lab_definition: an invalid config_method value fails preflight",
 
 
 # ── installer-ISO vs. config_method mismatch ─────────────────────────────────
-# An ISO_IMAGE ending in .iso used with any config_method other than install_iso fails in copy_vm_image(). It is an error.
+# An SOURCE_IMAGE ending in .iso used with any config_method other than install_iso fails in copy_vm_image(). It is an error.
 lab_iso_wrong_method = _lab_def({
     "common": base_common,
     "nodes": {"vm1": {
         "myip": "192.168.1.91", "config_method": "cloud-init",
-        "ISO_IMAGE": "ubuntu-24.04-live-server-amd64.iso",
+        "SOURCE_IMAGE": "ubuntu-24.04-live-server-amd64.iso",
     }},
 })
 buf = _io.StringIO()
@@ -743,13 +743,13 @@ check("validate_lab_definition: an installer ISO with a non-install_iso config_m
       ok is False and "is an installer ISO but config_method is" in buf.getvalue())
 check("validate_lab_definition: the installer-ISO mismatch doesn't also fire the softer "
       "compatibility warning (would just be redundant noise on top of the real error)",
-      "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" not in buf.getvalue())
 
 lab_iso_right_method = _lab_def({
     "common": base_common,
     "nodes": {"vm1": {
         "myip": "192.168.1.92", "config_method": "install_iso",
-        "ISO_IMAGE": "ubuntu-24.04-live-server-amd64.iso",
+        "SOURCE_IMAGE": "ubuntu-24.04-live-server-amd64.iso",
     }},
 })
 buf = _io.StringIO()
@@ -764,7 +764,7 @@ check("validate_lab_definition: an installer ISO with config_method=install_iso 
 # under a cloud-init common does not warn.
 lab_explicit_empty_override = _lab_def({
     "common": dict(base_common, **{
-        "ISO_IMAGE": "SL-Micro.x86_64-6.2-Default-qcow-GM.qcow2",
+        "SOURCE_IMAGE": "SL-Micro.x86_64-6.2-Default-qcow-GM.qcow2",
         "config_method": "cloud-init",
     }),
     "nodes": {"vm1": {"myip": "192.168.1.93", "config_method": ""}},
@@ -774,7 +774,7 @@ with _redirect_stdout(buf):
     lc.validate_lab_definition(lab_explicit_empty_override, single_host_cfg, "/iso", "/lab")
 check("validate_lab_definition: an explicit per-node config_method=\"\" wins over a non-empty "
       "common.config_method, instead of silently inheriting it",
-      "is likely unsupported on ISO_IMAGE" not in buf.getvalue())
+      "is likely unsupported on SOURCE_IMAGE" not in buf.getvalue())
 
 
 # ── VM_DSK auto-raise when it's below the source image's virtual size ───────
@@ -899,7 +899,7 @@ def _render_user_data(variables):
 _base_vars = {
     "_vm_name": "vm1.mydemo.lab", "mymac": "52:54:00:aa:bb:cc", "myip": "192.168.1.50",
     "mymask": "24", "mygw": "192.168.1.1", "mydns": "192.168.1.1", "mydomain": "mydemo.lab",
-    "ISO_IMAGE": "", "ROOT_PWD_HASH": "x",
+    "SOURCE_IMAGE": "", "ROOT_PWD_HASH": "x",
 }
 
 rendered = _render_network_config(dict(_base_vars))
@@ -909,27 +909,27 @@ check("prepare_cloud_init defaults network_renderer to NetworkManager when the l
 
 # The non-Ubuntu branch of template_user-data disables firewalld. SLES images enable it by default, and it drops inbound SSH.
 # The command is a no-op on images without firewalld.
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data disables firewalld via runcmd "
       "(real bug: a SLES BYOS AMI's default-enabled firewalld silently blocked inbound SSH "
       "even though the security group and NACL were both correctly configured)",
       "systemctl disable --now firewalld" in rendered)
 
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
 check("prepare_cloud_init: an Ubuntu image's user-data does NOT get the firewalld runcmd "
       "(it has its own netplan runcmd instead, from the existing ubuntu branch)",
       "firewalld" not in rendered and "netplan apply" in rendered)
 
 # A guarded /etc/hosts entry for the FQDN is appended in the runcmd of both branches. Without it, mgradm cannot compute the server
 # FQDN, because the VPC DNS does not know the lab's own zone. The append is idempotent.
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data adds a self-referential /etc/hosts "
       "entry for its own FQDN (real bug: mgradm's own hostname -f failed without one, since "
       "AWS's VPC DNS resolver knows nothing about this lab's custom on-prem zone)",
       'grep -qF "vm1.mydemo.lab" /etc/hosts || echo "127.0.0.1 vm1.mydemo.lab vm1" >> /etc/hosts'
       in rendered)
 
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
 check("prepare_cloud_init: an Ubuntu image's user-data gets the same self-referential "
       "/etc/hosts entry too, alongside its own netplan runcmd",
       'grep -qF "vm1.mydemo.lab" /etc/hosts || echo "127.0.0.1 vm1.mydemo.lab vm1" >> /etc/hosts'
@@ -938,7 +938,7 @@ check("prepare_cloud_init: an Ubuntu image's user-data gets the same self-refere
 # The SLES cloud-init build can drop the default gateway route when it writes the network configuration. The runcmd of the
 # non-Ubuntu branch therefore writes the wicked routes file directly, and applies the route at runtime. Both steps are idempotent
 # and non-fatal.
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ami-sles15sp7-byos"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ami-sles15sp7-byos"))
 check("prepare_cloud_init: a non-Ubuntu image's user-data writes a default route into wicked's "
       "own routes file directly (real bug: this SLES image's bundled cloud-init silently drops "
       "the gateway route from its own network-config, even when the route data is otherwise "
@@ -949,7 +949,7 @@ check("prepare_cloud_init: the same fix also applies the route immediately at ru
       "persists it for the next boot",
       "ip route show default | grep -q . || ip route add default via 192.168.1.1 || true" in rendered)
 
-rendered = _render_user_data(dict(_base_vars, ISO_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
+rendered = _render_user_data(dict(_base_vars, SOURCE_IMAGE="ubuntu-24.04-server-cloudimg-amd64.img"))
 check("prepare_cloud_init: an Ubuntu image's user-data does NOT get the wicked-routes-file "
       "workaround (Ubuntu's own netplan runcmd already applies routes correctly)",
       "/etc/sysconfig/network/routes" not in rendered)

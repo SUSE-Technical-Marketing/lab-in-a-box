@@ -42,7 +42,7 @@ import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
-from setup_vm import provision_vm  # noqa: E402
+from setup_vm import provision_vm, refresh_kept_node_dns  # noqa: E402
 
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
@@ -71,7 +71,7 @@ Options:
 
 The lab definition JSON must contain:
   nodes      — map of VM hostname → node config (myip, mymac, kcluster, …)
-  common     — shared VM settings (ISO_IMAGE, VM_MEM, VM_DSK, VM_CPU, …)
+  common     — shared VM settings (SOURCE_IMAGE, VM_MEM, VM_DSK, VM_CPU, …)
   kclusters  — map of cluster name → cluster config (clu_type, addons, …)
   <addon>    — one section per addon listed in kclusters[x].addons or nodes[x].addons
 
@@ -296,8 +296,8 @@ def validate_addon_configs(definition, json_file, issues_out=None):
 
 def phase_fetch_images(definition, config, iso_loc):
     """
-    Download every base image a node declares as a URL (SOURCE_IMAGE, or
-    ISO_URL; see lc.image_download_requests()) into ISO_LOC on each KVM host that node can be created on,
+    Download every base image a node declares as a URL in SOURCE_IMAGE
+    (see lc.image_download_requests()) into ISO_LOC on each KVM host that node can be created on,
     before the preflight looks for it there. Already-verified copies are kept;
     see lc.fetch_source_image().
     """
@@ -388,6 +388,13 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
         if keep_reusable:
             lc.log("  Skipping \"{}{}{}\" — existing VM matches definition".format(lc._RED, vm_name, lc._RESET))
             _report.add_node(vm_name, "reused")
+            # Its records are written again, so a kept node is in the DNS views that exist now, as a new one is.
+            try:
+                refresh_kept_node_dns(definition, config, defaults, vm_name)
+            except (SystemExit, RuntimeError) as e:
+                msg = "refreshing the DNS records of kept node '{}' failed (continuing): {}".format(vm_name, e)
+                lc.error(msg)
+                _report.add_error(msg)
             return
 
         if keep_backend_error is not None:
@@ -518,14 +525,14 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
         if not node_cfg.get("kcluster"):
             continue
         if targets.is_existing_node(node_cfg) or harvester.cluster_of(definition, vm_name):
-            # Not a VM this tool owns, or a Harvester appliance — nothing to reboot via libvirt.
+            # Not a VM this tool owns, or a Harvester appliance — nothing to reboot.
             continue
         lc.log("Restart node {}{}{} (cluster {}{}{})".format(
             lc._RED, vm_name, lc._RESET, lc._RED, node_cfg["kcluster"], lc._RESET))
-        # These are existing (kept) VMs — locate_kvm_host(), not resolve_kvm_host().
-        remote_host, virt_srv = lc.locate_kvm_host(definition, vm_name, config)
+        # A kept VM is rebooted by the backend that owns it, found the way the --keep check found it: libvirt
+        # on whichever KVM host runs it, a cloud through its own provider.
         boot_ids[vm_name] = lc.boot_id(vm_name)
-        lc.reboot_vm(virt_srv, vm_name, remote_host=remote_host)
+        backends.get_backend(definition, config, vm_name, for_existing=True).reboot_vm(vm_name)
     lc._level -= 1
 
     lc.log("Waiting for cluster nodes to come back online")
@@ -822,7 +829,7 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(json_file)
-    migrations.require_current(definition, json_file)
+    json_file = migrations.ensure_current(definition, json_file)
 
     iso_loc        = defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")

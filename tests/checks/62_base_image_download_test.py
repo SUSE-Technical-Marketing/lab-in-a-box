@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Base image download (a URL in SOURCE_IMAGE, or ISO_URL) — see 62_base_image_download.sh.
+# Base image download (a URL in SOURCE_IMAGE) — see 62_base_image_download.sh.
 import contextlib
 import hashlib
 import io
@@ -45,44 +45,28 @@ check("valid url + sha256 has no issues",
 check("valid url + sha256_url has no issues",
       lc.image_source_issues("n", "img.qcow2", "file:///srv/img.qcow2", "", "https://x/SUMS") == [])
 check("missing checksum is an issue",
-      any("ISO_SHA256" in i for i in lc.image_source_issues("n", "img", "https://x", "", "")))
+      any("SOURCE_SHA256" in i for i in lc.image_source_issues("n", "img", "https://x", "", "")))
 check("bad scheme is an issue",
-      any("ISO_URL" in i for i in lc.image_source_issues("n", "img", "nfs://x", GOOD, "")))
+      any("SOURCE_IMAGE" in i for i in lc.image_source_issues("n", "img", "nfs://x", GOOD, "")))
 check("ftp is a download scheme", lc.image_source_issues("n", "img", "ftp://x/img", GOOD, "") == [])
 check("image with a path is an issue",
       any("plain file name" in i for i in lc.image_source_issues("n", "../img", "https://x", GOOD, "")))
 check("malformed sha256 is an issue",
       any("64-character" in i for i in lc.image_source_issues("n", "img", "https://x", "abc", "")))
 
-# ── image_download_requests: which URL belongs to which image ──────────────
-definition = {
-    "common": {"ISO_IMAGE": "base.qcow2", "ISO_URL": "https://x/base.qcow2", "ISO_SHA256": GOOD},
-    "nodes": {
-        "a.lab": {},                                               # common image + common URL
-        "b.lab": {"ISO_IMAGE": "own.qcow2"},                       # own image, no URL
-        "c.lab": {"ISO_IMAGE": "c.img", "ISO_URL": "https://x/c.img",
-                  "ISO_SHA256_URL": "https://x/SUMS"},             # own image + own URL
-    },
-}
-reqs = {r[0]: r for r in lc.image_download_requests(definition)}
-check("common URL applies to nodes using common.ISO_IMAGE",
-      reqs.get("a.lab") == ("a.lab", "base.qcow2", "https://x/base.qcow2", GOOD, ""))
-check("a node with its own ISO_IMAGE and no ISO_URL downloads nothing", "b.lab" not in reqs)
-check("node-level URL applies to that node's image",
-      reqs.get("c.lab") == ("c.lab", "c.img", "https://x/c.img", "", "https://x/SUMS"))
-
-cloud = {"common": {"ISO_IMAGE": "ami-1", "ISO_URL": "https://x/i", "ISO_SHA256": GOOD},
+# ── image_download_requests: cloud nodes ───────────────────────────────────
+cloud = {"common": {"SOURCE_IMAGE": "https://x/i.qcow2", "SOURCE_SHA256": GOOD},
          "nodes": {"a.lab": {"cloud_account": "aws-lab"}, "b.lab": {"backend": "hetzner"},
                    "c.lab": {"backend": "libvirt"}}}
 check("cloud/Harvester nodes download nothing",
       [r[0] for r in lc.image_download_requests(cloud)] == ["c.lab"])
 
-# ── SOURCE_IMAGE as a URL: the same download as ISO_URL ────────────────────
+# ── SOURCE_IMAGE as a URL ──────────────────────────────────────────────────
 check("the image file name is the URL's last segment",
       lc.image_file_name("https://x/a/leap.qcow2?raw=1 https://y/other.qcow2") == "leap.qcow2")
 check("a node's image name is the URL's file name",
       lc.image_name({"SOURCE_IMAGE": "https://x/leap.qcow2"}) == "leap.qcow2"
-      and lc.image_name({"SOURCE_IMAGE": "", "ISO_IMAGE": "old.qcow2"}) == "old.qcow2")
+      and lc.image_name({"SOURCE_IMAGE": "", "ISO_IMAGE": "old.qcow2"}) == "")
 check("a hex checksum is the sha256", lc.source_checksum(GOOD.upper()) == (GOOD, ""))
 check("a checksum URL publishes the sha256", lc.source_checksum("https://x/SUMS") == ("", "https://x/SUMS"))
 with tempfile.NamedTemporaryFile("w", suffix=".sha256", delete=False) as fh:
@@ -92,9 +76,8 @@ Path(fh.name).unlink()
 check("SOURCE_IMAGE URL with SOURCE_SHA256",
       lc.image_source({"SOURCE_IMAGE": "https://x/leap.qcow2", "SOURCE_SHA256": "https://x/leap.qcow2.sha256"})
       == ("leap.qcow2", "https://x/leap.qcow2", "", "https://x/leap.qcow2.sha256"))
-check("ISO_URL downloads SOURCE_IMAGE",
-      lc.image_source({"SOURCE_IMAGE": "sp7.qcow2", "ISO_URL": "https://x/sp7", "ISO_SHA256": GOOD})
-      == ("sp7.qcow2", "https://x/sp7", GOOD, ""))
+check("the retired ISO_URL and ISO_SHA256 are not read",
+      lc.image_source({"SOURCE_IMAGE": "sp7.qcow2", "ISO_URL": "https://x/sp7", "ISO_SHA256": GOOD}) is None)
 check("a local SOURCE_IMAGE downloads nothing", lc.image_source({"SOURCE_IMAGE": "sp7.qcow2"}) is None)
 check("a URL without a checksum is an issue",
       lc.image_source_issues("n", *lc.image_source({"SOURCE_IMAGE": "https://x/leap.qcow2"})) != [])
@@ -105,7 +88,6 @@ mixed = {
         "b.lab": {"SOURCE_IMAGE": "own.qcow2"},                    # own local image
         "c.lab": {"SOURCE_IMAGE": "https://y/c.qcow2 https://z/c.qcow2",
                   "SOURCE_SHA256": "https://y/SUMS"},              # own URL, two mirrors
-        "d.lab": {"ISO_URL": "https://x/d", "ISO_SHA256": GOOD},  # own ISO_URL for the common image
     },
 }
 reqs = {r[0]: r for r in lc.image_download_requests(mixed)}
@@ -114,8 +96,6 @@ check("common SOURCE_IMAGE URL applies to nodes without their own image",
 check("a node with its own local SOURCE_IMAGE downloads nothing", "b.lab" not in reqs)
 check("a node's own SOURCE_IMAGE URL, mirrors kept",
       reqs.get("c.lab") == ("c.lab", "c.qcow2", "https://y/c.qcow2 https://z/c.qcow2", "", "https://y/SUMS"))
-check("a node's own ISO_URL downloads the common image name",
-      reqs.get("d.lab") == ("d.lab", "leap.qcow2", "https://x/d", GOOD, ""))
 
 
 def _preflight(definition):
@@ -140,7 +120,7 @@ check("the preflight accepts a SOURCE_IMAGE URL with its sha256", "downloaded im
 
 # ── image_source_hosts ─────────────────────────────────────────────────────
 lc._configured_hosts = lambda config: (["kvm1", "kvm2"], "kvm1")
-check("all configured hosts are candidates", lc.image_source_hosts(definition, "a.lab", {}) == ["kvm1", "kvm2"])
+check("all configured hosts are candidates", lc.image_source_hosts(mixed, "a.lab", {}) == ["kvm1", "kvm2"])
 pinned = {"nodes": {"p.lab": {"kvm_host": "kvm9"}}}
 check("an explicit kvm_host is the only candidate", lc.image_source_hosts(pinned, "p.lab", {}) == ["kvm9"])
 
@@ -221,14 +201,14 @@ lc.fetch_source_image = real_fetch
 # ── setup_lab.phase_fetch_images: one fetch per (host, image) ──────────────
 calls = []
 lc.fetch_source_image = lambda host, iso_loc, image, url, sha, sha_url: calls.append((host, image)) or "cached"
-two_nodes = {"common": {"ISO_IMAGE": "base.qcow2", "ISO_URL": "https://x/b", "ISO_SHA256": GOOD},
+two_nodes = {"common": {"SOURCE_IMAGE": "https://x/base.qcow2", "SOURCE_SHA256": GOOD},
              "nodes": {"n1.lab": {}, "n2.lab": {}}}
 setup_lab.phase_fetch_images(two_nodes, {}, "/srv/sources")
 check("each image fetched once per candidate host",
       sorted(calls) == [("kvm1", "base.qcow2"), ("kvm2", "base.qcow2")])
 calls.clear()
 setup_lab.phase_fetch_images({"common": {}, "nodes": {"n.lab": {}}}, {}, "/srv/sources")
-check("nothing fetched without ISO_URL", calls == [])
+check("nothing fetched without a URL in SOURCE_IMAGE", calls == [])
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

@@ -25,8 +25,11 @@ EOF
 cat > "${_bin}/curl" <<'EOF'
 #!/bin/bash
 echo "curl $*" >> "${STUB_LOG}"
-while [[ $# -gt 0 ]]; do [[ "$1" == --output ]] && { echo data > "$2"; shift; }; shift; done
-[[ -t 1 ]] || echo v3.99.0
+out=""
+while [[ $# -gt 0 ]]; do [[ "$1" == --output || "$1" == -o ]] && { out=$2; shift; }; shift; done
+if [[ -z "${out}" ]]; then echo v3.99.0
+elif [[ "${out}" == *.tar.gz* ]]; then printf '\037\213data' > "${out}"
+else echo data > "${out}"; fi
 EOF
 chmod 0755 "${_bin}"/*
 export PATH="${_bin}:${PATH}"
@@ -38,7 +41,7 @@ export PATH="${_bin}:${PATH}"
 AUTOMATION_HOSTNAME=automation.mydemo.lab MYREG=registry.mydemo.lab _myip=192.0.2.10 _mymask_cidr=24 _mygw=192.0.2.1
 _mydns=192.0.2.53 _mydomain=mydemo.lab _mynetrev=2.0.192 _timezone=UTC _virt_srv=root@192.0.2.2
 ROOT_SSH_PUB_KEY="ssh-ed25519 OPERATORKEY op@laptop" HOST_SSH_PUB_KEY="ssh-rsa HOSTKEY root@host"
-ROOT_PWD_HASH='$6$salt$abc/def.ghi' _host_ip=192.0.2.2 _host_name=kvmhost _host_fqdn=kvmhost.example.com myarch=amd64
+ROOT_PWD_HASH='$6$salt$abc/def.ghi' _host_ip=192.0.2.2 _host_name=kvmhost _host_fqdn=kvmhost.example.com
 _node_kind=container _node_netstack=none _python_bin=python3.11
 write_node_settings "${_t}/stage"
 [[ "$(stat -c %a "${_t}/stage${NODE_DIR}/settings")" == 600 ]] || fail "the settings file is not mode 0600"
@@ -74,6 +77,29 @@ grep -Eq "^kvmhost +IN  A +192\.0\.2\.2$" "${_zone}" || fail "the zone lacks the
 grep -Eq "^2 +IN  PTR +kvmhost\.example\.com\.$" /var/lib/named/2.0.192.db || fail "the reverse zone lacks the hypervisor's PTR record"
 [[ -x /usr/local/bin/download_latest_helm.sh && -x /srv/www/htdocs/helm/install_helm.sh ]] || fail "the helm scripts are not written"
 [[ -s /srv/www/htdocs/helm/KEYS ]] || fail "the helm files are not downloaded"
+is_gzip() { [[ "$(head -c2 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == 1f8b ]]; }
+for _arch in amd64 arm64; do
+    is_gzip "/srv/www/htdocs/helm/helm-latest-linux-${_arch}.tar.gz" || fail "the ${_arch} helm tarball is not downloaded"
+done
+# install_helm.sh picks the tarball of the machine it runs on: uname and curl are stubbed in their own PATH.
+_hb="${_t}/helmbin"
+mkdir -p "${_hb}"
+printf '#!/bin/bash\necho "$*" >> "%s/helm-urls"\nexit 1\n' "${_t}" > "${_hb}/curl"
+for _m in x86_64:amd64 aarch64:arm64; do
+    printf '#!/bin/bash\necho %s\n' "${_m%%:*}" > "${_hb}/uname"
+    chmod 0755 "${_hb}"/*
+    : > "${_t}/helm-urls"
+    PATH="${_hb}:${PATH}" bash /srv/www/htdocs/helm/install_helm.sh >/dev/null 2>&1
+    grep -q "/helm/helm-latest-linux-${_m##*:}.tar.gz" "${_t}/helm-urls" \
+        || fail "install_helm.sh on ${_m%%:*} does not fetch the ${_m##*:} tarball"
+done
+printf '#!/bin/bash\necho riscv64\n' > "${_hb}/uname"
+PATH="${_hb}:${PATH}" bash /srv/www/htdocs/helm/install_helm.sh > "${_t}/helm-out" 2>&1 \
+    && fail "install_helm.sh succeeds on an architecture no helm build is served for"
+grep -q "no helm build for architecture riscv64" "${_t}/helm-out" || fail "install_helm.sh does not name the unknown architecture"
+echo '<?xml version="1.0"?><Error><Code>BlobNotFound</Code></Error>' > /srv/www/htdocs/helm/helm-latest-linux-arm64.tar.gz
+download_helm_files /srv/www/htdocs/helm
+is_gzip /srv/www/htdocs/helm/helm-latest-linux-arm64.tar.gz || fail "a tarball that is an error page is not downloaded again"
 grep -q "^What=root@192.0.2.2:/var/lib/libvirt/images/sources$" /etc/systemd/system/srv-www-htdocs-sources.mount \
     && grep -q "StrictHostKeyChecking=accept-new" /etc/systemd/system/srv-www-htdocs-sources.mount \
     || fail "the sshfs mount unit is not written for a container node"

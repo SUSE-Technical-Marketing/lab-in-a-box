@@ -66,12 +66,12 @@ try:
 except ImportError:
     _has_yaml = False
 
-path = _tmpfile("nodes:\n  vm1:\n    myip: 192.168.1.50\ncommon:\n  ISO_IMAGE: img.qcow2\n", suffix=".yaml")
+path = _tmpfile("nodes:\n  vm1:\n    myip: 192.168.1.50\ncommon:\n  SOURCE_IMAGE: img.qcow2\n", suffix=".yaml")
 definition, error = primary.try_load_definition(path)
 if _has_yaml:
     check("try_load_definition: parses a valid .yaml file",
           error is None and definition == {"nodes": {"vm1": {"myip": "192.168.1.50"}},
-                                            "common": {"ISO_IMAGE": "img.qcow2"}})
+                                            "common": {"SOURCE_IMAGE": "img.qcow2"}})
 else:
     check("try_load_definition: .yaml without pyyaml installed fails gracefully (no exception, no dict)",
           definition is None and "pyyaml" in error.lower())
@@ -107,7 +107,7 @@ check("load_definition: dies (not crashes) on unparseable content", died)
 # never overwrites it either: it writes to "<source_path>.system_modified.
 # <fmt>" instead, so nothing about the original — including a hand-authored
 # file's own comments/formatting — is ever at risk.
-data = {"nodes": {"vm1": {"myip": "192.168.1.50"}}, "common": {"ISO_IMAGE": "img.qcow2"}}
+data = {"nodes": {"vm1": {"myip": "192.168.1.50"}}, "common": {"SOURCE_IMAGE": "img.qcow2"}}
 
 path = _tmpfile("STALE-ORIGINAL-CONTENT", suffix=".json")
 definition = primary.LabDefinition(data, path, "json")
@@ -118,6 +118,8 @@ check("save_definition: the original .json path's content is left completely unt
       Path(path).read_text() == "STALE-ORIGINAL-CONTENT")
 check("save_definition: writes valid JSON to the new path",
       json.loads(Path(output_path).read_text()) == data)
+check("save_definition: a definition read from its sibling file is saved back to that file",
+      primary.save_definition(primary.LabDefinition(data, output_path, "json")) == output_path)
 
 path = _tmpfile("", suffix=".yaml")
 definition = primary.LabDefinition(data, path, "yaml")

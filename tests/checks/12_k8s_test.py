@@ -14,6 +14,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import k8s  # noqa: E402
+import lab_schema_base  # noqa: E402
+from unittest import mock  # noqa: E402
 
 failures = []
 
@@ -298,8 +300,8 @@ check("load_kclu_vars: dies for an undefined kcluster", died)
 # ── first_server_node / addon_nodes ──────────────────────────────────────────
 definition2 = {
     "nodes": {
-        "srv1": {"INSTALL_RKE2_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
-        "agt1": {"INSTALL_RKE2_TYPE": "agent", "kcluster": "c1"},
+        "srv1": {"KUBERNETES_NODE_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
+        "agt1": {"KUBERNETES_NODE_TYPE": "agent", "kcluster": "c1"},
         "other": {"kcluster": "c2"},
     }
 }
@@ -308,7 +310,18 @@ check("first_server_node: finds the first server-typed node", name == "srv1")
 check("first_server_node: builds a root@ ssh command", "root@srv1" in ssh_cmd)
 
 check("first_server_node: returns None when no server node exists",
-      k8s.first_server_node({"nodes": {"a": {"INSTALL_RKE2_TYPE": "agent"}}}) is None)
+      k8s.first_server_node({"nodes": {"a": {"KUBERNETES_NODE_TYPE": "agent"}}}) is None)
+
+with mock.patch.dict(os.environ, {"_vm_name": "agt1"}):
+    check("first_server_node: the node setup_lab.py names in _vm_name wins over the scan",
+          k8s.first_server_node(definition2)[0] == "agt1")
+with mock.patch.dict(os.environ, {"_vm_name": ""}):
+    check("first_server_node: without _vm_name, a node in no kcluster that comes first is still the scan's pick",
+          k8s.first_server_node({"nodes": {"smlm": {}, "srv1": {"kcluster": "c1"}}})[0] == "smlm")
+check("node_role: KUBERNETES_NODE_TYPE when set", k8s.node_role({"KUBERNETES_NODE_TYPE": "agent"}) == "agent")
+check("node_role: unset gives the lab schema's own default",
+      k8s.node_role({}) == lab_schema_base.field_default("nodes", "KUBERNETES_NODE_TYPE") == "server")
+check("node_role: the retired INSTALL_RKE2_TYPE is not read", k8s.node_role({"INSTALL_RKE2_TYPE": "agent"}) == "server")
 
 nodes_with_addon = k8s.addon_nodes(definition2, "rancher")
 check("addon_nodes: finds the one node with the addon", [n for n, _ in nodes_with_addon] == ["srv1"])
@@ -424,9 +437,9 @@ class RecordingDistro(k8s.K8sDistro):
 cluster_lab = {"nodes": {
     "s1": {"kcluster": "c1"},
     "a1": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
-    "s2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "server"},
+    "s2": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "server"},
     "other": {"kcluster": "c2"},
-    "a2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "agent"},
+    "a2": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
 }}
 distro = RecordingDistro()
 ready_waits = []
@@ -435,7 +448,7 @@ with mock.patch.object(k8s, "wait_for_ssh_command",
     distro.install_cluster(cluster_lab, "c1", {})
 check("install_cluster: installs only the kcluster's nodes, in the lab definition's order",
       [c[1] for c in distro.calls] == ["s1", "a1", "s2", "a2"])
-check("install_cluster: KUBERNETES_NODE_TYPE and INSTALL_RKE2_TYPE pick agent or server (default server)",
+check("install_cluster: KUBERNETES_NODE_TYPE picks agent or server (default server)",
       [c[0] for c in distro.calls] == ["server", "agent", "server", "agent"])
 check("install_cluster: the first server's token and address go to every later node",
       distro.calls[0][2:] == (None, None) and all(c[2:] == ("tok-1", "10.0.0.1") for c in distro.calls[1:]))

@@ -16,6 +16,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
+import lab_creation  # noqa: E402
 import overlay  # noqa: E402
 
 failures = []
@@ -351,6 +352,12 @@ check("ensure_site_gateway_vm: dies naming the VM when cloud-init never finishes
 gw_create_call = next(c for c in create_backend2.calls if c[0] == "create_vm")
 check("ensure_site_gateway_vm: does NOT open any inbound port (a spoke gateway only connects OUT)",
       "open_ports" not in gw_create_call[-1] or not gw_create_call[-1].get("open_ports"))
+check("ensure_site_gateway_vm: sizes the gateway from the CLOUD_INFRA_VM_* constants, not its own literals",
+      (gw_create_call[2], gw_create_call[3], gw_create_call[4])
+      == (lab_creation.CLOUD_INFRA_VM_CPUS, lab_creation.CLOUD_INFRA_VM_MEM_MIB,
+          lab_creation.CLOUD_INFRA_VM_DSK_GIB))
+check("the gateway gets at least 1 GiB, the floor its image needs to decompress a kernel at boot",
+      lab_creation.CLOUD_INFRA_VM_MEM_MIB >= 1024)
 
 
 # ── ensure_overlay_site_gateway: full site-join flow, AllowedIPs covers every known site ──

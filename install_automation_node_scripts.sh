@@ -576,7 +576,7 @@ UNITEOF
         fi
     fi
 
-    # ── hypervisor status snapshot (feeds the status panel + live ISO_IMAGE
+    # ── hypervisor status snapshot (feeds the status panel + live SOURCE_IMAGE
     # dropdown) ──────────────────────────────────────────────────────────────
     # refresh_hypervisor_status.py runs as root on a schedule — unlike the
     # CGI (which never runs anything privileged, see lab-builder.conf's

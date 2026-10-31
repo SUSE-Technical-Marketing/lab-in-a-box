@@ -98,13 +98,12 @@ check("pattern match accepted",
 }
 
 // -- applyFieldDefault: repeat-group select never auto-fills its value ------
-// Regression test for a real bug reported live 2026-09-01: INSTALL_RKE2_TYPE
-// (a per-node/repeatable field with a schema default) always showed up in
-// the saved lab.json for every node, even ones whose role was never
-// actually chosen — because the select's own .value, not just its
-// placeholder-equivalent labeling, was being set to the default.
+// A per-node/repeatable field with a schema default (KUBERNETES_NODE_TYPE)
+// must not appear in the saved lab.json for a node whose role was never
+// chosen: the select's own .value stays unset, only its labeling shows the
+// default.
 {
-  const field = { name: "INSTALL_RKE2_TYPE", type: "string", default: "server" };
+  const field = { name: "KUBERNETES_NODE_TYPE", type: "string", default: "server" };
   const opts = [
     { value: "", dataset: { blank: "1" }, className: "" },
     { value: "server", dataset: { label: "server", fixedLabel: "" }, className: "" },
@@ -285,10 +284,10 @@ let lint = JSON.parse(JSON.stringify(sandbox.lintLab(st.model)));
 check("lint: required common settings unset while VMs have no own value are errors",
   lint.errors.some((e) => e.includes("SOURCE_IMAGE")) && lint.errors.some((e) => e.includes("VM_MEM")));
 check("lint: a common setting with a default is not required", !lint.errors.some((e) => e.includes("VM_BOOT")));
-st.model.common = { ISO_IMAGE: "x.qcow2" };
+st.model.common = { SOURCE_IMAGE: "x.qcow2" };
 st.model.items.forEach((i) => { if (i.type === "node") i.cfg.VM_MEM = 2048; });
 lint = JSON.parse(JSON.stringify(sandbox.lintLab(st.model)));
-check("lint: VMs' own values and the ISO_IMAGE alias satisfy the common settings", lint.errors.length === 0);
+check("lint: VMs' own values and the common SOURCE_IMAGE satisfy the common settings", lint.errors.length === 0);
 st.model.items.push({ id: "c2", type: "cluster", name: "empty", cfg: { clu_type: "k3s", clu_rel: "stable", mydomain: "lab" }, parent: null });
 st.model.items.push({ id: "a1", type: "addon", comp: "grafana", section: "grafana", parent: "c1" });
 st.model.items.push({ id: "a2", type: "addon", comp: "rancher", section: "rancher", parent: null });

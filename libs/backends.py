@@ -38,6 +38,7 @@ import dns_zone
 import ipalloc
 import primary
 import provisioning
+import services
 import suse_catalogue
 from lab_creation import (
     _RED, _YELLOW, _RESET,
@@ -154,9 +155,28 @@ def _reachable_for_keep(vm_name: str, myip: str) -> bool:
         log("  {}KEEP CHECK{} \"{}{}{}\": IP mismatch (want \"{}\", DNS gives \"{}\") — will recreate".format(
             _YELLOW, _RESET, _RED, vm_name, _RESET, myip, resolved_ip or "none"))
         return False
+    return _answers_ssh_for_keep(vm_name, vm_name)
+
+
+def _cloud_reachable_for_keep(vm_name: str, address) -> bool:
+    """
+    A cloud backend's vm_is_reusable() after its own state check: True when `address`, the instance's own address as
+    its provider reports it, answers on SSH as root. The provider assigns a cloud VM its address, so the lab
+    definition has no myip to compare it with, and the automation node need not serve the lab's domain; neither is
+    consulted. Logs why not otherwise ("will recreate").
+    """
+    if not address:
+        log("  {}KEEP CHECK{} \"{}{}{}\": its provider reports no address — will recreate".format(
+            _YELLOW, _RESET, _RED, vm_name, _RESET))
+        return False
+    return _answers_ssh_for_keep(vm_name, address)
+
+
+def _answers_ssh_for_keep(vm_name: str, target: str) -> bool:
+    """Whether `target` answers SSH as root, for the keep checks above. Logs "will recreate" for `vm_name` when not."""
     ssh_test = subprocess.run(
         ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-         "root@{}".format(vm_name), "exit 0"],
+         "root@{}".format(target), "exit 0"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     if ssh_test.returncode != 0:
@@ -429,18 +449,6 @@ class VMBackend(object):
         No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
-
-    def use_dns_server(self, dns_ip, mydomain=""):
-        """
-        Make this backend's network hand `dns_ip` to every VM in it as its DNS server, and `mydomain` as its search
-        domain, so a node resolves the other nodes of its own lab without anything being configured inside the guest.
-
-        A cloud node's resolver comes from the provider's own network, not from the provisioning files, so this is the
-        only place that can set it for every guest operating system at once. Called with the address of the cloud DNS
-        VM (see ensure_cloud_dns_vm()).
-
-        No-op by default. Only AWSBackend overrides it, with a VPC DHCP option set.
-        """
 
     def disable_source_dest_check(self, vm_name):
         """
@@ -1181,7 +1189,7 @@ class HarvesterBackend(VMBackend):
       - The cluster must share the bridge and L2 segment of the automation VM, so the existing DNS and
         BIND logic applies unchanged. This backend does not configure cluster networking.
       - copy_vm_image() does not import an image. The operator imports a VirtualMachineImage named after
-        ISO_IMAGE beforehand. The backend exits with a clear error if it is missing, rather than creating
+        SOURCE_IMAGE beforehand. The backend exits with a clear error if it is missing, rather than creating
         a VM without a boot disk.
       - With HARVESTER_NETWORK set in /etc/lab_creation.cfg, create_vm() attaches the VM to an existing
         Multus NetworkAttachmentDefinition ("<namespace>/<name>", or a bare name in HARVESTER_NAMESPACE).
@@ -1234,7 +1242,7 @@ class HarvesterBackend(VMBackend):
 
     @staticmethod
     def _image_name(iso_image):
-        """Derive a DNS-1123-safe VirtualMachineImage name from an ISO_IMAGE filename."""
+        """Derive a DNS-1123-safe VirtualMachineImage name from an SOURCE_IMAGE filename."""
         base = Path(iso_image or "").stem
         return re.sub(r"[^a-z0-9-]+", "-", base.lower()).strip("-") or "image"
 
@@ -1505,7 +1513,7 @@ class HetznerBackend(VMBackend):
 
       - config_method: only "cloud-init". Hetzner takes a `user_data` field at server creation, the same
         mechanism HarvesterBackend uses. Ignition and Combustion are not supported.
-      - ISO_IMAGE: Hetzner has no upload for arbitrary qcow2 or ISO files. ISO_IMAGE is either a curated
+      - SOURCE_IMAGE: Hetzner has no upload for arbitrary qcow2 or ISO files. SOURCE_IMAGE is either a curated
         system image name (e.g. "ubuntu-24.04") or the numeric ID of a private snapshot the operator
         created beforehand. It is never a qcow2 filename. The backend does not create or upload images.
       - vm_cpu and vm_mem: Hetzner sells fixed (cpu, memory) server_type SKUs (cx22, cx32, cpx31, ...)
@@ -1623,7 +1631,7 @@ class HetznerBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Hetzner (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -1671,11 +1679,11 @@ class HetznerBackend(VMBackend):
             die(str(e))
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
-        """No-op beyond validation — ISO_IMAGE is a Hetzner image NAME/ID here, not a file to
+        """No-op beyond validation — SOURCE_IMAGE is a Hetzner image NAME/ID here, not a file to
         copy anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'hetzner' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'hetzner' backend — set it to a real "
                 "Hetzner system-image name (e.g. \"ubuntu-24.04\") or your own snapshot ID".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -1758,7 +1766,7 @@ class AWSBackend(VMBackend):
     only consumes them:
 
       - config_method: only "cloud-init", passed as EC2's --user-data at launch.
-      - ISO_IMAGE: must be an AMI ID (e.g. "ami-0123456789abcdef0") the operator can access. The backend
+      - SOURCE_IMAGE: must be an AMI ID (e.g. "ami-0123456789abcdef0") the operator can access. The backend
         does not build, import or copy images.
       - Networking: EC2 needs a subnet and security group to be reachable. AWS_SUBNET_ID and
         AWS_SECURITY_GROUP_ID are optional. When omitted, EC2 uses the account's default VPC and security
@@ -2003,7 +2011,7 @@ class AWSBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on EC2 (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -2052,11 +2060,11 @@ class AWSBackend(VMBackend):
             die(str(e))
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
-        """No-op beyond validation — ISO_IMAGE is a real AMI ID here, not a file to copy anywhere
+        """No-op beyond validation — SOURCE_IMAGE is a real AMI ID here, not a file to copy anywhere
         (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'aws' backend — set it to a real AMI ID "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'aws' backend — set it to a real AMI ID "
                 "(e.g. \"ami-0123456789abcdef0\")".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -2195,6 +2203,9 @@ class AWSBackend(VMBackend):
 
           - "sles", "sles16", "sles16.0": the newest plain pay-as-you-go SLES AMI SUSE publishes.
           - "slmicro", "slmicro6", "slmicro6.1", "micro": the newest pay-as-you-go SUSE Linux Micro AMI.
+          - any of those with "-byos" appended ("slmicro6.1-byos", "sles16-byos"): the bring-your-own-subscription
+            AMI instead. It needs no AWS Marketplace subscription, which the pay-as-you-go SL Micro AMIs do, but
+            its zypper has no repositories until the node is registered with a registration code.
           - "opensuse", "leap", "leap16", "leap16.0": the newest openSUSE Leap AMI.
           - every name in libs/cloud_images.py's AWS_PRODUCTS ("ubuntu24.04", "rhel9", "rocky10", ...): the
             vendor's own current AMI, from its AWS Systems Manager public parameter or its own AWS account.
@@ -2217,16 +2228,20 @@ class AWSBackend(VMBackend):
         if vendor_id:
             return self._log_resolved(name, vendor_id, wanted)
 
-        match = re.match(r"^(sles|slmicro|micro|leap|opensuse)(\d+)?(?:[.-](\d+))?$", wanted)
+        match = re.match(r"^(sles|slmicro|micro|leap|opensuse)(\d+)?(?:[.-](\d+))?(-byos)?$", wanted)
         if not match:
             return name
-        product, major, minor = match.group(1), match.group(2), match.group(3)
+        product, major, minor, byos = match.group(1), match.group(2), match.group(3), bool(match.group(4))
         major = int(major) if major else 0
         minor = int(minor) if minor else -1
         picker, label = self._SUSE_PRODUCTS[product]
+        if byos and product in ("leap", "opensuse"):
+            die("SOURCE_IMAGE '{}': openSUSE Leap is free and has no BYOS image, so drop '-byos'".format(name))
+        if byos:
+            label += " BYOS"
         try:
             image = picker(suse_catalogue.active_images("amazon", self.region), arch_suffix,
-                           major=major, minor=minor)
+                           major=major, minor=minor, **({"byos": True} if byos else {}))
         except (OSError, ValueError) as exc:
             die("could not read SUSE's public cloud image list for AWS region '{}' to resolve SOURCE_IMAGE "
                 "'{}': {}".format(self.region, name, exc))
@@ -2333,56 +2348,6 @@ class AWSBackend(VMBackend):
         self._aws("ec2", "authorize-security-group-ingress", "--group-id", self.security_group_id,
                   "--protocol", "-1", "--source-group", self.security_group_id)
 
-    def use_dns_server(self, dns_ip, mydomain=""):
-        """
-        VMBackend.use_dns_server() override: a VPC DHCP option set naming `dns_ip` as the VPC's only DNS server and
-        `mydomain` as its search domain, associated with the VPC that holds self.subnet_id.
-
-        This is what lets a lab node resolve its own cluster peers by hostname. EC2 gives a guest its resolver over
-        DHCP, so no provisioning file can set it: a kcluster whose second server joins the first by FQDN
-        (see libs/k8s.py) has nothing to resolve that name with until the VPC itself hands out this server.
-
-        AmazonProvidedDNS cannot be listed alongside a custom server, so the DNS VM is the only resolver the VPC
-        offers, and it recurses for everything outside the lab domain itself (see dns_recursion_networks()).
-
-        Scope and timing, both deliberate: the option set belongs to the VPC, so it applies to every instance in it,
-        this project's or not; and a running instance picks it up only when its DHCP lease renews, while an instance
-        launched afterwards has it immediately. Idempotent: a VPC already handing out exactly this server and domain
-        is left untouched, so no new option set is created per lab run.
-        """
-        if not self.subnet_id or not dns_ip:
-            return
-        subnets = (self._aws("ec2", "describe-subnets", "--subnet-ids", self.subnet_id) or {}).get("Subnets") or []
-        if not subnets:
-            die("backend 'aws': subnet '{}' not found while pointing the VPC at DNS server {}".format(
-                self.subnet_id, dns_ip))
-        vpc_id = subnets[0]["VpcId"]
-
-        wanted = {"domain-name-servers": [dns_ip]}
-        if mydomain:
-            wanted["domain-name"] = [mydomain]
-
-        vpcs = (self._aws("ec2", "describe-vpcs", "--vpc-ids", vpc_id) or {}).get("Vpcs") or []
-        current_id = (vpcs[0].get("DhcpOptionsId") if vpcs else "") or ""
-        if current_id and current_id != "default":
-            opts = (self._aws("ec2", "describe-dhcp-options", "--dhcp-options-ids", current_id)
-                    or {}).get("DhcpOptions") or []
-            current = {c["Key"]: [v["Value"] for v in c.get("Values", [])]
-                       for c in (opts[0].get("DhcpConfigurations", []) if opts else [])}
-            if all(current.get(key) == value for key, value in wanted.items()):
-                _lc.log("- VPC {} already hands out DNS server {} for '{}'".format(vpc_id, dns_ip, mydomain))
-                return
-
-        _lc.log("- Pointing VPC {} at DNS server {} (search domain '{}') so its nodes resolve each "
-                "other".format(vpc_id, dns_ip, mydomain))
-        configs = ["Key={},Values={}".format(key, ",".join(value)) for key, value in sorted(wanted.items())]
-        created = self._aws("ec2", "create-dhcp-options", "--dhcp-configurations", *configs)
-        options_id = ((created or {}).get("DhcpOptions") or {}).get("DhcpOptionsId")
-        if not options_id:
-            die("backend 'aws': could not create a DHCP option set for VPC {} naming DNS server {}".format(
-                vpc_id, dns_ip))
-        self._aws("ec2", "associate-dhcp-options", "--dhcp-options-id", options_id, "--vpc-id", vpc_id)
-
     def _ensure_internet_gateway(self):
         """
         Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and
@@ -2465,7 +2430,7 @@ class AWSBackend(VMBackend):
         image_result = self._aws("ec2", "describe-images", "--image-ids", iso_image)
         images = (image_result or {}).get("Images", [])
         if not images:
-            die("AMI '{}' not found for VM '{}' — check ISO_IMAGE and AWS_REGION".format(iso_image, vm_name))
+            die("AMI '{}' not found for VM '{}' — check SOURCE_IMAGE and AWS_REGION".format(iso_image, vm_name))
         root_device = images[0].get("RootDeviceName", "/dev/xvda")
 
         # Raise vm_dsk_gb to the AMI's minimum root volume size when the requested size is smaller.
@@ -2556,7 +2521,7 @@ class GCPBackend(VMBackend):
 
       - config_method: only "cloud-init", passed as `--metadata-from-file user-data=<path>`. It points at
         the cloud-init file prepare_cloud_init() generates, so no copy or upload step is needed.
-      - ISO_IMAGE: must be a GCE image name the operator can access, such as "debian-12" or a custom image.
+      - SOURCE_IMAGE: must be a GCE image name the operator can access, such as "debian-12" or a custom image.
         The backend does not build or import images. GCP_IMAGE_PROJECT is optional and names the project that
         owns the image when it is not GCP_PROJECT (e.g. "debian-cloud" for Google's public Debian images).
         When omitted, GCP_PROJECT is assumed to own the image.
@@ -2675,7 +2640,7 @@ class GCPBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not RUNNING on GCE (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         try:
@@ -2730,11 +2695,11 @@ class GCPBackend(VMBackend):
             die(str(e))
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
-        """No-op beyond validation — ISO_IMAGE is a real GCE image name here, not a file to copy
+        """No-op beyond validation — SOURCE_IMAGE is a real GCE image name here, not a file to copy
         anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'gcp' backend — set it to a real GCE "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'gcp' backend — set it to a real GCE "
                 "image name (e.g. \"debian-12\")".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -2811,7 +2776,7 @@ class AlibabaBackend(VMBackend):
 
       - config_method: only "cloud-init", passed as `--UserData`. Alibaba Cloud requires that value to be
         Base64-encoded, and this backend encodes it. The cloud-init file on disk stays plain text.
-      - ISO_IMAGE: must be an Alibaba Cloud ImageId the operator can access. The backend does not build or
+      - SOURCE_IMAGE: must be an Alibaba Cloud ImageId the operator can access. The backend does not build or
         import images.
       - Networking is required. Alibaba Cloud VPC instances need an explicit security group and VSwitch.
         ALIBABA_SECURITY_GROUP_ID and ALIBABA_VSWITCH_ID are both mandatory.
@@ -2936,7 +2901,7 @@ class AlibabaBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not Running on Alibaba Cloud (status: {}) — will "
                 "recreate".format(_YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -2991,11 +2956,11 @@ class AlibabaBackend(VMBackend):
             die(str(e))
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
-        """No-op beyond validation — ISO_IMAGE is a real Alibaba Cloud ImageId here, not a file to
+        """No-op beyond validation — SOURCE_IMAGE is a real Alibaba Cloud ImageId here, not a file to
         copy anywhere (see this class's own docstring)."""
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'alibaba' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'alibaba' backend — set it to a real "
                 "Alibaba Cloud ImageId".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -3066,7 +3031,7 @@ class ScalewayBackend(VMBackend):
     only consumes them:
 
       - config_method must be "cloud-init", which is sent in Scaleway's user_data server field.
-      - ISO_IMAGE must be a Scaleway image ID or label.
+      - SOURCE_IMAGE must be a Scaleway image ID or label.
       - vm_cpu and vm_mem are matched to the smallest sufficient fixed server_type in
         ScalewayBackend.SERVER_TYPES. Scaleway sells fixed-SKU instances, as Hetzner and AWS do.
       - vm_dsk_gb cannot be set independently at creation for most server_types. The local or block volume
@@ -3176,7 +3141,7 @@ class ScalewayBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Scaleway (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -3226,7 +3191,7 @@ class ScalewayBackend(VMBackend):
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'scaleway' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'scaleway' backend — set it to a real "
                 "Scaleway image ID/label".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -3298,7 +3263,7 @@ class UpCloudBackend(VMBackend):
     only consumes them:
 
       - config_method must be "cloud-init".
-      - ISO_IMAGE must be an UpCloud storage or template UUID the operator can access. It is the clone source
+      - SOURCE_IMAGE must be an UpCloud storage or template UUID the operator can access. It is the clone source
         for storage_devices. It is never a qcow2 or ISO filename.
       - vm_cpu and vm_mem are matched to the smallest sufficient fixed plan in UpCloudBackend.PLANS. UpCloud
         names plans "NxCPU-MGB". This is the same fixed-SKU approach as Hetzner, AWS and Scaleway.
@@ -3415,7 +3380,7 @@ class UpCloudBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not started on UpCloud (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         server = self._find_server(vm_name)
@@ -3471,7 +3436,7 @@ class UpCloudBackend(VMBackend):
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'upcloud' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'upcloud' backend — set it to a real "
                 "UpCloud storage/template UUID".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -3541,7 +3506,7 @@ class OVHcloudBackend(VMBackend):
     consumes them:
 
       - config_method must be "cloud-init".
-      - ISO_IMAGE must be a region-scoped OVHcloud Public Cloud imageId (a UUID, looked up through OVH's image API
+      - SOURCE_IMAGE must be a region-scoped OVHcloud Public Cloud imageId (a UUID, looked up through OVH's image API
         or the console). It is not a qcow2 or ISO filename, and it is not a readable name.
       - vm_dsk_gb cannot be set at creation. The disk is bundled with the flavor, as on Hetzner and Scaleway. The
         backend warns instead of silently under-provisioning.
@@ -3682,7 +3647,7 @@ class OVHcloudBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not ACTIVE on OVHcloud (status: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, status or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         instance = self._find_instance(vm_name)
@@ -3734,7 +3699,7 @@ class OVHcloudBackend(VMBackend):
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'ovhcloud' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'ovhcloud' backend — set it to a real "
                 "OVHcloud Public Cloud imageId (UUID) for region '{}'".format(vm_name, self.region))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -3791,7 +3756,7 @@ class ExoscaleBackend(VMBackend):
 
       - config_method: only "cloud-init". It is passed to `exo compute instance create --cloud-init <file>`
         pointing at the generated cloud-init file. The CLI reads and encodes the file.
-      - ISO_IMAGE must be an Exoscale template ID or name the operator can access. It is not a qcow2 or ISO filename.
+      - SOURCE_IMAGE must be an Exoscale template ID or name the operator can access. It is not a qcow2 or ISO filename.
       - vm_cpu and vm_mem are matched to the smallest sufficient fixed instance-type in
         ExoscaleBackend.INSTANCE_TYPES, which follows Exoscale's "standard.<size>" naming.
       - vm_dsk_gb maps directly to --disk-size.
@@ -3896,7 +3861,7 @@ class ExoscaleBackend(VMBackend):
             log("  {}KEEP CHECK{} \"{}{}{}\": not running on Exoscale (state: {}) — will recreate".format(
                 _YELLOW, _RESET, _RED, vm_name, _RESET, state or "not found"))
             return False
-        return _reachable_for_keep(vm_name, myip)
+        return _cloud_reachable_for_keep(vm_name, self.get_ip(vm_name))
 
     def reboot_vm(self, vm_name):
         if not self.vm_exists(vm_name):
@@ -3961,7 +3926,7 @@ class ExoscaleBackend(VMBackend):
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method="", source_sha256=""):
         self._require_cloud_init(config_method, vm_name)
         if not iso_image:
-            die("ISO_IMAGE is required for VM '{}' on the 'exoscale' backend — set it to a real "
+            die("SOURCE_IMAGE is required for VM '{}' on the 'exoscale' backend — set it to a real "
                 "Exoscale template ID/name".format(vm_name))
 
     def push_provisioning_files(self, vm_name, config_method="", vm_img_loc=None):
@@ -4026,8 +3991,8 @@ BACKENDS = {
 CLOUD_BACKEND_NAMES = frozenset(BACKENDS) - {"libvirt", "harvester"}
 
 
-# What the cloud DNS VM serves and to whom, inserted into whichever options block the distribution has. The lab's
-# own networks are substituted into the two recursion lines; everything else gets the zone and nothing more.
+# The options block of the cloud DNS VM's named.conf (cloud_dns_options()). The lab's own networks are substituted
+# into the two recursion lines; everything else gets the zone and nothing more.
 _OPTIONS_TEMPLATE = (
     "\tlisten-on port 53 { any; };",
     "\tlisten-on-v6 port 53 { none; };",
@@ -4048,14 +4013,20 @@ _OPTIONS_TEMPLATE = (
 )
 
 
-def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -> str:
+def cloud_dns_options(lab_networks=()) -> list:
+    """The options statements of the cloud DNS VM's named.conf, recursing for `lab_networks` (CIDR strings) only."""
+    return [line.replace("__NETWORKS__", "".join("{}; ".format(c) for c in lab_networks or [])).strip()
+            for line in _OPTIONS_TEMPLATE]
+
+
+def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
     """
-    Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(): it installs BIND, writes the serving
-    policy this server needs on a public address, and starts named. It does NOT create the zone. The VM is one of
-    the lab's DNS masters, so DNSService.ensure_zone() (libs/services.py) creates the zone over SSH once the VM is
-    up, the same way it does for every other master — setup_vm.py adds this VM's address to remote_dns_servers,
-    and add_to_dns() reaches it from there. One zone-creation path, rather than one here and one there that have
-    to be kept saying the same thing.
+    Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(): it installs BIND and starts it. It
+    does NOT configure what named serves: ensure_cloud_dns_vm() writes the whole named.conf over SSH once the VM is
+    up (DNSService.serve_site_view() in libs/services.py), on a VM it creates and on one it reuses alike. Nor does it
+    create the zone: the VM is one of the lab's DNS masters, so DNSService.ensure_zone() creates the zone over SSH,
+    the same way it does for every other master — setup_vm.py adds this VM's address to remote_dns_servers, and
+    add_to_dns() reaches it from there.
 
     The DNS VM boots from the lab's own image, so runcmd detects the OS family from /etc/os-release for the things
     that must happen at first boot:
@@ -4068,12 +4039,7 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -
     rewrite its AppArmor profile or relabel for SELinux at all.
 
     runcmd entries run as one shell script, so the variables set by the first entry apply to the later ones.
-
-    Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
-    the path.
     """
-    _OPTIONS_LINES = [line.replace("__NETWORKS__", "".join("{}; ".format(c) for c in lab_networks or []))
-                      for line in _OPTIONS_TEMPLATE]
 
     def yq(s):
         """YAML single-quoted scalar: wrap in '...', doubling any literal ' per YAML's own
@@ -4091,16 +4057,6 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, lab_networks=()) -
         ' esac'.format(deb=dns_zone.ZONE_DIR_DEBIAN, other=dns_zone.ZONE_DIR_DEFAULT),
         'sh -c "$BIND_INSTALL"',
         "mkdir -p \"$ZONE_DIR\"",
-        # The serving policy is written rather than patched into whatever the distribution shipped, because this
-        # server answers on a public address: it is authoritative for the lab's zone to anyone, recurses only for
-        # the lab's own networks, rate-limits what it answers so it cannot be used to amplify an attack at someone
-        # else, hands out no zone transfers and does not announce its version. The distribution's own conflicting
-        # lines are removed first, so there is one policy and it is this one.
-        'OPTS=/etc/bind/named.conf.options; [ -f "$OPTS" ] || OPTS=/etc/named.conf',
-        'sed -i -e "/^[[:space:]]*\\(recursion\\|allow-query\\|allow-recursion\\|allow-query-cache'
-        '\\|allow-transfer\\|allow-update\\|version\\|listen-on\\|listen-on-v6\\|rate-limit\\|forwarders\\|forward\\)/d" "$OPTS"',
-        'sed -i "/^[[:space:]]*options[[:space:]]*{/a \\' + "\n".join(_OPTIONS_LINES) + '" "$OPTS"',
-        'named-checkconf || { echo "named-checkconf refused the generated configuration" >&2; exit 1; }',
         'chown -R "$BIND_USER:$BIND_USER" "$ZONE_DIR"',
         'chmod 0755 "$ZONE_DIR"',
         "systemctl enable --now named 2>/dev/null || systemctl enable --now bind9",
@@ -4155,7 +4111,19 @@ def dns_recursion_networks(backend):
     return networks
 
 
-def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
+def cloud_dns_vm_name(backend, backend_name: str) -> str:
+    """
+    The name of the cloud DNS VM `backend` uses: "lab-dns-<backend_name>" for the unnamed or "default" cloud account,
+    "lab-dns-<backend_name>-<account>" for a named one, since each account is its own cloud network.
+    """
+    acct = getattr(backend, "account", "") or ""
+    if acct in ("", "default"):
+        return "lab-dns-{}".format(backend_name)
+    return "lab-dns-{}-{}".format(backend_name, acct)
+
+
+def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image="",
+                        site=""):
     """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
     There is one DNS VM per backend, e.g. "lab-dns-aws", reused by every lab that uses that backend. It is not
@@ -4166,17 +4134,24 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     cloud network, and its nodes resolve each other through it. See provision_vm() in setup_vm.py for how this plugs
     into add_to_dns()'s remote_dns_servers mechanism.
 
-    Nodes are pointed at this server by the backend's own use_dns_server(), called right after this returns, which
-    configures the cloud network to hand it out. A node created after that resolves its lab peers by hostname from
-    first boot; a node already running picks the server up when its DHCP lease renews.
+    Each cloud node is pointed at this server's private address from inside the guest once it is up
+    (lab_creation.use_lab_dns(), called by setup_vm.py's provision_vm()), whatever the provider's DHCP hands out.
+
+    The server answers in two views (DNSService.serve_site_view()), configured every time this returns, on a VM it
+    creates and on one it reuses. A client reaching it from a private address, which is a node of `site` or one
+    routed to it, gets `site`'s view, where that site's own nodes are at their private addresses: traffic between
+    two nodes of one cloud network then stays inside it, instead of leaving through the internet gateway to come
+    back from a public address the network's own rules do not admit. Every other client gets the external view,
+    the public addresses every other master serves. Without `site` the server is left serving what it already does.
 
     With multiple cloud accounts (backend.account set, see resolve_cloud_account()), each account is an isolated
     cloud network, so the DNS VM is per account: "lab-dns-<backend>-<account>". The unnamed or "default" account
     keeps the plain "lab-dns-<backend>" name.
 
     Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
-    If the VM does not exist, it is created with the same backend's create_vm(), at the smallest instance or plan size
-    (1 vCPU and 512 MiB, enough for BIND). Its image is the first of: `preferred_image` (the account's CLOUD_DNS_IMAGE,
+    If the VM does not exist, it is created with the same backend's create_vm(), at lab_creation.CLOUD_INFRA_VM_CPUS /
+    CLOUD_INFRA_VM_MEM_MIB / CLOUD_INFRA_VM_DSK_GIB — the smallest size its image can boot, which is set by kernel
+    decompression and not by BIND. Its image is the first of: `preferred_image` (the account's CLOUD_DNS_IMAGE,
     see cloud_dns_image()), the backend's opensuse_image(), and `iso_image`, the image the calling lab configured. The
     image is looked up only when the VM is created. copy_vm_image() needs iso_loc and vm_img_loc only for libvirt. Each
     cloud backend's copy_vm_image() validation is a no-op.
@@ -4184,16 +4159,16 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
     """
-    acct = getattr(backend, "account", "") or ""
-    if acct in ("", "default"):
-        dns_vm_name = "lab-dns-{}".format(backend_name)
-    else:
-        dns_vm_name = "lab-dns-{}-{}".format(backend_name, acct)
+    dns_vm_name = cloud_dns_vm_name(backend, backend_name)
+    networks = dns_recursion_networks(backend)
 
     if backend.vm_exists(dns_vm_name):
         ip = backend.get_ip(dns_vm_name)
         if ip:
             log("- Reusing existing cloud DNS VM \"{}{}{}\" ({})".format(_RED, dns_vm_name, _RESET, ip))
+            if site:
+                services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
+                                                      cloud_dns_options(networks))
             return ip
         die("cloud DNS VM '{}' exists on backend '{}' but reported no IP — check it manually "
             "before retrying".format(dns_vm_name, backend_name))
@@ -4206,16 +4181,15 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)
-    (base / "{}_user-data".format(dns_vm_name)).write_text(
-        _cloud_dns_vm_user_data(root_ssh_key, mydomain, lab_networks=dns_recursion_networks(backend)))
+    (base / "{}_user-data".format(dns_vm_name)).write_text(_cloud_dns_vm_user_data(root_ssh_key, mydomain))
 
-    backend.copy_vm_image(iso_image, dns_vm_name, 8, config_method="cloud-init")
+    backend.copy_vm_image(iso_image, dns_vm_name, _lc.CLOUD_INFRA_VM_DSK_GIB, config_method="cloud-init")
     backend.push_provisioning_files(dns_vm_name, config_method="cloud-init")
     # DNS, and nothing else. A lab node resolves through this server from whatever network it is in, so 53 has to
     # be reachable; the server itself answers the lab's own zone to anyone and recurses only for the lab's networks
-    # (see _cloud_dns_vm_user_data), so an open 53 is not an open resolver. SSH is opened by the backend's own rule.
+    # (see cloud_dns_options()), so an open 53 is not an open resolver. SSH is opened by the backend's own rule.
     ip = backend.create_vm(
-        dns_vm_name, 1, 512, 8, None,
+        dns_vm_name, _lc.CLOUD_INFRA_VM_CPUS, _lc.CLOUD_INFRA_VM_MEM_MIB, _lc.CLOUD_INFRA_VM_DSK_GIB, None,
         config_method="cloud-init", iso_image=iso_image, mymac=None,
         open_ports=["53/udp", "53/tcp"],
     )
@@ -4235,6 +4209,9 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
             "manually (SSH in and inspect cloud-init's own log, /var/log/cloud-init-output.log)"
             .format(dns_vm_name, ip))
 
+    if site:
+        services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
+                                              cloud_dns_options(networks))
     log("- Cloud DNS VM \"{}{}{}\" ready at {}".format(_RED, dns_vm_name, _RESET, ip))
     return ip
 

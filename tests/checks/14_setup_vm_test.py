@@ -62,7 +62,7 @@ class _FakeBackend:
 
 definition = {
     "nodes": {"vm1": {"myip": "192.168.1.50"}},
-    "common": {"ISO_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2"},
+    "common": {"SOURCE_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_DSK": "40", "VM_CPU": "2"},
 }
 config = {"REMOTE_HOST": "hv1", "VIRT_SRV": "qemu+ssh://root@hv1/system?keyfile=.ssh/id_rsa"}
 defaults = {"ISO_LOC": "/iso", "LAB_SETUP_PATH": "/lab", "VM_IMG_LOC": "/var/lib/libvirt/images/"}
@@ -73,7 +73,7 @@ setup_vm.backends.get_backend = lambda *a, **kw: _FakeBackend()
 setup_vm.load_vm_vars = lambda definition, vm_name: {
     "myip": "192.168.1.50", "mymac": "", "mydomain": "mydemo.lab",
     "config_method": "cloud-init", "VM_CPU": "2", "VM_MEM": "4096", "VM_DSK": "40",
-    "ISO_IMAGE": "img.qcow2", "cloud_instance_type": "m5.2xlarge",
+    "SOURCE_IMAGE": "img.qcow2", "cloud_instance_type": "m5.2xlarge",
 }
 setup_vm.prepare_cloud_init = _rec("prepare_cloud_init")
 setup_vm.prepare_ignition_combustion = _rec("prepare_ignition_combustion")
@@ -82,11 +82,24 @@ setup_vm.prepare_install_iso = _rec("prepare_install_iso")
 setup_vm.add_to_dns = _rec("add_to_dns")
 setup_vm.clean_ssh_keys = _rec("clean_ssh_keys")
 setup_vm.check_ssh_conn = _rec("check_ssh_conn")
+setup_vm.register_suse = _rec("register_suse")
+setup_vm.boot_id = lambda host: order.append("boot_id") or "boot-1"
+reboot_waits = []
+setup_vm.wait_for_reboot = lambda host, old: order.append("wait_for_reboot") or reboot_waits.append((host, old)) or True
+lab_dns_calls = []
+setup_vm.use_lab_dns = lambda host, ip, domain, check_name="": order.append("use_lab_dns") or lab_dns_calls.append(
+    (host, ip, domain, check_name))
 
 setup_vm.provision_vm(definition, config, defaults, "vm1")
 
 check("provision_vm: MAC resolved before the image is copied",
       order.index("check_or_generate_mac") < order.index("copy_vm_image"))
+check("provision_vm: the boot id is read before the reboot and waited to change after it, since the SSH port of a "
+      "node going down still answers",
+      order.index("boot_id") < order.index("reboot_vm") < order.index("wait_for_reboot")
+      and reboot_waits[-1] == ("192.168.1.50", "boot-1"))
+check("provision_vm: SSH is polled only once the node is in its new boot",
+      order.index("wait_for_reboot") < len(order) - 1 - order[::-1].index("check_ssh_conn"))
 check("provision_vm: config_method='cloud-init' dispatches to prepare_cloud_init only",
       "prepare_cloud_init" in order
       and "prepare_ignition_combustion" not in order
@@ -97,8 +110,17 @@ check("provision_vm: DNS is registered AFTER the VM is created "
       order.index("create_vm") < order.index("add_to_dns"))
 check("provision_vm: the VM is created before the first connectivity wait",
       order.index("create_vm") < order.index("check_ssh_conn"))
-check("provision_vm: rebooted, then waited on again, after the first connectivity check",
-      order.count("check_ssh_conn") == 2 and order.index("reboot_vm") == order.index("check_ssh_conn") + 1)
+check("provision_vm: pointed at the lab DNS right after the first connectivity check, then rebooted and waited on "
+      "again, so the reboot shows the DNS configuration lasts",
+      order.count("check_ssh_conn") == 2
+      and order.index("use_lab_dns") == order.index("check_ssh_conn") + 1
+      and order.index("boot_id") == order.index("use_lab_dns") + 1
+      and order.index("reboot_vm") == order.index("boot_id") + 1)
+check("provision_vm: a libvirt node has no cloud DNS VM to be pointed at", lab_dns_calls[-1][1] == "")
+check("provision_vm: a SUSE node is registered once it is reachable after its reboot, before anything installs "
+      "packages on it",
+      order.count("register_suse") == 1
+      and order.index("register_suse") > len(order) - 1 - order[::-1].index("check_ssh_conn"))
 check("provision_vm: stale SSH host keys cleaned before the connectivity wait",
       order.index("clean_ssh_keys") < order.index("check_ssh_conn"))
 check("provision_vm: cloud_instance_type is threaded from env through to backend.create_vm() "
@@ -122,7 +144,7 @@ order.clear()
 setup_vm.load_vm_vars = lambda definition, vm_name: {
     "myip": "192.168.1.50", "mymac": "", "mydomain": "mydemo.lab",
     "config_method": "", "VM_CPU": "2", "VM_MEM": "4096", "VM_DSK": "40",
-    "ISO_IMAGE": "img.qcow2",
+    "SOURCE_IMAGE": "img.qcow2",
 }
 setup_vm.provision_vm(definition, config, defaults, "vm1")
 check("provision_vm: config_method='' dispatches to prepare_ignition_combustion",
@@ -144,7 +166,7 @@ class _FakeCloudBackend(_FakeBackend):
         return "172.31.16.0/20"
 
     def get_private_ip(self, vm_name):
-        return "172.31.22.45"
+        return "172.31.0.53" if isinstance(vm_name, str) and vm_name.startswith("lab-dns-") else "172.31.22.45"
 
     def disable_source_dest_check(self, vm_name):
         order.append("disable_source_dest_check:" + self.account)
@@ -152,8 +174,6 @@ class _FakeCloudBackend(_FakeBackend):
     def allow_internal_traffic(self):
         order.append("allow_internal_traffic:" + self.account)
 
-    def use_dns_server(self, dns_ip, mydomain=""):
-        order.append("use_dns_server:{}:{}:{}".format(self.account, dns_ip, mydomain))
 
 
 for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway")):
@@ -161,7 +181,7 @@ for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway"
     hub_backend, node_backend = _FakeCloudBackend("hub"), _FakeCloudBackend(node_account)
     setup_vm.load_vm_vars = lambda definition, vm_name: {
         "myip": "", "mymac": "", "mydomain": "mydemo.lab", "config_method": "cloud-init", "VM_CPU": "2",
-        "VM_MEM": "4096", "VM_DSK": "40", "ISO_IMAGE": "ami-1", "overlay": "true", "OVERLAY_HUB_ACCOUNT": "hub"}
+        "VM_MEM": "4096", "VM_DSK": "40", "SOURCE_IMAGE": "ami-1", "overlay": "true", "OVERLAY_HUB_ACCOUNT": "hub"}
     with mock.patch.object(setup_vm.backends, "get_backend", return_value=node_backend), \
             mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="aws"), \
             mock.patch.object(setup_vm.backends, "resolve_cloud_account", return_value=(node_account, {}, "aws")), \
@@ -173,14 +193,60 @@ for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway"
         ov.site_name_for.side_effect = lambda backend_name, account: "aws-" + account
         ov.list_other_sites.return_value = [("home", "192.168.88.0/24")]
         setup_vm.provision_vm(definition, config, defaults, "vm1")
-    check("provision_vm ({}): the cloud network is pointed at the lab's own DNS VM".format(branch),
-          "use_dns_server:{}:10.0.0.53:mydemo.lab".format(node_account) in order)
+    check("provision_vm ({}): the node is pointed at the lab's own DNS VM by its private address, since a query "
+          "to the public one arrives from outside and is refused recursion".format(branch),
+          lab_dns_calls[-1][1:3] == ("172.31.0.53", "mydemo.lab"))
     check("provision_vm overlay ({}): traffic between the account's own VMs is allowed".format(branch),
           "allow_internal_traffic:" + node_account in order)
     check("provision_vm overlay ({}): the node is routed through its site gateway".format(branch),
           ov.ensure_route_via_site_gateway.call_args[0] == ("vm1", "172.31.22.45", ["192.168.88.0/24"]))
     check("provision_vm overlay ({}): a site gateway VM is created only outside the hub's account".format(branch),
           ov.ensure_site_gateway_vm.called == (node_account != "hub"))
+
+# ── register_dns(): a cloud node is in its own site's view at its private address ───────────────────────────
+dns_calls = []
+setup_vm.add_to_dns = lambda *a, **kw: dns_calls.append((a, kw))
+cloud_backend = _FakeCloudBackend("acct1")
+cloud_env = {"myip": "18.0.0.9", "mydomain": "mydemo.lab", "SOURCE_IMAGE": "ami-1"}
+with mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="aws"), \
+        mock.patch.object(setup_vm.backends, "ensure_cloud_dns_vm", return_value="18.0.0.53") as ensured, \
+        mock.patch("pathlib.Path.read_text", return_value="ssh-rsa KEY"):
+    dns = setup_vm.register_dns(definition, config, cloud_backend, "vm1", cloud_env, "/lab")
+check("register_dns: the cloud DNS VM is configured for the node's site",
+      ensured.call_args[1].get("site") == "aws-acct1")
+check("register_dns: a cloud node is written at its public address, and at its private one in its site's view",
+      dns_calls[-1][0][:2] == ("vm1", "18.0.0.9")
+      and dns_calls[-1][1].get("site") == "aws-acct1" and dns_calls[-1][1].get("private_ip") == "172.31.22.45")
+check("register_dns: the DNS VM is written to as a master, and the node resolves through its private address",
+      "18.0.0.53" in dns_calls[-1][1]["remote_dns_servers"] and dns.lab_dns_ip == "172.31.0.53")
+
+dns_calls.clear()
+with mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="libvirt"):
+    dns = setup_vm.register_dns(definition, config, _FakeBackend(), "vm1", {"myip": "192.168.1.50"}, "/lab")
+check("register_dns: a node outside any cloud has no site and is not repointed",
+      dns_calls[-1][1].get("site") == "" and dns.lab_dns_ip == "")
+
+# ── refresh_kept_node_dns(): a node --keep reuses is registered from the address its backend reports ──────────
+class _KeptBackend(_FakeCloudBackend):
+    def get_ip(self, vm_name):
+        return "18.0.0.77"
+
+
+kept_definition = {"nodes": {"vm1": {}}}
+lab_dns_calls.clear()
+with mock.patch.object(setup_vm.backends, "get_backend", return_value=_KeptBackend("acct1")), \
+        mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="aws"), \
+        mock.patch.object(setup_vm.backends, "ensure_cloud_dns_vm", return_value="18.0.0.53"), \
+        mock.patch.object(setup_vm.harvester, "cluster_of", return_value=""), \
+        mock.patch("pathlib.Path.read_text", return_value="ssh-rsa KEY"):
+    setup_vm.load_vm_vars = lambda definition, vm_name: {"myip": "", "mydomain": "mydemo.lab"}
+    setup_vm.refresh_kept_node_dns(kept_definition, config, defaults, "vm1")
+check("refresh_kept_node_dns: the kept node is registered at the address its backend reports",
+      dns_calls[-1][0][:2] == ("vm1", "18.0.0.77") and dns_calls[-1][1].get("private_ip") == "172.31.22.45")
+check("refresh_kept_node_dns: the address is kept on the definition for the add-ons",
+      kept_definition["nodes"]["vm1"]["myip"] == "18.0.0.77")
+check("refresh_kept_node_dns: the kept node is pointed at its site's DNS VM from inside the guest",
+      lab_dns_calls[-1][:3] == ("18.0.0.77", "172.31.0.53", "mydemo.lab"))
 
 # ── main(): --version / --help exit cleanly ─────────────────────────────────
 import io

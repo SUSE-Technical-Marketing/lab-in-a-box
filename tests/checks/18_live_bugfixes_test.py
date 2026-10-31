@@ -136,6 +136,15 @@ except RuntimeError:
     ok = False
 check("DNSService.add_service_dns: an unreachable secondary DNS server does not raise", ok)
 
+svc.add_service_dns(
+    {"nodes": {"s1": {"myip": "192.168.88.21", "kcluster": "c2"},
+               "a1": {"myip": "192.168.88.22", "kcluster": "c2", "KUBERNETES_NODE_TYPE": "agent"},
+               "x1": {"myip": "192.168.88.23", "kcluster": "c2", "INSTALL_RKE2_TYPE": "agent"}}},
+    "c2", "rke2", "svc2", "mydemo.lab")
+_svc_lines = [l for l in (services.NAMED_ZONE_DIR / "mydemo.lab.lan").read_text().splitlines() if l.startswith("svc2")]
+check("DNSService.add_service_dns: points at the KUBERNETES_NODE_TYPE agents only, the retired key is not read",
+      _svc_lines == ["svc2\tIN A  192.168.88.22"])
+
 # And confirm it's genuinely check=False being passed, not just a lucky
 # no-op — every remote-server SSH call the two DNS-mutating paths make must
 # explicitly opt out of raising.
@@ -168,7 +177,7 @@ check("DNSService.add_to_dns: reusing an IP replaces the OLD PTR record, not "
 check("DNSService.add_to_dns: the NEW PTR record for the reused IP is present",
       any("venus.mydemo.lab" in l for l in rev_lines))
 check("DNSService.add_to_dns: exactly one PTR record exists for the IP, not two",
-      len(rev_lines) == 1)
+      len([l for l in rev_lines if l.split()[:1] == ["142"] and "PTR" in l.split()]) == 1)
 
 # A different octet must be completely unaffected by this — the removal is
 # keyed on the octet as a whole token, not a substring (same node1-vs-node10
@@ -886,7 +895,7 @@ with tempfile.TemporaryDirectory() as tmp:
     smlm_json = Path(tmp) / "lab.json"
     smlm_json.write_text(
         '{"common": {}, "nodes": {"srv1.mydemo.lab": {"myip": "10.0.0.1", "kcluster": "c1", '
-        '"INSTALL_RKE2_TYPE": "server"}}, "kclusters": {"c1": {"clu_type": "rke2", '
+        '"KUBERNETES_NODE_TYPE": "server"}}, "kclusters": {"c1": {"clu_type": "rke2", '
         '"mydomain": "mydemo.lab"}}, "smlm": {"smlm_fqdn": "smlm.mydemo.lab", '
         '"smlm_scc_user": "u", "smlm_scc_password": "p"}}'
     )
@@ -1071,7 +1080,7 @@ backends.resolve_cloud_account = _real_resolve
 _setup_vm_src = (_REPO / "scripts" / "setup_vm.py").read_text()
 check("setup_vm.py: cloud_dns_image() reaches ensure_cloud_dns_vm() as preferred_image, the lab's image as iso_image",
       "preferred_image=backends.cloud_dns_image(definition, config, vm_name)" in _setup_vm_src
-      and "env.get(\"SOURCE_IMAGE\") or env.get(\"ISO_IMAGE\", \"\"), lab_setup_path" in _setup_vm_src)
+      and "env.get(\"SOURCE_IMAGE\", \"\"), lab_setup_path" in _setup_vm_src)
 
 # ── waiting for a condition, not for the clock ───────────────────────────
 # Two fixed waits were removed: a 5 s guess before polling a rebooted node's port, which the node answered on its
@@ -1081,7 +1090,7 @@ _lab = (_REPO / "scripts" / "setup_lab.py").read_text()
 check("the reboot wait compares the node's own boot id",
       "lc.boot_id(vm_name)" in _lab and "lc.wait_for_reboot(vm_name, boot_ids[vm_name])" in _lab)
 check("the boot id is taken before the node is rebooted",
-      _lab.index("boot_ids[vm_name] = lc.boot_id(vm_name)") < _lab.index("lc.reboot_vm(virt_srv, vm_name"))
+      _lab.index("boot_ids[vm_name] = lc.boot_id(vm_name)") < _lab.index("for_existing=True).reboot_vm(vm_name)"))
 check("the cluster is waited for by its own system workloads",
       "k8s.wait_system_ready(" in _lab and "delay_min" in _lab)
 check("setup_lab no longer sleeps at all", "time.sleep(" not in _lab)

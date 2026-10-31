@@ -3,7 +3,7 @@
     "legacy1.mydemo.lab": {
       "myip": "192.168.88.120",
       "config_method": "virt_customize",
-      "ISO_IMAGE": "CentOS-7-x86_64-GenericCloud-20150628_01.qcow2",
+      "SOURCE_IMAGE": "CentOS-7-x86_64-GenericCloud-20150628_01.qcow2",
       "VM_BOOT": "bios",
       "VM_MACHINE": "pc"
     }

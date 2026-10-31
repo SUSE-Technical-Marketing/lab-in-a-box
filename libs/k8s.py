@@ -17,6 +17,7 @@ Typical usage:
 # Author/s: Raul Mahiques
 # License: GPLv3
 
+import os
 import re
 import shlex
 import subprocess
@@ -32,6 +33,7 @@ from lab_creation import (
 )
 from services import DNSService
 import apps
+from lab_schema_base import field_default
 
 
 # ── Cluster metadata ──────────────────────────────────────────────────────────
@@ -121,7 +123,7 @@ class K8sDistro(object):
 
     def install_cluster(self, definition, clu_name, clu_ctx):
         """Install the cluster on its nodes: install_server() or install_agent() on each, in the lab definition's
-        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server. Then wait until the
+        order, by node_role(). Then wait until the
         first server reports every node Ready; raises RuntimeError when that takes longer than ready_timeout seconds."""
         token = None
         rancher1_ip = None
@@ -130,8 +132,7 @@ class K8sDistro(object):
             if node_cfg.get("kcluster") != clu_name:
                 continue
             node_count += 1
-            node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
-            if node_type == "agent":
+            if node_role(node_cfg) == "agent":
                 token, rancher1_ip = self.install_agent(vm_name, clu_name, clu_ctx, token, rancher1_ip)
             else:
                 token, rancher1_ip = self.install_server(vm_name, clu_name, clu_ctx, token=token,
@@ -805,18 +806,26 @@ def cluster_provides(definition, clu_name):
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────
 
+def node_role(node_cfg: dict) -> str:
+    """A node's Kubernetes role, "server" or "agent": its KUBERNETES_NODE_TYPE, else the lab schema's default."""
+    return str((node_cfg or {}).get("KUBERNETES_NODE_TYPE") or field_default("nodes", "KUBERNETES_NODE_TYPE"))
+
+
 def first_server_node(definition):
     """
-    Return (vm_name, ssh_cmd) for the first server node in the definition, or None if there is none. This matches on_first_server.
-    A node is a server when INSTALL_RKE2_TYPE is "server" or absent.
+    Return (vm_name, ssh_cmd) for the node an add-on runs on, or None if there is none.
+
+    setup_lab.py names that node in the `_vm_name` environment variable: the first server of the kcluster for a
+    cluster add-on, the node itself for a node add-on. Without it, as when an add-on is run by hand, this is the first
+    node in the definition whose node_role() is "server".
     """
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("INSTALL_RKE2_TYPE", "") in ("server", ""):
-            ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
-            log("# Using node: {}".format(vm_name))
-            return vm_name, ssh_cmd
-    warn("No server node found in definition")
-    return None
+    vm_name = os.environ.get("_vm_name", "") or next(
+        (name for name, node_cfg in (definition.get("nodes") or {}).items() if node_role(node_cfg) == "server"), "")
+    if not vm_name:
+        warn("No server node found in definition")
+        return None
+    log("# Using node: {}".format(vm_name))
+    return vm_name, "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
 
 
 def kcluster_node(definition, clu_name):
@@ -834,7 +843,7 @@ def kcluster_node(definition, clu_name):
     members = [(name, cfg or {}) for name, cfg in (definition.get("nodes") or {}).items()
                if (cfg or {}).get("kcluster") == clu_name]
     for name, cfg in members:
-        if (cfg.get("KUBERNETES_NODE_TYPE") or cfg.get("INSTALL_RKE2_TYPE") or "server") == "server":
+        if node_role(cfg) == "server":
             return name
     return members[0][0] if members else ""
 

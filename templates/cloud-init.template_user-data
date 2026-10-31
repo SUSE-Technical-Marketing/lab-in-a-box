@@ -21,7 +21,7 @@ users:
 # The netplan block below configures one static address, so it is only written for a node that has
 # one. A cloud backend assigns the address itself and leaves myip empty, and its instance gets its
 # address, gateway and resolver from the provider network over DHCP.
-$( if [[ "${ISO_IMAGE,,}" == *ubuntu* && -n "${myip}" ]]; then
+$( if [[ "${SOURCE_IMAGE,,}" == *ubuntu* && -n "${myip}" ]]; then
 cat <<CI_UBUNTU
 write_files:
   - path:  /etc/netplan/50-cloud-init.yaml

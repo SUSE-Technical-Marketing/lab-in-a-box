@@ -10,6 +10,7 @@
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -168,6 +169,219 @@ check("validate_zones names this host when its own zone does not load",
 forward.write_text(intact)
 check("the restored zone loads again", svc.zone_loads(None, DOMAIN, dns_zone.forward_file(DOMAIN))[0] is True)
 check("...and validate_zones then reports nothing", svc.validate_zones(DOMAIN, REVERSE) == [])
+
+# ── a declared zone whose file never got a header is repaired, and then answers ─────────────────────────
+# The shape a live cloud lab's zone was found in: declared in named.conf, its file holding A records and nothing
+# else, because records reached it before its header did. BIND rejects such a zone whole, ensure_zone used to skip
+# it as already declared, and so nothing ever repaired it.
+forward.write_text("\n".join(line for line in intact.splitlines()
+                             if line.split() and line.split()[0] not in ("$TTL", "@", "IN", "ns")) + "\n"
+                   + "orphan IN A 192.0.2.77\n")
+check("the reproduced zone has records and no SOA", not dns_zone.has_header(forward.read_text())
+      and "orphan" in forward.read_text())
+reload_named()
+check("...and a real named rejects it whole", "status: SERVFAIL" in dig("SOA", DOMAIN))
+before = len(re.findall(r'zone "{}"'.format(re.escape(DOMAIN)), named_conf.read_text()))
+check("ensure_zone repairs it without calling it created, since its records were already there",
+      svc.ensure_zone(None, DOMAIN, REVERSE) is False)
+check("the repaired zone has a header in front of every record it held",
+      dns_zone.has_header(forward.read_text()) and "orphan IN A 192.0.2.77" in forward.read_text())
+check("the repair declares nothing twice",
+      len(re.findall(r'zone "{}"'.format(re.escape(DOMAIN)), named_conf.read_text())) == before)
+repaired = run("named-checkzone", DOMAIN, str(forward))
+check("named-checkzone accepts the repaired zone: " + repaired.stdout.strip(), repaired.returncode == 0)
+check("named serves the repaired zone's SOA", "status: NOERROR" in dig("SOA", DOMAIN))
+check("...and answers the record that was there before the header",
+      "192.0.2.77" in dig("+short", "A", "orphan." + DOMAIN))
+text = forward.read_text()
+check("a second ensure_zone leaves a zone with a header untouched",
+      svc.ensure_zone(None, DOMAIN, REVERSE) is False and forward.read_text() == text)
+
+# The same repair on a remote master is one shell command; run it in a real shell against real files.
+remote_file = tmp / "remote.zone"
+remote_file.write_text("orphan IN A 192.0.2.77\n")
+header = dns_zone.forward_header(DOMAIN)
+first = run("sh", "-c", services._header_command(str(remote_file), header))
+check("the remote command adds a header to a file with none and exits 0",
+      first.returncode == 0 and dns_zone.has_header(remote_file.read_text())
+      and "orphan IN A 192.0.2.77" in remote_file.read_text())
+check("...which named-checkzone accepts", run("named-checkzone", DOMAIN, str(remote_file)).returncode == 0)
+text = remote_file.read_text()
+again = run("sh", "-c", services._header_command(str(remote_file), header))
+check("the remote command exits 3 and changes nothing when the header is there", again.returncode == 3
+      and remote_file.read_text() == text)
+missing = tmp / "missing.zone"
+check("the remote command creates a missing file with just the header",
+      run("sh", "-c", services._header_command(str(missing), header)).returncode == 0
+      and dns_zone.has_header(missing.read_text()))
+chained = run("sh", "-c", services._header_command(str(remote_file), header) + "; echo after")
+check("its exit stops no command chained after it", "after" in chained.stdout)
+
+forward.write_text(intact)
+reload_named()
+
+# ── a view master: one site's clients get its private addresses, everyone else the public ones ──────────
+# The "remote" master is this container itself: every command DNSService would send over SSH runs in a local shell,
+# against the real /etc and zone directory, while "this host" keeps its own copies in a separate directory. systemctl
+# is a stand-in that restarts a daemonized named, since the container has no systemd.
+VIEW_PORT = 5355
+SERVER = "dnsvm.test"
+SITE = "aws-acct1"
+VIEW_DOMAIN = "sites.lab"
+OTHER_DOMAIN = "other.lab"
+PUBLIC, PRIVATE, KVM_ADDRESS = "198.51.100.10", "172.31.5.10", "192.168.88.20"
+os_release = {k: v.strip('"') for k, v in (line.split("=", 1) for line in Path("/etc/os-release").read_text()
+                                           .splitlines() if "=" in line)}
+OS_ID, OS_LIKE = os_release.get("ID", ""), os_release.get("ID_LIKE", "")
+remote_zone_dir = Path(dns_zone.zone_dir(OS_ID, OS_LIKE))
+main_conf = Path(dns_zone.main_named_conf(OS_ID, OS_LIKE))
+ext_conf = Path(dns_zone.remote_named_conf(OS_ID, OS_LIKE))
+site_conf = Path(dns_zone.site_named_conf(OS_ID, OS_LIKE))
+pid_file = tmp / "named-views.pid"
+for path in (main_conf, ext_conf, site_conf, Path(dns_zone.SITE_MARKER)):
+    if path.exists():
+        path.unlink()
+for name in (dns_zone.forward_file(VIEW_DOMAIN), dns_zone.site_file(VIEW_DOMAIN, SITE),
+             dns_zone.forward_file(OTHER_DOMAIN)):
+    if (remote_zone_dir / name).exists():
+        (remote_zone_dir / name).unlink()
+# named keeps no capability to write a directory it does not own, even started as root.
+keys_dir = Path(dns_zone.named_dirs(OS_ID, OS_LIKE)[1])
+keys_dir.mkdir(parents=True, exist_ok=True)
+keys_dir.chmod(0o777)
+# A client outside the site is this container's own non-loopback address, the loopback one being the site's.
+_probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+_probe.connect(("192.0.2.1", 9))
+OUTSIDE_SRC = _probe.getsockname()[0]
+_probe.close()
+
+stubs = tmp / "bin"
+stubs.mkdir()
+(stubs / "systemctl").write_text("""#!/bin/sh
+pidf={pid}
+alive() {{ [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; }}
+case "$1" in
+  cat) exit 0 ;;
+  is-active) alive; exit ;;
+  restart)
+    if alive; then kill "$(cat "$pidf")"; for i in $(seq 50); do alive || break; sleep 0.1; done; fi
+    rm -f "$pidf"
+    named -c {conf} >/dev/null 2>&1 || exit 1
+    for i in $(seq 50); do
+      alive && ss -lnu | grep -q ':{port} ' && exit 0
+      sleep 0.1
+    done
+    exit 1 ;;
+esac
+exit 0
+""".format(pid=pid_file, conf=main_conf, port=VIEW_PORT))
+(stubs / "systemctl").chmod(0o755)
+os.environ["PATH"] = "{}:{}".format(stubs, os.environ["PATH"])
+
+# A DNS VM as it was before views: the distribution's own named.conf with this project's include, and a zone of
+# another lab that the site view must keep answering once it exists.
+(remote_zone_dir / dns_zone.forward_file(OTHER_DOMAIN)).write_text(
+    "\n".join(dns_zone.forward_header(OTHER_DOMAIN)) + "\n" + dns_zone.node_record("old", "203.0.113.5") + "\n")
+ext_conf.write_text(dns_zone.stanza(OTHER_DOMAIN, str(remote_zone_dir / dns_zone.forward_file(OTHER_DOMAIN))) + "\n")
+view_options = ['listen-on port {} {{ any; }};'.format(VIEW_PORT), "listen-on-v6 { none; };",
+                'pid-file "{}";'.format(pid_file), "dnssec-validation no;"]
+main_conf.write_text("options {{\n\t{}\n}};\ninclude \"{}\";\n".format("\n\t".join(view_options), ext_conf))
+run("systemctl", "restart", "named")
+
+
+def local_ssh_run(hostname, cmd, check=True, input_text=None, capture=False, user="root"):
+    """ssh_run() for SERVER, run in a local shell."""
+    result = subprocess.run(["bash", "-c", cmd], input=input_text, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True)
+    if check and result.returncode != 0:
+        raise RuntimeError(result.stderr)
+    return result
+
+
+services.ssh_run = local_ssh_run
+services.detect_os = lambda host: {"id": OS_ID, "like": OS_LIKE}
+local_dir = tmp / "this-host"
+local_dir.mkdir()
+services.NAMED_ZONE_DIR = local_dir
+services.NAMED_CONF = tmp / "this-host-named.conf"
+services.DNSService._reachable_cache = {SERVER: True}
+services.DNSService._view_sites = {}
+views = services.DNSService()
+views._update_hosts_file = lambda *a, **k: None
+
+
+def ask(source, *args):
+    return run("dig", "+time=2", "+tries=1", "-b", source, "@" + source, "-p", str(VIEW_PORT), *args).stdout
+
+
+SITE_SRC = "127.0.0.1"
+check("serve_site_view converts the DNS VM", views.serve_site_view(SERVER, SITE, [SITE_SRC], view_options))
+check("...writes the site marker", Path(dns_zone.SITE_MARKER).read_text().strip() == SITE)
+check("...and named-checkconf accepts the named.conf it wrote: " + run("named-checkconf", str(main_conf)).stdout,
+      run("named-checkconf", str(main_conf)).returncode == 0)
+check("the other lab's zone is still answered to the site after the conversion",
+      "203.0.113.5" in ask(SITE_SRC, "+short", "A", "old." + OTHER_DOMAIN))
+check("...and to everyone else", "203.0.113.5" in ask(OUTSIDE_SRC, "+short", "A", "old." + OTHER_DOMAIN))
+services.DNSService._view_sites = {}
+again = local_ssh_run(SERVER, "cat {}".format(main_conf)).stdout
+check("a second serve_site_view finds it configured and changes nothing",
+      views.serve_site_view(SERVER, SITE, [SITE_SRC], view_options) and main_conf.read_text() == again)
+check("a configuration named refuses is not applied",
+      views.serve_site_view(SERVER, "other-site", [SITE_SRC], view_options + ["no-such-option yes;"]) is False
+      and main_conf.read_text() == again)
+services.DNSService._view_sites = {}
+
+views.add_to_dns("cloud1." + VIEW_DOMAIN, PUBLIC, VIEW_DOMAIN, "", remote_dns_servers=[SERVER],
+                 site=SITE, private_ip=PRIVATE)
+check("the site's own clients get a node of the site at its private address",
+      ask(SITE_SRC, "+short", "A", "cloud1." + VIEW_DOMAIN).strip() == PRIVATE)
+check("every other client gets its public address",
+      ask(OUTSIDE_SRC, "+short", "A", "cloud1." + VIEW_DOMAIN).strip() == PUBLIC)
+check("this host holds the site's view file too, without serving it",
+      (local_dir / dns_zone.site_file(VIEW_DOMAIN, SITE)).is_file()
+      and SITE not in services.NAMED_CONF.read_text())
+
+views.add_to_dns("kvm1." + VIEW_DOMAIN, KVM_ADDRESS, VIEW_DOMAIN, "", remote_dns_servers=[SERVER])
+check("a node outside any site is at its one address in both views",
+      ask(SITE_SRC, "+short", "A", "kvm1." + VIEW_DOMAIN).strip() == KVM_ADDRESS
+      and ask(OUTSIDE_SRC, "+short", "A", "kvm1." + VIEW_DOMAIN).strip() == KVM_ADDRESS)
+
+lab = {"nodes": {"cloud1." + VIEW_DOMAIN: {"myip": PUBLIC, "kcluster": "c1"}}}
+views.add_service_dns(lab, "c1", "rke2", "app", VIEW_DOMAIN, remote_dns_servers=[SERVER])
+check("a service record follows its node: private in the site's view",
+      ask(SITE_SRC, "+short", "A", "app." + VIEW_DOMAIN).strip() == PRIVATE)
+check("...and public in the external one", ask(OUTSIDE_SRC, "+short", "A", "app." + VIEW_DOMAIN).strip() == PUBLIC)
+
+views.add_to_dns("cloud1." + VIEW_DOMAIN, PUBLIC, VIEW_DOMAIN, "", remote_dns_servers=[SERVER],
+                 site=SITE, private_ip="172.31.5.99")
+check("a node re-registered at a new private address has only that one in its site's view",
+      ask(SITE_SRC, "+short", "A", "cloud1." + VIEW_DOMAIN).split() == ["172.31.5.99"])
+check("...and its service record moved with it",
+      ask(SITE_SRC, "+short", "A", "app." + VIEW_DOMAIN).split() == ["172.31.5.99"])
+
+views.del_from_dns("cloud1." + VIEW_DOMAIN, PUBLIC, VIEW_DOMAIN, "", remote_dns_servers=[SERVER])
+check("del_from_dns removes the node from the site's view",
+      ask(SITE_SRC, "+short", "A", "cloud1." + VIEW_DOMAIN).strip() == "")
+check("...and from the external one", ask(OUTSIDE_SRC, "+short", "A", "cloud1." + VIEW_DOMAIN).strip() == "")
+check("...and the service records pointing at it in both",
+      ask(SITE_SRC, "+short", "A", "app." + VIEW_DOMAIN).strip() == ""
+      and ask(OUTSIDE_SRC, "+short", "A", "app." + VIEW_DOMAIN).strip() == "")
+check("the node outside any site is untouched", ask(SITE_SRC, "+short", "A", "kvm1." + VIEW_DOMAIN).strip()
+      == KVM_ADDRESS)
+
+# The configuration a real cloud DNS VM gets, with the production options, is one named accepts.
+import backends  # noqa: E402
+production = tmp / "production-named.conf"
+production.write_text(dns_zone.view_named_conf(
+    backends.cloud_dns_options(["10.0.0.0/8", "172.16.0.0/12"]),
+    ["localhost", "localnets", "10.0.0.0/8", "172.16.0.0/12"], OS_ID, OS_LIKE))
+checked = run("named-checkconf", str(production))
+check("named-checkconf accepts a cloud DNS VM's real named.conf, without a warning: " + checked.stdout.strip(),
+      checked.returncode == 0 and checked.stdout.strip() == "")
+
+run("systemctl", "stop", "named")
+if pid_file.exists():
+    run("sh", "-c", "kill $(cat {}) 2>/dev/null".format(pid_file))
 
 if _named["proc"] is not None:
     _named["proc"].terminate()

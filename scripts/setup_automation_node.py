@@ -109,7 +109,6 @@ def node_settings(definition, config, vm_name, private_ip, mydomain) -> dict:
         "_host_ip": "",
         "_host_name": "",
         "_host_fqdn": "",
-        "myarch": "x86_64",
         "_node_kind": NODE_KIND,
         "_node_netstack": "nm",
         # Left to the node: node_install_packages picks the interpreter its own distribution ships,
@@ -189,7 +188,7 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(json_file)
-    migrations.require_current(definition, json_file)
+    json_file = migrations.ensure_current(definition, json_file)
 
     if vm_name not in (definition.get("nodes") or {}):
         die("'{}' is not a node of '{}' — the automation node is defined as one of its nodes".format(
@@ -227,11 +226,6 @@ def main():
         stage = Path(tmp)
         stage_inputs(stage, node_settings(definition, config, vm_name, private_ip, mydomain))
         configure_node(public_ip, stage)
-
-    # Now that it serves the zone, hand it to the provider's own network, so every instance there
-    # resolves this lab through it. Done after configure, not before: pointing the network at a host
-    # whose BIND is not running yet would leave the instances already in it without DNS.
-    backend.use_dns_server(private_ip, mydomain)
 
     log("Automation node \"{}\" is ready".format(vm_name))
     log("- It serves DNS for \"{}\" on {} (authoritative from anywhere; it recurses only for "

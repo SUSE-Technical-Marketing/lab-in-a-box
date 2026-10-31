@@ -138,7 +138,7 @@ def save_definition(definition):
     silently discard all of that. Instead, writes to
     "<source_path>.system_modified.<fmt>" — a clearly-named sibling file the
     operator can review and merge back manually. The original file is never
-    touched.
+    touched. A definition read from such a sibling file is saved back to it.
 
     This is the ONLY place a lab-definition-mutating change gets written to
     disk — a caller that needs to persist something (e.g. backends.py's
@@ -152,7 +152,8 @@ def save_definition(definition):
     """
     path = definition.source_path
     fmt = definition.fmt
-    output_path = "{}.system_modified.{}".format(path, fmt)
+    suffix = ".system_modified.{}".format(fmt)
+    output_path = path if str(path).endswith(suffix) else "{}{}".format(path, suffix)
 
     if fmt == "yaml":
         try:

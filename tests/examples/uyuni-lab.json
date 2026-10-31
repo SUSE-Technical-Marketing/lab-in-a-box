@@ -3,7 +3,7 @@
     "uyuni.mydemo.lab":  { "myip": "192.168.88.30", "addons": ["uyuni"] },
     "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
   },
-  "common": { "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4" },
+  "common": { "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4" },
   "uyuni": {
     "uyuni_admin": "admin", "uyuni_password": "Uyuni12345",
     "uyuni_activation_key": "1-lab-clients", "uyuni_activation_key_base_channel": "sle-micro-6.1-pool"

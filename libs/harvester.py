@@ -137,8 +137,7 @@ def problems(definition: dict, backend_name_of) -> list:
             nested = cfg.get("aws_nested_virtualization", common.get("aws_nested_virtualization"))
             if str(nested).lower() != "true":
                 out.append("Harvester node '{}' needs aws_nested_virtualization: \"true\"".format(vm))
-            image = (cfg.get("SOURCE_IMAGE") or cfg.get("ISO_IMAGE") or common.get("SOURCE_IMAGE")
-                     or common.get("ISO_IMAGE") or "")
+            image = cfg.get("SOURCE_IMAGE") or common.get("SOURCE_IMAGE") or ""
             if not str(image).startswith("ami-"):
                 out.append("Harvester node '{}' needs its Harvester AMI ID as SOURCE_IMAGE".format(vm))
     return out

@@ -3,6 +3,7 @@
 # clean_ssh_keys, copy_to_hypervisor, prepare_ignition_combustion, prepare_virt_customize_for_vm, setup_salt and the
 # network auto-detection used by load_vm_vars (_detect_dns/_detect_gateway/_detect_domain/_detect_netmask).
 # Run from 10_lab_creation_core.sh, in its own container — see tests/run_tests.sh.
+import os
 import subprocess
 import sys
 import tempfile
@@ -208,6 +209,121 @@ with mock.patch.object(lc, "wait_for_ssh_command", return_value=False):
     except SystemExit:
         died = True
 check("wait_for_transactional_update_lock: dies when the lock is still held after the timeout", died)
+
+# ── register_suse() ───────────────────────────────────────────────────────────
+_NOT_REGISTERED = '[{"identifier":"SL-Micro","version":"6.1","arch":"x86_64","status":"Not Registered"}]'
+_REGISTERED = '[{"identifier":"SLES","version":"15.7","arch":"x86_64","status":"Registered"}]'
+
+
+def _register(os_id, status, regcode="CODE-123", transactional=True, rc=0, stderr=""):
+    """Run register_suse() against a fake node; return (result, ssh calls, warn mock, die mock, reboot mock)."""
+    calls = []
+
+    def fake_ssh(host, cmd, check=True, input_text=None, capture=False, user="root"):
+        calls.append((cmd, input_text))
+        if cmd == "SUSEConnect --status":
+            return subprocess.CompletedProcess([], 0, status, "")
+        return subprocess.CompletedProcess([], rc, "", stderr)
+
+    with mock.patch.object(lc, "detect_os", return_value={"id": os_id}), \
+            mock.patch.object(lc, "ssh_run", side_effect=fake_ssh), \
+            mock.patch.object(lc, "is_transactional", return_value=transactional), \
+            mock.patch.object(lc, "reboot_into_pending_snapshot") as reboot, \
+            mock.patch.object(lc, "warn") as warned, \
+            mock.patch.object(lc, "die", side_effect=SystemExit(1)) as died:
+        try:
+            result = lc.register_suse("vm1", regcode, "me@example.com", "https://scc.suse.com")
+        except SystemExit:
+            result = "died"
+    return result, calls, warned, died, reboot
+
+
+result, calls, _w, _d, _r = _register("opensuse-leap", _NOT_REGISTERED)
+check("register_suse: leaves openSUSE alone, which needs no registration",
+      result is False and not any("SUSEConnect" in c for c, _ in calls))
+result, calls, _w, _d, _r = _register("sles", _REGISTERED)
+check("register_suse: leaves a registered system alone (a pay-as-you-go cloud image)",
+      result is False and [c for c, _ in calls] == ["SUSEConnect --status"])
+result, calls, warned, _d, _r = _register("sl-micro", _NOT_REGISTERED, regcode="")
+check("register_suse: without a regcode, warns naming SUSE_regcode and registers nothing",
+      result is False and warned.called and "SUSE_regcode" in warned.call_args[0][0]
+      and [c for c, _ in calls] == ["SUSEConnect --status"])
+result, calls, _w, _d, reboot = _register("sl-micro", _NOT_REGISTERED, transactional=True)
+cmd, stdin = calls[-1]
+check("register_suse: a transactional system registers through transactional-update and reboots into it",
+      result is True and cmd.startswith("read -r code; transactional-update -n register --regcode \"$code\"")
+      and reboot.called)
+check("register_suse: the code goes on stdin, never on the command line",
+      stdin == "CODE-123\n" and "CODE-123" not in cmd)
+check("register_suse: email and url are passed, shell-quoted",
+      "--email me@example.com" in cmd and "--url https://scc.suse.com" in cmd)
+result, calls, _w, _d, reboot = _register("sles", _NOT_REGISTERED, transactional=False)
+check("register_suse: a plain system registers with SUSEConnect and is not rebooted",
+      result is True and calls[-1][0].startswith("read -r code; SUSEConnect --regcode") and not reboot.called)
+result, calls, _w, died, _r = _register("sl-micro", _NOT_REGISTERED, rc=1,
+                                        stderr="SUSEConnect error: lookup scc.suse.com: server misbehaving")
+check("register_suse: a failed registration dies with SUSEConnect's error, read from stderr",
+      result == "died" and "server misbehaving" in died.call_args[0][0] and "CODE-123" not in died.call_args[0][0])
+
+# ── use_lab_dns() ─────────────────────────────────────────────────────────────
+calls = []
+with mock.patch.object(lc, "ssh_run", side_effect=lambda h, c, **kw: calls.append((h, c, kw)) or
+                       subprocess.CompletedProcess(c, 0, "", "")), mock.patch.object(lc, "log"):
+    check("use_lab_dns: no DNS server, nothing to do", lc.use_lab_dns("vm1", "", "lab") is False and calls == [])
+    check("use_lab_dns: applies the recipe with the server and domain as its arguments",
+          lc.use_lab_dns("vm1", "172.31.0.53", "mydemo.lab", check_name="vm1.mydemo.lab") is True
+          and calls[0][1] == "bash -s -- 172.31.0.53 mydemo.lab" and calls[0][2]["input_text"] == lc._LAB_DNS_SCRIPT
+          and calls[1][1] == "getent hosts vm1.mydemo.lab")
+with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess("", 1, "", "nmcli: boom")), \
+        mock.patch.object(lc, "log"), mock.patch.object(lc, "warn") as warned:
+    check("use_lab_dns: a recipe that fails is a warning, not the end of the node",
+          lc.use_lab_dns("vm1", "172.31.0.53", "mydemo.lab") is False and "nmcli: boom" in warned.call_args[0][0])
+
+# The recipe itself, run for real against stub service tools: each network stack gets its own configuration.
+work = Path(tempfile.mkdtemp())
+stub = work / "bin"
+stub.mkdir()
+for tool, body in (("systemctl", 'if [ "$1" = is-active ]; then [ "$3" = "$ACTIVE" ]; exit; fi; echo "systemctl $*" >> "$LOG"'),
+                   ("nmcli", 'echo "nmcli $*" >> "$LOG"'), ("netconfig", 'echo "netconfig $*" >> "$LOG"'),
+                   ("nscd", 'echo "nscd $*" >> "$LOG"'),
+                   ("networkctl", 'case "$1" in list) echo "2 ens5 ether routable configured";; '
+                                  'status) echo "  Network File: /run/systemd/network/10-netplan-ens5.network";; '
+                                  '*) echo "networkctl $*" >> "$LOG";; esac')):
+    (stub / tool).write_text("#!/bin/bash\n" + body + "\n")
+    (stub / tool).chmod(0o755)
+
+
+def run_recipe(active):
+    log = work / "log"
+    log.write_text("")
+    env = dict(os.environ, PATH="{}:{}".format(stub, os.environ["PATH"]), ACTIVE=active, LOG=str(log))
+    r = subprocess.run(["bash", "-s", "--", "172.31.0.53", "mydemo.lab"], input=lc._LAB_DNS_SCRIPT, env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+    return r.returncode, log.read_text()
+
+
+rc, log = run_recipe("NetworkManager")
+nm_conf = Path("/etc/NetworkManager/conf.d/90-lab-dns.conf")
+check("lab DNS recipe, NetworkManager: global DNS replaces every connection's, then NM reloads it",
+      rc == 0 and nm_conf.read_text() == "[global-dns]\nsearches=mydemo.lab\n\n[global-dns-domain-*]\n"
+      "servers=172.31.0.53\n" and "nmcli general reload conf,dns-full" in log)
+netcfg = Path("/etc/sysconfig/network/config")
+netcfg.parent.mkdir(parents=True, exist_ok=True)
+netcfg.write_text('NETCONFIG_DNS_POLICY="auto"\nNETCONFIG_DNS_STATIC_SERVERS=""\n')
+rc, log = run_recipe("wicked")
+text = netcfg.read_text()
+check("lab DNS recipe, wicked: static servers only, the DHCP ones dropped, and nscd forgets old answers",
+      rc == 0 and 'NETCONFIG_DNS_POLICY="STATIC"' in text and 'NETCONFIG_DNS_STATIC_SERVERS="172.31.0.53"' in text
+      and 'NETCONFIG_DNS_STATIC_SEARCHLIST="mydemo.lab"' in text and text.count("NETCONFIG_DNS_POLICY") == 1
+      and "netconfig update -f" in log and "nscd -i hosts" in log)
+rc, log = run_recipe("systemd-resolved")
+dropin = Path("/etc/systemd/network/10-netplan-ens5.network.d/90-lab-dns.conf")
+check("lab DNS recipe, resolved: the lab server and domain globally, and the link told to ignore DHCP's",
+      rc == 0 and Path("/etc/systemd/resolved.conf.d/90-lab-dns.conf").read_text()
+      == "[Resolve]\nDNS=172.31.0.53\nDomains=mydemo.lab\n"
+      and dropin.read_text().count("UseDNS=no") == 3 and dropin.read_text().count("UseDomains=no") == 3
+      and "networkctl reload" in log and "networkctl reconfigure ens5" in log
+      and "systemctl restart systemd-resolved" in log)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

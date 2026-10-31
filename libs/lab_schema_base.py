@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.7"
+LAB_SCHEMA_VERSION = "3.0"
 
 
 def base_lab_schema():
@@ -39,7 +39,6 @@ def base_lab_schema():
                 "fields": [
                     {"name": "SOURCE_IMAGE", "required": True, "type": "string", "description": "Source image: local filename (in ISO_LOC), local file path, URL (http://, https://, ftp://, file://; mirrors separated by spaces), a cloud provider's own image ID, or a product name such as \"slmicro6.1\", \"sles16\", \"leap\" or \"ubuntu24.04\". A product name is resolved to that provider's current image for the node's own processor architecture when the VM is created, so a lab definition never carries an image ID that ages out — see libs/cloud_images.py for the full list of names. A URL is downloaded once into ISO_LOC on each KVM host and only used once it matches SOURCE_SHA256"},
                     {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "sha256 of the source image (required when SOURCE_IMAGE is a URL): the 64-character hex digest, a URL publishing it, or a local file holding it"},
-                    {"name": "ISO_IMAGE", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_IMAGE instead"},
                     {"name": "VM_MEM", "required": True, "type": "integer", "min": 256, "description": "RAM in MiB (e.g. 8192)"},
                     {"name": "VM_DSK", "required": True, "type": "integer", "min": 1, "description": "Disk size in GiB (e.g. 80)"},
                     {"name": "VM_CPU", "required": True, "type": "integer", "min": 1, "description": "vCPU count"},
@@ -64,16 +63,13 @@ def base_lab_schema():
                      "enum": ["NetworkManager", "networkd", "sysconfig"],
                      "description": "cloud-init network-config's \"renderer\" value (config_method=cloud-init only) — the default matches SLE Micro/SLES/Leap's own default network stack; set to \"networkd\" for guests whose distro defaults to systemd-networkd instead (e.g. Ubuntu Server, Debian's generic cloud image), or \"sysconfig\" for guests using legacy ifcfg-file networking with NetworkManager not even enabled (e.g. Alibaba Cloud Linux 2's alibase image) — otherwise their static IP is silently never applied"},
                     {"name": "install_type", "required": False, "type": "string", "default": "",
-                     "enum": [{"value": "", "label": "(default) auto-detect from ISO_IMAGE name"}, "autoyast", "kickstart", "preseed", "autoinstall"],
+                     "enum": [{"value": "", "label": "(default) auto-detect from SOURCE_IMAGE name"}, "autoyast", "kickstart", "preseed", "autoinstall"],
                      "description": "For install_iso only"},
                     {"name": "VM_ROOT_PASS", "required": False, "type": "string", "default": "", "description": "Plaintext root password for virt_customize; omit to reuse ROOT_PWD_HASH from lab_creation.cfg (same as cloud-init/Ignition)"},
                     {"name": "BRIDGE", "required": False, "type": "string", "default": "br0", "description": "Host bridge every VM's NIC attaches to (virt-install --network bridge=<BRIDGE>,mac.address=<mymac>), e.g. virbr0 for libvirt's default NAT network"},
                     {"name": "ROOT_PWD_HASH", "required": False, "type": "password", "description": "crypt(3) hash of the VMs' root password for cloud-init/Ignition (overrides lab_creation.cfg's own ROOT_PWD_HASH)"},
                     {"name": "open_ports", "required": False, "type": "array", "description": "Cloud backends: ports reachable from anywhere on each VM (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — aws: security-group rules (needs AWS_SECURITY_GROUP_ID); gcp: a firewall rule + network tag; alibaba: ALIBABA_SECURITY_GROUP_ID rules; exoscale: a per-VM security group; hetzner/scaleway/upcloud/ovhcloud: open by default"},
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "backend aws (older form of open_ports): ports opened to 0.0.0.0/0 in the security group (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — needs AWS_SECURITY_GROUP_ID"},
-                    {"name": "ISO_SHA256", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_SHA256 instead"},
-                    {"name": "ISO_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_IMAGE instead"},
-                    {"name": "ISO_SHA256_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_SHA256 instead"},
                     {"name": "ssh_pwauth", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "config_method=cloud-init only: \"true\" enables SSH password login (cloud-init ssh_pwauth) and root login — for labs whose exercises log in or bootstrap clients with the root password"},
                     {"name": "lab_name", "required": False, "type": "string", "description": "Human-readable lab name shown in log output"},
                     {"name": "lab_description", "required": False, "type": "string", "description": "One line saying what this lab is for, shown where a lab is listed (the lab-builder's example and saved-lab lists)"},
@@ -96,7 +92,6 @@ def base_lab_schema():
                     {"name": "kcluster", "required": False, "type": "string", "description": "Kubernetes cluster this node belongs to (a name in kclusters)"},
                     {"name": "KUBERNETES_NODE_TYPE", "required": False, "type": "string", "default": "server", "enum": ["server", "agent"], "show_if": "kcluster", "description": "Kubernetes node role (server/control-plane or agent/worker)"},
                     {"name": "harvester_role", "required": False, "type": "string", "enum": ["default", "management", "worker", "witness"], "show_if": "kcluster", "description": "Harvester node role (clu_type harvester only; default: Harvester decides)"},
-                    {"name": "INSTALL_RKE2_TYPE", "required": False, "type": "string", "default": "server", "enum": ["server", "agent"], "show_if": "kcluster", "hidden": True, "description": "DEPRECATED: use KUBERNETES_NODE_TYPE instead"},
                     {"name": "addons", "required": False, "type": "array", "description": "List of VM-level addon names (install_<addon> scripts). Each entry is either a plain \"<addon>\" string (runs with only that addon's shared top-level config section, same as always), or a single-key {\"<addon>\": {...fields...}} mapping to override that addon's config for this node only — e.g. a lab registering many different OSes against one shared Uyuni/SMLM server, each node needing its own client_registration_activation_key. See README's addon-config section."},
                     {"name": "pre_commands", "required": False, "type": "array", "description": "Overrides common.pre_commands for this node only — shell commands run on the VM itself, as root, once it is up and reachable and before any Kubernetes or add-on work (e.g. [\"zypper -n in vim\"]). Each one's output is shown; one that fails is an error for that VM and the rest still run. Not run for a clu_type harvester node, which installs itself at first boot."},
                     {"name": "post_commands", "required": False, "type": "array", "description": "Overrides common.post_commands for this node only — shell commands run on the VM itself, as root, after everything else for it is done — its Kubernetes join and its own add-ons included. Same reporting as pre_commands."},
@@ -125,19 +120,15 @@ def base_lab_schema():
                     {"name": "open_ports", "required": False, "type": "array", "description": "Overrides common.open_ports for this node only"},
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "Overrides common.aws_open_ports for this node only"},
                     {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "Overrides common.SOURCE_SHA256 for this node — checksum value, URL, or local file path"},
-                    {"name": "ISO_SHA256", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_SHA256 instead"},
-                    {"name": "ISO_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_IMAGE instead"},
-                    {"name": "ISO_SHA256_URL", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: put the URL in SOURCE_SHA256 instead"},
                     {"name": "config_method", "required": False, "type": "string",
                      "enum": [{"value": "", "label": "(default) Ignition+Combustion"}, "cloud-init", "virt_customize", "install_iso"],
                      "description": "Overrides common.config_method for this node only"},
                     {"name": "install_type", "required": False, "type": "string",
-                     "enum": [{"value": "", "label": "(default) auto-detect from ISO_IMAGE name"}, "autoyast", "kickstart", "preseed", "autoinstall"],
+                     "enum": [{"value": "", "label": "(default) auto-detect from SOURCE_IMAGE name"}, "autoyast", "kickstart", "preseed", "autoinstall"],
                      "description": "Overrides common.install_type for this node only (config_method=install_iso only)"},
                     {"name": "network_renderer", "required": False, "type": "string", "enum": ["NetworkManager", "networkd", "sysconfig"],
                      "description": "Overrides common.network_renderer for this node only — set per-node when a lab mixes guest OSes (e.g. SLE Micro nodes on NetworkManager, an Ubuntu/Debian node on networkd, an Alibaba Cloud Linux node on sysconfig)"},
                     {"name": "SOURCE_IMAGE", "required": False, "type": "string", "description": "Overrides common.SOURCE_IMAGE for this node only — local filename, URL, file path, provider image ID, or product name"},
-                    {"name": "ISO_IMAGE", "required": False, "type": "string", "hidden": True, "description": "DEPRECATED: use SOURCE_IMAGE instead"},
                     {"name": "kvm_host", "required": False, "type": "string", "description": "Pin this VM to a specific KVM host from KVM_HOSTS; omit to auto-select by resource availability"},
                     {"name": "existing", "required": False, "type": "boolean", "description": "Pre-provisioned host (baremetal or already-running VM) — the tool will not create or destroy it, only SSH to it; omit for today's default (a VM this tool creates)"},
                     {"name": "backend", "required": False, "type": "string", "enum": ["libvirt", "harvester", "hetzner", "aws", "gcp", "alibaba", "scaleway", "upcloud", "ovhcloud", "exoscale"], "description": "Compute backend for this node; omit to use common.backend or the configured default"},
@@ -201,3 +192,13 @@ def base_lab_schema():
             },
         },
     }
+
+
+def field_default(section: str, name: str):
+    """The default the base lab schema declares for field `name` of `section` ("common", "nodes", ...); None when the
+    field declares none. Code that needs the value of an unset field reads it here, so the schema stays its only
+    source."""
+    for field in base_lab_schema()["sections"].get(section, {}).get("fields", []):
+        if field.get("name") == name:
+            return field.get("default")
+    return None

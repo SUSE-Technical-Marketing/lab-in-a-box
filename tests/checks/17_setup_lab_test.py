@@ -175,9 +175,10 @@ check("validate_addon_configs: a lab with no addons anywhere returns True withou
 
 
 # ── phase_create_vms: --keep reusability + existing-node handling ──────────
-calls = {"destroy": [], "provision": [], "check_ssh_conn": []}
+calls = {"destroy": [], "provision": [], "check_ssh_conn": [], "refresh_dns": []}
 setup_lab.destroy_vm = lambda definition, config, defaults, vm_name: calls["destroy"].append(vm_name)
 setup_lab.provision_vm = lambda definition, config, defaults, vm_name: calls["provision"].append(vm_name) or []
+setup_lab.refresh_kept_node_dns = lambda definition, config, defaults, vm_name: calls["refresh_dns"].append(vm_name)
 setup_lab.lc.check_ssh_conn = lambda vm_name: calls["check_ssh_conn"].append(vm_name)
 setup_lab.subprocess.run = lambda *a, **kw: FakeCompleted()
 
@@ -211,6 +212,8 @@ definition5 = {"nodes": {"vm1": {"myip": "10.0.0.1", "mymac": "aa:bb:cc:dd:ee:01
 setup_lab.phase_create_vms(definition5, config, defaults, "lab.json", keep=True)
 check("phase_create_vms: --keep + a reusable VM is skipped (no destroy/recreate)",
       calls["destroy"] == [] and calls["provision"] == [])
+check("phase_create_vms: --keep + a reusable VM has its DNS records written again",
+      calls["refresh_dns"] == ["vm1"])
 
 # keep=True, but the VM doesn't match (or doesn't exist) -> destroyed and recreated.
 for k in calls:
@@ -361,7 +364,7 @@ check("_RunReport.failed is False for an all-clean run", setup_lab._report.faile
 # ── _fold_issues_into_report: preflight/addon issue lines -> warnings/errors ──
 setup_lab._report = setup_lab._RunReport()
 setup_lab._fold_issues_into_report([
-    "  \x1b[1;91m[ERROR]\x1b[0m nodes.venus.ISO_IMAGE: image 'x' not found",
+    "  \x1b[1;91m[ERROR]\x1b[0m nodes.venus.SOURCE_IMAGE: image 'x' not found",
     "  \x1b[1;38;5;208m[WARN]\x1b[0m  nodes.mars.VM_DSK raised to 10 GiB",
     "  addon 'longhorn': plain continuation line",
 ])
@@ -680,18 +683,34 @@ with mock.patch.object(setup_lab.k8s, "add_kclu_dns") as add_dns:
 # ── phase_reboot_and_wait_kept_nodes: only with --keep; reboots owned kcluster VMs, then waits for each ────────────
 reboot_lab = {"nodes": {"k1": {"kcluster": "c1"}, "k2": {"kcluster": "c1", "existing": True}, "plain": {}},
               "kclusters": {"c1": {"clu_type": "rke2"}}}
-with mock.patch.object(setup_lab.lc, "reboot_vm") as reboot, \
+rebooted, owners = [], []
+
+
+class _RebootingBackend:
+    def reboot_vm(self, vm_name):
+        rebooted.append(vm_name)
+
+
+def _owner(definition, config, vm_name, for_existing=False):
+    owners.append((vm_name, for_existing))
+    return _RebootingBackend()
+
+
+with mock.patch.object(setup_lab.backends, "get_backend", side_effect=_owner), \
+        mock.patch.object(setup_lab.lc, "locate_kvm_host") as locate, \
         mock.patch.object(setup_lab.lc, "check_ssh_conn") as wait_ssh, \
-        mock.patch.object(setup_lab.lc, "locate_kvm_host", return_value=("hv1", "qemu+ssh://hv1/system")), \
         mock.patch.object(setup_lab.targets, "is_existing_node", side_effect=lambda cfg: bool(cfg.get("existing"))), \
         mock.patch.object(setup_lab.harvester, "cluster_of", return_value=None), \
         mock.patch.object(setup_lab.lc, "boot_id", return_value="boot-before") as read_boot, \
         mock.patch.object(setup_lab.lc, "wait_for_reboot", return_value=True) as waited:
     setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=False)
-    check("phase_reboot_and_wait_kept_nodes: does nothing without --keep", not reboot.called and not wait_ssh.called)
+    check("phase_reboot_and_wait_kept_nodes: does nothing without --keep", not rebooted and not wait_ssh.called)
     setup_lab.phase_reboot_and_wait_kept_nodes(reboot_lab, {}, keep=True)
-    check("phase_reboot_and_wait_kept_nodes: reboots only kcluster VMs this tool owns, on their KVM host",
-          [c[0][1] for c in reboot.call_args_list] == ["k1"] and reboot.call_args[1]["remote_host"] == "hv1")
+    check("phase_reboot_and_wait_kept_nodes: reboots only kcluster VMs this tool owns",
+          rebooted == ["k1"])
+    check("phase_reboot_and_wait_kept_nodes: each is rebooted by the backend that owns it, found as --keep finds it, "
+          "so a cloud node is not handed to virsh",
+          owners == [("k1", True)] and not locate.called)
     check("phase_reboot_and_wait_kept_nodes: waits for SSH on every kcluster node",
           sorted(c[0][0] for c in wait_ssh.call_args_list) == ["k1", "k2"])
     # The node answers its SSH port on the way down, so the wait needs evidence the reboot happened: its boot id,

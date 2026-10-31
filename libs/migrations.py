@@ -21,7 +21,8 @@ import re
 from pathlib import Path
 
 import apps
-from lab_creation import die
+import primary
+from lab_creation import warn
 
 _INSTALLED_COMPATIBILITY = Path("/usr/share/lab_creation/schemas/compatibility.json")
 _REPO_COMPATIBILITY = Path(__file__).resolve().parents[1] / "schemas" / "compatibility.json"
@@ -201,6 +202,42 @@ def open_ports_2_0(definition: dict) -> list:
     return changes
 
 
+# (old key, new key) of lab 3.0's renames, applied in this order. ISO_URL comes after ISO_IMAGE because a download URL
+# replaces the image name it was downloaded under: SOURCE_IMAGE holds the URL itself from 3.0 on.
+_LAB_3_0_RENAMES = (("INSTALL_RKE2_TYPE", "KUBERNETES_NODE_TYPE"), ("ISO_IMAGE", "SOURCE_IMAGE"),
+                    ("ISO_URL", "SOURCE_IMAGE"), ("ISO_SHA256", "SOURCE_SHA256"), ("ISO_SHA256_URL", "SOURCE_SHA256"))
+
+
+def lab_3_0(definition: dict) -> list:
+    """
+    lab 3.0: INSTALL_RKE2_TYPE, ISO_IMAGE, ISO_URL, ISO_SHA256 and ISO_SHA256_URL are gone, in common and in every
+    node. Each value moves to its successor (KUBERNETES_NODE_TYPE, SOURCE_IMAGE, SOURCE_SHA256) unless the successor
+    is already set, which is the value the section was already using; ISO_URL replaces a SOURCE_IMAGE that is not a
+    URL itself, since that name was only the file the URL was downloaded to.
+    """
+    changes = []
+    owners = [("common", definition.get("common"))]
+    for section in ("nodes", "disabled_nodes"):
+        owners += [(section + "." + name, cfg) for name, cfg in (definition.get(section) or {}).items()]
+    for where, cfg in owners:
+        if not isinstance(cfg, dict):
+            continue
+        for old, new in _LAB_3_0_RENAMES:
+            if old not in cfg:
+                continue
+            value = cfg.pop(old)
+            current = str(cfg.get(new) or "")
+            replaces = old == "ISO_URL" and not re.match(r"^(https?|ftp|file)://", current)
+            if value not in (None, "") and (not current or replaces):
+                cfg[new] = value
+                changes.append("{}: {} renamed to {}{}".format(where, old, new, (
+                    " (replacing '{}': the image is now stored under the URL's own file name)".format(current)
+                    if replaces and current else "")))
+            else:
+                changes.append("{}: {} dropped, {} already set".format(where, old, new))
+    return changes
+
+
 def _appcollection_default_2_0(name: str, prefix: str = ""):
     """
     The step for an add-on whose chart now comes from the SUSE Application Collection by default. It writes
@@ -245,6 +282,7 @@ MIGRATIONS = {
     "kagent_2_0": kagent_2_0,
     "keycloak_2_0": keycloak_2_0,
     "kimi_2_0": _litellm_2_0("kimi"),
+    "lab_3_0": lab_3_0,
     "linkerd_2_0": linkerd_2_0,
     "longhorn_2_0": _appcollection_default_2_0("longhorn", "lh"),
     "milvus_2_0": _appcollection_default_2_0("milvus"),
@@ -334,15 +372,25 @@ def needed_changes(kind: str, data, record: dict) -> list:
     return migrate(kind, copy.deepcopy(data), record)
 
 
-def require_current(definition: dict, path: str) -> None:
-    """Die when lab definition `definition`, read from `path`, still needs a migration, naming each change."""
+def ensure_current(definition, path: str) -> str:
+    """
+    Bring lab definition `definition`, read from `path`, up to the current schema versions and return the path the
+    run must continue with.
+
+    A definition that is already current is left alone and `path` is returned. Otherwise every pending migration is
+    applied to `definition` in memory, each change is reported as a warning, and the result is saved with
+    primary.save_definition() to its sibling file, never over `path`; that sibling's path is returned. Every add-on
+    runs as its own process and reads the lab definition from disk, so a run that kept `path` would hand them the
+    old form.
+    """
     record = load_record()
-    changes = needed_changes("lab", definition, record)
+    changes = migrate("lab", definition, record)
     if not changes:
-        return
-    current = copy.deepcopy(definition)
-    stamp("lab", current, record)
-    die("{} is written for older schema versions and needs these changes:\n  {}\n"
-        "Run: migrate_config.py {}   (writes the migrated copy next to it)\n"
-        "If it is written for the current versions, add to it: \"{}\": {}".format(
-            path, "\n  ".join(changes), path, LAB_VERSIONS_KEY, json.dumps(current[LAB_VERSIONS_KEY])))
+        return path
+    stamp("lab", definition, record)
+    for change in changes:
+        warn("- {}".format(change))
+    migrated = str(primary.save_definition(definition))
+    warn("{} is written for older schema versions: the run continues with {}, which holds the changes above. "
+         "Replace {} with it to stop this warning.".format(path, migrated, path))
+    return migrated
