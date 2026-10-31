@@ -267,5 +267,21 @@ for bad in (["--cloud-account"], ["--cloud-account", "--keep"], ["--cloud-accoun
     check("take_cloud_account_option: {} is refused rather than read as no account".format(" ".join(bad) or "--"),
           "needs the name of a cloud account" in missing)
 
+# ── the Marketplace opt-in refusal ───────────────────────────────────────────
+
+_optin = ("An error occurred (OptInRequired) when calling the RunInstances operation: "
+          "In order to use this AWS Marketplace product you need to accept terms and subscribe.")
+msg = backends.marketplace_optin_message("ami-0c831ff09a9ab2339", "amalthea.mydemoaws.lab", _optin)
+check("marketplace_optin_message: an OptInRequired error is recognised", msg != "")
+check("marketplace_optin_message: it names the image and the VM",
+      "ami-0c831ff09a9ab2339" in msg and "amalthea.mydemoaws.lab" in msg)
+check("marketplace_optin_message: it offers the -byos image", "slmicro6.1-byos" in msg)
+check("marketplace_optin_message: it says a BYOS image needs registering", "SUSE_regcode" in msg)
+check("marketplace_optin_message: it also offers accepting the terms", "AWS console" in msg)
+check("marketplace_optin_message: it keeps the provider's own error", _optin in msg)
+check("marketplace_optin_message: any other error is left alone",
+      backends.marketplace_optin_message("ami-1", "n1", "InsufficientInstanceCapacity") == "")
+
+
 print("FAILURES: {}".format(len(failures)) if failures else "all cloud shared-resource checks passed")
 sys.exit(1 if failures else 0)

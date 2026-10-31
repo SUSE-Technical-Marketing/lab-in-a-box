@@ -2531,7 +2531,7 @@ class AWSBackend(VMBackend):
         try:
             run_result = self._aws(*args)
         except RuntimeError as e:
-            die(str(e))
+            die(marketplace_optin_message(iso_image, vm_name, str(e)) or str(e))
 
         # Cache the exact InstanceId returned by run-instances. Finding the instance again by its
         # Name tag can return a different instance when an older one with the same name still exists.
@@ -4064,6 +4064,27 @@ _OPTIONS_TEMPLATE = (
     "\tforward first;",
     "\trate-limit { responses-per-second 15; window 5; };",
 )
+
+
+def marketplace_optin_message(image: str, vm_name: str, error: str) -> str:
+    """
+    The message for an AWS launch `error` that is a Marketplace opt-in refusal, or "" when it is not one.
+
+    A Marketplace product does not launch until the account has accepted its terms once, in the console, which no
+    API call can do for it. SUSE's pay-as-you-go SL Micro images are such a product: their name carries the "-ltd"
+    billing-entity suffix. The bring-your-own-subscription build of the same release is not a Marketplace product,
+    and an unregistered SUSE node is registered by this project itself (lab_creation.register_suse(), SUSE_regcode
+    in lab_creation.cfg), so naming the "-byos" variant is usually quicker than the console detour.
+    """
+    if "OptInRequired" not in error:
+        return ""
+    return ("AWS refuses to launch image '{}' for VM '{}': this account has not accepted that image's AWS "
+            "Marketplace terms (OptInRequired). Two ways out:\n"
+            "  - name the bring-your-own-subscription image, which is not a Marketplace product: SOURCE_IMAGE "
+            "\"<product>-byos\", e.g. \"slmicro6.1-byos\". It carries no repositories until it is registered, "
+            "which this project does for an unregistered SUSE node with SUSE_regcode from lab_creation.cfg.\n"
+            "  - or accept the terms once in the AWS console for this account, then re-run.\n{}"
+            .format(image, vm_name, error))
 
 
 def cloud_dns_options(lab_networks=()) -> list:
