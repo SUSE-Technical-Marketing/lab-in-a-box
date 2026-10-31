@@ -168,10 +168,19 @@ try:
     check("write_node_config: embeds both the domain and cluster.domain in tls-san",
           "mydemo.lab" in server_cfg.read_text() and "cluster1.mydemo.lab" in server_cfg.read_text())
 
-    server_cfg.write_text("MODIFIED-BY-TEST\n")
+    # A stale file is replaced, not kept: the directory is named after the kcluster alone, so a second lab
+    # definition with a kcluster of the same name but another mydomain must not inherit the first one's config.
+    server_cfg.write_text("STALE-FROM-ANOTHER-LAB\n")
     distro.write_node_config("cluster1", {"mydomain": "mydemo.lab"})
-    check("write_node_config: does not overwrite an existing config file",
-          server_cfg.read_text() == "MODIFIED-BY-TEST\n")
+    check("write_node_config: rewrites a stale config file",
+          "STALE-FROM-ANOTHER-LAB" not in server_cfg.read_text())
+
+    distro.write_node_config("cluster1", {"mydomain": "mydemoaws.lab"})
+    check("write_node_config: a second lab's domain replaces the first lab's",
+          "cluster1.mydemoaws.lab" in server_cfg.read_text()
+          and "mydemo.lab\"" not in server_cfg.read_text())
+    check("write_node_config: the agent config is rewritten too",
+          "cluster1.mydemoaws.lab" in agent_cfg.read_text())
 finally:
     os.chdir(_orig_cwd)
 

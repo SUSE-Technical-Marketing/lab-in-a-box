@@ -299,10 +299,12 @@ class RKE2Distro(K8sDistro):
 
     def write_node_config(self, clu_name, clu_ctx):
         """
-        Write local RKE2 config files (server + agent) if they do not
-        already exist. Writes both regardless of role — the original
-        _write_rke2_config() took a node_type argument but its body ignored
-        it and always wrote both files; preserved here unchanged.
+        Write this kcluster's local RKE2 config files, config-server.yaml and config-agent.yaml, under a
+        directory named after `clu_name`. Both are written regardless of the node's role.
+
+        The contents are derived wholly from `clu_name` and `clu_ctx`, so they are rewritten on every run: the
+        directory is named after the kcluster alone, and two lab definitions may each have a kcluster of that
+        name with a different mydomain, whose config must not be inherited from whichever ran first.
         """
         mydomain = clu_ctx.get("mydomain", "")
         clu_dir = Path(clu_name)
@@ -318,9 +320,7 @@ class RKE2Distro(K8sDistro):
         if apps.CLUSTER_INGRESS in cluster_disabled(clu_ctx, self):
             content += "disable:\n  - rke2-ingress-nginx\n"
         for kind in ("server", "agent"):
-            cfg = clu_dir / "config-{}.yaml".format(kind)
-            if not cfg.exists():
-                cfg.write_text(content)
+            (clu_dir / "config-{}.yaml".format(kind)).write_text(content)
 
     def _install(self, hostname, clu_name, clu_ctx, node_type, token=None, rancher1_ip=None):
         """
