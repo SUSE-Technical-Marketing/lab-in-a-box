@@ -120,9 +120,16 @@ class _FakeBackendReuse:
     def opensuse_image(self):
         raise AssertionError("opensuse_image() must not be called when the DNS VM already exists")
 
+    def provider_resolver(self):
+        return ""
+
+
+# A reused DNS VM is only reused when it answers: every reuse check below says it does, and the refusal when it
+# does not is checked on its own further down.
+_serving = mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True)
 
 reuse_backend = _FakeBackendReuse()
-with tempfile.TemporaryDirectory() as tempfile_dir:
+with _serving, tempfile.TemporaryDirectory() as tempfile_dir:
     ip = backends.ensure_cloud_dns_vm(
         reuse_backend, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz", tempfile_dir)
 check("ensure_cloud_dns_vm() returns the existing DNS VM's real IP on reuse", ip == "203.0.113.100")
@@ -132,6 +139,7 @@ check("ensure_cloud_dns_vm() calls get_ip() on reuse", ("get_ip", "lab-dns-aws")
 
 # The views are configured on every call that names a site, on a reused VM as on a new one.
 with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
         tempfile.TemporaryDirectory() as tempfile_dir:
     backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
                                  "ami-xyz", tempfile_dir, site="aws-acct1")
@@ -140,10 +148,23 @@ check("a reused DNS VM is given its site's view, at the address this host reache
 check("...for the private ranges and the server's own networks",
       "localnets" in served.call_args[0][2] and "10.0.0.0/8" in served.call_args[0][2])
 with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
         tempfile.TemporaryDirectory() as tempfile_dir:
     backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
                                  "ami-xyz", tempfile_dir)
 check("without a site, what the server serves is left alone", not served.called)
+
+# An instance that never booted still has an address, so having one is not being alive. Reusing it would point
+# every node of the lab at a server that answers nothing.
+_refusals = []
+with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=False), \
+        mock.patch.object(backends, "die", side_effect=lambda m, *a, **kw: _refusals.append(m)), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
+                                 "ami-xyz", tempfile_dir)
+check("a DNS VM that has an address but does not serve is refused, not reused",
+      _refusals and "not serving DNS" in _refusals[0])
+check("the refusal says how to recover", _refusals and "Destroy it" in _refusals[0])
 
 
 # ── ensure_cloud_dns_vm(): create path — vm_exists() False, full create flow, real IP returned ──
@@ -159,6 +180,9 @@ class _FakeBackendCreate:
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return False
+
+    def provider_resolver(self):
+        return "169.254.169.253"
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
         self.calls.append(("copy_vm_image", iso_image, vm_name, vm_dsk_gb, config_method))

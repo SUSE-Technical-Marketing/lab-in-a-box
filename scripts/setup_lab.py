@@ -16,7 +16,7 @@ setup_lab.py — provision all VMs defined in a lab JSON, set up Kubernetes
 clusters, and install cluster-level and VM-level addons in order.
 
 Usage:
-    setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
+    setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
 """
 
 __version__ = "__LABVERSION__"
@@ -45,7 +45,7 @@ from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm, refresh_kept_node_dns  # noqa: E402
 
 _HELP_TEXT = """\
-Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
+Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
 
 Provisions all VMs defined in the lab JSON, sets up Kubernetes clusters, and
 installs cluster-level and VM-level addons in order.
@@ -59,6 +59,14 @@ Options:
   --debug   Stream the full output of every command that is run. Without it
             (default) only lab-in-a-box's own messages are shown; a command's
             output is still shown if it fails or emits a warning/error.
+  --cloud-account <name>
+            Use cloud account <name> (a credentials file under
+            /etc/lab_creation/credentials/) for every cloud node of this run.
+            Takes precedence over "cloud_account" in the lab definition, which
+            lets one lab file be shared between operators with their own
+            accounts. Required when several credentials files match a node's
+            backend, since those are separate platforms with their own region,
+            network, images and addresses, and there is no right one to guess.
   --parallel[=N]
             Create up to N VMs at once instead of one at a time (default
             without this flag: strictly sequential). Bare --parallel uses a
@@ -796,6 +804,10 @@ def main():
         fmt = args[1] if len(args) > 1 else "json"
         sys.exit(subprocess.run(["lab_schema", "--base", fmt]).returncode)
 
+    # Applied and stripped before anything else parses args, so the option reads the same on every command
+    # that creates or destroys a cloud node.
+    args = backends.take_cloud_account_option(args)
+
     keep = "--keep" in args
     debug = "--debug" in args
     lc.set_debug(debug)
@@ -819,11 +831,12 @@ def main():
     unknown = [a for a in args if a.startswith("-") and a not in ("--keep", "--debug", "--parallel")
                and not a.startswith("--parallel=")]
     if unknown:
-        lc.die("unknown option(s): {}. Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>".format(
+        lc.die("unknown option(s): {}. Usage: "
+               "setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>".format(
             " ".join(unknown)))
     positional = [a for a in args if not a.startswith("-")]
     if not positional:
-        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>")
+        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>")
     json_file = positional[0]
 
     defaults = primary.load_defaults()

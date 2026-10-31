@@ -436,7 +436,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 def main():
     if primary.wants_help(sys.argv[1:]):
         print(
-            "Usage: setup_vm.py <lab.json> <vm_hostname>\n\n"
+            "Usage: setup_vm.py [--cloud-account <name>] <lab.json> <vm_hostname>\n\n""  --cloud-account <name>  use cloud account <name> for this VM, taking precedence\n""                          over \"cloud_account\" in the lab definition.\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"
             "(Ignition+Combustion or cloud-init), registers DNS, and calls virt-install.\n\n"
             "Run 'setup_lab.py --input-definition [json|yaml]' for the full lab definition schema."
@@ -451,6 +451,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
+
+    # Applied and stripped before the positional arguments are read, so the option reads the same on every
+    # command that creates or destroys a cloud node.
+    sys.argv[1:] = backends.take_cloud_account_option(sys.argv[1:])
 
     if len(sys.argv) < 3:
         die("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))

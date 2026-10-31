@@ -141,6 +141,21 @@ _mac_lock = threading.Lock()
 # one decision, and two nodes being created at once must not reach the same one.
 _ip_lock = threading.Lock()
 
+# Serializes the ensure step for resources shared by every node of one backend and account: the cloud DNS VM, the
+# security group and the internet gateway. Each is a look-up followed by a create with nothing held in between, so
+# N parallel workers otherwise each find it absent and each create one. Node creation itself stays parallel: the
+# lock covers only the shared resource, keyed by backend, account and resource so two backends do not block each
+# other. Threads in one process are enough (setup_lab.py's --parallel is a ThreadPoolExecutor).
+_shared_resource_locks = {}
+_shared_resource_locks_guard = threading.Lock()
+
+
+def shared_resource_lock(backend, resource: str):
+    """The lock guarding `resource` for `backend`'s own account. Created on first use."""
+    key = (type(backend).__name__, getattr(backend, "account", ""), resource)
+    with _shared_resource_locks_guard:
+        return _shared_resource_locks.setdefault(key, threading.Lock())
+
 
 def _reachable_for_keep(vm_name: str, myip: str) -> bool:
     """
@@ -439,6 +454,19 @@ class VMBackend(object):
         No-op (returns None) by default. Only AWSBackend overrides it.
         """
         return None
+
+    def provider_resolver(self):
+        """
+        Return the address of this provider's own always-reachable DNS resolver, or "" when it has none.
+
+        The cloud DNS VM resolves through it at first boot (_cloud_dns_vm_user_data()) instead of through whatever
+        the network hands out, because the network may hand out the address of a previous, dead DNS VM: the VM would
+        then be unable to resolve its package mirror, never install BIND, and never serve, so no replacement could
+        ever come up. This address answers whatever the network's own DNS settings say.
+
+        Returns "" by default, which leaves the guest's resolver alone. Only AWSBackend overrides it.
+        """
+        return ""
 
     def get_subnet_cidr(self):
         """
@@ -2097,6 +2125,15 @@ class AWSBackend(VMBackend):
 
     def _ensure_security_group_access(self, open_ports):
         """
+        Serialise the security group ensure step across the threads of a --parallel run, then do it:
+        _ensure_security_group_access_locked() is a look-up followed by a create, and N workers would otherwise
+        each find it absent.
+        """
+        with shared_resource_lock(self, "securitygroup"):
+            return self._ensure_security_group_access_locked(open_ports)
+
+    def _ensure_security_group_access_locked(self, open_ports):
+        """
         Ensure self.security_group_id allows: (1) SSH from this automation node's public IP, always, since every AWS VM
         needs it to be reachable (see _own_public_ip()); and (2) each port in `open_ports` (the lab-JSON aws_open_ports list,
         e.g. ["443", "4505", "4506"] or ["69/udp"]; tcp by default) from anywhere, 0.0.0.0/0. The second group is for
@@ -2139,6 +2176,13 @@ class AWSBackend(VMBackend):
         OVERLAY_HUB_HOST).
         """
         self._ensure_security_group_access(open_ports)
+
+    def provider_resolver(self):
+        """
+        VMBackend.provider_resolver() override — the Amazon-provided resolver at the base of the VPC's link-local
+        range. It answers from inside any VPC regardless of that VPC's DHCP option set.
+        """
+        return "169.254.169.253"
 
     def get_private_ip(self, vm_name):
         """VMBackend.get_private_ip() override — EC2's own PrivateIpAddress field."""
@@ -2349,6 +2393,15 @@ class AWSBackend(VMBackend):
                   "--protocol", "-1", "--source-group", self.security_group_id)
 
     def _ensure_internet_gateway(self):
+        """
+        Serialise the internet gateway ensure step across the threads of a --parallel run, then do it:
+        _ensure_internet_gateway_locked() is a look-up followed by a create, and N workers would otherwise each
+        find it absent.
+        """
+        with shared_resource_lock(self, "gateway"):
+            return self._ensure_internet_gateway_locked()
+
+    def _ensure_internet_gateway_locked(self):
         """
         Ensure the subnet's VPC has a route to the internet. If no Internet Gateway is attached, create and attach one and
         add the route table's 0.0.0.0/0 route. The method does nothing if self.subnet_id is not set or a working IGW route
@@ -4019,7 +4072,7 @@ def cloud_dns_options(lab_networks=()) -> list:
             for line in _OPTIONS_TEMPLATE]
 
 
-def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
+def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str, provider_resolver: str = "") -> str:
     """
     Minimal cloud-init for the cloud DNS VM created by ensure_cloud_dns_vm(): it installs BIND and starts it. It
     does NOT configure what named serves: ensure_cloud_dns_vm() writes the whole named.conf over SSH once the VM is
@@ -4038,6 +4091,12 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
     /var/lib/named elsewhere. Using each distribution's own permitted directory is what removes the need to
     rewrite its AppArmor profile or relabel for SELinux at all.
 
+    `provider_resolver`, the backend's provider_resolver(), is written to /etc/resolv.conf before the package
+    install when the backend has one. Without it the VM resolves through whatever the network hands out, which on a
+    network a previous DNS VM was registered in is that dead VM: the install then cannot reach the package mirror,
+    BIND is never installed, and no replacement DNS VM can come up for as long as the network points at the dead
+    one. Empty leaves the guest's resolver untouched.
+
     runcmd entries run as one shell script, so the variables set by the first entry apply to the later ones.
     """
 
@@ -4047,7 +4106,11 @@ def _cloud_dns_vm_user_data(root_ssh_key: str, mydomain: str) -> str:
         return "'" + s.replace("'", "''") + "'"
 
     # Each entry is one shell command, run through runcmd after cloud-init's own modules.
-    commands = [
+    commands = []
+    if provider_resolver:
+        # Before the install, and only for it: named replaces this file's role entirely once it is serving.
+        commands.append('printf "nameserver %s\\n" {} > /etc/resolv.conf'.format(provider_resolver))
+    commands += [
         '. /etc/os-release; case " $ID $ID_LIKE " in'
         ' *" debian "*|*" ubuntu "*) BIND_INSTALL="apt-get update -q && apt-get install -y bind9"; BIND_USER=bind;'
         ' ZONE_DIR={deb};;'
@@ -4125,6 +4188,19 @@ def cloud_dns_vm_name(backend, backend_name: str) -> str:
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image="",
                         site=""):
     """
+    Ensure the cloud DNS VM exists and return its address, serialised against the other threads of a --parallel run.
+
+    The work is _ensure_cloud_dns_vm(); this wrapper only holds the backend's "dns" shared-resource lock across it,
+    so the VM is looked up and created once however many nodes are being created at the same time.
+    """
+    with shared_resource_lock(backend, "dns"):
+        return _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path,
+                                    preferred_image=preferred_image, site=site)
+
+
+def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path,
+                         preferred_image="", site=""):
+    """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
     There is one DNS VM per backend, e.g. "lab-dns-aws", reused by every lab that uses that backend. It is not
     created per lab.
@@ -4165,6 +4241,15 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     if backend.vm_exists(dns_vm_name):
         ip = backend.get_ip(dns_vm_name)
         if ip:
+            # Having an address is not being alive: an instance that never booted still has one, and reusing it
+            # points every node of the lab at a server that answers nothing. Ask it the same question the create
+            # path waits on, with a short timeout because a healthy server answers at once.
+            if not _lc.wait_for_ssh_command(
+                    ip, "systemctl is-active named || systemctl is-active bind9", timeout=30):
+                die("cloud DNS VM '{}' ({}) exists on backend '{}' but is not serving DNS: no SSH, or named is "
+                    "not active. Every node of this lab would resolve through it. Destroy it and re-run, which "
+                    "creates a replacement: destroy_vm.py cannot, since it is not a node of any lab, so remove "
+                    "it with the provider's own tooling.".format(dns_vm_name, ip, backend_name))
             log("- Reusing existing cloud DNS VM \"{}{}{}\" ({})".format(_RED, dns_vm_name, _RESET, ip))
             if site:
                 services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
@@ -4181,7 +4266,8 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
 
     base = Path(lab_setup_path) / "cloud-init"
     base.mkdir(parents=True, exist_ok=True)
-    (base / "{}_user-data".format(dns_vm_name)).write_text(_cloud_dns_vm_user_data(root_ssh_key, mydomain))
+    (base / "{}_user-data".format(dns_vm_name)).write_text(
+        _cloud_dns_vm_user_data(root_ssh_key, mydomain, provider_resolver=backend.provider_resolver()))
 
     backend.copy_vm_image(iso_image, dns_vm_name, _lc.CLOUD_INFRA_VM_DSK_GIB, config_method="cloud-init")
     backend.push_provisioning_files(dns_vm_name, config_method="cloud-init")
@@ -4216,33 +4302,113 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     return ip
 
 
+# The cloud account named at the execution point (--cloud-account), which outranks the lab definition: the same
+# precedence an AWS profile already has over raw keys. Set once from the command line before any node is resolved.
+_cloud_account_override = ""
+
+# The accounts resolved so far in this run, so the warning below is given once per additional account rather than
+# once per node. Threads of a --parallel run share it.
+_accounts_selected = set()
+_accounts_selected_lock = threading.Lock()
+
+
+def set_cloud_account_override(name: str) -> None:
+    """Pin every cloud node of this run to cloud account `name` (the --cloud-account option). "" clears it."""
+    global _cloud_account_override
+    _cloud_account_override = name or ""
+
+
+def take_cloud_account_option(args: list) -> list:
+    """
+    Apply and strip the --cloud-account option, returning `args` without it.
+
+    Accepts "--cloud-account NAME" and "--cloud-account=NAME". Dies when the name is missing, so a typo is not
+    silently taken as "no account given". Every command that creates or destroys a cloud node calls this on its own
+    argument list before parsing the rest, which is what keeps the option identical across them.
+    """
+    out, rest = [], list(args)
+    while rest:
+        a = rest.pop(0)
+        if a == "--cloud-account":
+            if not rest or rest[0].startswith("-"):
+                die("--cloud-account needs the name of a cloud account, e.g. --cloud-account aws-tmm "
+                    "(the credentials files are listed by setup_credentials.py)")
+            set_cloud_account_override(rest.pop(0))
+        elif a.startswith("--cloud-account="):
+            name = a.split("=", 1)[1]
+            if not name:
+                die("--cloud-account= needs the name of a cloud account, e.g. --cloud-account=aws-tmm "
+                    "(the credentials files are listed by setup_credentials.py)")
+            set_cloud_account_override(name)
+        else:
+            out.append(a)
+    return out
+
+
+def _note_account_selected(account: str, backend_name: str) -> None:
+    """
+    Record that `account` is in use and, from the second distinct account on, warn what using more than one means.
+
+    Each credential file is a separate deployment platform: its own region, VPC, security group, images and address
+    space. Nodes under different accounts are not on one network and reach each other only through the overlay, and
+    an AMI or instance type resolved under one account does not exist under another.
+    """
+    with _accounts_selected_lock:
+        if account in _accounts_selected:
+            return
+        _accounts_selected.add(account)
+        if len(_accounts_selected) < 2:
+            return
+        others = ", ".join(sorted(a for a in _accounts_selected if a != account))
+    _lc.warn("- This run now uses more than one cloud account: \"{}\" ({}) alongside {}. Each account is a separate "
+         "deployment platform with its own region, network, security group, images and addresses: nodes under "
+         "different accounts are not on one network and reach each other only through the overlay, and an image or "
+         "instance type resolved under one does not exist under another.".format(account, backend_name, others))
+
+
 def _resolve_account_name(definition, config, vm_name):
     """
-    Return the cloud_account name that applies to `vm_name`. An explicit "cloud_account" field (node, then common) is used
-    if set. Otherwise auto-discovery checks the credentials files for a matching account, so an encrypted account is used
-    even when the lab JSON does not name it. Auto-discovery runs only when the node's own "backend" field names a cloud
-    backend. A libvirt or harvester node never scans the credentials directory.
+    Return the cloud_account name that applies to `vm_name`, in this order of precedence:
+      1. --cloud-account, set with set_cloud_account_override(): the execution point outranks the lab definition,
+         since pinning an account in the file ties the lab to one operator and makes it unshareable.
+      2. the "cloud_account" field, on the node, then on common.
+      3. auto-discovery: the credentials files are searched for an account matching the node's backend, so an
+         encrypted account is used even when the lab JSON does not name it. This runs only when the node's own
+         "backend" field names a cloud backend, so a libvirt or harvester node never scans the credentials
+         directory.
 
     Returns "" when no account applies, in which case lab_creation.cfg is read directly. Never returns None.
 
-    Dies if auto-discovery finds more than one credentials file for the provider. The ambiguity must be resolved with an
-    explicit "cloud_account".
+    Dies when auto-discovery finds more than one credentials file for the provider, naming them and both ways to
+    resolve it. It cannot guess: the accounts are different platforms, not different spellings of one.
     """
     node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
     common_cfg = definition.get("common", {}) or {}
+    backend_name = node_cfg.get("backend") or common_cfg.get("backend") or config.get("BACKEND") or "libvirt"
+    if _cloud_account_override:
+        if backend_name in CLOUD_BACKEND_NAMES:
+            _note_account_selected(_cloud_account_override, backend_name)
+        return _cloud_account_override
     account = node_cfg.get("cloud_account") or common_cfg.get("cloud_account") or ""
     if account:
+        if backend_name in CLOUD_BACKEND_NAMES:
+            _note_account_selected(account, backend_name)
         return account
-    backend_name = node_cfg.get("backend") or common_cfg.get("backend") or config.get("BACKEND") or "libvirt"
     if backend_name not in CLOUD_BACKEND_NAMES:
         return ""
     found, matches = primary.find_cloud_account_for_cloudtype(backend_name, config=config)
     if found:
+        _note_account_selected(found, backend_name)
         return found
     if len(matches) > 1:
-        die("VM '{}': backend '{}' has no explicit \"cloud_account\" set, and {} matching "
-            "credentials files were found ({}) — set \"cloud_account\" explicitly to pick "
-            "one".format(vm_name, backend_name, len(matches), ", ".join(matches)))
+        die("VM '{vm}': backend '{be}' has no \"cloud_account\" set and {n} credentials files match it: {names}.\n"
+            "Each of those is a separate cloud platform, with its own region, network, images and addresses, so "
+            "there is no right one to guess. Pick one of:\n"
+            "  --cloud-account <name>   on setup_lab.py, setup_vm.py, destroy_lab.py or destroy_vm.py (preferred: "
+            "the lab definition stays shareable)\n"
+            "  \"cloud_account\": \"<name>\"   in the lab definition, under common or under this node (pins the "
+            "lab to one operator's account)".format(vm=vm_name, be=backend_name, n=len(matches),
+                                                    names=", ".join(matches)))
     return ""
 
 

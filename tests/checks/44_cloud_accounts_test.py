@@ -241,6 +241,9 @@ class _FakeCloudBackend:
     def get_ip(self, name):
         return "203.0.113.9"
 
+    def provider_resolver(self):
+        return ""
+
     def copy_vm_image(self, *a, **kw):
         pass
 
