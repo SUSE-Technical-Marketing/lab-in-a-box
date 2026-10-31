@@ -541,6 +541,11 @@ UNITEOF
 
         if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
         then
+            # conf.d is included from default-server.conf, before vhosts.d. A copy left there by an older install
+            # declares "Alias /lab-builder" first, and first match wins, so /lab-builder/admin and /lab-builder/api
+            # map into htdocs and answer 404 however current the vhosts.d config is.
+            _apache_remove_conf /etc/apache2/conf.d/lab-builder.conf
+            _apache_remove_conf /etc/apache2/conf.d/lab-builder-ssl.conf
             _apache_install_conf webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
             # the modules this needs: cgid, Basic auth and expires always,
             # rewrite for the HTTPS redirect unless _webui_tls=0.
