@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Lab status</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Everything this page needs beyond style.css's shared tokens/components. */
+  .wrap{max-width:860px;margin:0 auto;padding:1.4rem}
+  .status-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;
+    box-shadow:var(--shadow);margin-bottom:1.1rem}
+  .status-card h1{font-size:1.1rem;margin-bottom:.3rem}
+  .status-card .sub{margin-top:.2rem}
+  .link-row{display:flex;align-items:center;gap:.5rem;margin:.6rem 0;flex-wrap:wrap}
+  .link-row input{flex:1;min-width:14rem;font:inherit;padding:.4rem .6rem;border:1px solid var(--line);
+    border-radius:6px;background:var(--field-bg);color:var(--ink)}
+  .access-card{display:none}
+  .access-card.show{display:block}
+  .access-card pre{white-space:pre-wrap;word-break:break-word;margin:0;background:var(--code);
+    border-radius:8px;padding:.8rem;font-size:.86rem}
+  .access-card pre a{color:var(--accent);text-decoration:underline}
+  .service-item{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;padding:.4rem 0;
+    border-bottom:1px solid var(--line)}
+  .service-item:last-child{border-bottom:none}
+  .service-item .service-label{font-weight:640;min-width:8rem}
+  .service-item a{color:var(--accent)}
+  .service-item .service-creds{color:var(--muted);font-size:.85rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .job-log{max-height:46vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:.82rem}
+  .log-filter-row{display:flex;gap:.5rem;margin-bottom:.5rem}
+  .log-filter-row input{flex:1;font:inherit;padding:.4rem .6rem;border:1px solid var(--line);
+    border-radius:6px;background:var(--field-bg);color:var(--ink)}
+  .hint{color:var(--muted);font-size:.82rem}
+  #notHttps{display:none}
+  .components-card{display:none}
+  .components-card.show{display:block}
+  .comp-group{margin-bottom:.6rem}
+  .comp-group h2{font-size:.75rem;margin:0 0 .4rem}
+  .comp-grid{display:flex;flex-wrap:wrap;gap:.4rem}
+  .comp-pill{display:flex;align-items:center;gap:.4rem;padding:.3rem .6rem;border-radius:999px;
+    border:1px solid var(--line);background:var(--code);font-size:.82rem;cursor:default}
+  .comp-pill.bad{cursor:pointer}
+  .comp-pill.bad:hover{border-color:var(--danger)}
+  .comp-dot{width:.6rem;height:.6rem;border-radius:50%;flex:none}
+  .comp-dot.good{background:var(--ok)}
+  .comp-dot.bad{background:var(--danger)}
+  .comp-dot.pending{background:var(--gold)}
+  .comp-pill.pending{cursor:pointer}
+  .comp-pill.pending:hover{border-color:var(--gold)}
+  #issueDialog{max-width:32rem;border-radius:12px;border:1px solid var(--line);padding:1.1rem 1.3rem;
+    background:var(--panel);color:var(--ink)}
+  #issueDialog::backdrop{background:rgba(0,0,0,.4)}
+  #issueDialog h2{font-size:.95rem;margin:0 0 .6rem}
+  #issueDialog pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border-radius:8px;
+    padding:.7rem;font-size:.85rem;margin:0 0 .8rem}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <img class="logo logo-light" src="logo-icon.svg" alt="" width="38" height="38">
+    <img class="logo logo-dark" src="logo-icon-dark.svg" alt="" width="38" height="38">
+    <div><h1 class="brand-name">lab-<span class="in-a">in</span><span class="sep">-</span>a-box</h1>
+      <p class="sub">Live lab status</p></div>
+  </div>
+  <div class="top-actions">
+    <button type="button" id="themeToggle" class="theme-toggle"><span class="dot"></span><span class="t-label">Auto</span></button>
+  </div>
+</div>
+
+<div class="wrap">
+  <p id="notHttps" class="issue err">This page shows lab access credentials once the deploy is done, so it only
+    works over HTTPS. Reload this exact link using <code>https://</code>.</p>
+
+  <div class="status-card">
+    <h1>Deployment status</h1>
+    <p id="jobState" class="job-state">Loading…</p>
+    <p class="hint">This page keeps refreshing on its own — nothing to click until it is done.
+      Bookmark or share this link; anyone who has it can watch the same deploy (no login needed).</p>
+    <div class="link-row">
+      <input id="selfLink" type="text" readonly aria-label="This page's link">
+      <button type="button" id="copyLink" class="btn">Copy link</button>
+    </div>
+  </div>
+
+  <div id="componentsCard" class="status-card components-card">
+    <h1>Components</h1>
+    <p class="hint">Green means that part came up; amber means it's still retrying in the background; red
+      means it failed — click either for details. Clicking any pill also filters the log below to it.</p>
+    <div id="componentsGrid"></div>
+  </div>
+
+  <div id="servicesCard" class="status-card access-card">
+    <h1>Services</h1>
+    <p class="hint">Picked out of the log — addons that print their own access URL when they come up.
+      Not every addon does this yet, so an absent service doesn't necessarily mean it isn't there.</p>
+    <div id="servicesGrid"></div>
+  </div>
+
+  <div id="accessCard" class="status-card access-card">
+    <h1>Access this lab</h1>
+    <pre id="accessText"></pre>
+  </div>
+
+  <div class="status-card">
+    <h1>Log</h1>
+    <div class="log-filter-row">
+      <input id="logFilter" type="text" placeholder="Filter by node or addon name (e.g. mercury, client_registration)…">
+      <button type="button" id="logFilterClear" class="btn">Clear</button>
+    </div>
+    <pre id="jobLog" class="job-log"></pre>
+  </div>
+</div>
+
+<dialog id="issueDialog">
+  <h2 id="issueTitle"></h2>
+  <pre id="issueText"></pre>
+  <button type="button" id="issueClose" class="btn">Close</button>
+</dialog>
+
+<script src="theme.js"></script>
+<script src="ansi.js"></script>
+<script>
+(function () {
+  "use strict";
+  var qs = new URLSearchParams(location.search);
+  var job = qs.get("job") || "", token = qs.get("token") || "";
+  var stateEl = document.getElementById("jobState");
+  var logEl = document.getElementById("jobLog");
+  var accessCard = document.getElementById("accessCard");
+  var accessText = document.getElementById("accessText");
+  var servicesCard = document.getElementById("servicesCard");
+  var servicesGrid = document.getElementById("servicesGrid");
+  var componentsCard = document.getElementById("componentsCard");
+  var componentsGrid = document.getElementById("componentsGrid");
+  var issueDialog = document.getElementById("issueDialog");
+  document.getElementById("issueClose").addEventListener("click", function () { issueDialog.close(); });
+  var logFilter = document.getElementById("logFilter");
+  var timer = null;
+  var lastRawLog = "";
+
+  // The log filter: a plain, case-insensitive substring match on each line (after stripping ANSI, so
+  // filtering isn't thrown off by color codes), kept entirely client-side against the log already
+  // fetched — no new data, no backend change, re-filters instantly as the viewer types.
+  function renderLog() {
+    var filter = logFilter.value.trim();
+    var atEnd = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+    var text = lastRawLog;
+    if (filter) {
+      var needle = filter.toLowerCase();
+      text = text.split("\n").filter(function (line) {
+        return stripAnsi(line).toLowerCase().indexOf(needle) !== -1;
+      }).join("\n");
+    }
+    logEl.innerHTML = text ? ansiToHtml(text)
+      : (filter ? '(no log lines match "' + escapeHtmlLocal(filter) + '")' : "");
+    if (atEnd) logEl.scrollTop = logEl.scrollHeight;
+  }
+  logFilter.addEventListener("input", renderLog);
+  document.getElementById("logFilterClear").addEventListener("click", function () {
+    logFilter.value = "";
+    renderLog();
+  });
+
+  var GOOD_STATUSES = ["created", "reused", "existing", "ok"];
+
+  // "pending" (setup_lab.py's _addon_status()) means an addon exited 0 but handed a step off to a
+  // background forever-retry worker instead of actually finishing — neither done (green) nor broken
+  // (red): its own color, and still clickable since there is real context worth showing.
+  function classify(status) {
+    var s = status.toLowerCase();
+    if (s === "pending") return "pending";
+    return GOOD_STATUSES.indexOf(s) !== -1 ? "good" : "bad";
+  }
+
+  function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ""); }
+
+  // The LAB SUMMARY's Nodes/Clusters/Addons sections (print_summary() in scripts/setup_lab.py), parsed
+  // into {kind, name, status}. Each section is "  <status>  name1, name2 (scope), ...", status left-padded
+  // to a column width that doesn't matter once ANSI codes are stripped and the line is re-split on runs
+  // of whitespace.
+  function parseComponents(plainSummary) {
+    var items = [], section = null;
+    plainSummary.split("\n").forEach(function (line) {
+      if (/^Nodes \(/.test(line)) { section = "node"; return; }
+      if (/^Clusters \(/.test(line)) { section = "cluster"; return; }
+      if (/^Addons \(/.test(line)) { section = "addon"; return; }
+      if (/^(Warnings|Errors) \(/.test(line) || /^Resources:/.test(line) || /^Access:/.test(line)) { section = null; return; }
+      var m = section && line.match(/^\s{2}(\S+)\s+(.*)$/);
+      if (!m) return;
+      var status = m[1];
+      m[2].split(/,\s*/).forEach(function (entry) {
+        entry = entry.trim();
+        if (!entry) return;
+        var em = entry.match(/^(.*?)\s*\(([^)]*)\)\s*$/); // addons: "name (scope:x)"
+        items.push(em ? { kind: section, name: em[1], scope: em[2], status: status }
+                       : { kind: section, name: entry, status: status });
+      });
+    });
+    return items;
+  }
+
+  // The Warnings/Errors bullet lists, as plain strings, so a red pill's click can show the ones that
+  // mention its own name instead of making the viewer search the whole raw log by hand.
+  function parseIssues(plainSummary) {
+    var warnings = [], errors = [], section = null;
+    plainSummary.split("\n").forEach(function (line) {
+      if (/^Warnings \(/.test(line)) { section = "warnings"; return; }
+      if (/^Errors \(/.test(line)) { section = "errors"; return; }
+      if (/^(Nodes|Clusters|Addons) \(/.test(line) || /^Access:/.test(line)) { section = null; return; }
+      var m = line.match(/^\s*•\s*(.*)$/);
+      if (m && section) (section === "warnings" ? warnings : errors).push(m[1]);
+    });
+    return { warnings: warnings, errors: errors };
+  }
+
+  function renderComponents(plainSummary) {
+    var items = parseComponents(plainSummary);
+    if (!items.length) return null;
+    var issues = parseIssues(plainSummary);
+    var groups = { node: [], cluster: [], addon: [] };
+    items.forEach(function (it) { groups[it.kind].push(it); });
+    var titles = { node: "Nodes", cluster: "Clusters", addon: "Addons" };
+    componentsGrid.innerHTML = "";
+    ["node", "cluster", "addon"].forEach(function (kind) {
+      if (!groups[kind].length) return;
+      var g = document.createElement("div");
+      g.className = "comp-group";
+      var h = document.createElement("h2");
+      h.textContent = titles[kind];
+      g.appendChild(h);
+      var grid = document.createElement("div");
+      grid.className = "comp-grid";
+      groups[kind].forEach(function (it) {
+        var cls = classify(it.status);
+        var pill = document.createElement("span");
+        pill.className = "comp-pill" + (cls === "good" ? "" : " " + cls);
+        var dot = document.createElement("span");
+        dot.className = "comp-dot " + cls;
+        pill.appendChild(dot);
+        pill.appendChild(document.createTextNode(it.name + (it.scope ? " (" + it.scope + ")" : "")));
+        pill.title = cls === "good" ? "Click to filter the log to this name"
+          : "Click for details (also filters the log below)";
+        pill.style.cursor = "pointer";
+        pill.addEventListener("click", function () {
+          if (cls !== "good") showIssue(it, issues);
+          logFilter.value = it.name;
+          renderLog();
+        });
+        grid.appendChild(pill);
+      });
+      g.appendChild(grid);
+      componentsGrid.appendChild(g);
+    });
+    componentsCard.classList.add("show");
+    return { pending: items.some(function (it) { return it.status.toLowerCase() === "pending"; }),
+             bad: items.some(function (it) { return classify(it.status) === "bad"; }) };
+  }
+
+  // print_summary()'s "Access:" section (scripts/setup_lab.py's _node_access_lines()) — each node's
+  // resolved IP and ssh command, parsed out of the plain-text summary and shown with a clickable ssh://
+  // link instead of plain text. Separate from the Nodes/Clusters/Addons breakdown Components shows.
+  function escapeHtmlLocal(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Service URLs picked straight out of the full log, not just the LAB SUMMARY — install_smlm and
+  // install_uyuni already print "<name> available at: https://<host>  (<user> / <pass>)" once the
+  // server is up, and install_rancher prints "...'s server URL is https://<host>". Reusing their
+  // existing output instead of inventing a new convention; an addon that doesn't print a line like this
+  // simply doesn't show up here (see the card's own hint text) rather than being guessed at.
+  function extractServiceLinks(plainLog) {
+    var out = [], seen = {};
+    var reAvailable = /^(.*?)\s+available at:?\s*(https?:\/\/\S+?)\s*(?:\(([^/()]+?)\s*\/\s*([^()]+?)\))?\s*$/i;
+    var reServerUrl = /^#?\s*(.+?)'s server URL is\s*(https?:\/\/\S+)\s*$/i;
+    plainLog.split("\n").forEach(function (rawLine) {
+      var line = rawLine.trim();
+      var m = line.match(reAvailable) || line.match(reServerUrl);
+      if (!m) return;
+      var entry = { label: m[1].trim(), url: m[2].trim(), user: m[3] ? m[3].trim() : "", pass: m[4] ? m[4].trim() : "" };
+      var key = entry.label + "|" + entry.url;
+      if (seen[key]) return; // the same "available at" line often repeats across retries/heartbeats
+      seen[key] = true;
+      out.push(entry);
+    });
+    return out;
+  }
+  function renderServices(plainLog) {
+    var services = extractServiceLinks(plainLog);
+    if (!services.length) { servicesCard.classList.remove("show"); return; }
+    servicesGrid.innerHTML = "";
+    services.forEach(function (svc) {
+      var row = document.createElement("div");
+      row.className = "service-item";
+      var label = document.createElement("span");
+      label.className = "service-label";
+      label.textContent = svc.label;
+      var link = document.createElement("a");
+      link.href = svc.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = svc.url;
+      row.appendChild(label);
+      row.appendChild(link);
+      if (svc.user || svc.pass) {
+        var creds = document.createElement("span");
+        creds.className = "service-creds";
+        creds.textContent = svc.user + " / " + svc.pass;
+        row.appendChild(creds);
+      }
+      servicesGrid.appendChild(row);
+    });
+    servicesCard.classList.add("show");
+  }
+
+  function extractAccessLines(plainSummary) {
+    var out = [], capturing = false;
+    plainSummary.split("\n").forEach(function (line) {
+      if (/^Access:/.test(line)) { capturing = true; return; }
+      if (/^(Warnings|Errors) \(/.test(line)) { capturing = false; return; }
+      if (capturing) out.push(line);
+    });
+    return out;
+  }
+  function renderAccess(plainSummary) {
+    var lines = extractAccessLines(plainSummary);
+    if (!lines.length) { accessCard.classList.remove("show"); return; }
+    accessText.innerHTML = lines.map(function (line) {
+      return escapeHtmlLocal(line).replace(/ssh root@(\S+)/, function (m, ip) {
+        return '<a href="ssh://root@' + ip + '">ssh root@' + ip + '</a>';
+      });
+    }).join("\n");
+    accessCard.classList.add("show");
+  }
+
+  function showIssue(item, issues) {
+    document.getElementById("issueTitle").textContent = item.name + " — " + item.status;
+    var matches = issues.errors.filter(function (l) { return l.indexOf(item.name) !== -1; })
+      .concat(issues.warnings.filter(function (l) { return l.indexOf(item.name) !== -1; }));
+    var text;
+    if (matches.length) {
+      text = matches.join("\n\n");
+    } else if (item.status.toLowerCase() === "pending") {
+      text = item.name + " finished its own step, but handed part of the work off to a background retry "
+        + "that is still running (this is normal — SMLM channel sync can take hours). It isn't broken; "
+        + "check the raw log below for '" + item.name + "' to see its current progress.";
+    } else {
+      text = "No specific error line found for '" + item.name + "' in the summary — check the raw log "
+        + "below for that name.";
+    }
+    document.getElementById("issueText").textContent = text;
+    issueDialog.showModal();
+  }
+
+  document.getElementById("selfLink").value = location.href;
+  document.getElementById("copyLink").addEventListener("click", function () {
+    navigator.clipboard.writeText(location.href).catch(function () {});
+  });
+
+  if (location.protocol !== "https:") {
+    document.getElementById("notHttps").style.display = "block";
+    stateEl.textContent = "Waiting for HTTPS…";
+    return;
+  }
+  if (!job || !token) {
+    stateEl.textContent = "This link is missing its job or token — it cannot be a real status link.";
+    stateEl.className = "job-state failed";
+    return;
+  }
+
+  // The LAB SUMMARY block setup_lab.py prints at the end of a run (see scripts/setup_lab.py's
+  // print_summary()) — pulled out of the raw log and shown as its own card once it appears.
+  function extractSummary(log) {
+    var marker = "LAB SUMMARY";
+    var i = log.indexOf(marker);
+    if (i === -1) return null;
+    // Back up to the start of the decorative rule line print_summary() puts just above the marker.
+    var start = log.lastIndexOf("\n\n", i);
+    return log.slice(start === -1 ? i : start).trim();
+  }
+
+  function poll() {
+    clearTimeout(timer);
+    var url = "api?action=pub-status&job=" + encodeURIComponent(job) + "&token=" + encodeURIComponent(token);
+    fetch(url).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        stateEl.textContent = res.body.error || "This link is no longer valid.";
+        stateEl.className = "job-state failed";
+        return; // a bad job/token never recovers by retrying
+      }
+      var j = res.body;
+      lastRawLog = j.log || "";
+      renderLog();
+      renderServices(stripAnsi(lastRawLog));
+      var summary = extractSummary(j.log || "");
+      var comp = null;
+      if (summary) {
+        var plainSummary = stripAnsi(summary);
+        renderAccess(plainSummary);
+        comp = renderComponents(plainSummary);
+      }
+      // setup_lab.py exiting 0 only means the PROCESS finished — it can still leave real work pending in
+      // the background (client registration waiting on channel sync, etc.), which the process itself
+      // cannot see by the time it exits. The component breakdown below is the real signal, so "done"
+      // alone never claims the lab is actually ready when any component still says otherwise.
+      if (j.state === "running") {
+        stateEl.textContent = "Deploying…";
+      } else if (j.state === "failed") {
+        stateEl.textContent = "Failed (exit " + (j.rc == null ? "?" : j.rc) + ").";
+      } else if (comp && comp.bad) {
+        stateEl.textContent = "Finished, but with failures — see Components below.";
+        j.state = "failed";
+      } else if (comp && comp.pending) {
+        stateEl.textContent = "Finished, but not fully usable yet — some parts are still retrying in "
+          + "the background (see Components below). This can take hours; the page keeps refreshing.";
+        j.state = "pending";
+      } else {
+        stateEl.textContent = "Done — the lab is ready.";
+      }
+      stateEl.className = "job-state " + j.state;
+      if (j.state === "running" || j.state === "pending") timer = setTimeout(poll, 4000);
+    }).catch(function () {
+      // A network hiccup, not a refusal — keep trying, same as the admin job dialog does.
+      timer = setTimeout(poll, 5000);
+    });
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

@@ -24,6 +24,7 @@
 <li><a href="#configuration-reference">配置参考</a></li>
 <li><a href="#testing">测试</a></li>
 <li><a href="#contributing--developer-setup">贡献 / 开发环境</a></li>
+<li><a href="#issues-and-feedback">问题与反馈</a></li>
 </ul>
 <p align="right"><a href="#top">↑ 返回顶部</a></p>
 
@@ -210,6 +211,18 @@
 <td>最新的 openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x，自带订阅（BYOS）</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7，自带订阅（BYOS）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1，自带订阅（BYOS）</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>由 Canonical 发布的 Ubuntu 24.04 LTS Server</td>
 </tr>
@@ -237,8 +250,13 @@
 <td><code>rocky10</code></td>
 <td>由 Rocky 项目发布的最新 Rocky Linux 10</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>由 CentOS 项目发布的最后一个 CentOS Linux 7（已于 2024 年 6 月停止支持）。仅限 x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>SUSE 产品名后加上 <code>-byos</code>，会选择该产品的自带订阅（BYOS）镜像，而不是按需付费镜像。该镜像在注册之前没有任何软件仓库：通过 <code>client_registration</code> 注册到 SMLM 服务器的节点从那里获取软件包；需要更早获取软件包的节点（例如 Kubernetes 节点）在 common 或单个节点中设置 <code>scc_regcode</code>（可选再加 <code>scc_email</code>），由 cloud-init 在首次启动时用 <code>SUSEConnect</code> 完成注册。</p>
 <p>SUSE 自家产品取自 SUSE 的公开镜像追踪服务，其余取自各厂商的 AWS Systems Manager 公开参数或其自有 AWS 账户，绝不使用其他账户也可能匹配的名称搜索。凡不是产品名称的值，包括镜像 ID 和镜像文件名，都原样传递。</p>
 <p>云端实验室还需要节点之间能相互解析。每个云账户有一台小型 DNS 虚拟机提供实验室域名，并将账户网络配置为把该服务器分发给其中的每个实例，于是节点可以按主机名加入其 Kubernetes 集群，无需在客户机内部做任何配置。在 AWS 上这是一个 VPC DHCP 选项集：它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。</p>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
@@ -270,7 +288,7 @@
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必填，位于 <code>/etc/lab_creation.cfg</code>）指定网关虚拟机作为中心的云账户，即拥有固定公网 IP、所有其他站点都连接到它的那个站点。<code>OVERLAY_CIDR</code>（默认 <code>10.99.0.0/16</code>）只用于网关在隧道上的地址，不用于路由实际流量；<code>OVERLAY_WG_PORT</code>（默认 <code>51820</code>）是中心的监听端口。加入、退出和路由下发都在 <code>setup_vm.py</code> 中自动完成，无需手动运行其他命令。</p>
 <p><strong>已知限制：</strong>不会修改 DNS（只有当节点名称解析到已路由的子网后，才能通过真实主机名访问它）；之后有新的远程站点加入时，站点中已预配的节点不会被追溯更新路由，只会在各节点自己预配时刷新；AWS 需要禁用站点网关的“源/目标检查”才能转发流量（会自动处理），其他 7 个云后端尚无对应处理。</p>
 <p><strong>已知差距：</strong>AWS 需要关闭站点网关的源/目的检查才能转发流量，这一步是自动完成的，但其余 7 个云后端尚无对应处理。相反，站点中先前已部署的节点在另一个站点后来加入时<em>确实</em>会重新配置路由：中心节点会记录它所路由到的每个节点，并在有站点加入或被撤除时逐一刷新。<code>overlay_ctl.py --hub &lt;host&gt;</code> 可以手动完成同样的事，提供 <code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code> 和 <code>forget &lt;node&gt;</code>。撤除一个站点会把它的网关从中心节点的对等列表中移除，停止路由它的子网，清理站点、地址和节点三份记录，并从其他所有站点的节点上删除该路由；不会触碰任何虚拟机，销毁站点的机器是 <code>destroy_lab.py</code> 的工作。</p>
-<p><strong>跨站点 DNS：</strong>实验室中的每个 DNS 服务器，无论是本自动化节点自己的 BIND，还是各云账号的 DNS 虚拟机，都是同一个区域的主服务器，记录是通过写入其区域文件而到达的。因此，只要把某个节点的记录同时写入其他站点的服务器，它在那些站点就能被解析：每个站点都会把自己的 DNS 服务器登记到中心节点，预配时也会把该节点的记录写入其他所有站点的服务器。仍会留下两类偏差，因为逐条记录的写入只能到达当时在运行的服务器：某站点在其服务器停机期间漏掉的记录，以及此后被销毁的节点的记录（销毁只会到达它自己那次运行所知道的服务器）。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> 会用本自动化节点的副本（即持有所有站点记录的那一份）替换每个站点的区域副本，从而同时修正这两类偏差。 这仅在由一个自动化节点驱动所有站点时才成立。若每个站点各有自己的节点，本节点的副本从未持有其他站点的记录，因此 <code>dns_sync.py &lt;lab.json&gt;</code> 改为比较每个主服务器：报告每个主服务器缺少哪些记录、以及哪些记录只有它持有，把缺少的记录写入每一个，并且从不删除任何记录，因为只有某一个主服务器持有的记录，既可能是尚未写入其他主服务器，也可能是已从其他主服务器删除。<code>--check</code> 只报告而不写入，<code>--prune</code> 则针对你已在报告中读到的记录作出相反的决定。此外，在写入任何记录之前，每个主服务器都会先成为该区域的主服务器：追加到服务器未声明的区域、或追加到没有 SOA 的文件中的记录，从来都不会被应答，而且无人察觉。</p>
+<p><strong>跨站点 DNS：</strong>实验室中的每个 DNS 服务器，无论是本自动化节点自己的 BIND，还是各云账号的 DNS 虚拟机，都是同一个区域的主服务器，记录是通过写入其区域文件而到达的。因此，只要把某个节点的记录同时写入其他站点的服务器，它在那些站点就能被解析：每个站点都会把自己的 DNS 服务器登记到中心节点，预配时也会把该节点的记录写入其他所有站点的服务器。仍会留下两类偏差，因为逐条记录的写入只能到达当时在运行的服务器：某站点在其服务器停机期间漏掉的记录，以及此后被销毁的节点的记录（销毁只会到达它自己那次运行所知道的服务器）。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> 通过把每个站点的 DNS 服务器与本节点作比较、而不是覆盖它，来同时修正这两类偏差：只有当本节点驱动所有站点时，它的副本才持有所有站点的记录；若每个站点各有自己的自动化节点，用本节点的副本替换它们的副本，恰恰会删除本节点从未持有过的记录。<code>dns_sync.py &lt;lab.json&gt;</code> 是针对实验室定义所指明的主服务器的同一套比对。两者都会报告每个主服务器缺少哪些记录、以及哪些记录只有它持有，把缺少的记录写入每一个，并且从不删除任何记录，因为只有某一个主服务器持有的记录，既可能是尚未写入其他主服务器，也可能是已从其他主服务器删除。<code>--check</code> 只报告而不写入，<code>--prune</code> 则针对你已在报告中读到的记录作出相反的决定。此外，在写入任何记录之前，每个主服务器都会先成为该区域的主服务器：追加到服务器未声明的区域、或追加到没有 SOA 的文件中的记录，从来都不会被应答，而且无人察觉。 每个主服务器还会通过 <code>named-checkzone</code> 被询问其区域副本能否真正加载：记录比较会忽略区域头部，因此 SOA 损坏或缺失的服务器与其他主服务器看起来完全一致，却什么都不应答。对于不响应 SSH 的服务器，会先重试再跳过，因为云实验室的 DNS 虚拟机在写入第一条记录时往往仍在启动。 每个主服务器的区域都放在其自身 named 被允许读取的目录中：在 Debian 和 Ubuntu 上是 /etc/bind，因为其 AppArmor 配置拒绝其他任何位置；其他发行版则为 /var/lib/named。云实验室的 DNS 虚拟机在首次启动时获得 BIND 及其应答策略，随后像其他任何主服务器一样获得区域，因此创建区域的地方只有一处。</p>
 <h3 id="library-loading-order">库加载顺序</h3>
 <p>每个脚本按以下顺序加载配置：</p>
 <ol>
@@ -1672,6 +1690,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>使用 YAML（而非 JSON）格式的<a href="#lab-definition-format">实验室定义</a>还需要：
 <code>pyyaml</code>（<code>pip install pyyaml</code>）</p>
+<hr />
+<h2 id="issues-and-feedback">问题与反馈</h2>
+<p>发现了错误、有功能请求，或只是想提个问题？请使用 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>：</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">提交新 issue</a></strong> —— 用于报告错误、缺失的功能，或对本项目任何方面的反馈</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">浏览已有 issue</a></strong> —— 也许已经有人遇到过同样的问题，或讨论中已有变通方法</li>
+</ul>
+<p>报告错误时，最有用的信息包括：您运行的确切命令、使用的 lab 定义（JSON/YAML，已移除敏感信息），以及输出或日志中相关的部分。日志的位置请参见上方的<a href="#testing">测试</a>，<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">示例</a>可作为已知可用的起点用于对比。</p>
+<p>发现的是安全漏洞而不是普通错误？请按照 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> 的说明处理，而不要公开提交 issue。</p>
+<p align="right"><a href="#top">↑ 返回顶部</a></p>
+
 <hr />
 <h2 id="author">作者</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

@@ -24,6 +24,7 @@
 <li><a href="#configuration-reference">Referencia de configuración</a></li>
 <li><a href="#testing">Pruebas</a></li>
 <li><a href="#contributing--developer-setup">Contribuir / Entorno de desarrollo</a></li>
+<li><a href="#issues-and-feedback">Problemas y comentarios</a></li>
 </ul>
 <p align="right"><a href="#top">↑ volver arriba</a></p>
 
@@ -210,6 +211,18 @@
 <td>El openSUSE Leap más reciente</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, publicado por Canonical</td>
 </tr>
@@ -237,8 +250,13 @@
 <td><code>rocky10</code></td>
 <td>El Rocky Linux 10 más reciente, publicado por el proyecto Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>El último CentOS Linux 7 (fin de soporte desde junio de 2024), publicado por el proyecto CentOS. Solo x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>Un nombre de producto de SUSE seguido de <code>-byos</code> elige su imagen con suscripción propia en lugar de la de pago por uso. Esa imagen no tiene repositorios hasta que se registra: un nodo registrado en un servidor SMLM mediante <code>client_registration</code> obtiene sus paquetes de allí, y un nodo que necesita paquetes antes, como un nodo de Kubernetes, define <code>scc_regcode</code> (y opcionalmente <code>scc_email</code>), en common o por nodo, para que cloud-init lo registre con <code>SUSEConnect</code> en el primer arranque.</p>
 <p>Los productos de SUSE provienen del registro público de imágenes de SUSE, y el resto del parámetro público de AWS Systems Manager de cada proveedor o de su propia cuenta de AWS, nunca de una búsqueda por nombre que otra cuenta pudiera satisfacer. Un valor que no sea un nombre de producto, incluido un ID de imagen o un nombre de archivo de imagen, se pasa sin tocar.</p>
 <p>Un laboratorio en la nube también necesita que sus nodos se resuelvan entre sí. Una pequeña VM de DNS por cuenta de nube sirve el dominio del laboratorio, y la red de la cuenta se configura para entregar ese servidor a cada instancia que contiene, de modo que un nodo se une a su clúster de Kubernetes por nombre de host sin configurar nada dentro del huésped. En AWS eso es un conjunto de opciones DHCP de la VPC: se aplica a toda la VPC, una instancia lanzada después lo tiene de inmediato, y una ya en ejecución lo toma cuando renueva su concesión DHCP.</p>
 <h3 id="kubernetes-setup">Configuración de Kubernetes</h3>
@@ -270,7 +288,7 @@
 <p><code>OVERLAY_HUB_ACCOUNT</code> (obligatorio, en <code>/etc/lab_creation.cfg</code>) indica la cuenta de nube cuya VM de puerta de enlace es el concentrador, el único sitio con una IP pública estable al que se conectan todos los demás. <code>OVERLAY_CIDR</code> (predeterminado <code>10.99.0.0/16</code>) solo se usa para las direcciones propias de las puertas de enlace en el túnel, no para enrutar el tráfico real; <code>OVERLAY_WG_PORT</code> (predeterminado <code>51820</code>) es el puerto de escucha del concentrador. La entrada, la salida y la distribución de rutas ocurren automáticamente como parte de <code>setup_vm.py</code>; no hay que ejecutar nada más a mano.</p>
 <p><strong>Limitaciones conocidas:</strong> no se modifica el DNS (un nodo es accesible por su nombre real cuando ese nombre resuelve a una subred ya enrutada, no antes); los nodos ya aprovisionados de un sitio no se reenrutan cuando se une más tarde un sitio remoto nuevo, solo se actualizan cuando se aprovisiona cada nodo; AWS necesita desactivar la «comprobación de origen/destino» de la puerta de enlace del sitio para reenviar tráfico (se hace automáticamente), y todavía no existe equivalente para los otros 7 backends de nube.</p>
 <p><strong>Carencias conocidas:</strong> AWS necesita desactivar la comprobación origen/destino de su puerta de enlace para reenviar tráfico, lo que se hace automáticamente, sin equivalente todavía para los otros 7 proveedores. En cambio, los nodos ya aprovisionados de un sitio <em>sí</em> se vuelven a encaminar cuando más tarde se incorpora otro sitio: el concentrador registra cada nodo al que encamina y los actualiza cada vez que un sitio entra o se retira. <code>overlay_ctl.py --hub &lt;host&gt;</code> hace lo mismo a mano con <code>list</code>, <code>refresh</code>, <code>retire &lt;site&gt;</code> y <code>forget &lt;node&gt;</code>. Retirar un sitio quita su puerta de enlace del concentrador, deja de encaminar su subred, limpia los registros de sitios, direcciones y nodos, y borra la ruta de los nodos de los demás sitios; no se toca ninguna VM, porque destruir las máquinas de un sitio es tarea de <code>destroy_lab.py</code>.</p>
-<p><strong>DNS entre sitios:</strong> todos los servidores DNS de un laboratorio, el BIND de este nodo de automatización y la VM de DNS de cada cuenta de nube, son maestros de la misma zona, y un registro llega escribiéndolo en su archivo de zona. Así, un nodo se vuelve resoluble en los demás sitios escribiendo su registro también en sus servidores: cada sitio registra su servidor DNS en el concentrador y el aprovisionamiento escribe el registro del nodo además en los servidores de todos los demás sitios. Quedan dos tipos de desviación, porque una escritura por registro solo alcanza a los servidores que estaban en marcha: un registro que un sitio perdió mientras su servidor estaba caído y el registro de un nodo destruido después, cuya destrucción solo alcanzó a los servidores que conocía su propia ejecución. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> sustituye la copia de la zona de cada sitio por la de este nodo de automatización, la que contiene los registros de todos los sitios, y corrige ambas. Eso solo es correcto cuando un nodo de automatización gobierna todos los sitios. Si cada sitio tiene el suyo, la copia de este nodo nunca contuvo los registros de los demás, así que <code>dns_sync.py &lt;lab.json&gt;</code> compara cada maestro: informa de lo que a cada uno le falta y de lo que solo él tiene, escribe en cada uno los registros que faltan y nunca elimina nada, porque un registro que solo tiene un maestro es tan probable que aún no se haya escrito en los demás como que se haya borrado de ellos. <code>--check</code> informa sin escribir y <code>--prune</code> toma la otra decisión para un registro que haya leído en el informe. Además, cada maestro pasa a ser maestro de la zona antes de escribir cualquier registro: un registro añadido a una zona que un servidor no declara, o a un archivo sin SOA, nunca se respondía y nadie lo advertía.</p>
+<p><strong>DNS entre sitios:</strong> todos los servidores DNS de un laboratorio, el BIND de este nodo de automatización y la VM de DNS de cada cuenta de nube, son maestros de la misma zona, y un registro llega escribiéndolo en su archivo de zona. Así, un nodo se vuelve resoluble en los demás sitios escribiendo su registro también en sus servidores: cada sitio registra su servidor DNS en el concentrador y el aprovisionamiento escribe el registro del nodo además en los servidores de todos los demás sitios. Quedan dos tipos de desviación, porque una escritura por registro solo alcanza a los servidores que estaban en marcha: un registro que un sitio perdió mientras su servidor estaba caído y el registro de un nodo destruido después, cuya destrucción solo alcanzó a los servidores que conocía su propia ejecución. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> corrige ambas comparando el servidor DNS de cada sitio con este en lugar de sobrescribirlo: la copia de este nodo contiene los registros de todos los sitios solo cuando él gobierna todos los sitios, y si cada sitio tiene su propio nodo de automatización, sustituir sus copias por esta borraría precisamente los registros que este nodo nunca tuvo. <code>dns_sync.py &lt;lab.json&gt;</code> es la misma reconciliación para los maestros que nombra una definición de laboratorio. Ambos informan de lo que a cada uno le falta y de lo que solo él tiene, escribe en cada uno los registros que faltan y nunca elimina nada, porque un registro que solo tiene un maestro es tan probable que aún no se haya escrito en los demás como que se haya borrado de ellos. <code>--check</code> informa sin escribir y <code>--prune</code> toma la otra decisión para un registro que haya leído en el informe. Además, cada maestro pasa a ser maestro de la zona antes de escribir cualquier registro: un registro añadido a una zona que un servidor no declara, o a un archivo sin SOA, nunca se respondía y nadie lo advertía. A cada maestro se le pregunta además, con <code>named-checkzone</code>, si su copia de la zona llega a cargarse: la comparación de registros ignora la cabecera de la zona, así que un servidor con el SOA dañado o ausente coincide perfectamente con los demás y no responde a nada. Un servidor que no responde por SSH se reintenta antes de omitirlo, porque la VM de DNS de un laboratorio en la nube suele estar aún arrancando cuando se escribe el primer registro. La zona de cada maestro va en el directorio del que su propio named puede leer: /etc/bind en Debian y Ubuntu, cuyo perfil de AppArmor niega cualquier otro, y /var/lib/named en el resto. La VM de DNS de un laboratorio en la nube recibe BIND y su política de servicio en el primer arranque y luego obtiene su zona igual que cualquier otro maestro, así que una zona se crea en un solo sitio.</p>
 <h3 id="library-loading-order">Orden de carga de bibliotecas</h3>
 <p>Cada script carga la configuración en este orden:</p>
 <ol>
@@ -1677,6 +1695,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Usar una <a href="#lab-definition-format">definición de laboratorio</a> en YAML (en lugar de JSON) requiere además:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Problemas y comentarios</h2>
+<p>¿Encontró un error, tiene una solicitud de función, o simplemente quiere hacer una pregunta? Use <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Abrir un nuevo issue</a></strong> — para un error, una función faltante, o comentarios sobre cualquier aspecto de este proyecto</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Explorar los issues existentes</a></strong> — alguien puede haber encontrado ya lo mismo, o puede haber una solución alternativa en la discusión</li>
+</ul>
+<p>Al reportar un error, lo más útil es incluir: el comando exacto que ejecutó, la definición del lab (JSON/YAML) que usó (sin secretos), y la sección relevante de la salida o el registro. Vea <a href="#testing">Pruebas</a> arriba para saber dónde están los registros, y los <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">ejemplos</a> como punto de partida conocido para comparar.</p>
+<p>¿Encontró una vulnerabilidad de seguridad en lugar de un error normal? Siga <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> en lugar de abrir un issue público.</p>
+<p align="right"><a href="#top">↑ volver arriba</a></p>
+
 <hr />
 <h2 id="author">Autor</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

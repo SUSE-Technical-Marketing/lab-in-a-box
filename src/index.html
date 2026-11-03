@@ -24,6 +24,7 @@
 <li><a href="#configuration-reference">Configuration reference</a></li>
 <li><a href="#testing">Testing</a></li>
 <li><a href="#contributing--developer-setup">Contributing / Developer setup</a></li>
+<li><a href="#issues-and-feedback">Issues and Feedback</a></li>
 </ul>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
@@ -210,6 +211,18 @@
 <td>The newest openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, bring your own subscription</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, bring your own subscription</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, bring your own subscription</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, published by Canonical</td>
 </tr>
@@ -237,8 +250,13 @@
 <td><code>rocky10</code></td>
 <td>The newest Rocky Linux 10, published by the Rocky project</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>The last CentOS Linux 7 (end of life since June 2024), published by the CentOS project. x86_64 only</td>
+</tr>
 </tbody>
 </table>
+<p>A SUSE product name followed by <code>-byos</code> picks its bring-your-own-subscription image instead of the pay-as-you-go one. That image has no repositories until it is registered: a node registered to an SMLM server through <code>client_registration</code> gets its packages from there, and a node that needs packages before that, such as a Kubernetes node, sets <code>scc_regcode</code> (and optionally <code>scc_email</code>), in common or per node, so cloud-init registers it with <code>SUSEConnect</code> at first boot.</p>
 <p>SUSE's own products come from SUSE's public image tracker, and the rest from each vendor's AWS Systems Manager public parameter or its own AWS account, never from a name search that another account could match. A value that is not a product name, an image ID or an image file name included, is passed through untouched.</p>
 <p>A cloud lab also needs its nodes to resolve each other. One small DNS VM per cloud account serves the lab domain, and the account's network is configured to hand that server to every instance in it, so a node joins its Kubernetes cluster by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set: it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews.</p>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
@@ -269,7 +287,7 @@
 <p>Only each site's own gateway ever joins the overlay itself — never an individual lab node. A "site" is the home libvirt lab or one cloud account; its gateway is either the home site's own automation VM (<code>mysource</code> in <code>/etc/lab_creation.cfg</code>) or, for a cloud account, a small dedicated VM auto-created/reused there (<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>, the same naming convention as the cloud DNS VM). Every OTHER node just gets a plain, persistent local route to each other site's real subnet, via its own site's gateway — that's the whole mechanism, no per-node WireGuard membership at all.</p>
 <p><code>OVERLAY_HUB_ACCOUNT</code> (required, in <code>/etc/lab_creation.cfg</code>) names the cloud account whose gateway VM is the hub — the one site with a stable public IP everyone else connects to. <code>OVERLAY_CIDR</code> (default <code>10.99.0.0/16</code>) is used only for the gateways' own point-of-presence addresses on the tunnel, not for routing real traffic; <code>OVERLAY_WG_PORT</code> (default <code>51820</code>) is the hub's listen port. Joining/leaving and route-pushing happen automatically as part of <code>setup_vm.py</code> — nothing else to run by hand.</p>
 <p><strong>Known gaps:</strong> AWS needs its site gateway's source/dest check disabled to forward traffic, which is handled automatically, with no equivalent yet for the other 7 cloud backends. A site's already-provisioned nodes <em>are</em> re-routed when another site joins later: the hub records every node it routes to, and each one is refreshed whenever a site joins or is retired. <code>overlay_ctl.py --hub &lt;host&gt;</code> does the same by hand with <code>list</code>, <code>refresh</code>, <code>retire &lt;site&gt;</code> and <code>forget &lt;node&gt;</code>. Retiring a site takes its gateway off the hub, stops the hub routing its subnet, cleans the site, allocation and node registries, and removes the route from every other site's nodes; no VM is touched, since destroying a site's machines is <code>destroy_lab.py</code>'s work.</p>
-<p><strong>Cross-site DNS:</strong> every DNS server in a lab, this automation node's own BIND and each cloud account's DNS VM, is a master of the same zone, and a record arrives by being written into its zone file. So a node becomes resolvable at the other sites by writing its record into their servers too: each site registers its DNS server on the hub, and provisioning writes the node's record into every other site's server as well. Two kinds of drift are left over, because a per-record write only reaches the servers that were up at the time: a record a site missed while its server was down, and a record for a node destroyed later, whose teardown only reached the servers its own run knew about. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> replaces every site's copy of the zone with this automation node's, which is the copy that holds every site's records, and fixes both. That is right only where one automation node drives every site. Where each site has its own, this node's copy never held the other sites' records, so <code>dns_sync.py &lt;lab.json&gt;</code> compares every master instead: it reports what each one is missing and what it holds alone, writes the missing records to each, and never removes anything, because a record one master holds alone is as likely to be one the others have not been written yet as one deleted from them. <code>--check</code> reports without writing and <code>--prune</code> takes the other decision for a record you have read in the report. Each master is also made a master of the zone before any record is written to it: a record appended to a zone a server does not declare, or to a file with no SOA, was silently never answered.</p>
+<p><strong>Cross-site DNS:</strong> every DNS server in a lab, this automation node's own BIND and each cloud account's DNS VM, is a master of the same zone, and a record arrives by being written into its zone file. So a node becomes resolvable at the other sites by writing its record into their servers too: each site registers its DNS server on the hub, and provisioning writes the node's record into every other site's server as well. Two kinds of drift are left over, because a per-record write only reaches the servers that were up at the time: a record a site missed while its server was down, and a record for a node destroyed later, whose teardown only reached the servers its own run knew about. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> fixes both by comparing every site's DNS server with this one rather than overwriting it: this node's copy holds every site's records only where it drives every site, and where each site has its own automation node, replacing their copies with it would delete the records it never held. <code>dns_sync.py &lt;lab.json&gt;</code> is the same reconciliation for the masters a lab definition names. Both report what each one is missing and what it holds alone, writes the missing records to each, and never removes anything, because a record one master holds alone is as likely to be one the others have not been written yet as one deleted from them. <code>--check</code> reports without writing and <code>--prune</code> takes the other decision for a record you have read in the report. Each master is also made a master of the zone before any record is written to it: a record appended to a zone a server does not declare, or to a file with no SOA, was silently never answered. Each master is also asked whether its copy of the zone loads, with <code>named-checkzone</code>: comparing records ignores the zone header, so a server whose SOA is damaged or missing agrees perfectly with the others while answering nothing at all. A server that does not answer SSH is retried before it is skipped, since a cloud lab's DNS VM is often still booting when the first record is written. Each master's zone goes in the directory that master's own named is allowed to read: /etc/bind on Debian and Ubuntu, whose AppArmor profile denies anything else, and /var/lib/named elsewhere. A cloud lab's DNS VM is given BIND and its serving policy at first boot and then gets its zone the same way every other master does, so there is one place a zone is created.</p>
 <h3 id="library-loading-order">Library loading order</h3>
 <p>Every script sources configuration in this order:</p>
 <ol>
@@ -1730,6 +1748,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Using a YAML (rather than JSON) <a href="#lab-definition-format">lab definition</a> additionally requires:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Issues and Feedback</h2>
+<p>Found a bug, have a feature request, or just want to ask a question? Use <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Open a new issue</a></strong> — for a bug, a missing feature, or feedback on anything in this project</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Browse existing issues</a></strong> — someone may have already hit the same thing, or there may be a workaround in the discussion</li>
+</ul>
+<p>When reporting a bug, the most useful things to include are: the exact command you ran, the lab definition (JSON/YAML) you used (with secrets removed), and the relevant section of the output or log. See <a href="#testing">Testing</a> above for where logs live, and the <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">examples</a> for a known-working starting point to compare against.</p>
+<p>Found a security vulnerability instead of a regular bug? Please follow <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> rather than opening a public issue.</p>
+<p align="right"><a href="#top">↑ back to top</a></p>
+
 <hr />
 <h2 id="author">Author</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>
