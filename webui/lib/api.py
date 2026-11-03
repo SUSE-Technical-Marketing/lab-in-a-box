@@ -43,6 +43,14 @@ def dispatch(action, method, params, body, user=None, https=False):
         if action == "auth" and method == "GET":
             return 200, {"login_configured": admin.login_configured(), "user": user or ""}
 
+        # No login needed — the job id plus its random token (see admin.pub_status()) is the whole
+        # credential, since this is the one page a QR code/direct link lets anyone reach. Still HTTPS-only:
+        # the page it feeds holds the lab's own access credentials.
+        if action == "pub-status" and method == "GET":
+            if not https:
+                return 403, {"error": "You must connect via HTTPS to view this page"}
+            return 200, admin.pub_status(_one(params.get("job")), _one(params.get("token")))
+
         if action == "components" and method == "GET":
             comps = discovery.catalogue()
             return 200, {

@@ -23,7 +23,7 @@ def check(desc, cond):
 
 
 def _profile_for(os_info):
-    with mock.patch.object(khp, "_read_os_release", return_value=os_info):
+    with mock.patch.object(khp, "read_os_release", return_value=os_info):
         return khp.detect_profile()
 
 
@@ -180,8 +180,8 @@ def rooted(p, *a):
 (root / "etc" / "sysconfig" / "network").mkdir(parents=True)
 (root / "etc" / "os-release").write_text('NAME="SLES"\nID="sles"\nVERSION_ID="15.7"\nID_LIKE="suse"\n')
 with mock.patch.object(khp, "Path", side_effect=rooted):
-    check("_read_os_release: the key/value pairs, quotes removed",
-          khp._read_os_release() == {"NAME": "SLES", "ID": "sles", "VERSION_ID": "15.7", "ID_LIKE": "suse"})
+    check("read_os_release: the key/value pairs, quotes removed",
+          khp.read_os_release() == {"NAME": "SLES", "ID": "sles", "VERSION_ID": "15.7", "ID_LIKE": "suse"})
     (root / "etc" / "resolv.conf").write_text("# generated\nsearch old.lab\nnameserver 1.1.1.1\noptions edns0\n")
     khp.HostOSProfile({}).configure_dns("192.168.8.71", "mydemo.lab")
     check("configure_dns: resolv.conf points at the automation host, other lines kept",
@@ -197,7 +197,7 @@ with mock.patch.object(khp, "Path", side_effect=rooted):
           and run.call_args[0][0] == ["netconfig", "update", "-f"])
 (root / "etc" / "os-release").unlink()
 with mock.patch.object(khp, "Path", side_effect=rooted):
-    check("_read_os_release: empty without /etc/os-release", khp._read_os_release() == {})
+    check("read_os_release: empty without /etc/os-release", khp.read_os_release() == {})
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

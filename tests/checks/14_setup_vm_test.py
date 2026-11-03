@@ -143,8 +143,14 @@ class _FakeCloudBackend(_FakeBackend):
     def get_subnet_cidr(self):
         return "172.31.16.0/20"
 
+    # The lab's DNS VM and the node itself each have their own private address; None when the account's backend
+    # has no private addresses at all, as every backend but AWS.
+    private_ips = {"lab-dns-aws-hub": "172.31.0.53", "lab-dns-aws-other": "172.31.0.54"}
+
     def get_private_ip(self, vm_name):
-        return "172.31.22.45"
+        if self.private_ips is None:
+            return None
+        return self.private_ips.get(vm_name, "172.31.22.45")
 
     def disable_source_dest_check(self, vm_name):
         order.append("disable_source_dest_check:" + self.account)
@@ -173,14 +179,33 @@ for node_account, branch in (("hub", "hub's own site"), ("other", "site gateway"
         ov.site_name_for.side_effect = lambda backend_name, account: "aws-" + account
         ov.list_other_sites.return_value = [("home", "192.168.88.0/24")]
         setup_vm.provision_vm(definition, config, defaults, "vm1")
-    check("provision_vm ({}): the cloud network is pointed at the lab's own DNS VM".format(branch),
-          "use_dns_server:{}:10.0.0.53:mydemo.lab".format(node_account) in order)
+    dns_private = "172.31.0.53" if node_account == "hub" else "172.31.0.54"
+    check("provision_vm ({}): the cloud network is pointed at the lab's own DNS VM, at its private address, "
+          "which the DNS VM recurses for".format(branch),
+          "use_dns_server:{}:{}:mydemo.lab".format(node_account, dns_private) in order
+          and "use_dns_server:{}:10.0.0.53:mydemo.lab".format(node_account) not in order)
     check("provision_vm overlay ({}): traffic between the account's own VMs is allowed".format(branch),
           "allow_internal_traffic:" + node_account in order)
     check("provision_vm overlay ({}): the node is routed through its site gateway".format(branch),
           ov.ensure_route_via_site_gateway.call_args[0] == ("vm1", "172.31.22.45", ["192.168.88.0/24"]))
     check("provision_vm overlay ({}): a site gateway VM is created only outside the hub's account".format(branch),
           ov.ensure_site_gateway_vm.called == (node_account != "hub"))
+
+# A backend with no private addresses (every backend but AWS) keeps handing out the address it was given.
+order.clear()
+_no_private = _FakeCloudBackend("default")
+_no_private.private_ips = None
+setup_vm.load_vm_vars = lambda definition, vm_name: {
+    "myip": "", "mymac": "", "mydomain": "mydemo.lab", "config_method": "cloud-init", "VM_CPU": "2",
+    "VM_MEM": "4096", "VM_DSK": "40", "ISO_IMAGE": "img-1"}
+with mock.patch.object(setup_vm.backends, "get_backend", return_value=_no_private), \
+        mock.patch.object(setup_vm.backends, "effective_backend_name", return_value="hetzner"), \
+        mock.patch.object(setup_vm.backends, "resolve_cloud_account", return_value=("", {}, "hetzner")), \
+        mock.patch.object(setup_vm.backends, "ensure_cloud_dns_vm", return_value="10.0.0.53"), \
+        mock.patch("pathlib.Path.read_text", return_value="ssh-rsa KEY"):
+    setup_vm.provision_vm(definition, config, defaults, "vm1")
+check("provision_vm: a backend with no private address points its network at the DNS VM's address as before",
+      "use_dns_server:default:10.0.0.53:mydemo.lab" in order)
 
 # ── main(): --version / --help exit cleanly ─────────────────────────────────
 import io

@@ -241,11 +241,21 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         # Hand that server to the cloud network itself, so each node resolves the others without
         # anything being configured inside the guest. A node created after this point has it from
         # first boot, which is what a kcluster's second server needs to join the first by FQDN.
-        backend.use_dns_server(dns_vm_ip, env.get("mydomain", ""))
+        # The network hands out the server's private address. A query to its public one leaves
+        # through the internet gateway and arrives from the node's public address, which the
+        # server does not recurse for (dns_recursion_networks()), so a node could resolve the lab
+        # but nothing on the internet. dns_vm_ip, the public address, stays this host's way to
+        # write the zone. A backend that has no private address falls back to it.
+        dns_private_ip = backend.get_private_ip(backends.cloud_dns_vm_name(backend, backend_name)) or dns_vm_ip
+        backend.use_dns_server(dns_private_ip, env.get("mydomain", ""))
 
+    # A cloud node's address is new at each creation, and a record of an earlier instance of the same name
+    # can outlive it (see DNSService.add_to_dns()'s replace), so its name is pointed at this address alone.
+    # Every other node keeps the records it has.
+    replace_dns = backend_name in backends.CLOUD_BACKEND_NAMES
     if env.get("myip"):
         add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
-                   remote_dns_servers=remote_dns_servers or None)
+                   remote_dns_servers=remote_dns_servers or None, replace=replace_dns)
     else:
         warn("- No myip known for \"{}\" — backend never reported one — skipping DNS registration".format(vm_name))
 
@@ -366,7 +376,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
                 hub_host, exclude_site=this_site, mydomain=env.get("mydomain", ""))]
             if other_dns and env.get("myip"):
                 add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
-                           remote_dns_servers=other_dns)
+                           remote_dns_servers=other_dns, replace=replace_dns)
 
     log("\t\tVM \"{}\" created".format(vm_name))
     return pre_failures

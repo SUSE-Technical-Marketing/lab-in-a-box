@@ -16,6 +16,15 @@ sys.path.insert(0, str(_REPO / "libs"))
 import lab_creation  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
 
+# Captured once, before any test below patches time.time/time.sleep, and NEVER by reading time.time or
+# time.sleep back off the module (sc.time IS this same `time` module object, so once an attribute is
+# overwritten, reading it back only ever returns whatever is currently patched in, fake included — a real
+# bug found live in one of this file's own earlier "restore" lines, which were really just reassigning the
+# fake function to itself). Anything in this file that needs the TRUE real functions back, not just
+# whatever the immediately preceding block happened to leave behind, restores from these.
+_TRUE_REAL_TIME_TIME = time.time
+_TRUE_REAL_TIME_SLEEP = time.sleep
+
 failures = []
 
 
@@ -2762,6 +2771,34 @@ sc.ssh_run = fake
 sc.import_images("host1", "mgrctl exec --", {}, "smlm")
 check("import_images: no-op (and no die) when smlm_image_imports is unset", len(fake.calls) == 0)
 
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1000010007, "name": "mercury.lab"}]))),
+    ("image.importContainerImage", FakeResult(returncode=0, stdout="[43]")),
+])
+sc.ssh_run = fake
+sc.import_images("host1", "mgrctl exec --", {"smlm_image_imports": [
+    {"name": "bci/bci-base", "version": "latest", "store": "suse-registry", "build_host": "mercury.lab"}]}, "smlm")
+call = next((c[1] for c in fake.calls if "image.importContainerImage" in c[1]), "")
+check("import_images: a build_host hostname is resolved to its system id",
+      any("system.getId" in c[1] for c in fake.calls) and '"bci/bci-base", "latest", 1000010007,' in call)
+
+fake = FakeSSH(responses=[("image.importContainerImage", FakeResult(returncode=0, stdout="[44]"))])
+sc.ssh_run = fake
+sc.import_images("host1", "mgrctl exec --", {"smlm_image_imports": [
+    {"name": "bci/bci-base", "store": "suse-registry", "build_host_id": 1000010000}]}, "smlm")
+check("import_images: a numeric build_host_id is used unchanged, with no lookup",
+      not any("system.getId" in c[1] for c in fake.calls)
+      and any('1000010000, "suse-registry"' in c[1] for c in fake.calls))
+
+fake = FakeSSH()
+sc.ssh_run = fake
+try:
+    sc.import_images("host1", "mgrctl exec --", {"smlm_image_imports": [
+        {"name": "bci/bci-base", "store": "suse-registry"}]}, "smlm")
+    check("import_images: an entry with neither build_host nor build_host_id dies", False)
+except SystemExit:
+    check("import_images: an entry with neither build_host nor build_host_id dies", len(fake.calls) == 0)
+
 # -- server monitoring ----------------------------------------------------------
 fake = FakeSSH(responses=[("admin.monitoring.getStatus", FakeResult(
     returncode=0, stdout=json.dumps([{"node": "disabled", "tomcat": "disabled"}])))])
@@ -2818,6 +2855,29 @@ try:
 except SystemExit:
     died = True
 check("_system_id: server-side failure dies", died)
+
+# -- system_is_registered: the same lookup, never dies, True/False for a verify() check --------------
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1000010042, "name": "sol.mydemo.lab"}])))])
+sc.ssh_run = fake
+check("system_is_registered: True for exactly one match",
+      sc.system_is_registered("host1", "mgrctl exec --", "sol.mydemo.lab") is True)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+check("system_is_registered: False for zero matches, no exception raised",
+      sc.system_is_registered("host1", "mgrctl exec --", "nosuch.lab") is False)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(
+    returncode=0, stdout=json.dumps([{"id": 1}, {"id": 2}])))])
+sc.ssh_run = fake
+check("system_is_registered: False for more than one match — not this check's job to resolve that",
+      sc.system_is_registered("host1", "mgrctl exec --", "ambiguous.lab") is False)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=1, stderr="no such method"))])
+sc.ssh_run = fake
+check("system_is_registered: False, not a raised exception, on a server-side failure",
+      sc.system_is_registered("host1", "mgrctl exec --", "sol.mydemo.lab") is False)
 
 # -- ensure_grafana_formula -----------------------------------------------
 fake = FakeSSH(responses=[
@@ -3630,13 +3690,19 @@ sc.ssh_run = fake
 # time.time() as a fast-forwarding counter avoids that without changing
 # what's being tested (the deadline logic itself).
 _fake_now = [0]
+# Captured BEFORE patching, not read back off time.time afterwards: sc.time and this file's own `time`
+# are the same module object, so "restoring" via time.time once the attribute itself has been overwritten
+# just reassigns the fake function to itself — a real bug, found live, that silently left time.time()
+# patched for the rest of this file (and broke an unrelated later test's own real-time assumptions) until
+# this fix.
+_real_time_time = sc.time.time
 sc.time.time = lambda: _fake_now.__setitem__(0, _fake_now[0] + 100) or _fake_now[0]
 died = False
 try:
     sc.ensure_keycloak("neptune.mydemo.lab", 8080, "lab-in-a-box", "admin", "admin")
 except SystemExit:
     died = True
-sc.time.time = time.time
+sc.time.time = _real_time_time
 check("ensure_keycloak: dies if it never becomes ready", died)
 sc.time.sleep = _real_time_sleep
 
@@ -4039,7 +4105,174 @@ check("run_provisioning_step: a step that fails twice then succeeds stops retryi
 check("run_provisioning_step: only slept for the 2 failed attempts, not a 3rd time after success",
       _sleep_calls == [20, 20])
 
+# forever=True: once the bounded attempts above are exhausted, hand off to launch_forever_retry() instead
+# of reporting a plain failure. Not handed off without retry_argv, even with forever=True — a step can opt
+# in to forever retry but still needs to say HOW (the argv its own worker re-invokes itself with).
+_launched = []
+_real_launch_forever_retry = sc.launch_forever_retry
+sc.launch_forever_retry = lambda key, argv: _launched.append((key, argv)) or "/fake/log"
+calls.clear()
+_sleep_calls.clear()
+sc.run_provisioning_step("goes forever", _always_dies, "host1", forever=True, retry_argv=["fake", "argv"])
+check("run_provisioning_step: forever=True hands off to launch_forever_retry after the bounded attempts",
+      _launched == [("step:goes forever", ["fake", "argv"])])
+
+_launched.clear()
+sc.run_provisioning_step("forever without retry_argv", _always_dies, "host1", forever=True)
+check("run_provisioning_step: forever=True alone, without retry_argv, does not hand off — "
+      "reports failure as before", _launched == [])
+
+_launched.clear()
+sc.run_provisioning_step("goes forever", _always_dies, "host1", forever=True, retry_argv=["fake", "argv"],
+                          retry_key="smlm:sol.mydemo.lab:goes forever")
+check("run_provisioning_step: an explicit retry_key is used instead of the bare 'step:<label>' default "
+      "— scoped to a host, so two servers' same-named step never share one pid/log file",
+      _launched == [("smlm:sol.mydemo.lab:goes forever", ["fake", "argv"])])
+sc.launch_forever_retry = _real_launch_forever_retry
+
 sc.time.sleep = _real_sleep
+
+# -- forever-retry background workers -----------------------------------------
+# Real subprocesses and real files — this mechanism's own job is process/file management, which a mocked
+# SSH call can't stand in for. Everything is scoped to a throwaway state dir, cleaned up at the end.
+import os as _os  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _subprocess  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+
+_state_dir = _tempfile.mkdtemp(prefix="forever-retry-test-")
+sc._FOREVER_RETRY_STATE_DIR = _state_dir
+# Force the TRUE real time.time/time.sleep back, regardless of whatever an earlier block in this file
+# left behind — this mechanism launches real subprocesses and polls them against real wall-clock time, so
+# a leftover fake clock from elsewhere would make every wait below misbehave in exactly the confusing way
+# that led to finding the bug _TRUE_REAL_TIME_TIME/_TRUE_REAL_TIME_SLEEP exist to avoid.
+sc.time.time = _TRUE_REAL_TIME_TIME
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+check("forever_retry_running: false when no worker was ever launched for this key",
+      sc.forever_retry_running("never-launched") is False)
+
+# A real, short-lived process: launch it, confirm it's seen as running, wait for it to exit on its own,
+# confirm it's then seen as not running and its stale pid file was cleaned up.
+_sleep_proc_argv = [sys.executable, "-c", "import time; time.sleep(2)"]
+log_path = sc.launch_forever_retry("sleeper", _sleep_proc_argv)
+check("launch_forever_retry: returns the log path", log_path == sc.forever_retry_log_path("sleeper"))
+check("launch_forever_retry: the worker is seen as running right after launch",
+      sc.forever_retry_running("sleeper") is True)
+_, _sleeper_pid_path = sc._forever_retry_paths("sleeper")
+check("launch_forever_retry: writes a pid file naming a real, live process",
+      Path(_sleeper_pid_path).is_file())
+
+# A second launch for the SAME key while the first is still running must be a no-op (the dedup guard) —
+# checked by the pid file staying unchanged, not a second process appearing.
+_pid_before = Path(_sleeper_pid_path).read_text()
+sc.launch_forever_retry("sleeper", _sleep_proc_argv)
+check("launch_forever_retry: a second launch for an already-running key does not start a new worker",
+      Path(_sleeper_pid_path).read_text() == _pid_before)
+
+for _ in range(40):
+    if not sc.forever_retry_running("sleeper"):
+        break
+    time.sleep(0.2)
+check("forever_retry_running: false once the worker process has actually exited",
+      sc.forever_retry_running("sleeper") is False)
+check("forever_retry_running: cleans up the stale pid file of a worker that is no longer alive",
+      not Path(_sleeper_pid_path).exists())
+
+# A launch right after that one exited must start a genuinely NEW worker (not blocked by stale state).
+sc.launch_forever_retry("sleeper", _sleep_proc_argv)
+check("launch_forever_retry: relaunches cleanly once the previous worker has actually finished",
+      sc.forever_retry_running("sleeper") is True)
+for _ in range(40):
+    if not sc.forever_retry_running("sleeper"):
+        break
+    time.sleep(0.2)
+
+# run_forever_retry_worker(): the worker's own loop — fails twice, then succeeds, with a heartbeat printed
+# at least once given a heartbeat_interval shorter than the time the two failures + sleeps take.
+_attempt_state = {"n": 0}
+
+
+def _attempt_flaky():
+    _attempt_state["n"] += 1
+    if _attempt_state["n"] < 3:
+        raise RuntimeError("not ready yet (attempt {})".format(_attempt_state["n"]))
+
+
+_attempt_state["n"] = 0
+sc.time.time = _TRUE_REAL_TIME_TIME
+sc.time.sleep = lambda s: None  # no real delay between attempts in this test
+sc.run_forever_retry_worker("flaky-step", _attempt_flaky, retry_delay=0.01, heartbeat_interval=0.01)
+check("run_forever_retry_worker: keeps retrying across real exceptions until the attempt stops raising",
+      _attempt_state["n"] == 3)
+_, _flaky_pid_path = sc._forever_retry_paths("flaky-step")
+check("run_forever_retry_worker: removes its own pid file once it succeeds and returns",
+      not Path(_flaky_pid_path).exists())
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+# verify: attempt() returning cleanly is not enough on its own — this is the fix for a real failure mode
+# found live, where a step (client_registration) reported success because its OWN call returned, while
+# the thing it was meant to produce (an actually-registered system) still did not exist.
+_verify_calls = []
+
+
+def _attempt_always_ok():
+    pass  # attempt() itself never raises — verify() is the only thing standing between "ran" and "done"
+
+
+def _verify_rejects_twice_then_accepts():
+    _verify_calls.append(len(_verify_calls) + 1)
+    return len(_verify_calls) >= 3
+
+
+_verify_calls.clear()
+sc.time.time = _TRUE_REAL_TIME_TIME
+sc.time.sleep = lambda s: None
+sc.run_forever_retry_worker("verified-step", _attempt_always_ok, retry_delay=0.01, heartbeat_interval=0.01,
+                            verify=_verify_rejects_twice_then_accepts)
+check("run_forever_retry_worker: a clean attempt() is not enough on its own — verify() is checked too",
+      len(_verify_calls) == 3)
+_, _verified_pid_path = sc._forever_retry_paths("verified-step")
+check("run_forever_retry_worker: only stops, and cleans up its pid file, once verify() actually accepts",
+      not Path(_verified_pid_path).exists())
+
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+# End-to-end: a real detached worker process, started via launch_forever_retry(), that fails a few times
+# and then succeeds, writing real heartbeats to its own real log file — the exact mechanism install_smlm's
+# and install_client_registration's own forever-retry steps rely on, exercised here without either of them.
+_state_file = str(Path(_state_dir) / "e2e-state.json")
+Path(_state_file).write_text(json.dumps({"n": 0}))
+_e2e_script = str(Path(_state_dir) / "e2e_attempt.py")
+Path(_e2e_script).write_text(
+    "import json, sys\n"
+    "sys.path.insert(0, {libs!r})\n"
+    "import spacecmd_common as sc\n"
+    "state_file = {state_file!r}\n"
+    "def attempt():\n"
+    "    state = json.load(open(state_file))\n"
+    "    state['n'] += 1\n"
+    "    json.dump(state, open(state_file, 'w'))\n"
+    "    if state['n'] < 2:\n"
+    "        raise RuntimeError('still not ready, attempt {{}}'.format(state['n']))\n"
+    "sc._FOREVER_RETRY_STATE_DIR = {state_dir!r}\n"
+    "sc.run_forever_retry_worker('e2e', attempt, retry_delay=0.1, heartbeat_interval=0)\n".format(
+        libs=str(_REPO / "libs"), state_file=_state_file, state_dir=_state_dir))
+sc.launch_forever_retry("e2e", [sys.executable, "-u", _e2e_script])
+for _ in range(50):
+    if not sc.forever_retry_running("e2e"):
+        break
+    time.sleep(0.2)
+check("launch_forever_retry end-to-end: the real detached worker retries until it succeeds, then exits",
+      sc.forever_retry_running("e2e") is False)
+check("...the attempt itself really ran more than once (it failed first, then succeeded)",
+      json.load(open(_state_file))["n"] == 2)
+_e2e_log = Path(sc.forever_retry_log_path("e2e")).read_text()
+check("...and the heartbeat is really visible in the worker's own log file, unbuffered, naming the "
+      "real failure text — not trapped in memory the way this exact mechanism's precursor was",
+      "still not ready" in _e2e_log and ("INFO" in _e2e_log or "succeeded" in _e2e_log))
+
+_shutil.rmtree(_state_dir, ignore_errors=True)
 
 # -- Virtual Host Managers ----------------------------------------------
 fake = FakeSSH(responses=[

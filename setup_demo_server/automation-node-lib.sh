@@ -26,7 +26,7 @@ _SSHFS_OPTS="_netdev,reconnect,identityfile=/root/.ssh/id_rsa,allow_other,defaul
 # that pulls in a kernel: installing one in the chroot rebuilds the initrd there, and the VM then cannot find its
 # root disk.
 _VM_PACKAGES="vim-small git rsync apache2 bind-utils bind docker podman libvirt-client jq virt-install salt-ssh
-fuse3 sshfs netcat-openbsd openssl sudo"
+fuse3 sshfs netcat-openbsd openssl sudo qrencode"
 
 # What each Leap version calls its Python, and the interpreter the lab scripts then run under.
 # node_install_packages picks a set by the node's own VERSION_ID. Leap 16 packages no kubernetes client; kubectl

@@ -14,7 +14,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
     if Path(_candidate).is_dir() and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 
-from lab_creation import ssh_run, die  # noqa: E402
+from lab_creation import ssh_run, die, warn  # noqa: E402
 
 
 def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_interval=5):
@@ -92,6 +92,26 @@ def run_install_with_pg_hba_guard(hostname, install_cmd, timeout=1800, poll_inte
         elapsed += poll_interval
 
     if not finished:
+        # A timeout does not always mean the install failed (see this function's own docstring): the
+        # outer mgradm process can still be waiting on an optional image the subscription is not
+        # entitled to (attestation, tftpd, hub-xmlrpc-api), long after the core server has already
+        # bootstrapped and is serving. spacewalk.target is only reached once the schema, organization
+        # and admin accounts mgradm creates itself are already in place, so it is active exactly when
+        # continuing (to mgr-sync add credentials, channel sync, activation keys, ...) is safe.
+        #
+        # spacewalk.target exists only inside the uyuni-server container's own init, not on the host —
+        # `mgradm status`/`mgrctl exec` reach it that way, and so must this: a bare `systemctl
+        # is-active spacewalk.target` on the host finds no such unit there at all and, as systemd does
+        # for an unknown unit name, reports it "inactive" rather than erroring, which would otherwise
+        # always fall through to the die() below even once the container is genuinely ready.
+        r = ssh_run(hostname, "podman exec uyuni-server systemctl is-active --quiet spacewalk.target",
+                    check=False)
+        if r.returncode == 0:
+            warn("mgradm install on '{}' did not finish within {}s, but spacewalk.target is already "
+                 "active — the core server came up; mgradm itself is most likely still stuck on an "
+                 "optional image the subscription is not entitled to (check {} there directly). "
+                 "Continuing as if the install had succeeded.".format(hostname, timeout, log_path))
+            return
         die("mgradm install on '{}' did not finish within {}s — check {} there directly"
             .format(hostname, timeout, log_path))
 

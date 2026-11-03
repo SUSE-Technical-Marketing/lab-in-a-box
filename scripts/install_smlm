@@ -253,13 +253,13 @@
 #   smlm_image_profiles    : [{"label", "type": "dockerfile" | "kiwi", "store" (label of an smlm_image_stores entry),
 #                            "path": "https://github.com/USER/project.git#branch:folder", "activation_key"}].
 #                            activation_key is required. It decides which channels a build or import can use.
-#   smlm_image_imports     : [{"name", "version": "latest", "store", "build_host_id" (numeric id of a system that has
-#                            the "Container Build Host" entitlement; find it with 'spacecmd system_list'),
-#                            "activation_key" (optional)}]
+#   smlm_image_imports     : [{"name", "version": "latest", "store", "build_host" (hostname of a system that has the
+#                            "Container Build Host" entitlement, resolved to its id) or "build_host_id" (that system's
+#                            numeric id; find it with 'spacecmd system_list'), "activation_key" (optional)}]
 #                            Run with install_smlm.py <lab.json> --import-images. It never runs automatically, because
 #                            each call schedules a new import.
 #   smlm_image_build_hosts : [{"system": "registered-hostname"}]. Enables the "container_build_host" entitlement and
-#                            applies highstate. It runs before imports, so a build_host_id can be used.
+#                            applies highstate. It runs before imports, so the system can be an import's build_host.
 #                            The Containers module must still be in that system's channels.
 #   smlm_mcp_server        : {"version": "latest", "port": 8090, "user", "password" (the smlm admin account when unset),
 #                            "write_tools_enabled": false, "ssl_verify": false}
@@ -667,9 +667,23 @@ def _resolve_and_fill_vhm_credentials(cfg, virtual_host_managers):
             vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
 
 
-def setup_smlm_podman(hostname, virt_srv, cfg):
+def setup_smlm_podman(hostname, virt_srv, cfg, json_file=None, only_step=None):
     """
     Install SUSE Multi-Linux Manager with mgradm and podman directly on a dedicated host or VM, without Kubernetes.
+
+    json_file: the lab definition's own path, needed only so a provisioning step that exhausts its bounded
+    retries can hand itself off to a detached forever-retry worker (see the provisioning block's own
+    comment below) that re-invokes this script with --retry-step-worker. None (every existing direct
+    caller, including this project's own tests) disables that hand-off outright — every step then behaves
+    exactly as it always has, reported as failed after its bounded attempts rather than retried forever.
+
+    only_step: worker-dispatch mode (see main()'s --retry-step-worker). When set, every provisioning step
+    below except the one named is skipped outright, and the named one runs forever (not through its own
+    bounded retries at all) via run_forever_retry_worker(), never returning until it actually succeeds.
+    This is how --retry-step-worker re-enters exactly one step in its own detached process: the SAME
+    step definitions below are reused unchanged, rather than kept a second time in a separate registry
+    that could drift out of sync with them. Dies if only_step names a step this function does not define
+    (a provisioning_steps structure the lab's own config doesn't reach, or a stale/mistyped label).
 
     The function reuses the mgradm install and container health-wait helpers in libs/mgradm_common.py, which are shared with
     install_uyuni. The underlying tool and container mechanics are the same for Uyuni and SMLM. What differs is where mgradm,
@@ -923,7 +937,27 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
             or cfg.get("smlm_monitoring_enabled")):
         exec_prefix = "mgrctl exec --"
         sc.ensure_spacecmd_config(hostname, exec_prefix, admin, password)
-        rps = sc.run_provisioning_step
+
+        if only_step:
+            # Worker-dispatch mode: every step below is a no-op except the one named, which runs
+            # forever instead of through its own bounded retries — see this function's own docstring.
+            _matched = []
+
+            def rps(label, func, *args, **kwargs):
+                if label != only_step:
+                    return
+                _matched.append(label)
+                kwargs.pop("retries", None)
+                kwargs.pop("retry_delay", None)
+                sc.run_forever_retry_worker(_step_retry_key(hostname, label), lambda: func(*args, **kwargs))
+                sys.exit(0)
+        else:
+            def rps(label, func, *args, retries=1, retry_delay=15, **kwargs):
+                sc.run_provisioning_step(
+                    label, func, *args, retries=retries, retry_delay=retry_delay,
+                    forever=bool(json_file), retry_key=_step_retry_key(hostname, label),
+                    retry_argv=_step_retry_argv(json_file, label) if json_file else None, **kwargs)
+
         if virtual_host_managers:
             # The VHM credential resolution runs through rps(), like every other step. A missing or misnamed credential file
             # then skips only the VHM provisioning, not the rest of the server's configuration.
@@ -1018,6 +1052,26 @@ def setup_smlm_podman(hostname, virt_srv, cfg):
         # both established by the "organizations" step just above via that
         # org's own trust_with field.
         rps("org system transfers", sc.ensure_org_system_transfers, hostname, exec_prefix, cfg, "smlm")
+
+        if only_step and not _matched:
+            die("--retry-step-worker: '{}' is not a provisioning step this lab's own config reaches "
+                "for '{}' (check the label against the server's own deploy log, or the config fields "
+                "that enable each step)".format(only_step, hostname))
+
+
+def _step_retry_key(hostname, label):
+    """The forever-retry mechanism's own key for one SMLM provisioning step — scoped to the exact
+    server, so install_smlm's and install_uyuni's same-named steps (or two different SMLM servers in one
+    lab) never collide into the one shared pid/log file (see run_provisioning_step()'s own retry_key
+    docstring)."""
+    return "smlm:{}:{}".format(hostname, label)
+
+
+def _step_retry_argv(json_file, label):
+    """The argv a provisioning step's own forever-retry worker is launched with: this same script,
+    unbuffered, re-invoked as --retry-step-worker <label> against the SAME lab definition."""
+    return [sys.executable, "-u", str(Path(__file__).resolve()), str(Path(json_file).resolve()),
+            "--retry-step-worker", label]
 
 
 _CHANNEL_SYNC_MONITOR_SCRIPT = """#!/bin/bash
@@ -2101,8 +2155,21 @@ def main():
             sc.ensure_ansible_paths(nodes[0][0], "mgrctl exec --", cfg, "smlm")
             return
 
+        # --retry-step-worker <label>: this is a detached background worker launched by one of the
+        # provisioning steps below (via run_provisioning_step()'s own forever=True handoff) — runs ONLY
+        # that single named step, forever, never the normal full-install path. See
+        # setup_smlm_podman()'s own only_step docstring.
+        if len(sys.argv) > 3 and sys.argv[2] == "--retry-step-worker":
+            nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
+            if not nodes:
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                      file=sys.stderr)
+                sys.exit(1)
+            setup_smlm_podman(nodes[0][0], virt_srv, cfg, only_step=sys.argv[3])
+            return
+
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
-            setup_smlm_podman(vm_name, virt_srv, cfg)
+            setup_smlm_podman(vm_name, virt_srv, cfg, json_file=json_file)
         return
 
     if not cfg.get("smlm_fqdn"):

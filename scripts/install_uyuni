@@ -315,7 +315,21 @@ def run_ansible_playbooks(hostname, cfg):
             a=action_id))
 
 
-def run_clm_actions(hostname, cfg):
+def _clm_action_key(hostname, project, wait_env):
+    """The forever-retry mechanism's own key for one content-lifecycle action — scoped to the server
+    AND to the project/environment pair, so two different actions (or the same project waited on by two
+    different servers) never collide into one shared pid/log file."""
+    return "uyuni:{}:clm:{}/{}".format(hostname, project, wait_env)
+
+
+def _clm_retry_argv(json_file, project, wait_env):
+    """The argv a CLM action's own forever-retry worker is launched with: this same script, unbuffered,
+    re-invoked as --retry-step-worker <project>/<wait_env> against the SAME lab definition."""
+    return [sys.executable, "-u", str(Path(__file__).resolve()), str(Path(json_file).resolve()),
+            "--retry-step-worker", "{}/{}".format(project, wait_env)]
+
+
+def run_clm_actions(hostname, cfg, json_file=None, only_label=None):
     """
     Run every entry in uyuni_content_lifecycle_actions. The actions are not idempotent, and the automatic setup_uyuni() flow does
     not run them.
@@ -324,6 +338,15 @@ def run_clm_actions(hostname, cfg):
     wedge after a few builds, and then every later build or promote stays in "building". The recovery restarts uyuni-server.service and
     triggers the action again. It is specific to this deployment, which has host-level systemctl, so it lives here and not in
     spacecmd_common.py. It is best effort: the wedge is an upstream issue that this script works around.
+
+    json_file, only_label: this project's mandatory forever-retry policy for anything depending on SMLM/Uyuni server
+    state (see libs/spacecmd_common.py's own "Forever-retry background workers" section) — _wait_for_clm_with_restart_retry's
+    own restart-and-retry recovery still gives up after max_restarts and dies for real on a genuinely stuck build. With
+    json_file given, a 'wait: true' entry that reaches that point is instead handed off to a detached background worker
+    (one per entry, so several run in parallel with each other and with the rest of this call, which returns at once)
+    that repeats the WHOLE trigger-then-wait-with-restart-recovery round forever rather than giving up. only_label
+    restricts this call to running just the one project/wait_env pair it names — see main()'s own --retry-step-worker
+    dispatch, which is what a launched worker re-enters this function through.
     """
     actions = cfg.get("uyuni_content_lifecycle_actions") or []
     if not actions:
@@ -340,17 +363,41 @@ def run_clm_actions(hostname, cfg):
         if not project or action not in ("build", "promote"):
             die("uyuni_content_lifecycle_actions: an entry needs 'project' and "
                 "action 'build' or 'promote'")
+        wait_env = a.get("wait_env") if a.get("wait") else None
+        label = "{}/{}".format(project, wait_env) if wait_env else None
+        if only_label and label != only_label:
+            continue
+
+        if a.get("wait") and not wait_env:
+            die("content_lifecycle_actions: 'wait' requires 'wait_env' (the environment to poll — "
+                "the first stage for a build, the successor stage for a promote)")
+
+        if only_label:
+            # Worker-dispatch mode: repeat the WHOLE round — trigger, then wait with its existing
+            # bounded restart-recovery — forever, instead of dying for real once that recovery is
+            # exhausted. Never returns until an attempt finally reaches a terminal status.
+            def attempt():
+                _trigger_clm_action(hostname, exec_prefix, project, action, a)
+                return _wait_for_clm_with_restart_retry(hostname, exec_prefix, project, action, a, wait_env,
+                                                        timeout=a.get("wait_timeout") or 1800)
+            sc.run_forever_retry_worker(_clm_action_key(hostname, project, wait_env), attempt)
+            return
 
         _trigger_clm_action(hostname, exec_prefix, project, action, a)
 
-        if a.get("wait"):
-            wait_env = a.get("wait_env")
-            if not wait_env:
-                die("content_lifecycle_actions: 'wait' requires 'wait_env' (the environment to poll — "
-                    "the first stage for a build, the successor stage for a promote)")
-            status = _wait_for_clm_with_restart_retry(hostname, exec_prefix, project, action, a, wait_env,
-                                                       timeout=a.get("wait_timeout") or 1800)
-            print("  Environment '{}/{}' reached status '{}'".format(project, wait_env, status))
+        if wait_env:
+            try:
+                status = _wait_for_clm_with_restart_retry(hostname, exec_prefix, project, action, a, wait_env,
+                                                           timeout=a.get("wait_timeout") or 1800)
+                print("  Environment '{}/{}' reached status '{}'".format(project, wait_env, status))
+            except SystemExit:
+                if not json_file:
+                    raise
+                sc.launch_forever_retry(_clm_action_key(hostname, project, wait_env),
+                                         _clm_retry_argv(json_file, project, wait_env))
+                print("  Environment '{}/{}' still not built after the usual stuck-build recovery — "
+                      "handed off to a background retry that will keep trying (trigger + wait + "
+                      "recovery, repeated) until it actually succeeds.".format(project, wait_env))
 
 
 def _trigger_clm_action(hostname, exec_prefix, project, action, action_cfg):
@@ -513,7 +560,16 @@ def main():
     # are not idempotent (see libs/spacecmd_common.py).
     if len(sys.argv) > 2 and sys.argv[2] == "--run-clm-actions":
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
-            run_clm_actions(vm_name, cfg)
+            run_clm_actions(vm_name, cfg, json_file=json_file)
+        return
+
+    # --retry-step-worker <project>/<wait_env>: a detached background worker launched by run_clm_actions()
+    # itself (once the usual stuck-build recovery is exhausted) — runs ONLY that single CLM action,
+    # forever, never the normal full --run-clm-actions path. See run_clm_actions()'s own only_label
+    # docstring.
+    if len(sys.argv) > 3 and sys.argv[2] == "--retry-step-worker":
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "uyuni", vm_name=env_vm_name):
+            run_clm_actions(vm_name, cfg, only_label=sys.argv[3])
         return
 
     # Schedule uyuni_scap_scans instead of installing when requested — same

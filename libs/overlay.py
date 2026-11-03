@@ -36,7 +36,6 @@ from pathlib import Path
 
 from lab_creation import ssh_run, ssh_output, log, warn, die, wait_for_ssh_command
 import ipalloc
-from services import NAMED_ZONE_DIR as _NAMED_ZONE_DIR
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -409,56 +408,18 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
     return out
 
 
-def sync_zone_to_sites(hub_host, mydomain, zone_dir=None):
+def dns_servers(hub_host, mydomain):
     """
-    Replace every registered site's copy of `mydomain`'s zone with this automation node's own, and reload named
-    there.
+    The other sites' DNS servers for `mydomain`, as (site name, address), which are the remote masters of that
+    zone a reconciliation has to reach.
 
-    Per-record writes reach the servers that were up at the time, which leaves two kinds of drift: a record a site
-    missed while its server was down, and a record for a node that has since been destroyed, since a teardown only
-    reaches the servers its own run knows about. Pushing the whole zone fixes both, because the file is replaced
-    rather than appended to. This automation node holds the record of every node of every site, so it is the copy
-    worth having.
-
-    Returns (synced, failed) as counts.
+    This node's own addresses are left out: it is a master of the zone itself, reached as the local server rather
+    than over SSH, so listing it as a remote one would have it compared against itself.
     """
-    # Where this node keeps the zone (zone_dir only moves the local copy, for a test), and where every DNS server
-    # keeps it, which is the one convention _cloud_dns_vm_user_data() builds them with.
-    local_path = "{}/{}.lan".format((zone_dir or str(_NAMED_ZONE_DIR)).rstrip("/"), mydomain)
-    remote_path = "{}/{}.lan".format(str(_NAMED_ZONE_DIR).rstrip("/"), mydomain)
-    try:
-        content = Path(local_path).read_text()
-    except OSError as exc:
-        die("this automation node has no zone for '{}' at {} to push ({})".format(mydomain, local_path, exc))
-
-    # This node's own addresses: it is the source of the zone, so pushing to itself would only rewrite the file
-    # with its own content.
     own = ipalloc.local_ips()
+    return [(site_name, dns_ip) for site_name, dns_ip in list_dns_servers(hub_host, mydomain=mydomain)
+            if dns_ip not in own]
 
-    synced = failed = 0
-    for site_name, dns_ip in list_dns_servers(hub_host, mydomain=mydomain):
-        if dns_ip in own:
-            log("- Site '{}' is served by this automation node itself, which is where the zone comes from".format(
-                site_name))
-            continue
-        written = ssh_run(dns_ip, "cat > {}".format(shlex.quote(remote_path)), input_text=content, check=False)
-        if written.returncode != 0:
-            warn("- Could not push the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
-            failed += 1
-            continue
-        # A zone file nothing reloads is a zone nobody serves, and the unit is named bind9 on Debian and named
-        # elsewhere. Confirmed live on 2026-10-17: a cloud DNS VM with no BIND installed at all took the file and
-        # the push was reported as a success, which it was not.
-        reloaded = ssh_run(dns_ip, "systemctl reload named 2>/dev/null || systemctl restart named 2>/dev/null "
-                                   "|| systemctl reload bind9 2>/dev/null || systemctl restart bind9", check=False)
-        if reloaded.returncode != 0:
-            warn("- Site '{}' ({}) took the '{}' zone but has no BIND to reload: it serves nothing. Check that "
-                 "its DNS VM finished installing bind".format(site_name, dns_ip, mydomain))
-            failed += 1
-            continue
-        log("- Pushed the '{}' zone to site '{}' ({})".format(mydomain, site_name, dns_ip))
-        synced += 1
-    return synced, failed
 
 def refresh_routes(hub_host, only_site=None):
     """

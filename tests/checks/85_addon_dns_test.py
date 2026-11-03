@@ -62,6 +62,9 @@ check("register_service_dns: and a warning names it", len(warnings) == 1 and "ai
 # ── del_from_dns(): service records pointing at the node's IP ────────────────────────────────────────────────────────
 
 import services  # noqa: E402
+# Every zone path depends on the target's os-release, which services.py reads over SSH; nothing here
+# has a host to ask, so the default answer is an unknown family and its default zone directory.
+services.detect_os = lambda hostname: {"id": "", "ver_id": "", "like": "", "ver_major": ""}
 
 with tempfile.TemporaryDirectory() as tmp:
     services.NAMED_ZONE_DIR = Path(tmp)

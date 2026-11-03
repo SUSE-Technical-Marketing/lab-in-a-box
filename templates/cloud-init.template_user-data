@@ -69,4 +69,14 @@ cat <<CI_ROUTE
   - ip route show default | grep -q . || ip route add default via ${mygw} || true
 CI_ROUTE
   fi
+  # A bring-your-own-subscription SUSE image has no repositories until it is registered, so a node whose
+  # packages are needed before anything else could register it (an RKE2 node, say) names its code here.
+  # Written as an argument list, so no shell ever parses the code. Without scc_regcode nothing is added.
+  if [[ -n "${scc_regcode}" ]]; then
+    if [[ -n "${scc_email}" ]]; then
+      printf '  - [SUSEConnect, -r, "%s", -e, "%s"]\n' "${scc_regcode}" "${scc_email}"
+    else
+      printf '  - [SUSEConnect, -r, "%s"]\n' "${scc_regcode}"
+    fi
+  fi
 fi )

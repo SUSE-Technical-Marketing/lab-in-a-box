@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">lab-in-a-box を使う理由</a></li><li><a href="#architecture">アーキテクチャ</a></li><li><a href="#how-it-works">仕組み</a></li><li><a href="#quick-start">クイックスタート</a></li><li><a href="#web-ui-lab-builder">Web UI（lab-builder）</a></li><li><a href="#lab-definition-format">ラボ定義の形式</a></li><li><a href="#examples">例</a></li><li><a href="#step-by-step-walkthroughs">ステップバイステップガイド</a></li><li><a href="#available-commands">使用できるコマンド</a></li><li><a href="#available-addons">使用できるアドオン</a></li><li><a href="#configuration-reference">設定リファレンス</a></li><li><a href="#testing">テスト</a></li><li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li><li><a href="#author">作者</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">lab-in-a-box を使う理由</a></li><li><a href="#architecture">アーキテクチャ</a></li><li><a href="#how-it-works">仕組み</a></li><li><a href="#quick-start">クイックスタート</a></li><li><a href="#web-ui-lab-builder">Web UI（lab-builder）</a></li><li><a href="#lab-definition-format">ラボ定義の形式</a></li><li><a href="#examples">例</a></li><li><a href="#step-by-step-walkthroughs">ステップバイステップガイド</a></li><li><a href="#available-commands">使用できるコマンド</a></li><li><a href="#available-addons">使用できるアドオン</a></li><li><a href="#configuration-reference">設定リファレンス</a></li><li><a href="#testing">テスト</a></li><li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li><li><a href="#issues-and-feedback">問題とフィードバック</a></li><li><a href="#author">作者</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">lab-in-a-box を使う理由</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">設定リファレンス</a></li>
 <li><a href="#testing">テスト</a></li>
 <li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li>
+<li><a href="#issues-and-feedback">問題とフィードバック</a></li>
 </ul>
 <p align="right"><a href="#top">↑ トップへ戻る</a></p>
 
@@ -415,6 +416,18 @@ footer.site {
 <td>最新の openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Canonical が公開する Ubuntu 24.04 LTS Server</td>
 </tr>
@@ -442,8 +455,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>Rocky プロジェクトが公開する最新の Rocky Linux 10</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>CentOS プロジェクトが公開した最後の CentOS Linux 7（2024 年 6 月にサポート終了）。x86_64 のみ</td>
+</tr>
 </tbody>
 </table>
+<p>SUSE の製品名の後ろに <code>-byos</code> を付けると、従量課金のイメージではなく、お手持ちのサブスクリプションを使う (BYOS) イメージが選ばれます。このイメージは登録されるまでリポジトリを持ちません。<code>client_registration</code> で SMLM サーバーに登録されるノードはそこからパッケージを取得し、それより前にパッケージが必要なノード (Kubernetes ノードなど) は common またはノードごとに <code>scc_regcode</code> (必要なら <code>scc_email</code> も) を設定します。cloud-init が初回起動時に <code>SUSEConnect</code> で登録します。</p>
 <p>SUSE 自身の製品は SUSE の公開イメージトラッカーから、それ以外は各ベンダーの AWS Systems Manager 公開パラメーターまたはそのベンダー自身の AWS アカウントから取得されます。別のアカウントが一致しうる名前検索は決して使いません。製品名でない値は、イメージ ID やイメージファイル名も含めて、そのまま渡されます。</p>
 <p>クラウドラボでは、ノードが互いの名前を解決できることも必要です。クラウドアカウントごとに 1 台の小さな DNS VM がラボのドメインを提供し、アカウントのネットワークはその中のすべてのインスタンスにそのサーバーを配布するよう構成されます。これにより、ゲスト内で何も設定せずに、ノードはホスト名で Kubernetes クラスターに参加できます。AWS では VPC の DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。</p>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
@@ -463,7 +481,7 @@ footer.site {
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必須、<code>/etc/lab_creation.cfg</code>）は、ゲートウェイ VM がハブになるクラウドアカウントを指定します。ハブは、他のすべてのサイトが接続する固定パブリック IP を持つ唯一のサイトです。<code>OVERLAY_CIDR</code>（デフォルト <code>10.99.0.0/16</code>）はトンネル上のゲートウェイ自身のアドレスにのみ使われ、実際のトラフィックのルーティングには使われません。<code>OVERLAY_WG_PORT</code>（デフォルト <code>51820</code>）はハブの待ち受けポートです。参加、離脱、ルートの配布は <code>setup_vm.py</code> の中で自動的に行われ、手動で実行するものはありません。</p>
 <p><strong>既知の制限：</strong>DNS は変更されません（ノードの実ホスト名で到達できるのは、その名前がルーティング済みのサブネットに解決されるようになってからです）。後から新しいリモートサイトが参加しても、サイト内の既存ノードのルートはさかのぼって更新されず、各ノードのプロビジョニング時にのみ更新されます。AWS ではトラフィックを転送するためにサイトゲートウェイの「送信元/送信先チェック」を無効にする必要があり（自動で処理されます）、他の 7 つのクラウドバックエンドにはまだ同等の処理がありません。</p>
 <p><strong>既知のギャップ:</strong> AWS ではサイトゲートウェイの source/dest チェックを無効にしないと転送できず、これは自動で行われますが、他の 7 つのクラウドバックエンドには相当する処理がまだありません。一方で、先に用意されていたサイトのノードは、あとから別のサイトが参加したときに<em>再び</em>経路が設定されます。ハブは経路を向けているノードをすべて記録しており、サイトの参加時と撤去時にそれぞれを更新します。<code>overlay_ctl.py --hub &lt;host&gt;</code> は同じことを手動で行い、<code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code>、<code>forget &lt;node&gt;</code> を備えます。サイトを撤去すると、そのゲートウェイはハブのピアから外れ、ハブはその subnet への経路をやめ、サイト・アドレス・ノードの各台帳が整理され、他のすべてのサイトのノードから当該経路が削除されます。VM には触れません。サイトのマシンを破棄するのは <code>destroy_lab.py</code> の仕事です。</p>
-<p><strong>サイト間の DNS:</strong> ラボの DNS サーバーはどれも、この自動化ノード自身の BIND も各クラウドアカウントの DNS VM も、同じゾーンのマスターであり、レコードはそのゾーンファイルに書き込まれることで届きます。したがってノードは、そのレコードを他サイトのサーバーにも書き込むことで、そこから名前解決できるようになります。各サイトは自分の DNS サーバーをハブに登録し、プロビジョニングはノードのレコードを他のすべてのサイトのサーバーにも書き込みます。レコード単位の書き込みはその時点で稼働していたサーバーにしか届かないため、ずれが二種類残ります。サーバーが停止している間にそのサイトが取りこぼしたレコードと、あとで破棄されたノードのレコード（撤去処理は自分の実行が知っているサーバーにしか届きません）です。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> は各サイトのゾーンのコピーを、全サイトのレコードを持つこの自動化ノードのものに置き換え、どちらも解消します。 これは 1 つの自動化ノードが全サイトを運用している場合にのみ正しいです。各サイトが独自のノードを持つ場合、このノードのコピーは他サイトのレコードを持ったことがありません。そのため <code>dns_sync.py &lt;lab.json&gt;</code> は各マスターを比較します。各マスターに不足しているレコードと、そのマスターだけが持つレコードを報告し、不足分を各マスターに書き込み、削除は一切行いません。1 つのマスターだけが持つレコードは、他へまだ書かれていないものである可能性と、他から削除されたものである可能性が同じだからです。<code>--check</code> は書き込まずに報告し、<code>--prune</code> は報告を読んだうえでもう一方の判断を下します。また、レコードを書き込む前に各マスターをそのゾーンのマスターにします。サーバーが宣言していないゾーンや SOA のないファイルに追記されたレコードは、何も告げずに応答されないままでした。</p>
+<p><strong>サイト間の DNS:</strong> ラボの DNS サーバーはどれも、この自動化ノード自身の BIND も各クラウドアカウントの DNS VM も、同じゾーンのマスターであり、レコードはそのゾーンファイルに書き込まれることで届きます。したがってノードは、そのレコードを他サイトのサーバーにも書き込むことで、そこから名前解決できるようになります。各サイトは自分の DNS サーバーをハブに登録し、プロビジョニングはノードのレコードを他のすべてのサイトのサーバーにも書き込みます。レコード単位の書き込みはその時点で稼働していたサーバーにしか届かないため、ずれが二種類残ります。サーバーが停止している間にそのサイトが取りこぼしたレコードと、あとで破棄されたノードのレコード（撤去処理は自分の実行が知っているサーバーにしか届きません）です。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> は、各サイトの DNS サーバーを上書きするのではなく、このノードと比較することでどちらも解消します。このノードのコピーが全サイトのレコードを持つのは、このノードが全サイトを運用している場合だけであり、各サイトが独自の自動化ノードを持つ場合、そのコピーを本ノードのもので置き換えると、本ノードが一度も持たなかったレコードを削除してしまいます。<code>dns_sync.py &lt;lab.json&gt;</code> は、ラボ定義が指定するマスターに対する同じ照合です。どちらも、各マスターに不足しているレコードと、そのマスターだけが持つレコードを報告し、不足分を各マスターに書き込み、削除は一切行いません。1 つのマスターだけが持つレコードは、他へまだ書かれていないものである可能性と、他から削除されたものである可能性が同じだからです。<code>--check</code> は書き込まずに報告し、<code>--prune</code> は報告を読んだうえでもう一方の判断を下します。また、レコードを書き込む前に各マスターをそのゾーンのマスターにします。サーバーが宣言していないゾーンや SOA のないファイルに追記されたレコードは、何も告げずに応答されないままでした。 各マスターには <code>named-checkzone</code> でゾーンのコピーが実際に読み込めるかどうかも確認します。レコードの比較ではゾーンのヘッダーを無視するため、SOA が壊れていたり欠けていたりするサーバーは他のマスターと完全に一致しているように見えながら、何も応答しません。SSH に応答しないサーバーはスキップする前に再試行します。クラウドラボの DNS VM は最初のレコードが書き込まれる時点でまだ起動中であることが多いためです。 各マスターのゾーンは、そのマスター自身の named が読み取りを許可されているディレクトリに置かれます。Debian と Ubuntu では AppArmor プロファイルがそれ以外を拒否するため /etc/bind、それ以外では /var/lib/named です。クラウドラボの DNS VM は初回起動時に BIND と配信ポリシーを受け取り、ゾーンは他のマスターとまったく同じ方法で作成されます。つまりゾーンを作る場所は 1 か所だけです。</p>
 <h3 id="library-loading-order">ライブラリの読み込み順序</h3>
 <p>各スクリプトは次の順序で設定を読み込みます。</p>
 <ol>
@@ -1854,6 +1872,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>JSON ではなく YAML の<a href="#lab-definition-format">ラボ定義</a>を使うには、さらに次が必要です：
 <code>pyyaml</code>（<code>pip install pyyaml</code>）</p>
+<hr />
+<h2 id="issues-and-feedback">問題とフィードバック</h2>
+<p>バグを見つけた、機能のリクエストがある、あるいは単に質問したい場合は、<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a> を使ってください：</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">新しい Issue を開く</a></strong> — バグ、未実装の機能、またはこのプロジェクトに関するフィードバックのため</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">既存の Issue を見る</a></strong> — 同じ問題に既に誰かが遭遇している場合や、議論の中に回避策がある場合があります</li>
+</ul>
+<p>バグを報告する際に最も役立つのは、実行した正確なコマンド、使用したラボ定義（JSON/YAML、機密情報は削除）、および出力やログの関連部分です。ログの場所については上記の<a href="#testing">テスト</a>を、比較のための動作確認済みの出発点については<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">例</a>を参照してください。</p>
+<p>通常のバグではなくセキュリティの脆弱性を見つけましたか？公開の Issue を開く代わりに <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> の手順に従ってください。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
 <hr />
 <h2 id="author">作者</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

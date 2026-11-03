@@ -76,9 +76,7 @@ def destroy_vm(definition, config, defaults, vm_name):
         # Best-effort: the DNS VM itself (see ensure_cloud_dns_vm()) is a shared, persistent
         # resource, never created here — only looked up, and skipped if it doesn't exist (nothing
         # to clean an entry off of). Per-account name when this node uses a named cloud_account.
-        _acct = getattr(backend, "account", "") or ""
-        dns_vm_name = ("lab-dns-{}".format(backend_name) if _acct in ("", "default")
-                       else "lab-dns-{}-{}".format(backend_name, _acct))
+        dns_vm_name = backends.cloud_dns_vm_name(backend, backend_name)
         if backend.vm_exists(dns_vm_name):
             dns_vm_ip = backend.get_ip(dns_vm_name)
             if dns_vm_ip:

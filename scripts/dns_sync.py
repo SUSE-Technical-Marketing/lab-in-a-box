@@ -24,14 +24,19 @@ The masters are this automation node itself, REMOTE_DNS_SERVERS from /etc/lab_cr
 A lab's own cloud DNS VM is created per run and reached at whatever address it currently has, so pass it with
 --server when reconciling a cloud lab outside a run.
 
-The exit code is 0 when every master already agreed, 1 when any difference was found, whether or not it was
-reconciled, and 2 on a usage or input error.
+Each master is also asked whether its copy of the zone loads at all, with named-checkzone. Comparing records
+ignores the zone header, since the SOA and the NS address are per server, so a master whose SOA is damaged or
+missing agrees perfectly with the others while answering nothing: that is reported first, because reconciling
+records over it would report success on a server serving nothing. A master without named-checkzone installed is
+not reported, since its absence says nothing about the zone.
 
-overlay_ctl.py's "dns-sync" is the blunter instrument for a WireGuard overlay: it replaces every site's copy of the
-zone with this automation node's, which is right when one automation node drives every site and so holds every
-record, and wrong when each site has its own, because this node's copy then never held the other sites' records.
-This command compares the masters instead of assuming one of them is correct, so it is the one to use when more
-than one automation node writes the zone.
+The exit code is 0 when every master's zones load and already agreed, 1 when any difference or unloadable zone was
+found, whether or not it was reconciled, and 2 on a usage or input error.
+
+overlay_ctl.py's "dns-sync" is this same reconciliation for a WireGuard overlay, whose DNS servers are registered
+on the hub rather than named in a lab definition. Use that one when the servers to reconcile are an overlay's
+sites, and this one when they are the masters a lab definition and lab_creation.cfg name. Both compare what each
+server answers, add what is missing and remove nothing without --prune.
 """
 
 __version__ = "__LABVERSION__"
@@ -98,7 +103,7 @@ def main(argv):
         if prune:
             differences += service.prune_zone(mydomain, mynet_reverse, remote_dns_servers=masters)
     if not differences:
-        log("Every DNS master of '{}' holds the same records".format(mydomain))
+        log("Every DNS master of '{}' loads its zones and holds the same records".format(mydomain))
         return 0
     return 1
 
