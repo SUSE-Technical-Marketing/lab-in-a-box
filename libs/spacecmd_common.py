@@ -134,6 +134,40 @@ def _forever_retry_paths(key):
     return str(base) + ".log", str(base) + ".pid"
 
 
+def forever_retry_handoff_since(ts):
+    """
+    True when some forever-retry worker's pid file was written at or after `ts` (a time.time()-style
+    timestamp), minus a small grace window — i.e. some step handed off to a background retry instead of
+    actually finishing, in the time since `ts`. The grace window (2s) absorbs ordinary clock skew between
+    Python's time.time() and the filesystem's own mtime clock — confirmed live: a pid file written mere
+    milliseconds after `ts` was captured can still report an mtime a few ms BEFORE `ts`, which a strict
+    `>=` would wrongly call "no handoff happened". A handoff that lands just outside a caller's own
+    before/after window by a couple of seconds is a harmless false positive (reported "pending" instead
+    of "ok"); missing one it should have caught is the failure mode that actually matters here.
+
+    This is how scripts/setup_lab.py tells an addon that genuinely succeeded apart from one that just
+    launched a background retry and returned 0 anyway (register_client() and friends: "returning cleanly
+    only means the retry was launched, never that the real work finished"). It cannot rely on scanning the
+    addon's own captured stdout for a marker line, because a run launched behind the live status page
+    streams addon output live instead of capturing it (see _debug_wanted()) — stdout is None then, nothing
+    to scan. Checking the forever-retry state directory instead works the same way regardless of capture
+    mode, since it is the one place every handoff (install_client_registration, install_smlm's per-step
+    retries, install_uyuni's CLM wait) is guaranteed to leave a trace, via this module's own
+    launch_forever_retry().
+    """
+    d = Path(_FOREVER_RETRY_STATE_DIR)
+    if not d.is_dir():
+        return False
+    ts -= 2
+    for p in d.glob("*.pid"):
+        try:
+            if p.stat().st_mtime >= ts:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def forever_retry_log_path(key):
     """The log path a forever-retry worker for `key` writes to (and will write to once launched, whether
     or not one is running right now) — what a status report reads to show real progress/errors, instead

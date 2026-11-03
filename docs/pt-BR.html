@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Por que lab-in-a-box?</a></li><li><a href="#architecture">Arquitetura</a></li><li><a href="#how-it-works">Como funciona</a></li><li><a href="#quick-start">Início rápido</a></li><li><a href="#web-ui-lab-builder">Interface web (lab-builder)</a></li><li><a href="#lab-definition-format">Formato de definição do laboratório</a></li><li><a href="#examples">Exemplos</a></li><li><a href="#step-by-step-walkthroughs">Guias passo a passo</a></li><li><a href="#available-commands">Comandos disponíveis</a></li><li><a href="#available-addons">Complementos disponíveis</a></li><li><a href="#configuration-reference">Referência de configuração</a></li><li><a href="#testing">Testes</a></li><li><a href="#contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</a></li><li><a href="#author">Autor</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Por que lab-in-a-box?</a></li><li><a href="#architecture">Arquitetura</a></li><li><a href="#how-it-works">Como funciona</a></li><li><a href="#quick-start">Início rápido</a></li><li><a href="#web-ui-lab-builder">Interface web (lab-builder)</a></li><li><a href="#lab-definition-format">Formato de definição do laboratório</a></li><li><a href="#examples">Exemplos</a></li><li><a href="#step-by-step-walkthroughs">Guias passo a passo</a></li><li><a href="#available-commands">Comandos disponíveis</a></li><li><a href="#available-addons">Complementos disponíveis</a></li><li><a href="#configuration-reference">Referência de configuração</a></li><li><a href="#testing">Testes</a></li><li><a href="#contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</a></li><li><a href="#issues-and-feedback">Problemas e feedback</a></li><li><a href="#author">Autor</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">Por que lab-in-a-box?</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">Referência de configuração</a></li>
 <li><a href="#testing">Testes</a></li>
 <li><a href="#contributing--developer-setup">Contribuir / Ambiente de desenvolvimento</a></li>
+<li><a href="#issues-and-feedback">Problemas e feedback</a></li>
 </ul>
 <p align="right"><a href="#top">↑ voltar ao topo</a></p>
 
@@ -1873,6 +1874,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Usar uma <a href="#lab-definition-format">definição de laboratório</a> em YAML (em vez de JSON) exige ainda:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Problemas e feedback</h2>
+<p>Encontrou um bug, tem uma solicitação de recurso, ou só quer fazer uma pergunta? Use o <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Abrir um novo issue</a></strong> — para um bug, um recurso ausente, ou feedback sobre qualquer coisa neste projeto</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Navegar pelos issues existentes</a></strong> — alguém pode já ter encontrado o mesmo problema, ou pode haver uma solução alternativa na discussão</li>
+</ul>
+<p>Ao relatar um bug, as informações mais úteis para incluir são: o comando exato que você executou, a definição do lab (JSON/YAML) que você usou (com segredos removidos), e a seção relevante da saída ou do log. Veja <a href="#testing">Testes</a> acima para saber onde ficam os logs, e os <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">exemplos</a> como ponto de partida conhecido para comparação.</p>
+<p>Encontrou uma vulnerabilidade de segurança em vez de um bug comum? Siga o <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> em vez de abrir um issue público.</p>
+<p align="right"><a href="#top">↑ voltar ao topo</a></p>
+
 <hr />
 <h2 id="author">Autor</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

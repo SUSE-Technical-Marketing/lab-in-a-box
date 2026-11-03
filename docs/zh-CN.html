@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">为什么选择 lab-in-a-box？</a></li><li><a href="#architecture">架构</a></li><li><a href="#how-it-works">工作原理</a></li><li><a href="#quick-start">快速入门</a></li><li><a href="#web-ui-lab-builder">Web 界面（lab-builder）</a></li><li><a href="#lab-definition-format">实验室定义格式</a></li><li><a href="#examples">示例</a></li><li><a href="#step-by-step-walkthroughs">分步指南</a></li><li><a href="#available-commands">可用命令</a></li><li><a href="#available-addons">可用附加组件</a></li><li><a href="#configuration-reference">配置参考</a></li><li><a href="#testing">测试</a></li><li><a href="#contributing--developer-setup">贡献 / 开发环境</a></li><li><a href="#author">作者</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">为什么选择 lab-in-a-box？</a></li><li><a href="#architecture">架构</a></li><li><a href="#how-it-works">工作原理</a></li><li><a href="#quick-start">快速入门</a></li><li><a href="#web-ui-lab-builder">Web 界面（lab-builder）</a></li><li><a href="#lab-definition-format">实验室定义格式</a></li><li><a href="#examples">示例</a></li><li><a href="#step-by-step-walkthroughs">分步指南</a></li><li><a href="#available-commands">可用命令</a></li><li><a href="#available-addons">可用附加组件</a></li><li><a href="#configuration-reference">配置参考</a></li><li><a href="#testing">测试</a></li><li><a href="#contributing--developer-setup">贡献 / 开发环境</a></li><li><a href="#issues-and-feedback">问题与反馈</a></li><li><a href="#author">作者</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">为什么选择 lab-in-a-box？</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">配置参考</a></li>
 <li><a href="#testing">测试</a></li>
 <li><a href="#contributing--developer-setup">贡献 / 开发环境</a></li>
+<li><a href="#issues-and-feedback">问题与反馈</a></li>
 </ul>
 <p align="right"><a href="#top">↑ 返回顶部</a></p>
 
@@ -1868,6 +1869,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>使用 YAML（而非 JSON）格式的<a href="#lab-definition-format">实验室定义</a>还需要：
 <code>pyyaml</code>（<code>pip install pyyaml</code>）</p>
+<hr />
+<h2 id="issues-and-feedback">问题与反馈</h2>
+<p>发现了错误、有功能请求，或只是想提个问题？请使用 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>：</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">提交新 issue</a></strong> —— 用于报告错误、缺失的功能，或对本项目任何方面的反馈</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">浏览已有 issue</a></strong> —— 也许已经有人遇到过同样的问题，或讨论中已有变通方法</li>
+</ul>
+<p>报告错误时，最有用的信息包括：您运行的确切命令、使用的 lab 定义（JSON/YAML，已移除敏感信息），以及输出或日志中相关的部分。日志的位置请参见上方的<a href="#testing">测试</a>，<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">示例</a>可作为已知可用的起点用于对比。</p>
+<p>发现的是安全漏洞而不是普通错误？请按照 <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> 的说明处理，而不要公开提交 issue。</p>
+<p align="right"><a href="#top">↑ 返回顶部</a></p>
+
 <hr />
 <h2 id="author">作者</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

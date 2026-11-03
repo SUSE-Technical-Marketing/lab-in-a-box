@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Why lab-in-a-box?</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#how-it-works">How it works</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#web-ui-lab-builder">Web UI (lab-builder)</a></li><li><a href="#lab-definition-format">Lab definition format</a></li><li><a href="#examples">Examples</a></li><li><a href="#step-by-step-walkthroughs">Step-by-Step Walkthroughs</a></li><li><a href="#available-commands">Available commands</a></li><li><a href="#available-addons">Available addons</a></li><li><a href="#configuration-reference">Configuration reference</a></li><li><a href="#testing">Testing</a></li><li><a href="#contributing--developer-setup">Contributing / Developer setup</a></li><li><a href="#author">Author</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Why lab-in-a-box?</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#how-it-works">How it works</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#web-ui-lab-builder">Web UI (lab-builder)</a></li><li><a href="#lab-definition-format">Lab definition format</a></li><li><a href="#examples">Examples</a></li><li><a href="#step-by-step-walkthroughs">Step-by-Step Walkthroughs</a></li><li><a href="#available-commands">Available commands</a></li><li><a href="#available-addons">Available addons</a></li><li><a href="#configuration-reference">Configuration reference</a></li><li><a href="#testing">Testing</a></li><li><a href="#contributing--developer-setup">Contributing / Developer setup</a></li><li><a href="#issues-and-feedback">Issues and Feedback</a></li><li><a href="#author">Author</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">Why lab-in-a-box?</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">Configuration reference</a></li>
 <li><a href="#testing">Testing</a></li>
 <li><a href="#contributing--developer-setup">Contributing / Developer setup</a></li>
+<li><a href="#issues-and-feedback">Issues and Feedback</a></li>
 </ul>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
@@ -1926,6 +1927,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Using a YAML (rather than JSON) <a href="#lab-definition-format">lab definition</a> additionally requires:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Issues and Feedback</h2>
+<p>Found a bug, have a feature request, or just want to ask a question? Use <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Open a new issue</a></strong> — for a bug, a missing feature, or feedback on anything in this project</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Browse existing issues</a></strong> — someone may have already hit the same thing, or there may be a workaround in the discussion</li>
+</ul>
+<p>When reporting a bug, the most useful things to include are: the exact command you ran, the lab definition (JSON/YAML) you used (with secrets removed), and the relevant section of the output or log. See <a href="#testing">Testing</a> above for where logs live, and the <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">examples</a> for a known-working starting point to compare against.</p>
+<p>Found a security vulnerability instead of a regular bug? Please follow <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> rather than opening a public issue.</p>
+<p align="right"><a href="#top">↑ back to top</a></p>
+
 <hr />
 <h2 id="author">Author</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

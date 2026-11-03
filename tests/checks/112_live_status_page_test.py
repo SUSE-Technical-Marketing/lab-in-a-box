@@ -168,6 +168,82 @@ check("both set: a real https:// link naming this job and token", url is not Non
 for k in ("LAB_STATUS_JOB", "LAB_STATUS_TOKEN"):
     os.environ.pop(k, None)
 
+# ── setup_lab.py: a run behind the status page always streams addon output, regardless of --debug ──
+for k in ("LAB_STATUS_JOB", "LAB_STATUS_TOKEN"):
+    os.environ.pop(k, None)
+check("no env set: --debug absent means quiet", setup_lab._debug_wanted(["lab.json"]) is False)
+check("no env set: --debug still works explicitly", setup_lab._debug_wanted(["--debug", "lab.json"]) is True)
+os.environ["LAB_STATUS_JOB"] = job
+check("only LAB_STATUS_JOB set (no token): still quiet", setup_lab._debug_wanted(["lab.json"]) is False)
+os.environ["LAB_STATUS_TOKEN"] = token
+check("both LAB_STATUS_JOB and LAB_STATUS_TOKEN set: always streams, even without --debug",
+      setup_lab._debug_wanted(["lab.json"]) is True)
+for k in ("LAB_STATUS_JOB", "LAB_STATUS_TOKEN"):
+    os.environ.pop(k, None)
+
+# ── setup_lab.py: _addon_status()/_RunReport.pending — an addon that exits 0 but handed a step off to a
+# forever-retry worker reports "pending", not "ok", and that alone keeps the final banner honest ─────
+retry_state_dir = tmp / "retry-state"
+retry_state_dir.mkdir()
+old_state_dir = setup_lab.sc._FOREVER_RETRY_STATE_DIR
+setup_lab.sc._FOREVER_RETRY_STATE_DIR = str(retry_state_dir)
+try:
+    check("a non-zero exit is always FAILED, regardless of forever-retry state",
+          setup_lab._addon_status(1, time.time()) == "FAILED (exit 1)")
+    t0 = time.time()
+    check("exit 0 with no forever-retry activity since t0 is ok", setup_lab._addon_status(0, t0) == "ok")
+    (retry_state_dir / "some_step.pid").write_text("12345")
+    check("exit 0 with a forever-retry pid file written after t0 is pending",
+          setup_lab._addon_status(0, t0) == "pending")
+    later = time.time() + 5
+    check("...but not once that handoff is clearly BEFORE the window being checked",
+          setup_lab._addon_status(0, later) == "ok")
+
+    report = setup_lab._RunReport()
+    check("a fresh report is not pending", report.pending is False)
+    report.add_addon("node:x", "someaddon", "pending")
+    check("add_addon('pending') makes the report pending but not failed",
+          report.pending is True and report.failed is False)
+finally:
+    setup_lab.sc._FOREVER_RETRY_STATE_DIR = old_state_dir
+
+# ── setup_lab.py: _node_access_lines() — real IP (via DNS) + ssh command, a password only when one is
+# actually configured, never guessed ──────────────────────────────────────────────────────────────────
+import socket as _socket  # noqa: E402
+
+_real_gethostbyname = _socket.gethostbyname
+
+
+def _fake_gethostbyname(name):
+    if name in ("resolvable.example.lab", "withpass.example.lab"):
+        return "10.1.2.3"
+    raise OSError("no such host")
+
+
+_socket.gethostbyname = _fake_gethostbyname
+try:
+    fake_def = {"common": {}, "nodes": {
+        "resolvable.example.lab": {},
+        "unresolvable.example.lab": {},
+        "withpass.example.lab": {"VM_ROOT_PASS": "s3cret"},
+    }}
+    lines = "\n".join(setup_lab._node_access_lines(fake_def))
+    check("a resolvable node gets a real ssh command with its IP",
+          "resolvable.example.lab" in lines and "ssh root@10.1.2.3" in lines)
+    check("an unresolvable node says so instead of inventing an address",
+          "unresolvable.example.lab" in lines and "not resolvable yet" in lines)
+    check("a node with an explicit VM_ROOT_PASS shows it",
+          "withpass.example.lab" in lines and "password: s3cret" in lines)
+    check("a node with no VM_ROOT_PASS never shows a made-up password",
+          "resolvable.example.lab — " in lines and "password:" not in lines.split("\n")[0])
+
+    fake_def_nopass = {"common": {}, "nodes": {"solo.example.lab": {}}}
+    lines2 = "\n".join(setup_lab._node_access_lines(fake_def_nopass))
+    check("with no node having a plaintext password anywhere, a clear pointer is added instead of silence",
+          "no plaintext password is configured" in lines2)
+finally:
+    _socket.gethostbyname = _real_gethostbyname
+
 # ── status.html / app.js / index.html wiring: static checks, same spirit as 95's ────────────────────
 status_html = (_REPO / "webui" / "htdocs" / "status.html").read_text()
 app_js = (_REPO / "webui" / "htdocs" / "app.js").read_text()

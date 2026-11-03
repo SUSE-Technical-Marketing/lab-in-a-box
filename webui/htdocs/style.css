@@ -342,7 +342,12 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .job-state{margin:0;font-weight:640}
 .job-state.done{color:var(--ok)}
 .job-state.failed{color:var(--danger)}
-.job-log{margin:0;padding:.7rem .8rem;background:var(--field-bg);border:1px solid var(--line);border-radius:8px;
+.job-state.pending{color:var(--gold)}
+/* Fixed dark terminal background regardless of the page's own light/dark theme: ansi.js's color palette
+   (ansiToHtml(), shared by this dialog and status.html) assumes the dark backdrop real terminals have —
+   on a light page theme, bright ANSI colors (e.g. the near-white _WHITE rule lines, the light-green _GREEN)
+   were unreadable against a light panel. */
+.job-log{margin:0;padding:.7rem .8rem;background:#1b1e23;color:#d3d7cf;border:1px solid var(--line);border-radius:8px;
   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:50vh;overflow:auto;min-height:8rem}
 .status-link{padding:.7rem .8rem;background:var(--code);border-radius:8px;margin-bottom:.8rem}
 .status-link-row{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
