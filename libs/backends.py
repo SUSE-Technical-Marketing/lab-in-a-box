@@ -2195,6 +2195,9 @@ class AWSBackend(VMBackend):
 
           - "sles", "sles16", "sles16.0": the newest plain pay-as-you-go SLES AMI SUSE publishes.
           - "slmicro", "slmicro6", "slmicro6.1", "micro": the newest pay-as-you-go SUSE Linux Micro AMI.
+          - any SLES or SL Micro name above followed by "-byos" ("sles16-byos", "sles15.7-byos", "slmicro6.1-byos"):
+            the same product's Bring-Your-Own-Subscription AMI, which has no repositories until it is registered
+            (scc_regcode, or an SMLM server through client_registration).
           - "opensuse", "leap", "leap16", "leap16.0": the newest openSUSE Leap AMI.
           - every name in libs/cloud_images.py's AWS_PRODUCTS ("ubuntu24.04", "rhel9", "rocky10", ...): the
             vendor's own current AMI, from its AWS Systems Manager public parameter or its own AWS account.
@@ -2217,22 +2220,27 @@ class AWSBackend(VMBackend):
         if vendor_id:
             return self._log_resolved(name, vendor_id, wanted)
 
-        match = re.match(r"^(sles|slmicro|micro|leap|opensuse)(\d+)?(?:[.-](\d+))?$", wanted)
+        match = re.match(r"^(sles|slmicro|micro|leap|opensuse)(\d+)?(?:[.-](\d+))?(-byos)?$", wanted)
         if not match:
             return name
         product, major, minor = match.group(1), match.group(2), match.group(3)
+        byos = bool(match.group(4))
         major = int(major) if major else 0
         minor = int(minor) if minor else -1
         picker, label = self._SUSE_PRODUCTS[product]
+        if byos and product in ("leap", "opensuse"):
+            die("SOURCE_IMAGE '{}': openSUSE Leap is free and has no BYOS image — drop '-byos'".format(name))
         try:
+            kwargs = {"byos": True} if byos else {}
             image = picker(suse_catalogue.active_images("amazon", self.region), arch_suffix,
-                           major=major, minor=minor)
+                           major=major, minor=minor, **kwargs)
         except (OSError, ValueError) as exc:
             die("could not read SUSE's public cloud image list for AWS region '{}' to resolve SOURCE_IMAGE "
                 "'{}': {}".format(self.region, name, exc))
         if not image.get("id"):
-            die("SUSE publishes no plain {}{} {} image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
-                "instead".format(label, " " + str(major) if major else "", arch, self.region))
+            die("SUSE publishes no {} {}{} {} image in AWS region '{}' — name an AMI ID in SOURCE_IMAGE "
+                "instead".format("BYOS" if byos else "plain", label, " " + str(major) if major else "", arch,
+                                 self.region))
         return self._log_resolved(name, image["id"], image.get("name", ""))
 
     def _log_resolved(self, name: str, image_id: str, described: str) -> str:
@@ -4155,6 +4163,17 @@ def dns_recursion_networks(backend):
     return networks
 
 
+def cloud_dns_vm_name(backend, backend_name):
+    """
+    The name of the cloud DNS VM serving `backend`: "lab-dns-<backend_name>", or "lab-dns-<backend_name>-<account>" for a
+    named cloud account other than "default" (see ensure_cloud_dns_vm()). The one place this name is formed.
+    """
+    acct = getattr(backend, "account", "") or ""
+    if acct in ("", "default"):
+        return "lab-dns-{}".format(backend_name)
+    return "lab-dns-{}-{}".format(backend_name, acct)
+
+
 def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path, preferred_image=""):
     """
     Idempotently ensures a small, cheap DNS-serving VM exists for this cloud backend, and returns its real IP.
@@ -4184,11 +4203,7 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
     Nodes query this server through its private IP; DNS queries to its public IP can be intercepted by networks on
     the path.
     """
-    acct = getattr(backend, "account", "") or ""
-    if acct in ("", "default"):
-        dns_vm_name = "lab-dns-{}".format(backend_name)
-    else:
-        dns_vm_name = "lab-dns-{}-{}".format(backend_name, acct)
+    dns_vm_name = cloud_dns_vm_name(backend, backend_name)
 
     if backend.vm_exists(dns_vm_name):
         ip = backend.get_ip(dns_vm_name)

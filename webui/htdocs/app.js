@@ -2074,6 +2074,7 @@ async function openCreate() {
   $("#createGo").hidden = false;
   $("#createPass").value = "";
   $("#createMsg").hidden = true;
+  $("#jobStatusLink").hidden = true;
   showDialog("#createDialog");
 
   // A lab already being created cannot be started again, and the server says so only after the password has been
@@ -2103,6 +2104,7 @@ async function startCreate() {
     $("#createConfirm").hidden = true;
     $("#createGo").hidden = true;
     $("#createJob").hidden = false;
+    showStatusLink(r.status_url, r.qr_svg);
     watchJob(r.job);
   } catch (e) {
     // In the dialog, where the reader is looking, as well as in a toast: a failure here is the end of what they
@@ -2112,6 +2114,18 @@ async function startCreate() {
     msg.hidden = false;
     toastError("The lab was not started: " + e.message);
   }
+}
+
+// Shows the one-time public status link + QR code that "create" hands back. Only lab_create()'s own
+// answer ever carries the token (see lab_builder_helper.py) — reopening the dialog for an
+// already-running job (openCreate()'s "jobs" lookup) has no token to show, so this stays hidden then.
+function showStatusLink(url, qrSvg) {
+  const box = $("#jobStatusLink");
+  if (!url) { box.hidden = true; return; }
+  $("#jobStatusUrl").href = url;
+  $("#jobStatusUrl").textContent = url;
+  $("#jobStatusQr").innerHTML = qrSvg || "";
+  box.hidden = false;
 }
 
 // Polls job `id` every 3 s and shows its state and log until it ends.

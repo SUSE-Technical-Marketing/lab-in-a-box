@@ -547,6 +547,33 @@ class DNSService(AuxService):
         self._remote(server, "sed -Ei {} {}".format(
             _quote("\\|{}|d".format(dns_zone.pattern(record))), zone_file), check=False)
 
+    @staticmethod
+    def _other_a_pattern(short, keep_ip):
+        """
+        (POSIX ERE for any A record of name `short`, POSIX ERE for one pointing at `keep_ip`): the lines
+        _dns_remove_other_a() and _remote_dns_remove_other_a() remove are those matching the first and not the second.
+        The name is matched whole, so removing node1's records leaves node10's alone.
+        """
+        name = dns_zone.pattern(short)[:-len("[[:space:]]*$")]
+        any_a = name + "[[:space:]]+IN[[:space:]]+A[[:space:]]+"
+        keep = "[[:space:]]" + keep_ip.replace(".", "\\.") + "[[:space:]]*$"
+        return any_a, keep
+
+    def _dns_remove_other_a(self, zone_file, short, keep_ip):
+        """Remove every A record of `short` from zone_file except the one pointing at `keep_ip`."""
+        path = Path(zone_file)
+        if not path.exists():
+            return
+        any_a, keep = (re.compile(p.replace("[[:space:]]", r"\s")) for p in self._other_a_pattern(short, keep_ip))
+        kept = [line for line in path.read_text().splitlines() if not (any_a.match(line) and not keep.search(line))]
+        path.write_text("\n".join(kept) + "\n")
+
+    def _remote_dns_remove_other_a(self, server, zone_file, short, keep_ip):
+        """The remote counterpart of _dns_remove_other_a(), on `server`'s own zone file."""
+        any_a, keep = self._other_a_pattern(short, keep_ip)
+        self._remote(server, "sed -Ei {} {}".format(
+            _quote("\\|{}|{{\\|{}|!d}}".format(any_a, keep)), zone_file), check=False)
+
     def _dns_remove_record(self, zone_file, record):
         """The local counterpart of _remote_dns_remove_record(), matching the same whitespace-tolerant line."""
         path = Path(zone_file)
@@ -590,8 +617,16 @@ class DNSService(AuxService):
             lines.append(self._hosts_line(vm_name, myip))
         path.write_text("\n".join(lines) + "\n")
 
-    def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Add forward (A) and reverse (PTR) DNS records for a VM. Without `mynet_reverse` only the A record is added."""
+    def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, replace=False):
+        """
+        Add forward (A) and reverse (PTR) DNS records for a VM. Without `mynet_reverse` only the A record is added.
+
+        replace: first remove every other A record of the VM's own name, on every master, so the name resolves to
+        `myip` alone. For a cloud node, whose provider assigns a new address at each creation: when its previous
+        instance is gone, nothing can tell the earlier destroy what its address was, and that record would otherwise
+        stay beside the new one for good, the sync only ever adding records. Off by default, leaving every other
+        caller's records as they are.
+        """
         log("Adding DNS entry for '{}' → {}".format(vm_name, myip))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
@@ -619,6 +654,8 @@ class DNSService(AuxService):
                 remote_rev = self._zone_path(server, dns_zone.reverse_file(mynet_reverse)) if mynet_reverse else ""
                 if mynet_reverse:
                     self._remote_dns_remove_ptr_for_octet(server, remote_rev, last_octet)
+                if replace:
+                    self._remote_dns_remove_other_a(server, remote_lan, short, myip)
                 self._remote_dns_add(server, remote_lan, a_record)
                 if mynet_reverse:
                     self._remote_dns_add(server, remote_rev, ptr_record)
@@ -627,6 +664,8 @@ class DNSService(AuxService):
             # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
             if mynet_reverse:
                 self._dns_remove_ptr_for_octet(rev_file, last_octet)
+            if replace:
+                self._dns_remove_other_a(lan_file, short, myip)
             self._dns_add_line(lan_file, a_record)
             if mynet_reverse:
                 self._dns_add_line(rev_file, ptr_record)

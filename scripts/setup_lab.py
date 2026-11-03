@@ -38,6 +38,7 @@ import lab_creation as lc  # noqa: E402
 import k8s  # noqa: E402
 import targets  # noqa: E402
 import apps  # noqa: E402
+import qr_util  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
@@ -194,6 +195,15 @@ def print_summary():
         for e in r.errors:
             print("  {}•{} {}".format(lc._RED, lc._RESET, e))
 
+    url = _status_page_url()
+    if url:
+        print("\nLive status page (share the link or QR code — no login needed, only whoever holds this "
+              "exact link can open it, and only over HTTPS):")
+        print("  " + url)
+        art = qr_util.render_ascii(url)
+        if art:
+            print(art)
+
     print("")
     if r.failed:
         print("{}✗ Lab setup finished WITH FAILURES{} — see the Errors list and the entries "
@@ -204,6 +214,23 @@ def print_summary():
     else:
         print("{}✓ Lab setup finished — everything OK{}.".format(lc._GREEN, lc._RESET))
     print("{}{}{}".format(lc._WHITE, _RULE, lc._RESET))
+
+
+def _status_page_url():
+    """
+    The public live-status page for this run, or None when there isn't one.
+
+    Only set when this run was launched as a lab-builder-helper job (LAB_STATUS_JOB/LAB_STATUS_TOKEN in
+    the environment — see scripts/lab_builder_helper.py's lab_create()); a bare CLI run has no such page
+    to point to. The job id and token are already URL-safe (job: NAME_RE in lab_builder_helper.py; token:
+    secrets.token_urlsafe()), so no extra quoting is needed.
+    """
+    job = os.environ.get("LAB_STATUS_JOB")
+    token = os.environ.get("LAB_STATUS_TOKEN")
+    if not job or not token:
+        return None
+    import socket
+    return "https://{}/lab-builder/status.html?job={}&token={}".format(socket.getfqdn(), job, token)
 
 
 def _lab_resources(definition):

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Lab status</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Everything this page needs beyond style.css's shared tokens/components. */
+  .wrap{max-width:860px;margin:0 auto;padding:1.4rem}
+  .status-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;
+    box-shadow:var(--shadow);margin-bottom:1.1rem}
+  .status-card h1{font-size:1.1rem;margin-bottom:.3rem}
+  .status-card .sub{margin-top:.2rem}
+  .link-row{display:flex;align-items:center;gap:.5rem;margin:.6rem 0;flex-wrap:wrap}
+  .link-row input{flex:1;min-width:14rem;font:inherit;padding:.4rem .6rem;border:1px solid var(--line);
+    border-radius:6px;background:var(--field-bg);color:var(--ink)}
+  .access-card{display:none}
+  .access-card.show{display:block}
+  .access-card pre{white-space:pre-wrap;word-break:break-word;margin:0;background:var(--code);
+    border-radius:8px;padding:.8rem;font-size:.86rem}
+  .job-log{max-height:46vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:.82rem}
+  .hint{color:var(--muted);font-size:.82rem}
+  #notHttps{display:none}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <img class="logo logo-light" src="logo-icon.svg" alt="" width="38" height="38">
+    <img class="logo logo-dark" src="logo-icon-dark.svg" alt="" width="38" height="38">
+    <div><h1 class="brand-name">lab-<span class="in-a">in</span><span class="sep">-</span>a-box</h1>
+      <p class="sub">Live lab status</p></div>
+  </div>
+  <div class="top-actions">
+    <button type="button" id="themeToggle" class="theme-toggle"><span class="dot"></span><span class="t-label">Auto</span></button>
+  </div>
+</div>
+
+<div class="wrap">
+  <p id="notHttps" class="issue err">This page shows lab access credentials once the deploy is done, so it only
+    works over HTTPS. Reload this exact link using <code>https://</code>.</p>
+
+  <div class="status-card">
+    <h1>Deployment status</h1>
+    <p id="jobState" class="job-state">Loading…</p>
+    <p class="hint">This page keeps refreshing on its own — nothing to click until it is done.
+      Bookmark or share this link; anyone who has it can watch the same deploy (no login needed).</p>
+    <div class="link-row">
+      <input id="selfLink" type="text" readonly aria-label="This page's link">
+      <button type="button" id="copyLink" class="btn">Copy link</button>
+    </div>
+  </div>
+
+  <div id="accessCard" class="status-card access-card">
+    <h1>Access this lab</h1>
+    <pre id="accessText"></pre>
+  </div>
+
+  <div class="status-card">
+    <h1>Log</h1>
+    <pre id="jobLog" class="job-log"></pre>
+  </div>
+</div>
+
+<script src="theme.js"></script>
+<script>
+(function () {
+  "use strict";
+  var qs = new URLSearchParams(location.search);
+  var job = qs.get("job") || "", token = qs.get("token") || "";
+  var stateEl = document.getElementById("jobState");
+  var logEl = document.getElementById("jobLog");
+  var accessCard = document.getElementById("accessCard");
+  var accessText = document.getElementById("accessText");
+  var timer = null;
+
+  document.getElementById("selfLink").value = location.href;
+  document.getElementById("copyLink").addEventListener("click", function () {
+    navigator.clipboard.writeText(location.href).catch(function () {});
+  });
+
+  if (location.protocol !== "https:") {
+    document.getElementById("notHttps").style.display = "block";
+    stateEl.textContent = "Waiting for HTTPS…";
+    return;
+  }
+  if (!job || !token) {
+    stateEl.textContent = "This link is missing its job or token — it cannot be a real status link.";
+    stateEl.className = "job-state failed";
+    return;
+  }
+
+  // The LAB SUMMARY block setup_lab.py prints at the end of a run (see scripts/setup_lab.py's
+  // print_summary()) — pulled out of the raw log and shown as its own card once it appears.
+  function extractSummary(log) {
+    var marker = "LAB SUMMARY";
+    var i = log.indexOf(marker);
+    if (i === -1) return null;
+    // Back up to the start of the decorative rule line print_summary() puts just above the marker.
+    var start = log.lastIndexOf("\n\n", i);
+    return log.slice(start === -1 ? i : start).trim();
+  }
+
+  function poll() {
+    clearTimeout(timer);
+    var url = "api?action=pub-status&job=" + encodeURIComponent(job) + "&token=" + encodeURIComponent(token);
+    fetch(url).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        stateEl.textContent = res.body.error || "This link is no longer valid.";
+        stateEl.className = "job-state failed";
+        return; // a bad job/token never recovers by retrying
+      }
+      var j = res.body;
+      stateEl.textContent = j.state === "running" ? "Deploying…"
+        : j.state === "done" ? "Done — the lab is ready." : "Failed (exit " + (j.rc == null ? "?" : j.rc) + ").";
+      stateEl.className = "job-state " + j.state;
+      var atEnd = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+      logEl.textContent = j.log || "";
+      if (atEnd) logEl.scrollTop = logEl.scrollHeight;
+      var summary = extractSummary(j.log || "");
+      if (summary) { accessText.textContent = summary; accessCard.classList.add("show"); }
+      if (j.state === "running") timer = setTimeout(poll, 4000);
+    }).catch(function () {
+      // A network hiccup, not a refusal — keep trying, same as the admin job dialog does.
+      timer = setTimeout(poll, 5000);
+    });
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

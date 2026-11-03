@@ -45,6 +45,7 @@ Feature areas:
 import base64
 import hashlib
 import json
+import os
 import re
 import shlex
 import socket
@@ -56,7 +57,8 @@ from pathlib import Path
 from lab_creation import ssh_run, scp_to, die, warn, error, boot_id, wait_for_reboot
 
 
-def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
+def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, forever=False, retry_argv=None,
+                           retry_key=None, **kwargs):
     """
     Run one config-provisioning step from install_smlm's or install_uyuni's setup orchestration, and report a
     failure without stopping the remaining steps.
@@ -67,11 +69,21 @@ def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwarg
 
     retries and retry_delay: some steps depend on state that another process is still producing, for example a client that
     background workers have not registered yet. With retries > 1 the step is retried up to `retries` times, sleeping
-    `retry_delay` seconds between attempts, before the failure is reported. The default is no retry, so a real configuration
-    error is reported at once.
+    `retry_delay` seconds between attempts, before the failure is reported. This bounded pass is for ordinary, short
+    server-side propagation lag (a group that was just created, say) — not a substitute for `forever` below.
 
-    The wait is bounded. A dependency that takes longer than retries * retry_delay seconds is picked up by a later
-    configuration run.
+    forever, retry_argv and retry_key: this project's mandatory policy for anything depending on SMLM server state (see
+    the "Forever-retry background workers" section of this module) — when forever=True and every bounded attempt above
+    has failed, retry_argv (an argv list that ultimately calls run_forever_retry_worker() for this exact step) is
+    launched as a detached background worker via launch_forever_retry() instead of giving up. The step is then reported
+    as handed off, not failed: its real eventual outcome is in that worker's own log (forever_retry_log_path()), never
+    in this function's return value, which carries no result at all either way.
+
+    retry_key is the forever-retry mechanism's own key for this step — unique across every server AND every label, so
+    two servers' same-named step (install_smlm's and install_uyuni's "organizations", say, or two SMLM nodes in one
+    lab) never collide into one shared pid/log file. The caller, which alone knows which host and which script this
+    step belongs to, must pass one whenever forever=True; "step:{label}" alone (not scoped to a host) is used only as
+    a last resort when forever=True but retry_key is left unset.
     """
     last_err = None
     for attempt in range(1, retries + 1):
@@ -85,9 +97,195 @@ def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwarg
                      "catching up elsewhere in the automation; retrying in {}s".format(
                          label, attempt, retries, retry_delay))
                 time.sleep(retry_delay)
+    if forever and retry_argv:
+        launch_forever_retry(retry_key or "step:{}".format(label), retry_argv)
+        return
     error("config step '{}' failed after {} attempt{} — see the ERROR(s) above; continuing "
           "with the rest of the configuration".format(
               label, retries, "" if retries == 1 else "s"))
+
+
+# ── Forever-retry background workers for SMLM-dependent operations ──────────────────────────────────────
+#
+# Mandatory project policy: any operation whose success depends on SMLM/Uyuni server-side state — channel
+# sync, activation-key-to-group propagation, client registration, content lifecycle builds, bootstrap
+# repository generation, anything of that kind — must keep retrying rather than give up. Real channel sync
+# is a serial, one-channel-at-a-time background job (taskomatic) that can legitimately take many hours
+# when dozens of channels are queued, so a bounded retry count or timeout on a step that depends on it is
+# a failure waiting to happen, not a safety net.
+#
+# The mechanism below generalizes this project's own original pattern (install_client_registration's
+# detached per-node retry worker): a fully independent OS process keeps retrying one named operation
+# forever, printing one INFO heartbeat every heartbeat_interval seconds (elapsed time, that it keeps going
+# indefinitely, and the most recent failure's own text) so a human watching its log always sees real
+# status instead of long silence. Several such workers run at once, each its own process, so one step's
+# long wait never blocks another's, and nothing in the main deployment path blocks on any of them either.
+
+_FOREVER_RETRY_STATE_DIR = "/var/log/lab-in-a-box/forever-retry"
+
+
+def _forever_retry_paths(key):
+    """(log_path, pid_path) for the forever-retry worker named `key` (e.g. "smlm:channels sync" or
+    "client_registration:mercury.mydemoaws.lab") — one pair per distinct operation, so two unrelated
+    operations never share or clobber each other's state."""
+    Path(_FOREVER_RETRY_STATE_DIR).mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", key)
+    base = Path(_FOREVER_RETRY_STATE_DIR) / safe
+    return str(base) + ".log", str(base) + ".pid"
+
+
+def forever_retry_log_path(key):
+    """The log path a forever-retry worker for `key` writes to (and will write to once launched, whether
+    or not one is running right now) — what a status report reads to show real progress/errors, instead
+    of trusting a launcher's own immediate return (which only ever means "a worker exists", never that the
+    operation itself has finished)."""
+    log_path, _ = _forever_retry_paths(key)
+    return log_path
+
+
+def forever_retry_running(key):
+    """
+    Whether a forever-retry worker for `key` is alive right now.
+
+    A pid file naming a process that is no longer running — crashed, killed, the host rebooted — is a
+    half-finished, falsely-"in progress" state: left alone, a later launch_forever_retry() for the same
+    key would see the stale file and wrongly skip relaunching it forever. Cleaning it up here, the one
+    place this check is made, is that cleanup: the next launch_forever_retry() call starts fresh instead
+    of silently doing nothing.
+    """
+    _, pid_path = _forever_retry_paths(key)
+    if not Path(pid_path).is_file():
+        return False
+    try:
+        pid = int(Path(pid_path).read_text().strip())
+    except ValueError:
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
+        return False
+    try:
+        # A worker's own launcher process (launch_forever_retry()'s own caller) is its real OS parent only
+        # for as long as it stays running itself — in every normal use here that process exits within
+        # moments of launching it, so by the time anything checks, the worker has long since been
+        # reparented away (to init or an equivalent subreaper), which then reaps it on exit automatically
+        # and os.kill(pid, 0) below is a correct liveness check. The one case that would NOT hold is the
+        # launching process itself still being alive and checking its own just-launched child: without
+        # reaping it, a child that has already finished sits as a zombie, which os.kill(pid, 0) still
+        # reports as "exists" — so that case is reaped outright here first, rather than trusting kill().
+        reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped_pid == pid:
+            try:
+                Path(pid_path).unlink()
+            except OSError:
+                pass
+            return False
+    except ChildProcessError:
+        pass  # not this process's own child (the normal case) — fall through to the kill(pid, 0) check
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
+        return False
+
+
+def launch_forever_retry(key, argv, env=None):
+    """
+    Ensure a detached background worker is retrying `key` forever. If one is already running
+    (forever_retry_running()), does nothing — the guard that stops a rerun of the same deployment from
+    piling up a second worker racing the first one for the very same operation. Otherwise spawns `argv` —
+    expected to end by invoking this project's own --retry-step-worker-style entry point, and to include
+    "-u" (or an equivalent unbuffered mode) so its heartbeat is actually visible in the log file while it
+    runs, not trapped in Python's own stdout buffer — as a new process: output to its own per-key log
+    file (appended, so a relaunch after a genuinely dead worker keeps the earlier history), stdin from
+    /dev/null, detached into its own session so it outlives the process that launched it. `env`, when
+    given, replaces the worker's environment entirely (pass a full dict, e.g. dict(os.environ, _vm_name=...),
+    not a partial one) — None inherits this process's own environment unchanged, same as subprocess.Popen's
+    own default. Always returns the log path, whether a new worker was started or one was already running.
+    """
+    log_path, pid_path = _forever_retry_paths(key)
+    if forever_retry_running(key):
+        print("  '{}' is already being retried in the background — log: {}".format(key, log_path))
+        return log_path
+    with open(log_path, "a") as logf, open(os.devnull) as devnull:
+        proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT, stdin=devnull,
+                                 env=env, start_new_session=True)
+    Path(pid_path).write_text(str(proc.pid))
+    print("  '{}' launched as a background retry (runs forever until it succeeds) — log: {}".format(
+        key, log_path))
+    return log_path
+
+
+def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=1800, verify=None):
+    """
+    The body of a forever-retry worker process (what launch_forever_retry()'s argv must ultimately run):
+    calls the zero-argument callable `attempt()` and keeps retrying — sleeping retry_delay seconds between
+    tries — until it stops raising AND, if `verify` is given, `verify()` also returns true. No deadline, by
+    design: see this section's own module-level docstring for why a bounded retry is wrong for anything
+    depending on SMLM server state.
+
+    verify: an optional zero-argument callable that checks the REAL end state through a read-only API call
+    — does the activation key now exist with the right channels, is the system now actually in
+    system_list, does the channel's own reposync log really say "Sync completed." — rather than trusting
+    `attempt()` merely not having raised. This is the fix for a real failure mode found live: a step (or
+    its caller) reporting success because its own call returned cleanly, while the thing it was supposed
+    to produce still did not exist — attempt() can return cleanly for reasons that are not the real,
+    intended end state (e.g. client_registration handing off to ITS OWN background worker and returning
+    immediately, counted as "done" by a caller that never checked whether registration itself had actually
+    finished). When verify() returns falsy, or raises, the attempt is NOT considered successful — the
+    specific exception is reported as "attempt() returned but verify() rejected it: <error>" and the loop
+    retries exactly as it would for a raised exception. verify() itself must be read-only: it runs after
+    EVERY attempt, successful or not, that could plausibly need re-checking.
+
+    Writes its own pid file first (removed on return, success or not) so forever_retry_running() sees it
+    as live for exactly as long as it actually is, then loops, printing one INFO heartbeat every
+    heartbeat_interval seconds: how long it has been retrying, that it keeps going indefinitely, and the
+    exact text of the most recent failure, with every print flushed immediately — the fix for this
+    mechanism's own precursor (install_client_registration's original worker going completely silent for
+    hours because Python block-buffers stdout once it is redirected to a file).
+    """
+    _, pid_path = _forever_retry_paths(key)
+    Path(pid_path).write_text(str(os.getpid()))
+    start = time.time()
+    next_heartbeat = start + heartbeat_interval
+    attempt_n = 0
+    last_error = "(no attempt has failed yet)"
+    try:
+        while True:
+            attempt_n += 1
+            try:
+                attempt()
+                if verify is not None:
+                    ok = verify()
+                    if not ok:
+                        raise RuntimeError("attempt() returned but verify() rejected it (returned {!r})"
+                                           .format(ok))
+                elapsed_min = int((time.time() - start) / 60)
+                print("[{}] '{}' succeeded on attempt {} after {} minute(s) — stopping.".format(
+                    datetime.now(timezone.utc).isoformat(), key, attempt_n, elapsed_min), flush=True)
+                return
+            except SystemExit as e:
+                last_error = "exit {}".format(e.code)
+            except Exception as e:  # noqa: BLE001 — this loop must never die on the step's own failure
+                last_error = "{}: {}".format(type(e).__name__, e)
+            now = time.time()
+            if now >= next_heartbeat:
+                elapsed_min = int((now - start) / 60)
+                print("[{}] INFO '{}': still retrying after {} minute(s) (attempt {}) — will keep "
+                      "retrying indefinitely until it succeeds. Last error: {}".format(
+                          datetime.now(timezone.utc).isoformat(), key, elapsed_min, attempt_n, last_error),
+                      flush=True)
+                next_heartbeat = now + heartbeat_interval
+            time.sleep(retry_delay)
+    finally:
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
@@ -1108,7 +1306,11 @@ def import_images(hostname, exec_prefix, cfg, prefix):
     SEPARATE, explicit trigger (install_smlm's own
     --import-images/--run-recurring-schedules-style flag), never part of
     the automatic install flow: entry shape is {"name", "version",
-    "build_host_id", "store", "activation_key"}.
+    "build_host" or "build_host_id", "store", "activation_key"}.
+
+    build_host is the build system's hostname, resolved to its numeric id with _system_id() as <prefix>_image_builds
+    does, so a lab names the system rather than an id the server only assigns once it registers. build_host_id, the
+    numeric id itself, is used unchanged when given.
     """
     imports = cfg.get("{}_image_imports".format(prefix)) or []
     if not imports:
@@ -1118,8 +1320,11 @@ def import_images(hostname, exec_prefix, cfg, prefix):
         name = entry.get("name")
         build_host_id = entry.get("build_host_id")
         store = entry.get("store")
-        if not (name and build_host_id and store):
-            die("{}_image_imports: an entry needs 'name', 'build_host_id' and 'store'".format(prefix))
+        if not (name and (build_host_id or entry.get("build_host")) and store):
+            die("{}_image_imports: an entry needs 'name', 'store' and either 'build_host' or "
+                "'build_host_id'".format(prefix))
+        if not build_host_id:
+            build_host_id = _system_id(hostname, exec_prefix, entry["build_host"])
         import_container_image(hostname, exec_prefix, name, entry.get("version"), build_host_id,
                                 store, entry.get("activation_key") or "")
 
@@ -2740,6 +2945,27 @@ def _system_id(hostname, exec_prefix, target_system):
         die("more than one system named '{}' found on the server — genuinely ambiguous".format(
             target_system))
     return matches[0]["id"]
+
+
+def system_is_registered(hostname, exec_prefix, target_system):
+    """
+    Whether `target_system` (a hostname/minion id) is really, right now, a registered system on the
+    server reached through exec_prefix — the same system.getId() lookup _system_id() uses, but never
+    dies: a plain True/False answer, meant for a forever-retry worker's own verify() check (see
+    run_forever_retry_worker()'s docstring for why that check exists — a registration call returning
+    cleanly is not proof the system actually exists yet). False for zero matches, a failed call, or
+    unparseable output; also False for more than one match, since this check's only job is "is the ONE
+    expected system genuinely there", not resolving an ambiguity — a real one is still something
+    _system_id()'s own die() should catch wherever this project treats the id as actually needed.
+    """
+    r = _api_call(hostname, exec_prefix, "system.getId", [target_system])
+    if r.returncode != 0:
+        return False
+    try:
+        matches = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return len(matches) == 1
 
 
 # ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────

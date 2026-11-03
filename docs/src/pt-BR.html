@@ -210,6 +210,18 @@
 <td>O openSUSE Leap mais recente</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, com assinatura própria (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, com assinatura própria (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, com assinatura própria (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, publicado pela Canonical</td>
 </tr>
@@ -237,8 +249,13 @@
 <td><code>rocky10</code></td>
 <td>O Rocky Linux 10 mais recente, publicado pelo projeto Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>O último CentOS Linux 7 (fim de vida desde junho de 2024), publicado pelo projeto CentOS. Somente x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>Um nome de produto SUSE seguido de <code>-byos</code> escolhe a imagem com assinatura própria em vez da imagem pré-paga por uso. Essa imagem não tem repositórios até ser registrada: um nó registrado em um servidor SMLM por meio de <code>client_registration</code> obtém seus pacotes de lá, e um nó que precisa de pacotes antes disso, como um nó Kubernetes, define <code>scc_regcode</code> (e opcionalmente <code>scc_email</code>), em common ou por nó, para que o cloud-init o registre com <code>SUSEConnect</code> na primeira inicialização.</p>
 <p>Os produtos da própria SUSE vêm do rastreador público de imagens da SUSE, e os demais do parâmetro público do AWS Systems Manager de cada fornecedor ou da sua própria conta AWS, nunca de uma busca por nome que outra conta pudesse satisfazer. Um valor que não seja um nome de produto, incluindo um ID de imagem ou um nome de arquivo de imagem, é repassado sem alteração.</p>
 <p>Um laboratório na nuvem também precisa que seus nós resolvam uns aos outros. Uma pequena VM de DNS por conta de nuvem serve o domínio do laboratório, e a rede da conta é configurada para entregar esse servidor a cada instância nela, de modo que um nó entra no seu cluster Kubernetes pelo nome de host sem nada configurado dentro do convidado. Na AWS isso é um conjunto de opções DHCP da VPC: ele se aplica a toda a VPC, uma instância iniciada depois o tem imediatamente, e uma já em execução o adota quando renova sua concessão DHCP.</p>
 <h3 id="kubernetes-setup">Configuração do Kubernetes</h3>

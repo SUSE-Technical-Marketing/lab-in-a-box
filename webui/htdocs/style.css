@@ -344,6 +344,11 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .job-state.failed{color:var(--danger)}
 .job-log{margin:0;padding:.7rem .8rem;background:var(--field-bg);border:1px solid var(--line);border-radius:8px;
   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:50vh;overflow:auto;min-height:8rem}
+.status-link{padding:.7rem .8rem;background:var(--code);border-radius:8px;margin-bottom:.8rem}
+.status-link-row{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.status-link-row a{font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.status-qr{width:112px;height:112px;flex:none}
+.status-qr svg{width:100%;height:100%;display:block;background:#fff;border-radius:4px}
 .cred-grid .f-name{font-weight:600;font-size:.82rem}
 .top-actions .btn{padding:.38rem .8rem}
 .dialog-body[hidden],.dialog-msg[hidden],#credPassBox[hidden]{display:none}

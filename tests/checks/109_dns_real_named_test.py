@@ -143,6 +143,47 @@ check("named no longer answers the PTR record after del_from_dns", NODE not in d
 check("the zone still loads after a removal",
       "status: NOERROR" in dig("SOA", DOMAIN))
 
+# ── replace: a recreated cloud node's name points at its new address alone ────
+
+# A record of an earlier instance of the same name, which nothing could remove because that instance's address
+# was no longer known, plus neighbours that must survive: a name node1 is a prefix of, and a service record.
+OLD, NEW = "203.0.113.7", "203.0.113.8"
+forward = zone_dir / dns_zone.forward_file(DOMAIN)
+with forward.open("a") as zone:
+    zone.write("node1         IN  A       {}\n".format(OLD))
+    zone.write("node10         IN  A       {}\n".format(OLD))
+    zone.write("svc1\tIN A  {}\n".format(OLD))
+
+svc.add_to_dns(NODE, NEW, DOMAIN, "")
+reload_named()
+both = dig("+short", "A", NODE).split()
+check("without replace an earlier record of the name stays beside the new one, as before: {}".format(both),
+      sorted(both) == sorted([OLD, NEW]))
+
+svc.add_to_dns(NODE, NEW, DOMAIN, "", replace=True)
+reload_named()
+check("with replace the name resolves to its new address alone: " + dig("+short", "A", NODE).strip(),
+      dig("+short", "A", NODE).split() == [NEW])
+check("...a name it is only a prefix of keeps its record",
+      dig("+short", "A", "node10." + DOMAIN).split() == [OLD])
+check("...and so does a service record at the old address",
+      dig("+short", "A", "svc1." + DOMAIN).split() == [OLD])
+check("the zone still loads after a replace", "status: NOERROR" in dig("SOA", DOMAIN))
+
+# The same removal on a remote master runs as one sed command over SSH. It is run here, for real, on a copy of a
+# zone file holding the same records, so the command itself is what is checked rather than its text.
+remote_copy = tmp / "remote.lan"
+remote_copy.write_text("node1         IN  A       {o}\nnode1 IN A {n}\nnode10   IN  A   {o}\nsvc1\tIN A  {o}\n".format(
+    o=OLD, n=NEW))
+sent = []
+svc._remote = lambda server, cmd, check=True, capture=False: sent.append(cmd) or run("bash", "-c", cmd)
+svc._remote_dns_remove_other_a("dns2.lab", str(remote_copy), "node1", NEW)
+check("the remote removal runs one command on the master", len(sent) == 1)
+remote_records = dns_zone.records(remote_copy.read_text())
+check("the remote removal leaves exactly the new record of the name and its neighbours: {}".format(
+      sorted(remote_records)),
+      remote_records == {"node1 IN A " + NEW, "node10 IN A " + OLD, "svc1 IN A " + OLD})
+
 # ── zone validity, as named-checkzone itself judges it ──────────────────────
 
 # A damaged header is the case record comparison cannot see: records() drops the header on purpose, because the

@@ -210,6 +210,18 @@
 <td>Le openSUSE Leap le plus récent</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, publié par Canonical</td>
 </tr>
@@ -237,8 +249,13 @@
 <td><code>rocky10</code></td>
 <td>Le Rocky Linux 10 le plus récent, publié par le projet Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>Le dernier CentOS Linux 7 (fin de vie depuis juin 2024), publié par le projet CentOS. x86_64 uniquement</td>
+</tr>
 </tbody>
 </table>
+<p>Un nom de produit SUSE suivi de <code>-byos</code> choisit son image avec votre propre abonnement au lieu de l'image à l'usage. Cette image n'a aucun dépôt tant qu'elle n'est pas enregistrée : un nœud enregistré auprès d'un serveur SMLM via <code>client_registration</code> obtient ses paquets de celui-ci, et un nœud qui a besoin de paquets avant cela, comme un nœud Kubernetes, définit <code>scc_regcode</code> (et éventuellement <code>scc_email</code>), dans common ou par nœud, pour que cloud-init l'enregistre avec <code>SUSEConnect</code> au premier démarrage.</p>
 <p>Les produits SUSE viennent du registre public d'images de SUSE, et les autres du paramètre public AWS Systems Manager de chaque éditeur ou de son propre compte AWS, jamais d'une recherche par nom qu'un autre compte pourrait satisfaire. Une valeur qui n'est pas un nom de produit, identifiant d'image ou nom de fichier d'image compris, est transmise telle quelle.</p>
 <p>Un lab cloud a aussi besoin que ses nœuds se résolvent entre eux. Une petite VM DNS par compte cloud sert le domaine du lab, et le réseau du compte est configuré pour distribuer ce serveur à chaque instance qu'il contient, de sorte qu'un nœud rejoint son cluster Kubernetes par nom d'hôte sans rien configurer dans l'invité. Sur AWS il s'agit d'un jeu d'options DHCP de VPC : il s'applique à tout le VPC, une instance lancée ensuite l'a immédiatement, et une instance déjà en marche le récupère au renouvellement de son bail DHCP.</p>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>

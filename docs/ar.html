@@ -415,6 +415,18 @@ footer.site {
 <td>أحدث إصدار من openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server، تنشره Canonical</td>
 </tr>
@@ -442,8 +454,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>أحدث إصدار من Rocky Linux 10، ينشره مشروع Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>آخر إصدار من CentOS Linux 7 (انتهى دعمه في يونيو 2024)، ينشره مشروع CentOS. لمعمارية x86_64 فقط</td>
+</tr>
 </tbody>
 </table>
+<p>اسم منتج من SUSE متبوعًا بـ <code>-byos</code> يختار صورة الاشتراك الخاص (BYOS) بدلًا من صورة الدفع حسب الاستخدام. لا تحتوي هذه الصورة على مستودعات حتى يتم تسجيلها: العقدة المسجلة في خادم SMLM عبر <code>client_registration</code> تحصل على حزمها منه، والعقدة التي تحتاج إلى حزم قبل ذلك، مثل عقدة Kubernetes، تضبط <code>scc_regcode</code> (واختياريًا <code>scc_email</code>) في common أو لكل عقدة، فيسجلها cloud-init باستخدام <code>SUSEConnect</code> عند أول إقلاع.</p>
 <p>تأتي منتجات SUSE نفسها من متتبّع الصور العام الخاص بـ SUSE، ويأتي الباقي من معامل AWS Systems Manager العام لكل مزوّد أو من حسابه الخاص على AWS، ولا يأتي أبداً من بحث بالاسم قد يطابقه حساب آخر. وأي قيمة ليست اسم منتج، بما في ذلك مُعرّف صورة أو اسم ملف صورة، تُمرّر كما هي.</p>
 <p>يحتاج المختبر السحابي أيضاً إلى أن تحلّ عقده أسماء بعضها. يخدم جهاز ظاهري صغير واحد لـ DNS لكل حساب سحابي نطاق المختبر، وتُضبط شبكة الحساب لتسليم ذلك الخادم إلى كل نسخة فيها، فتنضم العقدة إلى عنقود Kubernetes الخاص بها باسم المضيف دون أي ضبط داخل النظام الضيف. وعلى AWS يكون ذلك مجموعة خيارات DHCP لشبكة VPC: تنطبق على VPC بأكملها، وتسري فوراً على أي نسخة تُطلق بعدها، وتتبنّاها نسخة تعمل بالفعل عند تجديد عقد DHCP الخاص بها.</p>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>

@@ -210,6 +210,18 @@
 <td>Das neueste openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, veröffentlicht von Canonical</td>
 </tr>
@@ -237,8 +249,13 @@
 <td><code>rocky10</code></td>
 <td>Das neueste Rocky Linux 10, veröffentlicht vom Rocky-Projekt</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>Das letzte CentOS Linux 7 (Supportende seit Juni 2024), veröffentlicht vom CentOS-Projekt. Nur x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>Ein SUSE-Produktname mit angehängtem <code>-byos</code> wählt das Image mit eigener Subscription statt des Pay-as-you-go-Images. Dieses Image hat keine Repositories, bis es registriert ist: Ein Knoten, der über <code>client_registration</code> bei einem SMLM-Server registriert wird, erhält seine Pakete von dort, und ein Knoten, der vorher Pakete braucht, etwa ein Kubernetes-Knoten, setzt <code>scc_regcode</code> (und optional <code>scc_email</code>) in common oder pro Knoten, damit cloud-init ihn beim ersten Start mit <code>SUSEConnect</code> registriert.</p>
 <p>SUSEs eigene Produkte kommen aus SUSEs öffentlichem Image-Tracker, die übrigen aus dem öffentlichen AWS-Systems-Manager-Parameter des jeweiligen Herstellers oder aus seinem eigenen AWS-Konto, niemals aus einer Namenssuche, die ein anderes Konto treffen könnte. Ein Wert, der kein Produktname ist, einschließlich einer Image-ID oder eines Image-Dateinamens, wird unverändert durchgereicht.</p>
 <p>Ein Cloud-Lab braucht außerdem, dass seine Knoten einander auflösen. Eine kleine DNS-VM pro Cloud-Konto bedient die Lab-Domain, und das Netzwerk des Kontos wird so konfiguriert, dass es diesen Server an jede Instanz darin ausgibt. So tritt ein Knoten seinem Kubernetes-Cluster über den Hostnamen bei, ohne dass im Gast etwas konfiguriert wird. Auf AWS ist das ein VPC-DHCP-Optionssatz: er gilt für die ganze VPC, eine danach gestartete Instanz hat ihn sofort, und eine bereits laufende übernimmt ihn bei der Erneuerung ihres DHCP-Lease.</p>
 <h3 id="kubernetes-setup">Kubernetes-Einrichtung</h3>

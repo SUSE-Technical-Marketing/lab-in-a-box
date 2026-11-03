@@ -714,16 +714,41 @@ hba_idx = next(i for i, (h, c, kw) in enumerate(fake.calls) if "pg_hba_custom.co
 check("_run_install_with_pg_hba_guard: pg_hba patch happens after uyuni-db is confirmed ready",
       hba_idx > pg_isready_idx)
 
-# Timeout: the rc-file marker never appears -> die(), not a silent return.
+# Timeout, and the core server never came up either (spacewalk.target inactive) -> die(), not a silent return.
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
-                          ("test -f", FakeResult(returncode=1))])
+                          ("test -f", FakeResult(returncode=1)),
+                          ("systemctl is-active --quiet spacewalk.target", FakeResult(returncode=1))])
 mgradm_common.ssh_run = fake
 try:
     install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=1, poll_interval=1)
     died = False
 except SystemExit:
     died = True
-check("_run_install_with_pg_hba_guard: dies if the install never finishes within the timeout", died)
+check("_run_install_with_pg_hba_guard: dies if the install never finishes and the core server never "
+      "came up either", died)
+
+# Timeout, but spacewalk.target IS active: mgradm's own CLI is most likely stuck on an optional,
+# unentitled image (attestation/tftpd/hub-xmlrpc-api) after the real server already bootstrapped —
+# this must NOT die, so the caller goes on to mgr-sync add credentials/channels/activation keys.
+warned = []
+mgradm_common.warn = lambda msg: warned.append(msg)
+fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
+                          ("test -f", FakeResult(returncode=1)),
+                          ("systemctl is-active --quiet spacewalk.target", FakeResult(returncode=0))])
+mgradm_common.ssh_run = fake
+died = False
+try:
+    install_uyuni._run_install_with_pg_hba_guard("host1", "mgradm install podman", timeout=1, poll_interval=1)
+except SystemExit:
+    died = True
+check("_run_install_with_pg_hba_guard: a timeout with spacewalk.target already active does not die",
+      not died)
+check("_run_install_with_pg_hba_guard: ...and warns instead, naming the host and the install log",
+      len(warned) == 1 and "host1" in warned[0] and "/tmp/mgradm_install.log" in warned[0])
+check("_run_install_with_pg_hba_guard: spacewalk.target is checked inside the uyuni-server container, "
+      "not on the host — it exists only in the container's own init, so a bare host-level check would "
+      "always report it inactive and this whole recovery path would never fire",
+      any("podman exec uyuni-server systemctl is-active" in c[1] for c in fake.calls))
 
 # The install command itself reports a non-zero exit in its rc file -> die().
 fake = FakeSSH(responses=[("pg_isready", FakeResult(returncode=0)),
@@ -878,6 +903,40 @@ install_uyuni.run_clm_actions(
     ]})
 check("run_clm_actions: runs build then promote in order",
       calls["trigger"] == [("build", "proj"), ("promote", "proj", "dev")])
+
+# run_clm_actions(json_file=...): a build that's still stuck after the usual restart recovery is handed
+# off to a forever-retry background worker instead of dying for real — the same mandatory policy as
+# every other SMLM/Uyuni-dependent operation, applied here without changing
+# _wait_for_clm_with_restart_retry's own already-confirmed-live recovery mechanics at all.
+install_uyuni.sc.wait_for_content_environment = _fake_wait_always_stuck
+install_uyuni.sc.build_content_project = lambda *a, **kw: calls["trigger"].append(("build", a[2]))
+_launched = []
+install_uyuni.sc.launch_forever_retry = lambda key, argv: _launched.append((key, argv))
+calls["trigger"] = []
+calls["wait"] = []
+calls["restart"] = []
+install_uyuni.run_clm_actions(
+    "host1", {"uyuni_content_lifecycle_actions": [
+        {"project": "proj", "action": "build", "wait": True, "wait_env": "dev",
+         "wait_timeout": 1800}]}, json_file="lab.json")
+check("run_clm_actions(json_file=...): a build still stuck after the restart recovery is handed off, "
+      "not died on", len(_launched) == 1 and _launched[0][0] == "uyuni:host1:clm:proj/dev")
+check("run_clm_actions(json_file=...): the worker's own argv re-invokes this script unbuffered with "
+      "--retry-step-worker and the project/wait_env label",
+      "-u" in _launched[0][1] and _launched[0][1][-2:] == ["--retry-step-worker", "proj/dev"])
+
+# only_label: the worker-dispatch path itself — runs ONLY the one matching entry, forever (via
+# sc.run_forever_retry_worker, mocked here), skipping every other entry in the same list outright.
+_forever_calls = []
+install_uyuni.sc.run_forever_retry_worker = lambda key, attempt: _forever_calls.append((key, attempt))
+install_uyuni.run_clm_actions(
+    "host1", {"uyuni_content_lifecycle_actions": [
+        {"project": "other", "action": "build", "wait": True, "wait_env": "dev"},
+        {"project": "proj", "action": "build", "wait": True, "wait_env": "dev"},
+    ]}, only_label="proj/dev")
+check("run_clm_actions(only_label=...): dispatches the matching entry only, to run_forever_retry_worker, "
+      "under the same key launch_forever_retry would have used",
+      len(_forever_calls) == 1 and _forever_calls[0][0] == "uyuni:host1:clm:proj/dev")
 
 
 # ── install_smlm.main(): no unused module-level assignments ──────────────────

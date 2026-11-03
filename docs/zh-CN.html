@@ -415,6 +415,18 @@ footer.site {
 <td>最新的 openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x，自带订阅（BYOS）</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7，自带订阅（BYOS）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1，自带订阅（BYOS）</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>由 Canonical 发布的 Ubuntu 24.04 LTS Server</td>
 </tr>
@@ -442,8 +454,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>由 Rocky 项目发布的最新 Rocky Linux 10</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>由 CentOS 项目发布的最后一个 CentOS Linux 7（已于 2024 年 6 月停止支持）。仅限 x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>SUSE 产品名后加上 <code>-byos</code>，会选择该产品的自带订阅（BYOS）镜像，而不是按需付费镜像。该镜像在注册之前没有任何软件仓库：通过 <code>client_registration</code> 注册到 SMLM 服务器的节点从那里获取软件包；需要更早获取软件包的节点（例如 Kubernetes 节点）在 common 或单个节点中设置 <code>scc_regcode</code>（可选再加 <code>scc_email</code>），由 cloud-init 在首次启动时用 <code>SUSEConnect</code> 完成注册。</p>
 <p>SUSE 自家产品取自 SUSE 的公开镜像追踪服务，其余取自各厂商的 AWS Systems Manager 公开参数或其自有 AWS 账户，绝不使用其他账户也可能匹配的名称搜索。凡不是产品名称的值，包括镜像 ID 和镜像文件名，都原样传递。</p>
 <p>云端实验室还需要节点之间能相互解析。每个云账户有一台小型 DNS 虚拟机提供实验室域名，并将账户网络配置为把该服务器分发给其中的每个实例，于是节点可以按主机名加入其 Kubernetes 集群，无需在客户机内部做任何配置。在 AWS 上这是一个 VPC DHCP 选项集：它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。</p>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>

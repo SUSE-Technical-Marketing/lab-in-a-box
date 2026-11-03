@@ -415,6 +415,18 @@ footer.site {
 <td>最新の openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Canonical が公開する Ubuntu 24.04 LTS Server</td>
 </tr>
@@ -442,8 +454,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>Rocky プロジェクトが公開する最新の Rocky Linux 10</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>CentOS プロジェクトが公開した最後の CentOS Linux 7（2024 年 6 月にサポート終了）。x86_64 のみ</td>
+</tr>
 </tbody>
 </table>
+<p>SUSE の製品名の後ろに <code>-byos</code> を付けると、従量課金のイメージではなく、お手持ちのサブスクリプションを使う (BYOS) イメージが選ばれます。このイメージは登録されるまでリポジトリを持ちません。<code>client_registration</code> で SMLM サーバーに登録されるノードはそこからパッケージを取得し、それより前にパッケージが必要なノード (Kubernetes ノードなど) は common またはノードごとに <code>scc_regcode</code> (必要なら <code>scc_email</code> も) を設定します。cloud-init が初回起動時に <code>SUSEConnect</code> で登録します。</p>
 <p>SUSE 自身の製品は SUSE の公開イメージトラッカーから、それ以外は各ベンダーの AWS Systems Manager 公開パラメーターまたはそのベンダー自身の AWS アカウントから取得されます。別のアカウントが一致しうる名前検索は決して使いません。製品名でない値は、イメージ ID やイメージファイル名も含めて、そのまま渡されます。</p>
 <p>クラウドラボでは、ノードが互いの名前を解決できることも必要です。クラウドアカウントごとに 1 台の小さな DNS VM がラボのドメインを提供し、アカウントのネットワークはその中のすべてのインスタンスにそのサーバーを配布するよう構成されます。これにより、ゲスト内で何も設定せずに、ノードはホスト名で Kubernetes クラスターに参加できます。AWS では VPC の DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。</p>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>

@@ -1777,10 +1777,11 @@ def copy_to_hypervisor(remote_host, lab_setup_path, vm_name, config_method="", v
 # a fresh DNSService() per call (it holds no state). Kept because 9 addon
 # scripts + setup_vm.py/destroy_vm.py/k8s.py import these names directly.
 
-def add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-    """Add forward (A) and reverse (PTR) DNS records for a VM."""
+def add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, replace=False):
+    """Add forward (A) and reverse (PTR) DNS records for a VM. replace: see DNSService.add_to_dns()."""
     from services import DNSService
-    DNSService().add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+    DNSService().add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers,
+                            replace=replace)
 
 
 def del_from_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):

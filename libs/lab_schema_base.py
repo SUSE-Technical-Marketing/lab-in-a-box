@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "2.7"
+LAB_SCHEMA_VERSION = "2.8"
 
 
 def base_lab_schema():
@@ -80,6 +80,8 @@ def base_lab_schema():
                     {"name": "backend", "required": False, "type": "string", "default": "libvirt", "enum": ["libvirt", "harvester", "hetzner", "aws", "gcp", "alibaba", "scaleway", "upcloud", "ovhcloud", "exoscale"], "description": "Compute backend for every node in this lab, unless overridden per-node"},
                     {"name": "cloud_account", "required": False, "type": "string", "description": "Name of a cloud account file under /etc/lab_creation/credentials/<name>.{yaml,json,cfg} (path configurable via lab_creation.cfg's CREDENTIALS_PATH; multiple cloud accounts, the same way KVM_HOSTS gives multiple hypervisors) — see scripts/setup_credentials.py to create one. Encrypted by default; the file's `cloudtype` becomes the backend (so `backend` is then optional) and its keys (AWS_REGION, etc.) are layered over lab_creation.cfg. Omit for the single default account."},
                     {"name": "cloud_instance_type", "required": False, "type": "string", "description": "Cloud backends only: an explicit instance type/server type/plan/flavor name, used verbatim instead of auto-picking one from vm_cpu/vm_mem — see README's Compute backends table for each provider's own official list of valid values"},
+                    {"name": "scc_regcode", "required": False, "type": "string", "description": "SUSE Customer Center registration code. When set, cloud-init registers the node with SUSEConnect at first boot, so a bring-your-own-subscription (\"-byos\") SUSE image has repositories before anything else runs on it. Omit for a pay-as-you-go image, or for a node that gets its packages from an SMLM server through client_registration"},
+                    {"name": "scc_email", "required": False, "type": "string", "description": "Email address registered together with scc_regcode (optional)"},
                     {"name": "pre_commands", "required": False, "type": "array", "description": "Shell commands run on the VM itself, as root, once it is up and reachable and before any Kubernetes or add-on work (e.g. [\"zypper -n in vim\"]). Each one's output is shown; one that fails is an error for that VM and the rest still run. A node's own list replaces this one — set [] on a node to run nothing there. Not run for a clu_type harvester node, which installs itself at first boot."},
                     {"name": "post_commands", "required": False, "type": "array", "description": "Shell commands run on the VM itself, as root, after everything else for it is done — its Kubernetes join and its own add-ons included. Same reporting and per-node override as pre_commands."},
                     {"name": "services", "required": False, "type": "array", "description": "Lab-support services to configure+enable before VMs are created: dns, http (both already running from the automation VM bootstrap; listing them is a no-op today), pxe (see the top-level \"pxe\" section), portforward (DNAT-forwards each node's own \"forwarded_ports\" field from the KVM host's real IP — see that per-node field). Omit for today's default (nothing extra runs)."},
@@ -143,6 +145,8 @@ def base_lab_schema():
                     {"name": "backend", "required": False, "type": "string", "enum": ["libvirt", "harvester", "hetzner", "aws", "gcp", "alibaba", "scaleway", "upcloud", "ovhcloud", "exoscale"], "description": "Compute backend for this node; omit to use common.backend or the configured default"},
                     {"name": "cloud_account", "required": False, "type": "string", "description": "Overrides common.cloud_account for this node only — name of a cloud account file under /etc/lab_creation/credentials/. Its cloudtype sets this node's backend; its keys layer over lab_creation.cfg for this node only."},
                     {"name": "cloud_instance_type", "required": False, "type": "string", "description": "Overrides common.cloud_instance_type for this node only — cloud backends only, used verbatim instead of auto-picking from vm_cpu/vm_mem"},
+                    {"name": "scc_regcode", "required": False, "type": "string", "description": "Overrides common.scc_regcode for this node only — registers it with SUSEConnect at first boot (cloud-init)"},
+                    {"name": "scc_email", "required": False, "type": "string", "description": "Overrides common.scc_email for this node only"},
                     {"name": "pxe_kernel", "required": False, "type": "string", "description": "PXE boot kernel path for this node (only used when the \"pxe\" service is enabled via common.services); omit to skip generating a PXE boot entry for this node"},
                     {"name": "pxe_initrd", "required": False, "type": "string", "description": "PXE boot initrd path for this node (pxe service only)"},
                     {"name": "pxe_append", "required": False, "type": "string", "description": "PXE boot kernel command-line arguments for this node (pxe service only)"},

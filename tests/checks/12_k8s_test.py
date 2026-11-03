@@ -228,7 +228,8 @@ try:
     check("RKE2Distro first node: a shell metacharacter in install_method is quoted, not passed through raw",
           "INSTALL_RKE2_METHOD='tar; touch /tmp/pwned'" in install_cmd)
 
-    fake_ssh = FakeSSH()
+    # No zypper (e.g. Ubuntu/Debian): the plain, no-install_method, non-transactional case these next checks mean.
+    fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=1))])
     k8s.ssh_run = fake_ssh
     token, addr = distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"},
                                         "RKE2TOKEN", "vm1")
@@ -240,8 +241,23 @@ try:
           and any("token: RKE2TOKEN" in c for h, c, kw in fake_ssh.calls))
 
     # ── transactional-update nodes: RPM method, reboot into its snapshot, SELinux on ──
-    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional node without install_method",
+    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional, non-SUSE node without install_method",
           "INSTALL_RKE2_METHOD='' " in install_cmd)
+
+    # A non-transactional node that DOES have zypper (plain SLES, e.g. SLES 16 — pluto's own real case) also
+    # defaults to the RPM method. get.rke2.io's own install.sh auto-selects rpm itself only for SLES 16 with
+    # VARIANT_ID=server (and separately for RHEL/CentOS) — every other SUSE-family node would otherwise fall
+    # through to its tarball method, so this project sets INSTALL_RKE2_METHOD explicitly instead of relying on
+    # that narrower, version-specific auto-detection.
+    fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=0))])
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"}, "RKE2TOKEN", "vm1")
+    _plain_suse_cmds = [c for h, c, kw in fake_ssh.calls]
+    check("RKE2Distro: a non-transactional node with zypper (plain SLES) also defaults to the RPM method",
+          "INSTALL_RKE2_METHOD=rpm " in next(c for c in _plain_suse_cmds if "get.rke2.io" in c))
+    check("RKE2Distro: ...without updating the kernel first (that step is transactional-update specific)",
+          "<update_kernel>" not in _plain_suse_cmds)
+
     k8s.is_transactional = lambda hostname: True
     fake_ssh = FakeSSH()
     k8s.ssh_run = fake_ssh
@@ -309,6 +325,45 @@ check("first_server_node: builds a root@ ssh command", "root@srv1" in ssh_cmd)
 
 check("first_server_node: returns None when no server node exists",
       k8s.first_server_node({"nodes": {"a": {"INSTALL_RKE2_TYPE": "agent"}}}) is None)
+
+# ── first_server_node: the _vm_name/clu_name env hint from _install_cluster_addons ──
+# A second cluster whose only node ("other") would never be found by the plain scan above (it has no
+# INSTALL_RKE2_TYPE at all, which the scan treats as "server", but "srv1" is still first in iteration order).
+# This is exactly the real bug: without the hint, a cluster addon dispatched for "c2" would run on "srv1",
+# a node of an unrelated cluster, instead of "other".
+_saved_env = {k: os.environ.get(k) for k in ("_vm_name", "clu_name")}
+
+
+def _set_env(vm_name=None, clu_name=None):
+    for key, value in (("_vm_name", vm_name), ("clu_name", clu_name)):
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+try:
+    _set_env(vm_name="other", clu_name="c2")
+    name, ssh_cmd = k8s.first_server_node(definition2)
+    check("first_server_node: with both _vm_name and clu_name set, the hinted node is used directly",
+          name == "other" and "root@other" in ssh_cmd)
+
+    # _vm_name alone (no clu_name) is what a per-node dual-mode add-on (install_gitlab's "kubernetes"
+    # deployment, say) sets for its OWN node, which need not be a cluster member at all — must NOT be
+    # trusted here, or such an add-on would stop finding a real Kubernetes node to deploy its chart onto.
+    _set_env(vm_name="other", clu_name=None)
+    name, ssh_cmd = k8s.first_server_node(definition2)
+    check("first_server_node: _vm_name without clu_name is ignored, and the plain scan still runs",
+          name == "srv1")
+
+    # A hinted node that doesn't exist in this definition (stale env from an unrelated run) falls back to
+    # the scan rather than returning a bogus target.
+    _set_env(vm_name="ghost", clu_name="c2")
+    name, ssh_cmd = k8s.first_server_node(definition2)
+    check("first_server_node: an unknown hinted node is ignored, falling back to the plain scan",
+          name == "srv1")
+finally:
+    _set_env(vm_name=_saved_env["_vm_name"], clu_name=_saved_env["clu_name"])
 
 nodes_with_addon = k8s.addon_nodes(definition2, "rancher")
 check("addon_nodes: finds the one node with the addon", [n for n, _ in nodes_with_addon] == ["srv1"])

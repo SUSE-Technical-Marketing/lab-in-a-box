@@ -101,10 +101,7 @@ PLUGIN = {
 }
 
 import os
-import subprocess
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -156,7 +153,6 @@ def _server_access(cfg):
     return server_node, exec_prefix, admin_user, admin_pass
 
 
-_RETRY_LOG_DIR = "/var/log/lab-in-a-box"
 _RETRY_WORKER_FLAG = "--retry-worker"
 
 
@@ -218,45 +214,49 @@ def _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activatio
     )
 
 
+def _background_retry_key(vm_name):
+    """The forever-retry mechanism's own key for vm_name's registration — one per node, so two different
+    nodes' retries never collide, and a rerun for the SAME node is recognised as already in progress
+    (see sc.launch_forever_retry()'s own dedup guard) rather than piling up a second, racing worker."""
+    return "client_registration:{}".format(vm_name)
+
+
 def _launch_background_retry(json_file, vm_name):
     """
-    Spawns a DETACHED background worker (this same script, re-invoked with
-    _RETRY_WORKER_FLAG and _vm_name set) that keeps retrying vm_name's
-    registration — no artificial timeout, it only stops once registration
-    has actually succeeded — while THIS process returns immediately so the
-    rest of the deployment keeps moving. Matches this project's existing
-    nohup'd-background-worker convention (see e.g. install_smlm's own
-    channel-sync monitor). Output goes to a per-node log file rather than
-    setup_lab.py's own captured output, since this worker outlives the
-    addon invocation that launched it.
+    Ensure a DETACHED background worker (this same script, re-invoked with _RETRY_WORKER_FLAG and
+    _vm_name set) is retrying vm_name's registration — no artificial timeout, it only stops once
+    registration has actually succeeded — while THIS process returns immediately so the rest of the
+    deployment keeps moving. Delegates to this project's shared forever-retry mechanism
+    (libs/spacecmd_common.py's launch_forever_retry()/run_forever_retry_worker()), which is also what
+    gives this worker its own per-node log, a 30-minute INFO heartbeat, unbuffered output (a real,
+    previously-silent bug in this worker's own precursor), and the dedup guard mentioned above.
 
-    The worker retries without a timeout and stops once registration succeeds. A synchronous wait with
-    a timeout is not used, because each node would wait out its own timeout in turn. A detached per-node
-    retry lets the deployment finish while each pending registration continues on its own.
+    A synchronous wait with a timeout is not used, because each node would wait out its own timeout in
+    turn. A detached per-node retry lets the deployment finish while each pending registration continues
+    on its own, every node's worker running independently and in parallel with every other one's.
     """
-    Path(_RETRY_LOG_DIR).mkdir(parents=True, exist_ok=True)
-    log_path = str(Path(_RETRY_LOG_DIR) / "client-registration-retry-{}.log".format(vm_name))
     resolved_json = str(Path(json_file).resolve())
     env = dict(os.environ)
     env["_vm_name"] = vm_name
-    with open(log_path, "a") as logf:
-        subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), resolved_json, _RETRY_WORKER_FLAG],
-            stdout=logf, stderr=subprocess.STDOUT, env=env, start_new_session=True,
-        )
-    print("  Background retry log: {}".format(log_path))
+    argv = [sys.executable, "-u", str(Path(__file__).resolve()), resolved_json, _RETRY_WORKER_FLAG]
+    sc.launch_forever_retry(_background_retry_key(vm_name), argv, env=env)
 
 
 def _retry_until_registered(vm_name, cfg):
     """
-    The background worker's own loop — runs forever (no deadline), waiting
-    for this registration's required channels to finish syncing
-    (sc.wait_for_channels_synced(..., timeout=None)) and then registering,
-    catching ANY failure along the way (a transient spacecmd hiccup, a
-    channel that fails and needs another sync cycle, etc.) and simply
-    trying the whole sequence again after a real pause — until it
-    genuinely succeeds, then returns. Intended to be run standalone, as
-    it's own detached process (see _launch_background_retry()), never
+    The background worker's own loop — runs forever (no deadline), waiting for this registration's
+    required channels to finish syncing (sc.wait_for_channels_synced(..., timeout=None)) and then
+    registering. Delegates the actual forever-retry loop, heartbeat and crash-proofing to this project's
+    shared mechanism (libs/spacecmd_common.py's run_forever_retry_worker()) — see that function's own
+    docstring for the generic contract.
+
+    verify=sc.system_is_registered(...) is the fix for a real failure mode found live: _register_now()
+    (and the sc.ensure_client_registered() it calls) can return cleanly for reasons that are not the
+    system actually, really being registered yet, and a caller that only checks "did the call raise" can
+    end up reporting a node as registered while the server's own system list still shows nothing. Only a
+    real system.getId() match through this check counts as done.
+
+    Intended to be run standalone, as its own detached process (see _launch_background_retry()), never
     inline in the main deployment path.
     """
     server_fqdn = cfg.get("client_registration_server")
@@ -265,24 +265,15 @@ def _retry_until_registered(vm_name, cfg):
     wait_channels = _wait_channels(cfg, server_node, exec_prefix, activation_key)
     retry_delay = int(cfg.get("client_registration_background_retry_delay") or 60)
 
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            sc.ensure_spacecmd_config(server_node, exec_prefix, admin_user, admin_pass)
-            if wait_channels:
-                sc.wait_for_channels_synced(server_node, exec_prefix, wait_channels, timeout=None)
-            _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activation_key)
-            print("[{}] '{}' registered successfully on attempt {}".format(
-                datetime.now(timezone.utc).isoformat(), vm_name, attempt))
-            return
-        except SystemExit as e:
-            print("[{}] attempt {} for '{}' failed (exit {}) — retrying in {}s".format(
-                datetime.now(timezone.utc).isoformat(), attempt, vm_name, e.code, retry_delay))
-        except Exception as e:  # noqa: BLE001 — deliberately broad: this loop must never die
-            print("[{}] attempt {} for '{}' raised {}: {} — retrying in {}s".format(
-                datetime.now(timezone.utc).isoformat(), attempt, vm_name, type(e).__name__, e, retry_delay))
-        time.sleep(retry_delay)
+    def attempt():
+        sc.ensure_spacecmd_config(server_node, exec_prefix, admin_user, admin_pass)
+        if wait_channels:
+            sc.wait_for_channels_synced(server_node, exec_prefix, wait_channels, timeout=None)
+        _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activation_key)
+
+    sc.run_forever_retry_worker(
+        _background_retry_key(vm_name), attempt, retry_delay=retry_delay,
+        verify=lambda: sc.system_is_registered(server_node, exec_prefix, vm_name))
 
 
 def register_client(vm_name, cfg, json_file=None):
@@ -315,8 +306,10 @@ def register_client(vm_name, cfg, json_file=None):
               "keep trying until registration succeeds; continuing with the rest of the "
               "deployment. NOTE: real channel data syncs from SCC in the background, one "
               "channel at a time — this can legitimately take SEVERAL HOURS depending on how "
-              "much is queued ahead of this one, not a failure or a hang.".format(
-                  ", ".join(sorted(pending))))
+              "much is queued ahead of this one, not a failure or a hang. Real status (this call "
+              "returning cleanly only means the retry was launched, never that registration has "
+              "actually finished — check the worker's own log): {}".format(
+                  ", ".join(sorted(pending)), sc.forever_retry_log_path(_background_retry_key(vm_name))))
         return
 
     _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activation_key)

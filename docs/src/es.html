@@ -210,6 +210,18 @@
 <td>El openSUSE Leap más reciente</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, con suscripción propia (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, publicado por Canonical</td>
 </tr>
@@ -237,8 +249,13 @@
 <td><code>rocky10</code></td>
 <td>El Rocky Linux 10 más reciente, publicado por el proyecto Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>El último CentOS Linux 7 (fin de soporte desde junio de 2024), publicado por el proyecto CentOS. Solo x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>Un nombre de producto de SUSE seguido de <code>-byos</code> elige su imagen con suscripción propia en lugar de la de pago por uso. Esa imagen no tiene repositorios hasta que se registra: un nodo registrado en un servidor SMLM mediante <code>client_registration</code> obtiene sus paquetes de allí, y un nodo que necesita paquetes antes, como un nodo de Kubernetes, define <code>scc_regcode</code> (y opcionalmente <code>scc_email</code>), en common o por nodo, para que cloud-init lo registre con <code>SUSEConnect</code> en el primer arranque.</p>
 <p>Los productos de SUSE provienen del registro público de imágenes de SUSE, y el resto del parámetro público de AWS Systems Manager de cada proveedor o de su propia cuenta de AWS, nunca de una búsqueda por nombre que otra cuenta pudiera satisfacer. Un valor que no sea un nombre de producto, incluido un ID de imagen o un nombre de archivo de imagen, se pasa sin tocar.</p>
 <p>Un laboratorio en la nube también necesita que sus nodos se resuelvan entre sí. Una pequeña VM de DNS por cuenta de nube sirve el dominio del laboratorio, y la red de la cuenta se configura para entregar ese servidor a cada instancia que contiene, de modo que un nodo se une a su clúster de Kubernetes por nombre de host sin configurar nada dentro del huésped. En AWS eso es un conjunto de opciones DHCP de la VPC: se aplica a toda la VPC, una instancia lanzada después lo tiene de inmediato, y una ya en ejecución lo toma cuando renueva su concesión DHCP.</p>
 <h3 id="kubernetes-setup">Configuración de Kubernetes</h3>
