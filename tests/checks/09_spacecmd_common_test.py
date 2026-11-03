@@ -4210,6 +4210,43 @@ check("run_forever_retry_worker: removes its own pid file once it succeeds and r
       not Path(_flaky_pid_path).exists())
 sc.time.sleep = _TRUE_REAL_TIME_SLEEP
 
+# A failed attempt's own noisy print (simulating die()'s "ERROR: ..." text, which a real step like
+# ensure_container_build_hosts() prints on every call via libs/lab_creation.py's die()) must not flood
+# the real log once per retry attempt — found live 2026-11-03. It should still reach the log, just once
+# per heartbeat via the heartbeat's own "Last error:" field, and a SUCCESSFUL attempt's own output must
+# still go straight through immediately, not get held back.
+import contextlib as _contextlib  # noqa: E402
+import io as _io  # noqa: E402
+
+_noisy_state = {"n": 0}
+
+
+def _attempt_noisy_then_ok():
+    _noisy_state["n"] += 1
+    if _noisy_state["n"] < 4:
+        print("ERROR: no system named 'mercury' found on the server (attempt {})".format(_noisy_state["n"]))
+        raise SystemExit(1)
+    print("Enabled the Container Build Host entitlement on 'mercury'")
+
+
+sc.time.time = _TRUE_REAL_TIME_TIME
+sc.time.sleep = lambda s: None
+_noisy_buf = _io.StringIO()
+with _contextlib.redirect_stdout(_noisy_buf):
+    # heartbeat_interval=0: a heartbeat fires on every single failed attempt, deterministically — real
+    # wall-clock timing (heartbeat_interval=0.01) is too tight to reliably beat elapsed real time in a
+    # busy test run, as the 109_e2e test below also found (see its own heartbeat_interval=0 for the same
+    # reason).
+    sc.run_forever_retry_worker("noisy-step", _attempt_noisy_then_ok, retry_delay=0.01, heartbeat_interval=0)
+_noisy_output = _noisy_buf.getvalue()
+check("a failing attempt's own noisy print never reaches the real log as a bare, unprefixed line",
+      not re.search(r"(?m)^ERROR: no system named", _noisy_output))
+check("...but the real diagnostic message still reaches the log, via the heartbeat's throttled field",
+      "Last error: ERROR: no system named 'mercury' found on the server" in _noisy_output)
+check("a successful attempt's own output still goes straight through immediately",
+      "Enabled the Container Build Host entitlement on 'mercury'" in _noisy_output)
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
 # verify: attempt() returning cleanly is not enough on its own — this is the fix for a real failure mode
 # found live, where a step (client_registration) reported success because its OWN call returned, while
 # the thing it was meant to produce (an actually-registered system) still did not exist.

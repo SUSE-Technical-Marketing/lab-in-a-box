@@ -43,13 +43,16 @@ Feature areas:
 # License: GPLv3
 
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
 import shlex
 import socket
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -254,6 +257,14 @@ def launch_forever_retry(key, argv, env=None):
     return log_path
 
 
+def _last_captured_line(buf_out, buf_err):
+    """The last non-empty line written to `buf_out`/`buf_err` (io.StringIO), or "" if both are empty —
+    used by run_forever_retry_worker() to pull a failed attempt()'s real error message (e.g. die()'s own
+    "ERROR: ..." text) out of its captured output, instead of only ever knowing a bare exit code."""
+    lines = [ln for ln in (buf_out.getvalue() + buf_err.getvalue()).splitlines() if ln.strip()]
+    return lines[-1].strip() if lines else ""
+
+
 def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=1800, verify=None):
     """
     The body of a forever-retry worker process (what launch_forever_retry()'s argv must ultimately run):
@@ -281,6 +292,12 @@ def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=18
     exact text of the most recent failure, with every print flushed immediately — the fix for this
     mechanism's own precursor (install_client_registration's original worker going completely silent for
     hours because Python block-buffers stdout once it is redirected to a file).
+
+    A FAILED attempt()'s own stdout/stderr is captured and discarded, not let straight through to this
+    worker's log — otherwise a step whose own die()/error() fires on an expected ordering failure (e.g.
+    a system that hasn't registered yet) would print that same line once every retry_delay seconds
+    instead of once per heartbeat_interval (confirmed live). A SUCCESSFUL attempt's own output still
+    goes straight through immediately, since it is real progress information, not noise.
     """
     _, pid_path = _forever_retry_paths(key)
     Path(pid_path).write_text(str(os.getpid()))
@@ -291,8 +308,25 @@ def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=18
     try:
         while True:
             attempt_n += 1
+            # attempt()'s own stdout/stderr is captured, not let straight through: a step that calls
+            # die() (print an ERROR, then raise) on an EXPECTED ordering failure — e.g. "no system named
+            # 'X' found" before X has registered yet — would otherwise flood the log with that same
+            # ERROR line once every retry_delay seconds (confirmed live, install_smlm's
+            # ensure_container_build_hosts() before its target system registered). A failed attempt's
+            # captured text is used to build `last_error` below (its last non-empty line — die()'s own
+            # message, not just the exit code SystemExit itself carries) and then discarded: the real
+            # diagnostic text still reaches the log, just once per heartbeat_interval via "Last error:"
+            # instead of once per attempt. A SUCCESSFUL attempt's output (e.g. "Enabled the Container
+            # Build Host entitlement...") is real information and is written through immediately, not
+            # held back for the next heartbeat.
+            buf_out, buf_err = io.StringIO(), io.StringIO()
             try:
-                attempt()
+                with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                    attempt()
+                sys.stdout.write(buf_out.getvalue())
+                sys.stdout.flush()
+                sys.stderr.write(buf_err.getvalue())
+                sys.stderr.flush()
                 if verify is not None:
                     ok = verify()
                     if not ok:
@@ -303,9 +337,9 @@ def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=18
                     datetime.now(timezone.utc).isoformat(), key, attempt_n, elapsed_min), flush=True)
                 return
             except SystemExit as e:
-                last_error = "exit {}".format(e.code)
+                last_error = _last_captured_line(buf_out, buf_err) or "exit {}".format(e.code)
             except Exception as e:  # noqa: BLE001 — this loop must never die on the step's own failure
-                last_error = "{}: {}".format(type(e).__name__, e)
+                last_error = _last_captured_line(buf_out, buf_err) or "{}: {}".format(type(e).__name__, e)
             now = time.time()
             if now >= next_heartbeat:
                 elapsed_min = int((now - start) / 60)
