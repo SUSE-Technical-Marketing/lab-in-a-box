@@ -93,6 +93,7 @@ check("lab-create's answer carries a status_url", "status_url" in out and out["s
 check("...with the job id in it", job in out.get("status_url", ""))
 check("lab-create's answer carries qr_svg (fake qrencode on PATH)",
       out.get("qr_svg", "").startswith("SAW:") and out["status_url"] in out["qr_svg"])
+status_url_from_create = out.get("status_url", "")
 check("the token is not echoed back in lab-create's own answer",
       "token" not in out)  # the token lives inside status_url, not as its own field
 
@@ -107,16 +108,24 @@ check("job.json stores the token", bool(job_json.get("token")))
 token = job_json["token"]
 check("the token is in the status_url that was returned", token in out["status_url"])
 
+# lab-status/lab-jobs ARE admin-gated (called only through admin.py's login-gated "job"/"jobs" actions —
+# see further down), so including the token/status_url here is intentional: it's how reopening the
+# Create dialog for an already-running job can show the same link/QR again.
 r, out = run(["lab-status", job])
-check("lab-status never leaks the token", "token" not in out and r.returncode == 0)
+check("lab-status includes the token (admin-gated, so this is safe)", out.get("token") == token
+      and r.returncode == 0)
+check("...and a status_url rebuilt from it", out.get("status_url") == status_url_from_create)
+check("...and a qr_svg rebuilt too (fake qrencode on PATH)", out.get("qr_svg", "").startswith("SAW:"))
 r, out = run(["lab-jobs"])
-check("lab-jobs never leaks any job's token either",
-      r.returncode == 0 and all("token" not in j for j in out.get("jobs", [])))
+check("lab-jobs includes it too, for every job", r.returncode == 0
+      and all(j.get("token") for j in out.get("jobs", [])))
 
-# pub-status: right token works, and a wrong job / wrong token give the exact same refusal
+# pub-status: right token works, and a wrong job / wrong token give the exact same refusal. This IS the
+# unauthenticated path, so it must never echo the token (or the status_url containing it) back.
 r, out = run(["pub-status", job], {"token": token})
 check("pub-status with the right token succeeds", r.returncode == 0 and "state" in out)
-check("...and does not itself echo the token back", "token" not in out)
+check("...and does not itself echo the token back",
+      "token" not in out and "status_url" not in out and "qr_svg" not in out)
 
 r_badtoken, out_badtoken = run(["pub-status", job], {"token": "not-it"})
 r_badjob, out_badjob = run(["pub-status", "no-such-job"], {"token": token})
@@ -252,6 +261,8 @@ check("status.html polls pub-status", "action=pub-status" in status_html)
 check("status.html refuses to run over plain HTTP", "location.protocol !== \"https:\"" in status_html)
 check("status.html pulls the LAB SUMMARY block out of the log", "LAB SUMMARY" in status_html)
 check("app.js shows the status link/QR right after create", "showStatusLink(r.status_url, r.qr_svg)" in app_js)
+check("...and also when resuming an already-running job's dialog",
+      "showStatusLink(running.status_url, running.qr_svg)" in app_js)
 check("the create dialog has a place for the status link and QR", 'id="jobStatusLink"' in index_html
       and 'id="jobStatusQr"' in index_html)
 

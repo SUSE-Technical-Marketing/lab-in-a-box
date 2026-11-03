@@ -2086,6 +2086,10 @@ async function openCreate() {
       $("#createConfirm").hidden = true;
       $("#createGo").hidden = true;
       $("#createJob").hidden = false;
+      // job_state() rebuilds status_url/qr_svg from the job's own stored token whenever one exists, so
+      // reopening Create for an already-running job shows the same link/QR as the original create did,
+      // not just on that one first call.
+      showStatusLink(running.status_url, running.qr_svg);
       watchJob(running.job || running.id);
     }
   } catch (e) { /* the jobs list is a courtesy here: startCreate() reports anything that matters */ }
@@ -2116,9 +2120,9 @@ async function startCreate() {
   }
 }
 
-// Shows the one-time public status link + QR code that "create" hands back. Only lab_create()'s own
-// answer ever carries the token (see lab_builder_helper.py) — reopening the dialog for an
-// already-running job (openCreate()'s "jobs" lookup) has no token to show, so this stays hidden then.
+// Shows the public status link + QR code: from "create"'s own answer the first time, or rebuilt by
+// job_state() from the job's own stored token when openCreate() resumes an already-running job (see
+// lab_builder_helper.py's job_state()) — either way just whatever url/qrSvg the caller already has.
 function showStatusLink(url, qrSvg) {
   const box = $("#jobStatusLink");
   if (!url) { box.hidden = true; return; }

@@ -23,7 +23,7 @@ function extractFn(name) {
 }
 
 const src = [extractFn("stripAnsi"), extractFn("parseComponents"), extractFn("parseIssues"),
-  extractFn("escapeHtmlLocal"), extractFn("extractAccessLines")].join("\n");
+  extractFn("escapeHtmlLocal"), extractFn("extractAccessLines"), extractFn("extractServiceLinks")].join("\n");
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(src, sandbox);
@@ -87,6 +87,25 @@ check("extractAccessLines excludes the Warnings/Errors lines that follow",
   !accessLines.some((l) => l.indexOf("mercury") !== -1));
 
 check("escapeHtmlLocal escapes the HTML-special characters", sandbox.escapeHtmlLocal("<a>&</a>") === "&lt;a&gt;&amp;&lt;/a&gt;");
+
+// extractServiceLinks(): the real lines install_smlm/install_uyuni/install_rancher print, verbatim.
+const serviceLog = [
+  "some unrelated line",
+  "SUSE Multi-Linux Manager available at: https://sol.mydemoaws.lab  (admin / s3cr3t)",
+  "Uyuni available at: https://sol.mydemo.lab  (admin / linux)",
+  "# Rancher's server URL is https://rancher.clu.lab",
+  "SUSE Multi-Linux Manager available at: https://sol.mydemoaws.lab  (admin / s3cr3t)", // repeated by a retry
+].join("\n");
+const services = sandbox.extractServiceLinks(serviceLog);
+check("exactly 3 distinct services found (the repeated line is deduplicated)", services.length === 3);
+check("SMLM's label, url and credentials are parsed out",
+  services.some((s) => s.label === "SUSE Multi-Linux Manager" && s.url === "https://sol.mydemoaws.lab"
+    && s.user === "admin" && s.pass === "s3cr3t"));
+check("Uyuni is parsed the same way", services.some((s) => s.label === "Uyuni" && s.url === "https://sol.mydemo.lab"
+  && s.user === "admin" && s.pass === "linux"));
+check("Rancher's differently-phrased line is parsed with no credentials (none in that line)",
+  services.some((s) => s.label === "Rancher" && s.url === "https://rancher.clu.lab" && !s.user && !s.pass));
+check("an unrelated line produces no entry", !services.some((s) => s.label.indexOf("unrelated") !== -1));
 
 if (fail) {
   console.log(fail + " check(s) failed");

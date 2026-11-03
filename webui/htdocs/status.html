@@ -22,6 +22,12 @@
   .access-card pre{white-space:pre-wrap;word-break:break-word;margin:0;background:var(--code);
     border-radius:8px;padding:.8rem;font-size:.86rem}
   .access-card pre a{color:var(--accent);text-decoration:underline}
+  .service-item{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;padding:.4rem 0;
+    border-bottom:1px solid var(--line)}
+  .service-item:last-child{border-bottom:none}
+  .service-item .service-label{font-weight:640;min-width:8rem}
+  .service-item a{color:var(--accent)}
+  .service-item .service-creds{color:var(--muted);font-size:.85rem;font-family:ui-monospace,Menlo,Consolas,monospace}
   .job-log{max-height:46vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:.82rem}
   .log-filter-row{display:flex;gap:.5rem;margin-bottom:.5rem}
   .log-filter-row input{flex:1;font:inherit;padding:.4rem .6rem;border:1px solid var(--line);
@@ -86,6 +92,13 @@
     <div id="componentsGrid"></div>
   </div>
 
+  <div id="servicesCard" class="status-card access-card">
+    <h1>Services</h1>
+    <p class="hint">Picked out of the log — addons that print their own access URL when they come up.
+      Not every addon does this yet, so an absent service doesn't necessarily mean it isn't there.</p>
+    <div id="servicesGrid"></div>
+  </div>
+
   <div id="accessCard" class="status-card access-card">
     <h1>Access this lab</h1>
     <pre id="accessText"></pre>
@@ -118,6 +131,8 @@
   var logEl = document.getElementById("jobLog");
   var accessCard = document.getElementById("accessCard");
   var accessText = document.getElementById("accessText");
+  var servicesCard = document.getElementById("servicesCard");
+  var servicesGrid = document.getElementById("servicesGrid");
   var componentsCard = document.getElementById("componentsCard");
   var componentsGrid = document.getElementById("componentsGrid");
   var issueDialog = document.getElementById("issueDialog");
@@ -250,6 +265,56 @@
   function escapeHtmlLocal(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
+
+  // Service URLs picked straight out of the full log, not just the LAB SUMMARY — install_smlm and
+  // install_uyuni already print "<name> available at: https://<host>  (<user> / <pass>)" once the
+  // server is up, and install_rancher prints "...'s server URL is https://<host>". Reusing their
+  // existing output instead of inventing a new convention; an addon that doesn't print a line like this
+  // simply doesn't show up here (see the card's own hint text) rather than being guessed at.
+  function extractServiceLinks(plainLog) {
+    var out = [], seen = {};
+    var reAvailable = /^(.*?)\s+available at:?\s*(https?:\/\/\S+?)\s*(?:\(([^/()]+?)\s*\/\s*([^()]+?)\))?\s*$/i;
+    var reServerUrl = /^#?\s*(.+?)'s server URL is\s*(https?:\/\/\S+)\s*$/i;
+    plainLog.split("\n").forEach(function (rawLine) {
+      var line = rawLine.trim();
+      var m = line.match(reAvailable) || line.match(reServerUrl);
+      if (!m) return;
+      var entry = { label: m[1].trim(), url: m[2].trim(), user: m[3] ? m[3].trim() : "", pass: m[4] ? m[4].trim() : "" };
+      var key = entry.label + "|" + entry.url;
+      if (seen[key]) return; // the same "available at" line often repeats across retries/heartbeats
+      seen[key] = true;
+      out.push(entry);
+    });
+    return out;
+  }
+  function renderServices(plainLog) {
+    var services = extractServiceLinks(plainLog);
+    if (!services.length) { servicesCard.classList.remove("show"); return; }
+    servicesGrid.innerHTML = "";
+    services.forEach(function (svc) {
+      var row = document.createElement("div");
+      row.className = "service-item";
+      var label = document.createElement("span");
+      label.className = "service-label";
+      label.textContent = svc.label;
+      var link = document.createElement("a");
+      link.href = svc.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = svc.url;
+      row.appendChild(label);
+      row.appendChild(link);
+      if (svc.user || svc.pass) {
+        var creds = document.createElement("span");
+        creds.className = "service-creds";
+        creds.textContent = svc.user + " / " + svc.pass;
+        row.appendChild(creds);
+      }
+      servicesGrid.appendChild(row);
+    });
+    servicesCard.classList.add("show");
+  }
+
   function extractAccessLines(plainSummary) {
     var out = [], capturing = false;
     plainSummary.split("\n").forEach(function (line) {
@@ -330,6 +395,7 @@
       var j = res.body;
       lastRawLog = j.log || "";
       renderLog();
+      renderServices(stripAnsi(lastRawLog));
       var summary = extractSummary(j.log || "");
       var comp = null;
       if (summary) {

@@ -235,10 +235,17 @@ def job_dir(job: str) -> Path:
 
 
 def job_state(d: Path) -> dict:
-    """Job directory `d` as {"job", "lab", "started", "state", "rc"}; state is running, done or failed.
-    Never includes the job's pub-status token — that goes out exactly once, in lab_create()'s own answer."""
+    """
+    Job directory `d` as {"job", "lab", "started", "state", "rc", ...}; state is running, done or
+    failed. Includes "status_url" (rebuilt from job.json's own token) whenever that token exists, so an
+    admin reopening the Create dialog for an already-running job (admin.py's login-gated "job"/"jobs"
+    actions call this) can show the same link/QR lab_create() showed the first time, not just on the one
+    original call. This is safe specifically because only an already-authenticated admin reaches this —
+    pub_status() (no login) strips both "status_url" and "token" from its own answer before returning,
+    since an unauthenticated caller supplied that exact token to get here and gains nothing from having
+    it echoed back, and should not implicitly gain the ability to read it off some OTHER job's state.
+    """
     meta = json.loads((d / "job.json").read_text())
-    meta.pop("token", None)
     rc_file = d / "rc"
     rc = int(rc_file.read_text().strip()) if rc_file.is_file() and rc_file.read_text().strip() else None
     if rc is None:
@@ -246,7 +253,11 @@ def job_state(d: Path) -> dict:
         state = "running" if alive else "failed"
     else:
         state = "done" if rc == 0 else "failed"
-    return dict(meta, job=d.name, state=state, rc=rc)
+    out = dict(meta, job=d.name, state=state, rc=rc)
+    if out.get("token"):
+        out["status_url"] = status_url(d.name, out["token"])
+        out["qr_svg"] = qr_util.render_svg(out["status_url"])
+    return out
 
 
 def status_url(job: str, token: str) -> str:
@@ -322,7 +333,11 @@ def pub_status(job: str, token: str) -> dict:
     meta = json.loads(meta_file.read_text())
     if not token or not hmac.compare_digest(str(meta.get("token", "")), token):
         raise Refused("no such lab or wrong link")
-    return lab_status(job)
+    out = lab_status(job)
+    out.pop("token", None)
+    out.pop("status_url", None)
+    out.pop("qr_svg", None)
+    return out
 
 
 def lab_jobs() -> dict:
