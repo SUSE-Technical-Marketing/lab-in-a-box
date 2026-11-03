@@ -66,6 +66,7 @@
 </div>
 
 <script src="theme.js"></script>
+<script src="ansi.js"></script>
 <script>
 (function () {
   "use strict";
@@ -120,10 +121,10 @@
         : j.state === "done" ? "Done — the lab is ready." : "Failed (exit " + (j.rc == null ? "?" : j.rc) + ").";
       stateEl.className = "job-state " + j.state;
       var atEnd = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
-      logEl.textContent = j.log || "";
+      logEl.innerHTML = ansiToHtml(j.log || "");
       if (atEnd) logEl.scrollTop = logEl.scrollHeight;
       var summary = extractSummary(j.log || "");
-      if (summary) { accessText.textContent = summary; accessCard.classList.add("show"); }
+      if (summary) { accessText.innerHTML = ansiToHtml(summary); accessCard.classList.add("show"); }
       if (j.state === "running") timer = setTimeout(poll, 4000);
     }).catch(function () {
       // A network hiccup, not a refusal — keep trying, same as the admin job dialog does.

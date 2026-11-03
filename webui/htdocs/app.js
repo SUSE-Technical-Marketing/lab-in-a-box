@@ -2139,7 +2139,7 @@ async function watchJob(id) {
     st.className = "job-state " + j.state;
     const log = $("#jobLog");
     const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-    log.textContent = j.log || "";
+    log.innerHTML = ansiToHtml(j.log || "");
     if (atEnd) log.scrollTop = log.scrollHeight;
     if (j.state === "running") watchJob._t = setTimeout(() => watchJob(id), 3000);
   } catch (e) { $("#jobState").textContent = "Cannot read the job: " + e.message; }

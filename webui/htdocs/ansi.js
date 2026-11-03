@@ -28,19 +28,24 @@
   // `text` (raw log text, possibly containing "\x1b[...m" SGR sequences) -> HTML string with <span>s for
   // color/bold. Every plain-text chunk is HTML-escaped before it is ever placed next to a tag.
   function ansiToHtml(text) {
-    var out = [], open = false, fg = null, bold = false;
+    // fg/bold: the style escape codes have set so far, applied to the NEXT text chunk. openFg/openBold:
+    // the style of the <span> currently open in `out`, or null when none is. Kept apart so two escape
+    // codes with no text between them (a common pattern: reset immediately followed by a new color)
+    // never open and close an empty <span>.
+    var out = [], fg = null, bold = false, openFg = null, openBold = false, open = false;
     var re = /\x1b\[([0-9;]*)m/g, last = 0, m;
-    function closeSpan() { if (open) { out.push("</span>"); open = false; } }
-    function openSpan() {
-      closeSpan();
-      if (fg || bold) {
-        var style = (fg ? "color:" + fg + ";" : "") + (bold ? "font-weight:700" : "");
-        out.push('<span style="' + style + '">');
-        open = true;
+    function emit(chunk) {
+      if (!chunk) return;
+      if (fg !== openFg || bold !== openBold) {
+        if (open) out.push("</span>");
+        open = !!(fg || bold);
+        if (open) out.push('<span style="' + (fg ? "color:" + fg + ";" : "") + (bold ? "font-weight:700" : "") + '">');
+        openFg = fg; openBold = bold;
       }
+      out.push(escapeHtml(chunk));
     }
     while ((m = re.exec(text))) {
-      if (m.index > last) out.push(escapeHtml(text.slice(last, m.index)));
+      emit(text.slice(last, m.index));
       var codes = m[1] === "" ? [0] : m[1].split(";").map(Number);
       for (var i = 0; i < codes.length; i++) {
         var c = codes[i];
@@ -52,11 +57,10 @@
         else if (c >= 90 && c <= 97) fg = STANDARD[8 + c - 90];
         else if (c === 38 && codes[i + 1] === 5) { fg = xterm256(codes[i + 2]); i += 2; }
       }
-      openSpan();
       last = re.lastIndex;
     }
-    if (last < text.length) out.push(escapeHtml(text.slice(last)));
-    closeSpan();
+    emit(text.slice(last));
+    if (open) out.push("</span>");
     return out.join("");
   }
 
