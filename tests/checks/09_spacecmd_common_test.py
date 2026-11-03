@@ -2943,6 +2943,9 @@ check("ensure_grafana_formula: a real API failure (e.g. missing subscription) di
 # -- ensure_ansible_control_node -----------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+    ("system.scheduleApplyHighstate", FakeResult(returncode=0, stdout="[22]")),
+    ("system.listSystemEvents", FakeResult(returncode=0, stdout=json.dumps(
+        [{"id": 22, "failed_count": 0, "successful_count": 1}]))),
 ])
 sc.ssh_run = fake
 cfg = {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}
@@ -2955,6 +2958,8 @@ check("ensure_ansible_control_node: enables the real 'ansible_control_node' enti
 check("ensure_ansible_control_node: schedules a highstate apply so 'ansible' actually gets installed",
       any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
           for c in cmds))
+check("ensure_ansible_control_node: verifies it via system.listSystemEvents, not just the schedule call",
+      any("system.listSystemEvents" in c and "-A 42" in c for c in cmds))
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -2986,6 +2991,9 @@ check("ensure_ansible_control_node: a real API failure dies with a clear message
 # -- ensure_container_build_hosts ------------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "mercury.mydemo.lab"}]))),
+    ("system.scheduleApplyHighstate", FakeResult(returncode=0, stdout="[22]")),
+    ("system.listSystemEvents", FakeResult(returncode=0, stdout=json.dumps(
+        [{"id": 22, "failed_count": 0, "successful_count": 1}]))),
 ])
 sc.ssh_run = fake
 cfg = {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}
@@ -2999,6 +3007,8 @@ check("ensure_container_build_hosts: schedules a highstate apply so build toolin
       "gets installed",
       any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
           for c in cmds))
+check("ensure_container_build_hosts: verifies it via system.listSystemEvents too",
+      any("system.listSystemEvents" in c and "-A 42" in c for c in cmds))
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -3025,6 +3035,99 @@ except SystemExit:
     died = True
 check("ensure_container_build_hosts: a real API failure dies with a clear message, not silently "
       "ignored", died)
+
+# -- ensure_highstate_applied: actually waits for and checks the real outcome, not just the schedule
+# call — the fix for a real gap found live 2026-11-03 (a highstate that fails completely on the minion,
+# e.g. a 403 on a channel the client should not need, went unnoticed by every caller here before this).
+_poll_calls = {"n": 0}
+
+
+def _highstate_eventually_succeeds(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[22]")
+    if "system.listSystemEvents" in cmd:
+        _poll_calls["n"] += 1
+        pending = _poll_calls["n"] < 2
+        return FakeResult(stdout=json.dumps(
+            [{"id": 22, "failed_count": 0, "successful_count": 0 if pending else 1}]))
+    return FakeResult()
+
+
+_poll_calls["n"] = 0
+sc.ssh_run = _highstate_eventually_succeeds
+sc.time.sleep = lambda s: None  # no real delay between polls
+sc.ensure_ansible_control_node(
+    "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+check("ensure_highstate_applied: polls system.listSystemEvents until the highstate actually reports "
+      "success, not just once", _poll_calls["n"] >= 2)
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+
+def _highstate_really_fails(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[23]")
+    if "system.listSystemEvents" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 23, "failed_count": 1, "successful_count": 0,
+                                               "result_msg": "Failed to apply state(s): [services.salt-minion]"}]))
+    return FakeResult()
+
+
+sc.ssh_run = _highstate_really_fails
+died = False
+_highstate_died_buf = _io2.StringIO()
+with _contextlib2.redirect_stderr(_highstate_died_buf):
+    try:
+        sc.ensure_ansible_control_node(
+            "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+    except SystemExit:
+        died = True
+check("ensure_highstate_applied: a highstate that SCHEDULES fine but FAILS on the minion now dies too "
+      "— previously this was invisible (the schedule call alone looked successful)", died)
+check("...with the server's own real failure message, not just 'scheduled successfully'",
+      "Failed to apply state(s)" in _highstate_died_buf.getvalue())
+
+# Never reports success or failure within the poll window -> times out (dies too, so the caller's own
+# forever-retry can reschedule a fresh highstate instead of blocking on this one forever).
+def _highstate_hangs(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[24]")
+    if "system.listSystemEvents" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 24, "failed_count": 0, "successful_count": 0}]))
+    return FakeResult()
+
+
+sc.ssh_run = _highstate_hangs
+_fake_now = {"t": 1000.0}
+sc.time.time = lambda: _fake_now["t"]
+
+
+def _fake_sleep_advancing(s):
+    _fake_now["t"] += s
+
+
+sc.time.sleep = _fake_sleep_advancing
+died = False
+try:
+    sc.ensure_ansible_control_node(
+        "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_highstate_applied: a highstate stuck neither succeeding nor failing eventually times "
+      "out, instead of blocking forever", died)
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+sc.time.time = _TRUE_REAL_TIME_TIME
 
 
 # -- ensure_mcp_server ------------------------------------------------------

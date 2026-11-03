@@ -1754,6 +1754,54 @@ def ensure_users(hostname, exec_prefix, cfg, prefix):
         ensure_user(hostname, exec_prefix, user)
 
 
+def ensure_highstate_applied(hostname, exec_prefix, sid, label, timeout=400, poll_interval=15):
+    """
+    Schedule a highstate apply on system `sid` with system.scheduleApplyHighstate, then actually wait for
+    it to finish and check whether it succeeded — the fix for a real gap found live 2026-11-03:
+    scheduleApplyHighstate() is fire-and-forget by itself (every prior caller here only checked whether
+    the SCHEDULING call succeeded, never the real outcome), so a highstate that fails completely on the
+    minion side — confirmed live: a 403 "Permission ... denied" on a channel the client should not even
+    need, which broke the salt-minion package reinstall — went unnoticed by every tool in this project.
+
+    Polls system.listSystemEvents(sid) for the scheduled action's own id (scheduleApplyHighstate's return
+    value — a one-element list, [action_id], not a bare int) up to `timeout` seconds, matching Uyuni's own
+    event-history shape: {"id", "failed_count", "successful_count", "result_msg", ...}. dies (die()) with
+    the server's own result_msg on a real failure, or on a timeout (treated the same way, since the
+    caller's own forever-retry handoff can reschedule a fresh highstate rather than this function blocking
+    on one that may be stuck) — either way the caller's normal retry path takes over exactly as it already
+    does for every die() elsewhere in this module.
+    """
+    earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+    if r.returncode != 0:
+        die("could not schedule a highstate apply on sid {} ({}): {}".format(
+            sid, label, (r.stderr or r.stdout or "").strip()))
+    try:
+        action_id = json.loads(r.stdout)[0]
+    except (json.JSONDecodeError, TypeError, IndexError):
+        die("system.scheduleApplyHighstate(sid {}) returned unparseable output: {}".format(sid, r.stdout))
+
+    deadline = time.time() + timeout
+    while True:
+        rr = _api_call(hostname, exec_prefix, "system.listSystemEvents", [sid])
+        if rr.returncode == 0:
+            try:
+                events = json.loads(rr.stdout)
+            except (json.JSONDecodeError, TypeError):
+                events = []
+            match = next((e for e in events if e.get("id") == action_id), None)
+            if match:
+                if match.get("failed_count"):
+                    die("highstate apply ({}) failed on sid {}: {}".format(
+                        label, sid, match.get("result_msg") or "see the server's own Event History for details"))
+                if match.get("successful_count"):
+                    return
+        if time.time() >= deadline:
+            die("highstate apply ({}) on sid {} did not complete within {}s (action {} still pending)".format(
+                label, sid, timeout, action_id))
+        time.sleep(poll_interval)
+
+
 def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_access_groups, a list of {label, description, permissions_from, permissions: [{namespace, mode}],
@@ -1781,8 +1829,9 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
 def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_ansible_control_nodes, a list of {system} dicts. For each system, it enables the "Ansible
-    Control Node" add-on entitlement with system.addEntitlements, using the label "ansible_control_node". Then it schedules a
-    highstate apply with system.scheduleApplyHighstate, which installs the ansible package on the system.
+    Control Node" add-on entitlement with system.addEntitlements, using the label "ansible_control_node". Then
+    ensure_highstate_applied() schedules a highstate apply that installs the ansible package on the system, and —
+    unlike a bare system.scheduleApplyHighstate() call — actually waits for and checks whether it really succeeded.
 
     The call is idempotent and safe on every configuration pass. addEntitlements ignores an entitlement the system already has,
     and a repeated highstate is idempotent on the Salt side. The function does nothing if the field is unset or empty. The
@@ -1805,22 +1854,18 @@ def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
             die("could not enable the Ansible Control Node entitlement on '{}': {}".format(
                 system, (r.stderr or r.stdout or "").strip()))
 
-        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
-        if r.returncode != 0:
-            die("could not schedule a highstate apply on '{}' to install ansible: {}".format(
-                system, (r.stderr or r.stdout or "").strip()))
-        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and scheduled a "
-              "highstate apply to install ansible".format(system, sid))
+        ensure_highstate_applied(hostname, exec_prefix, sid, "install ansible on '{}'".format(system))
+        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and verified the "
+              "highstate apply that installs ansible actually succeeded".format(system, sid))
 
 
 def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_image_build_hosts, a list of {system} dicts. For each system, it enables the "Container Build Host"
     add-on entitlement with system.addEntitlements, using the label "container_build_host". This entitlement is separate from
-    "osimage_build_host", which belongs to the Kiwi-based OS-image build path. Then it schedules a highstate apply with
-    system.scheduleApplyHighstate, which installs the container build tooling on the system. The two steps match
-    ensure_ansible_control_node().
+    "osimage_build_host", which belongs to the Kiwi-based OS-image build path. Then ensure_highstate_applied() schedules a
+    highstate apply that installs the container build tooling on the system, verifying it really succeeded instead of just
+    trusting the schedule call. The two steps match ensure_ansible_control_node().
 
     An image import's build_host_id must name a system that has this entitlement. This function grants it, so a single list entry
     gives a working build host, with no manual step.
@@ -1843,13 +1888,10 @@ def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
             die("could not enable the Container Build Host entitlement on '{}': {}".format(
                 system, (r.stderr or r.stdout or "").strip()))
 
-        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
-        if r.returncode != 0:
-            die("could not schedule a highstate apply on '{}' to install container build tooling: {}".format(
-                system, (r.stderr or r.stdout or "").strip()))
-        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and scheduled a "
-              "highstate apply to install container build tooling".format(system, sid))
+        ensure_highstate_applied(hostname, exec_prefix, sid,
+                                  "install container build tooling on '{}'".format(system))
+        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and verified the "
+              "highstate apply that installs container build tooling actually succeeded".format(system, sid))
 
 
 def ensure_mcp_server(hostname, exec_prefix, cfg, prefix):
