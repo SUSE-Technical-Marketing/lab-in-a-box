@@ -5,14 +5,14 @@
 """
 check_lab.py: what a lab's add-ons say about their own deployment.
 
-An add-on answers `install_<addon> --check <lab.json>` with 0 when what is deployed matches the lab definition, 1
+An add-on answers `install_<addon> --check <lab-file>` with 0 when what is deployed matches the lab definition, 1
 when it does not, and 2 when it implements no check at all (libs/addon_common.py's Checker). This walks a lab's
 add-ons the way setup_lab.py installs them, runs the check of each on the target that add-on was installed on, and
 reports per add-on.
 
-    check_lab.py <lab.json>              every add-on of the lab
-    check_lab.py <lab.json> <addon>...   only these
-    check_lab.py --quiet <lab.json>      one line per add-on, no [OK] detail
+    check_lab.py <lab-file>              every add-on of the lab
+    check_lab.py <lab-file> <addon>...   only these
+    check_lab.py --quiet <lab-file>      one line per add-on, no [OK] detail
 
 An add-on that implements no check is listed as exactly that, and the summary repeats how many there were, because a
 report that calls a lab healthy while half of it was never looked at is worse than no report. The exit code is 0
@@ -37,7 +37,7 @@ import primary  # noqa: E402
 from addon_common import CHECK_OK, CHECK_UNSUPPORTED  # noqa: E402
 from lab_creation import _GREEN, _RED, _YELLOW, _RESET, die  # noqa: E402
 
-USAGE = "Usage: check_lab.py [--quiet] <lab.json> [<addon>...]\n"
+USAGE = "Usage: check_lab.py [--quiet] <lab-file> [<addon>...]\n"
 
 
 def placements(definition):
@@ -61,7 +61,7 @@ def placements(definition):
     return found
 
 
-def run_one(addon, json_file, vm_name, clu_name):
+def run_one(addon, lab_file, vm_name, clu_name):
     """
     Run one add-on's --check on its own target. Returns (code, output); the code is CHECK_OK / CHECK_MISMATCH /
     CHECK_UNSUPPORTED, or None when the add-on's installer is not there at all.
@@ -72,7 +72,7 @@ def run_one(addon, json_file, vm_name, clu_name):
     env = dict(os.environ)
     env["_vm_name"] = vm_name or ""
     env["clu_name"] = clu_name or ""
-    r = subprocess.run([installer, "--check", json_file], env=env, stdout=subprocess.PIPE,
+    r = subprocess.run([installer, "--check", lab_file], env=env, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, universal_newlines=True)
     return r.returncode, r.stdout or ""
 
@@ -94,9 +94,9 @@ def main():
         print(USAGE, file=sys.stderr)
         die("no lab definition given")
 
-    json_file = args[0]
+    lab_file = args[0]
     wanted = set(args[1:])
-    definition = primary.load_definition(json_file)
+    definition = primary.load_definition(lab_file)
 
     todo = [p for p in placements(definition) if not wanted or p[0] in wanted]
     if wanted:
@@ -106,11 +106,11 @@ def main():
         print("This lab has no add-ons to check.")
         return 0
 
-    print("── Checking {} add-on placement(s) of '{}' ──".format(len(todo), json_file))
+    print("── Checking {} add-on placement(s) of '{}' ──".format(len(todo), lab_file))
     matched, mismatched, unsupported, missing = [], [], [], []
     for addon, vm_name, clu_name in todo:
         where = clu_name or vm_name or "?"
-        code, output = run_one(addon, json_file, vm_name, clu_name)
+        code, output = run_one(addon, lab_file, vm_name, clu_name)
         if code is None:
             missing.append(addon)
             print("  {}[GONE]{} {:<22} {:<24} {}".format(_RED, _RESET, addon, where, output.strip()))

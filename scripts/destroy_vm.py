@@ -10,7 +10,7 @@
 destroy_vm.py — destroy a single VM from a lab definition.
 
 Usage:
-    destroy_vm.py <lab.json> <vm_hostname>
+    destroy_vm.py <lab-file> <vm_hostname>
 """
 
 __version__ = "__LABVERSION__"
@@ -112,12 +112,12 @@ def main():
         print("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))
         sys.exit(1)
 
-    json_file = sys.argv[1]
+    lab_file = sys.argv[1]
     vm_name = sys.argv[2]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
+    definition = primary.load_definition(lab_file)
 
     destroy_vm(definition, config, defaults, vm_name)
 

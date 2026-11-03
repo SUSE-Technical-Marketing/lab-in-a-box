@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box, it will destroy all VMs defined in a lab JSON file
+# Part of lab-in-a-box, it will destroy all VMs defined in a lab definition file
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -10,7 +10,7 @@
 destroy_lab.py — destroy every VM defined in a lab definition.
 
 Usage:
-    destroy_lab.py <lab.json>
+    destroy_lab.py <lab-file>
 """
 
 __version__ = "__LABVERSION__"
@@ -27,7 +27,7 @@ import lab_creation  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
 
-def destroy_lab(definition, config, defaults, json_file):
+def destroy_lab(definition, config, defaults, lab_file):
     lab_name = definition.get("common", {}).get("lab_name", "")
     lab_creation.log('Destroy lab "{}{}{}"'.format(lab_creation._RED, lab_name, lab_creation._RESET))
     lab_creation._level += 1
@@ -60,13 +60,13 @@ def main():
         print("Usage:\n{} <configuration file>".format(sys.argv[0]))
         sys.exit(1)
 
-    json_file = sys.argv[1]
+    lab_file = sys.argv[1]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
+    definition = primary.load_definition(lab_file)
 
-    destroy_lab(definition, config, defaults, json_file)
+    destroy_lab(definition, config, defaults, lab_file)
 
 
 if __name__ == "__main__":

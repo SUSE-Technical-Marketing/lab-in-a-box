@@ -100,7 +100,7 @@ icr = apps.load_addon_module("install_client_registration", str(_REPO / "scripts
 _real_register_client = icr.register_client  # main() tests below stub this out
 
 calls = []
-icr.register_client = lambda vm_name, cfg, json_file=None: calls.append((vm_name, cfg))
+icr.register_client = lambda vm_name, cfg, lab_file=None: calls.append((vm_name, cfg))
 icr.primary.load_definition = lambda path: cfg_def
 
 old_argv = sys.argv
@@ -197,7 +197,7 @@ class _FakeSc:
 
 
 launch_calls = []
-icr._launch_background_retry = lambda json_file, vm_name: launch_calls.append((json_file, vm_name))
+icr._launch_background_retry = lambda lab_file, vm_name: launch_calls.append((lab_file, vm_name))
 
 # -- fast path: channels already fully synced -> registers synchronously, no background retry --
 launch_calls.clear()
@@ -209,7 +209,7 @@ _real_register_client("mercury.mydemo.lab", {
     "client_registration_sync_channels": "sles15-sp7-pool sles15-sp7-updates",
     "client_registration_activation_key_base_channel": "sles15-sp7-pool",
     "client_registration_activation_key_child_channels": "managertools-sles15-sp7-pool",
-}, json_file="lab.json")
+}, lab_file="lab.json")
 names = [c[0] for c in fake_sc.calls]
 pending_call = next(c for c in fake_sc.calls if c[0] == "pending_channels")
 check("register_client(): checks pending_channels() on the UNION of sync_channels + "
@@ -227,7 +227,7 @@ _real_register_client("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-key",
     "client_registration_activation_key_base_channel": "sles15-sp7-pool",
-}, json_file="lab.json")
+}, lab_file="lab.json")
 names2 = [c[0] for c in fake_sc2.calls]
 check("register_client(): channels still pending -> launches a background retry for this node",
       launch_calls == [("lab.json", "mercury.mydemo.lab")])
@@ -243,7 +243,7 @@ icr.sc = fake_sc3
 _real_register_client("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-key",
-}, json_file="lab.json")
+}, lab_file="lab.json")
 check("register_client(): no sync_channels/activation-key-channels configured, key doesn't "
       "exist yet -> nothing to wait on, registers synchronously without even calling "
       "pending_channels()",
@@ -267,7 +267,7 @@ icr.sc = fake_sc4
 _real_register_client("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-sles15sp7",
-}, json_file="lab.json")
+}, lab_file="lab.json")
 names4 = [c[0] for c in fake_sc4.calls]
 check("register_client(): key already exists, no local channel fields set -> checks whether "
       "it exists before assuming there's nothing to wait on",
@@ -284,7 +284,7 @@ check("register_client(): a still-pending real channel correctly defers to a bac
       launch_calls == [("lab.json", "mercury.mydemo.lab")]
       and "ensure_client_registered" not in names4)
 
-# -- register_client() refuses to launch a background retry without a json_file --
+# -- register_client() refuses to launch a background retry without a lab_file --
 fake_sc4 = _FakeSc(pending={"still-syncing"})
 icr.sc = fake_sc4
 died = False
@@ -293,10 +293,10 @@ try:
         "client_registration_server": "sol.mydemo.lab",
         "client_registration_activation_key": "1-key",
         "client_registration_activation_key_base_channel": "still-syncing",
-    })  # json_file omitted
+    })  # lab_file omitted
 except SystemExit:
     died = True
-check("register_client(): dies with a clear message if asked to background-retry with no json_file",
+check("register_client(): dies with a clear message if asked to background-retry with no lab_file",
       died)
 
 

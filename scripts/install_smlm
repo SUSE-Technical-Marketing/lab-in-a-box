@@ -110,7 +110,7 @@
 #   smlm_db_ha_size        : data volume per instance (default: 50Gi)
 #   smlm_db_ha_pg_image    : PostgreSQL image, which must match SMLM 5.2's major version (default: ghcr.io/cloudnative-pg/postgresql:18)
 #   smlm_db_ha_cnpg_version: CloudNativePG operator chart version (default: latest)
-#   Failover test, after deployment:  install_smlm.py <lab.json> --test-failover
+#   Failover test, after deployment:  install_smlm.py <lab-file> --test-failover
 #   It writes a canary row, deletes the primary pod, measures promotion and write recovery, and checks that no
 #   committed row was lost and the web UI stayed up. For a harder test, power off the primary's node VM.
 #
@@ -256,7 +256,7 @@
 #   smlm_image_imports     : [{"name", "version": "latest", "store", "build_host" (hostname of a system that has the
 #                            "Container Build Host" entitlement, resolved to its id) or "build_host_id" (that system's
 #                            numeric id; find it with 'spacecmd system_list'), "activation_key" (optional)}]
-#                            Run with install_smlm.py <lab.json> --import-images. It never runs automatically, because
+#                            Run with install_smlm.py <lab-file> --import-images. It never runs automatically, because
 #                            each call schedules a new import.
 #   smlm_image_build_hosts : [{"system": "registered-hostname"}]. Enables the "container_build_host" entitlement and
 #                            applies highstate. It runs before imports, so the system can be an import's build_host.
@@ -279,7 +279,7 @@
 #                            Give exactly one of ical or url. Calendars are synced, so an existing calendar whose ical
 #                            or url differs is updated, with the reschedule strategy "Fail". Scheduled actions are never
 #                            cancelled. To sync a live server without anything else, run
-#                            install_smlm.py <lab.json> --sync-maintenance-calendars.
+#                            install_smlm.py <lab-file> --sync-maintenance-calendars.
 #   smlm_maintenance_schedules : [{"name", "type": "single" | "multi", "calendar" (name of a calendar, optional),
 #                            "systems": [...] (optional, assigned right after creation)}]
 #
@@ -342,13 +342,13 @@
 # Ansible integration (orchestration only; playbook and inventory files stay on the control node)
 #   smlm_ansible_control_nodes : [{"system": "hostname"}]. Enables the "Ansible Control Node" entitlement and applies
 #                            highstate to install the ansible package. The system must be registered first.
-#                            Also run with install_smlm.py <lab.json> --enable-ansible-control-nodes.
+#                            Also run with install_smlm.py <lab-file> --enable-ansible-control-nodes.
 #   smlm_ansible_paths     : [{"system" (hostname) or "control_node_id" (numeric), "type": "playbook" | "inventory",
 #                            "path"}]. For "playbook", path is a directory, such as /srv/ansible/playbooks. For
 #                            "inventory", path is the inventory file or script.
 #   smlm_ansible_playbooks : [{"control_node_id", "playbook_path", "inventory_path", "earliest" (optional, default now),
 #                            "action_chain_label" (optional), "test_mode": false, "extra_vars": "...", "flush_cache": false}]
-#                            Run with install_smlm.py <lab.json> --run-ansible-playbooks. It never runs automatically.
+#                            Run with install_smlm.py <lab-file> --run-ansible-playbooks. It never runs automatically.
 #
 # Content Lifecycle Management (CLM)
 #   Projects, sources, filters and environments are defined automatically and idempotently, before activation keys so the
@@ -368,7 +368,7 @@
 #   smlm_scap_scans        : [{"system" or "group", "xccdf_path", "profile"}]. Exactly one of system or group. A group
 #                            expands to its members. Idempotent by system and xccdf_path. The XCCDF path and the scanner
 #                            must already exist on the target, unless ensure_openscap_prerequisites() installs them.
-#                            Run with install_smlm.py <lab.json> --run-scap-scans. It never runs automatically.
+#                            Run with install_smlm.py <lab-file> --run-scap-scans. It never runs automatically.
 #   smlm_scap_policies     : [{"policy_name", "scap_content_id" (a content id uploaded through the Web UI), "xccdf_profile_id"
 #                            (read it from the uploaded document), "description", "earliest" (ISO local date-time),
 #                            "tailoring_file", "tailoring_profile_id", "oval_files", "advanced_args",
@@ -378,8 +378,8 @@
 #                            uploaded by this module. Upload them once through the Web UI, then use their ids here.
 #
 # CVE audit (read only, no JSON)
-#   install_smlm.py <lab.json> --cve-audit CVE-YYYY-NNNNN         systems' patch status for the CVE
-#   install_smlm.py <lab.json> --cve-audit-images CVE-YYYY-NNNNN  the same for container and OS images
+#   install_smlm.py <lab-file> --cve-audit CVE-YYYY-NNNNN         systems' patch status for the CVE
+#   install_smlm.py <lab-file> --cve-audit-images CVE-YYYY-NNNNN  the same for container and OS images
 #
 # Environment topology (a composition of the primitives above; automatic except recurring_schedule)
 #   smlm_activation_keys   : [{...}], one dict per key, with the same fields as the smlm_activation_key* keys.
@@ -394,7 +394,7 @@
 #                            "group_id" (skips the name lookup), "extra": {...}}}]
 #                            system_group and activation_key are references only. recurring_schedule needs the numeric group
 #                            id, which is looked up from the name unless group_id is given. Run it with
-#                            install_smlm.py <lab.json> --run-recurring-schedules.
+#                            install_smlm.py <lab-file> --run-recurring-schedules.
 #   smlm_grafana_formulas  : [{"system", "admin_user" (admin when unset), "admin_pass" (admin when unset),
 #                            "prometheus": [{"key", "url" (http://localhost:9090 when unset), "user", "password"}],
 #                            "reportdb": false, "is_hub": false,
@@ -405,7 +405,7 @@
 #                            Proxy.
 #
 # Read-only export of a running server (never runs automatically)
-#   install_smlm.py <lab.json> --export-config [output.json]
+#   install_smlm.py <lab-file> --export-config [output.json]
 #   Writes the "smlm" section for channels, activation keys, system groups, the calling organization's access groups, and
 #   a best-effort username list for the other organizations. Passwords cannot be recovered, because the server stores only
 #   hashes, so fill in each admin_pass and password by hand. A custom access group's member list is readable only for the
@@ -667,11 +667,11 @@ def _resolve_and_fill_vhm_credentials(cfg, virtual_host_managers):
             vhm.setdefault("secret_access_key", vhm_creds["vhm_aws_secret_access_key"])
 
 
-def setup_smlm_podman(hostname, virt_srv, cfg, json_file=None, only_step=None):
+def setup_smlm_podman(hostname, virt_srv, cfg, lab_file=None, only_step=None):
     """
     Install SUSE Multi-Linux Manager with mgradm and podman directly on a dedicated host or VM, without Kubernetes.
 
-    json_file: the lab definition's own path, needed only so a provisioning step that exhausts its bounded
+    lab_file: the lab definition's own path, needed only so a provisioning step that exhausts its bounded
     retries can hand itself off to a detached forever-retry worker (see the provisioning block's own
     comment below) that re-invokes this script with --retry-step-worker. None (every existing direct
     caller, including this project's own tests) disables that hand-off outright — every step then behaves
@@ -955,8 +955,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg, json_file=None, only_step=None):
             def rps(label, func, *args, retries=1, retry_delay=15, **kwargs):
                 sc.run_provisioning_step(
                     label, func, *args, retries=retries, retry_delay=retry_delay,
-                    forever=bool(json_file), retry_key=_step_retry_key(hostname, label),
-                    retry_argv=_step_retry_argv(json_file, label) if json_file else None, **kwargs)
+                    forever=bool(lab_file), retry_key=_step_retry_key(hostname, label),
+                    retry_argv=_step_retry_argv(lab_file, label) if lab_file else None, **kwargs)
 
         if virtual_host_managers:
             # The VHM credential resolution runs through rps(), like every other step. A missing or misnamed credential file
@@ -1067,10 +1067,10 @@ def _step_retry_key(hostname, label):
     return "smlm:{}:{}".format(hostname, label)
 
 
-def _step_retry_argv(json_file, label):
+def _step_retry_argv(lab_file, label):
     """The argv a provisioning step's own forever-retry worker is launched with: this same script,
     unbuffered, re-invoked as --retry-step-worker <label> against the SAME lab definition."""
-    return [sys.executable, "-u", str(Path(__file__).resolve()), str(Path(json_file).resolve()),
+    return [sys.executable, "-u", str(Path(__file__).resolve()), str(Path(lab_file).resolve()),
             "--retry-step-worker", label]
 
 
@@ -1966,28 +1966,28 @@ def run_recurring_schedules(hostname, cfg):
 
 
 def main():
-    usage = ("Usage: {0} <lab.json> [<vm_name>]\n"
-             "       {0} <lab.json> --test-failover   # HA DB failover test (requires smlm_db_ha)\n"
-             "       {0} <lab.json> --run-ansible-playbooks   # schedule smlm_ansible_playbooks\n"
-             "       {0} <lab.json> --run-clm-actions   # build/promote smlm_content_lifecycle_actions\n"
-             "       {0} <lab.json> --run-scap-scans   # schedule smlm_scap_scans\n"
-             "       {0} <lab.json> --sync-maintenance-calendars   # push smlm_maintenance_calendars\n"
-             "       {0} <lab.json> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
-             "       {0} <lab.json> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
-             "       {0} <lab.json> --run-recurring-schedules   # create smlm_environments' recurring schedules\n"
-             "       {0} <lab.json> --import-images   # schedule smlm_image_imports\n"
-             "       {0} <lab.json> --build-images   # schedule smlm_image_builds\n"
-             "       {0} <lab.json> --enable-sso   # deploy Keycloak + enable smlm_sso\n"
-             "       {0} <lab.json> --provision-guests   # schedule smlm_virtual_guests\n"
-             "       {0} <lab.json> --enable-ansible-control-nodes   # enable smlm_ansible_control_nodes"
+    usage = ("Usage: {0} <lab-file> [<vm_name>]\n"
+             "       {0} <lab-file> --test-failover   # HA DB failover test (requires smlm_db_ha)\n"
+             "       {0} <lab-file> --run-ansible-playbooks   # schedule smlm_ansible_playbooks\n"
+             "       {0} <lab-file> --run-clm-actions   # build/promote smlm_content_lifecycle_actions\n"
+             "       {0} <lab-file> --run-scap-scans   # schedule smlm_scap_scans\n"
+             "       {0} <lab-file> --sync-maintenance-calendars   # push smlm_maintenance_calendars\n"
+             "       {0} <lab-file> --cve-audit CVE-YYYY-NNNNN   # patch-status audit for one CVE\n"
+             "       {0} <lab-file> --cve-audit-images CVE-YYYY-NNNNN   # same, for images\n"
+             "       {0} <lab-file> --run-recurring-schedules   # create smlm_environments' recurring schedules\n"
+             "       {0} <lab-file> --import-images   # schedule smlm_image_imports\n"
+             "       {0} <lab-file> --build-images   # schedule smlm_image_builds\n"
+             "       {0} <lab-file> --enable-sso   # deploy Keycloak + enable smlm_sso\n"
+             "       {0} <lab-file> --provision-guests   # schedule smlm_virtual_guests\n"
+             "       {0} <lab-file> --enable-ansible-control-nodes   # enable smlm_ansible_control_nodes"
              ).format(Path(__file__).name)
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
 
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
-    definition = primary.load_definition(json_file)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
 
     cfg = definition.get("smlm", {}) or {}
     # smlm_scc_user/smlm_scc_password/smlm_scc_regcode may alternatively come
@@ -2030,7 +2030,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--export-config":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             if len(nodes) > 1:
@@ -2054,7 +2054,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] in _podman_triggers:
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             _podman_triggers[sys.argv[2]](nodes[0][0], cfg)
@@ -2063,7 +2063,7 @@ def main():
         if len(sys.argv) > 3 and sys.argv[2] in ("--cve-audit", "--cve-audit-images"):
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             (cve_audit if sys.argv[2] == "--cve-audit" else cve_audit_images)(
@@ -2077,7 +2077,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--import-images":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             admin = cfg.get("smlm_admin_user") or "admin"
@@ -2091,7 +2091,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--build-images":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             admin = cfg.get("smlm_admin_user") or "admin"
@@ -2110,7 +2110,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--enable-sso":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             admin = cfg.get("smlm_admin_user") or "admin"
@@ -2125,7 +2125,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--provision-guests":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             admin = cfg.get("smlm_admin_user") or "admin"
@@ -2145,7 +2145,7 @@ def main():
         if len(sys.argv) > 2 and sys.argv[2] == "--enable-ansible-control-nodes":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             admin = cfg.get("smlm_admin_user") or "admin"
@@ -2162,14 +2162,14 @@ def main():
         if len(sys.argv) > 3 and sys.argv[2] == "--retry-step-worker":
             nodes = list(k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name))
             if not nodes:
-                print("ERROR: no node with the 'smlm' addon found in '{}'".format(json_file),
+                print("ERROR: no node with the 'smlm' addon found in '{}'".format(lab_file),
                       file=sys.stderr)
                 sys.exit(1)
             setup_smlm_podman(nodes[0][0], virt_srv, cfg, only_step=sys.argv[3])
             return
 
         for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "smlm", vm_name=env_vm_name):
-            setup_smlm_podman(vm_name, virt_srv, cfg, json_file=json_file)
+            setup_smlm_podman(vm_name, virt_srv, cfg, lab_file=lab_file)
         return
 
     if not cfg.get("smlm_fqdn"):

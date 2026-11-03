@@ -344,7 +344,7 @@ def print_help(script_path, usage=None):
     parses for --input-definition/--schema).
     """
     name = Path(script_path).name
-    print(usage or "Usage: {} <lab.json> [<vm_name>]".format(name))
+    print(usage or "Usage: {} <lab-file> [<vm_name>]".format(name))
     print()
     text = Path(script_path).read_text(errors="replace")
     in_block = False
@@ -443,13 +443,13 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
 
     if argv and argv[0] == "--validate":
         if len(argv) < 2:
-            print("[ERROR] --validate requires a JSON file path")
+            print("[ERROR] --validate requires a lab file path")
             sys.exit(1)
         sys.exit(run_validate(argv[1], validate_fn, plugin=plugin, script_path=script_path))
 
     if argv and argv[0] == "--check":
         if len(argv) < 2:
-            print("[FAIL] --check requires a JSON file path")
+            print("[FAIL] --check requires a lab file path")
             sys.exit(CHECK_MISMATCH)
         sys.exit(run_check(argv[1], check_fn, plugin=plugin))
 

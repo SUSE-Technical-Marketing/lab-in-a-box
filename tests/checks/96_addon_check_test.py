@@ -99,7 +99,7 @@ caps = json.loads(subprocess.run([sys.executable, str(_REPO / "scripts" / "insta
 check("longhorn advertises its check", caps.get("check") is True)
 r = subprocess.run([sys.executable, str(_REPO / "scripts" / "install_longhorn"), "--check"],
                    stdout=subprocess.PIPE, universal_newlines=True)
-check("--check with no lab file is refused, not a crash", r.returncode == 1 and "requires a JSON file" in r.stdout)
+check("--check with no lab file is refused, not a crash", r.returncode == 1 and "requires a lab file" in r.stdout)
 
 # The bash example add-on answers the same contract, in a lab that does not configure it.
 motd = _REPO / "examples" / "addons" / "install_example_motd.sh"

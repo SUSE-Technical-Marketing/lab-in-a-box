@@ -221,7 +221,7 @@ def _background_retry_key(vm_name):
     return "client_registration:{}".format(vm_name)
 
 
-def _launch_background_retry(json_file, vm_name):
+def _launch_background_retry(lab_file, vm_name):
     """
     Ensure a DETACHED background worker (this same script, re-invoked with _RETRY_WORKER_FLAG and
     _vm_name set) is retrying vm_name's registration — no artificial timeout, it only stops once
@@ -235,7 +235,7 @@ def _launch_background_retry(json_file, vm_name):
     turn. A detached per-node retry lets the deployment finish while each pending registration continues
     on its own, every node's worker running independently and in parallel with every other one's.
     """
-    resolved_json = str(Path(json_file).resolve())
+    resolved_json = str(Path(lab_file).resolve())
     env = dict(os.environ)
     env["_vm_name"] = vm_name
     argv = [sys.executable, "-u", str(Path(__file__).resolve()), resolved_json, _RETRY_WORKER_FLAG]
@@ -276,7 +276,7 @@ def _retry_until_registered(vm_name, cfg):
         verify=lambda: sc.system_is_registered(server_node, exec_prefix, vm_name))
 
 
-def register_client(vm_name, cfg, json_file=None):
+def register_client(vm_name, cfg, lab_file=None):
     server_fqdn = cfg.get("client_registration_server")
     activation_key = cfg.get("client_registration_activation_key")
     if not server_fqdn or not activation_key:
@@ -299,9 +299,9 @@ def register_client(vm_name, cfg, json_file=None):
     wait_channels = _wait_channels(cfg, server_node, exec_prefix, activation_key)
     pending = sc.pending_channels(server_node, exec_prefix, wait_channels) if wait_channels else set()
     if pending:
-        if not json_file:
-            die("register_client() needs json_file to launch a background retry")
-        _launch_background_retry(json_file, vm_name)
+        if not lab_file:
+            die("register_client() needs lab_file to launch a background retry")
+        _launch_background_retry(lab_file, vm_name)
         print("  Channel(s) not yet fully synced ({}) — launched a background retry that will "
               "keep trying until registration succeeds; continuing with the rest of the "
               "deployment. NOTE: real channel data syncs from SCC in the background, one "
@@ -319,10 +319,10 @@ def main():
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
 
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
-    definition = primary.load_definition(json_file)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
 
     # _RETRY_WORKER_FLAG mode: this is a detached background worker spawned
     # by _launch_background_retry(), re-invoking this same script — runs
@@ -351,7 +351,7 @@ def main():
         # nested form replaces a flat nodes[x].client_registration_* field, so it is unambiguous which
         # addon an override belongs to, and the same mechanism works for any addon.
         eff_cfg = k8s.addon_node_config(definition, "client_registration", vm_name)
-        register_client(vm_name, eff_cfg, json_file=json_file)
+        register_client(vm_name, eff_cfg, lab_file=lab_file)
 
 
 if __name__ == "__main__":

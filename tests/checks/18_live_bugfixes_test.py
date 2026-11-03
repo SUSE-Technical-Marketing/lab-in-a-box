@@ -904,7 +904,7 @@ install_uyuni.run_clm_actions(
 check("run_clm_actions: runs build then promote in order",
       calls["trigger"] == [("build", "proj"), ("promote", "proj", "dev")])
 
-# run_clm_actions(json_file=...): a build that's still stuck after the usual restart recovery is handed
+# run_clm_actions(lab_file=...): a build that's still stuck after the usual restart recovery is handed
 # off to a forever-retry background worker instead of dying for real — the same mandatory policy as
 # every other SMLM/Uyuni-dependent operation, applied here without changing
 # _wait_for_clm_with_restart_retry's own already-confirmed-live recovery mechanics at all.
@@ -918,10 +918,10 @@ calls["restart"] = []
 install_uyuni.run_clm_actions(
     "host1", {"uyuni_content_lifecycle_actions": [
         {"project": "proj", "action": "build", "wait": True, "wait_env": "dev",
-         "wait_timeout": 1800}]}, json_file="lab.json")
-check("run_clm_actions(json_file=...): a build still stuck after the restart recovery is handed off, "
+         "wait_timeout": 1800}]}, lab_file="lab.json")
+check("run_clm_actions(lab_file=...): a build still stuck after the restart recovery is handed off, "
       "not died on", len(_launched) == 1 and _launched[0][0] == "uyuni:host1:clm:proj/dev")
-check("run_clm_actions(json_file=...): the worker's own argv re-invokes this script unbuffered with "
+check("run_clm_actions(lab_file=...): the worker's own argv re-invokes this script unbuffered with "
       "--retry-step-worker and the project/wait_env label",
       "-u" in _launched[0][1] and _launched[0][1][-2:] == ["--retry-step-worker", "proj/dev"])
 
