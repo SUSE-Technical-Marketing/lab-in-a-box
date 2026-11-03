@@ -24,6 +24,7 @@
 <li><a href="#configuration-reference">Référence de configuration</a></li>
 <li><a href="#testing">Tests</a></li>
 <li><a href="#contributing--developer-setup">Contribuer / Environnement de développement</a></li>
+<li><a href="#issues-and-feedback">Problèmes et retours</a></li>
 </ul>
 <p align="right"><a href="#top">↑ retour en haut</a></p>
 
@@ -210,6 +211,18 @@
 <td>Le openSUSE Leap le plus récent</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, avec votre propre abonnement (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, publié par Canonical</td>
 </tr>
@@ -237,8 +250,13 @@
 <td><code>rocky10</code></td>
 <td>Le Rocky Linux 10 le plus récent, publié par le projet Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>Le dernier CentOS Linux 7 (fin de vie depuis juin 2024), publié par le projet CentOS. x86_64 uniquement</td>
+</tr>
 </tbody>
 </table>
+<p>Un nom de produit SUSE suivi de <code>-byos</code> choisit son image avec votre propre abonnement au lieu de l'image à l'usage. Cette image n'a aucun dépôt tant qu'elle n'est pas enregistrée : un nœud enregistré auprès d'un serveur SMLM via <code>client_registration</code> obtient ses paquets de celui-ci, et un nœud qui a besoin de paquets avant cela, comme un nœud Kubernetes, définit <code>scc_regcode</code> (et éventuellement <code>scc_email</code>), dans common ou par nœud, pour que cloud-init l'enregistre avec <code>SUSEConnect</code> au premier démarrage.</p>
 <p>Les produits SUSE viennent du registre public d'images de SUSE, et les autres du paramètre public AWS Systems Manager de chaque éditeur ou de son propre compte AWS, jamais d'une recherche par nom qu'un autre compte pourrait satisfaire. Une valeur qui n'est pas un nom de produit, identifiant d'image ou nom de fichier d'image compris, est transmise telle quelle.</p>
 <p>Un lab cloud a aussi besoin que ses nœuds se résolvent entre eux. Une petite VM DNS par compte cloud sert le domaine du lab, et le réseau du compte est configuré pour distribuer ce serveur à chaque instance qu'il contient, de sorte qu'un nœud rejoint son cluster Kubernetes par nom d'hôte sans rien configurer dans l'invité. Sur AWS il s'agit d'un jeu d'options DHCP de VPC : il s'applique à tout le VPC, une instance lancée ensuite l'a immédiatement, et une instance déjà en marche le récupère au renouvellement de son bail DHCP.</p>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>
@@ -270,7 +288,7 @@
 <p><code>OVERLAY_HUB_ACCOUNT</code> (obligatoire, dans <code>/etc/lab_creation.cfg</code>) désigne le compte cloud dont la VM passerelle est le concentrateur, le seul site doté d'une IP publique stable auquel tous les autres se connectent. <code>OVERLAY_CIDR</code> (par défaut <code>10.99.0.0/16</code>) sert uniquement aux adresses des passerelles sur le tunnel, pas au routage du trafic réel ; <code>OVERLAY_WG_PORT</code> (par défaut <code>51820</code>) est le port d'écoute du concentrateur. L'adhésion, le départ et la diffusion des routes se font automatiquement dans <code>setup_vm.py</code> ; il n'y a rien d'autre à lancer à la main.</p>
 <p><strong>Limites connues :</strong> aucune modification DNS n'est faite (un nœud est joignable par son vrai nom dès que ce nom se résout dans un sous-réseau désormais routé, pas avant) ; les nœuds déjà provisionnés d'un site ne sont pas re-routés quand un nouveau site distant arrive plus tard, seulement mis à jour lors du provisionnement de chaque nœud ; AWS exige de désactiver le « source/dest check » de la passerelle du site pour transférer le trafic (fait automatiquement), et il n'existe pas encore d'équivalent pour les 7 autres backends cloud.</p>
 <p><strong>Limites connues :</strong> AWS exige la désactivation du contrôle source/destination de sa passerelle pour relayer le trafic, ce qui est automatique, sans équivalent pour les 7 autres fournisseurs. En revanche, les nœuds déjà provisionnés d'un site <em>sont</em> re-routés quand un autre site rejoint plus tard : le concentrateur retient chaque nœud vers lequel il route, et les rafraîchit dès qu'un site arrive ou est retiré. <code>overlay_ctl.py --hub &lt;host&gt;</code> fait de même à la main, avec <code>list</code>, <code>refresh</code>, <code>retire &lt;site&gt;</code> et <code>forget &lt;node&gt;</code>. Retirer un site ôte sa passerelle du concentrateur, arrête le routage de son sous-réseau, nettoie les registres de sites, d'adresses et de nœuds, et supprime la route des nœuds de tous les autres sites ; aucune VM n'est touchée, détruire les machines d'un site étant le travail de <code>destroy_lab.py</code>.</p>
-<p><strong>DNS entre sites :</strong> tous les serveurs DNS d'un lab, le BIND de ce nœud d'automatisation comme la VM DNS de chaque compte cloud, sont maîtres de la même zone, et un enregistrement y arrive en étant écrit dans son fichier de zone. Un nœud devient donc résoluble sur les autres sites en écrivant son enregistrement dans leurs serveurs aussi : chaque site inscrit son serveur DNS auprès du concentrateur, et le provisionnement écrit l'enregistrement du nœud également dans les serveurs de tous les autres sites. Deux formes de dérive subsistent, car une écriture par enregistrement n'atteint que les serveurs alors en service : un enregistrement manqué par un site dont le serveur était arrêté, et celui d'un nœud détruit plus tard, dont la destruction n'a atteint que les serveurs connus de sa propre exécution. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt;</code> remplace la copie de la zone de chaque site par celle de ce nœud d'automatisation, celle qui porte les enregistrements de tous les sites, et corrige les deux. Cela n'est juste que lorsqu'un seul nœud d'automatisation pilote tous les sites. Si chaque site a le sien, la copie de ce nœud n'a jamais porté les enregistrements des autres sites : <code>dns_sync.py &lt;lab.json&gt;</code> compare donc chaque maître : il signale ce qui manque à chacun et ce que lui seul détient, écrit les enregistrements manquants dans chacun, et ne supprime jamais rien, car un enregistrement détenu par un seul maître a autant de chances de ne pas encore avoir été écrit dans les autres que d'y avoir été supprimé. <code>--check</code> signale sans écrire et <code>--prune</code> prend l'autre décision pour un enregistrement que vous avez lu dans le rapport. Chaque maître devient aussi maître de la zone avant qu'un enregistrement y soit écrit : un enregistrement ajouté à une zone qu'un serveur ne déclare pas, ou à un fichier sans SOA, n'était jamais servi, sans que rien ne le signale.</p>
+<p><strong>DNS entre sites :</strong> tous les serveurs DNS d'un lab, le BIND de ce nœud d'automatisation comme la VM DNS de chaque compte cloud, sont maîtres de la même zone, et un enregistrement y arrive en étant écrit dans son fichier de zone. Un nœud devient donc résoluble sur les autres sites en écrivant son enregistrement dans leurs serveurs aussi : chaque site inscrit son serveur DNS auprès du concentrateur, et le provisionnement écrit l'enregistrement du nœud également dans les serveurs de tous les autres sites. Deux formes de dérive subsistent, car une écriture par enregistrement n'atteint que les serveurs alors en service : un enregistrement manqué par un site dont le serveur était arrêté, et celui d'un nœud détruit plus tard, dont la destruction n'a atteint que les serveurs connus de sa propre exécution. <code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> corrige les deux en comparant le serveur DNS de chaque site avec celui-ci plutôt qu'en l'écrasant : la copie de ce nœud ne porte les enregistrements de tous les sites que lorsqu'il les pilote tous, et si chaque site a son propre nœud d'automatisation, remplacer leurs copies par celle-ci supprimerait justement les enregistrements qu'elle n'a jamais portés. <code>dns_sync.py &lt;lab.json&gt;</code> est la même réconciliation pour les maîtres qu'une définition de lab nomme. Tous deux signalent ce qui manque à chacun et ce que lui seul détient, écrit les enregistrements manquants dans chacun, et ne supprime jamais rien, car un enregistrement détenu par un seul maître a autant de chances de ne pas encore avoir été écrit dans les autres que d'y avoir été supprimé. <code>--check</code> signale sans écrire et <code>--prune</code> prend l'autre décision pour un enregistrement que vous avez lu dans le rapport. Chaque maître devient aussi maître de la zone avant qu'un enregistrement y soit écrit : un enregistrement ajouté à une zone qu'un serveur ne déclare pas, ou à un fichier sans SOA, n'était jamais servi, sans que rien ne le signale. Chaque maître est aussi interrogé avec <code>named-checkzone</code> pour savoir si sa copie de la zone se charge : la comparaison des enregistrements ignore l'en-tête de zone, si bien qu'un serveur dont le SOA est endommagé ou absent concorde parfaitement avec les autres tout en ne répondant à rien. Un serveur qui ne répond pas en SSH fait l'objet de nouvelles tentatives avant d'être ignoré, car la VM DNS d'un lab dans le cloud est souvent encore en train de démarrer lorsque le premier enregistrement est écrit. La zone de chaque maître va dans le répertoire que son propre named est autorisé à lire : /etc/bind sur Debian et Ubuntu, dont le profil AppArmor refuse tout autre, et /var/lib/named ailleurs. La VM DNS d'un lab dans le cloud reçoit BIND et sa politique de service au premier démarrage, puis obtient sa zone comme tout autre maître : une zone n'est donc créée qu'à un seul endroit.</p>
 <h3 id="library-loading-order">Ordre de chargement des bibliothèques</h3>
 <p>Chaque script charge la configuration dans cet ordre :</p>
 <ol>
@@ -1677,6 +1695,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Utiliser une <a href="#lab-definition-format">définition de laboratoire</a> en YAML (plutôt qu'en JSON) nécessite en plus :
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Problèmes et retours</h2>
+<p>Vous avez trouvé un bug, avez une demande de fonctionnalité, ou voulez simplement poser une question ? Utilisez <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a> :</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Ouvrir un nouveau ticket</a></strong> — pour un bug, une fonctionnalité manquante, ou des retours sur n'importe quel aspect de ce projet</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Parcourir les tickets existants</a></strong> — quelqu'un a peut-être déjà rencontré le même problème, ou il peut y avoir une solution de contournement dans la discussion</li>
+</ul>
+<p>Lors du signalement d'un bug, les informations les plus utiles à inclure sont : la commande exacte que vous avez exécutée, la définition du lab (JSON/YAML) que vous avez utilisée (secrets retirés), et la section pertinente de la sortie ou du journal. Voir <a href="#testing">Tests</a> ci-dessus pour savoir où se trouvent les journaux, et les <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">exemples</a> comme point de départ connu pour comparer.</p>
+<p>Vous avez trouvé une vulnérabilité de sécurité plutôt qu'un bug classique ? Merci de suivre <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> plutôt que d'ouvrir un ticket public.</p>
+<p align="right"><a href="#top">↑ retour en haut</a></p>
+
 <hr />
 <h2 id="author">Auteur</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

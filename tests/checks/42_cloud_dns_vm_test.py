@@ -14,6 +14,7 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import backends  # noqa: E402
+import dns_zone  # noqa: E402
 
 failures = []
 
@@ -52,22 +53,24 @@ try:
     check("runcmd is a non-empty list of shell command strings",
           isinstance(runcmd, list) and len(runcmd) > 0 and all(isinstance(c, str) for c in runcmd))
     joined = "\n".join(runcmd)
-    check("runcmd creates /var/lib/named before writing into it (real ordering, not write_files)",
-          runcmd.index("mkdir -p /var/lib/named") < next(
-              i for i, c in enumerate(runcmd) if "/var/lib/named/mydemo.lab.lan" in c))
-    check("runcmd writes the real zone file path", "/var/lib/named/mydemo.lab.lan" in joined)
-    check("runcmd writes the real named.conf.local zone stanza",
-          any('zone "mydemo.lab"' in c and "/var/lib/named/mydemo.lab.lan" in c for c in runcmd))
+    # The zone is NOT created here: this VM is one of the lab's DNS masters, so DNSService.ensure_zone() creates
+    # it over SSH once the VM is up, the same way it does for every other master. One zone-creation path.
+    check("runcmd does not write the zone file, which ensure_zone() does over SSH",
+          "mydemo.lab.lan" not in joined)
+    check("...nor the zone stanza", not any('zone "mydemo.lab"' in c for c in runcmd))
+    check("runcmd creates the zone directory its own named may read, from the one shared table",
+          any('mkdir -p "$ZONE_DIR"' in c for c in runcmd))
+    check("the directory is chosen per family: /etc/bind on Debian and Ubuntu, /var/lib/named elsewhere",
+          any("ZONE_DIR={}".format(dns_zone.ZONE_DIR_DEBIAN) in c
+              and "ZONE_DIR={}".format(dns_zone.ZONE_DIR_DEFAULT) in c for c in runcmd))
     check("runcmd does NOT create a bind9.service -> named.service alias symlink, since Ubuntu's "
           "bind9 package already ships a working named.service, which the symlink would shadow",
           not any("ln -sf" in c and "named.service" in c for c in runcmd))
-    check("runcmd writes an AppArmor local override for /var/lib/named, since Ubuntu's "
-          "usr.sbin.named profile only allows /var/lib/bind/**",
-          any("/etc/apparmor.d/local/usr.sbin.named" in c and "/var/lib/named/** rw," in c for c in runcmd))
-    check("runcmd reloads the AppArmor profile after writing the override, before starting named",
-          runcmd.index(next(c for c in runcmd if "/etc/apparmor.d/local/usr.sbin.named" in c))
-          < runcmd.index(next(c for c in runcmd if "apparmor_parser -r" in c))
-          < next(i for i, c in enumerate(runcmd) if c.startswith("systemctl enable --now named")))
+    # Using each distribution's own permitted directory is what removes the need to rewrite its AppArmor profile
+    # or relabel for SELinux: a zone under /etc/bind is already readable by Debian's confined named.
+    check("runcmd no longer rewrites the AppArmor profile",
+          not any("apparmor" in c.lower() for c in runcmd))
+    check("...nor relabels for SELinux", not any("named_zone_t" in c for c in runcmd))
     check("runcmd enables and starts named (no alias needed) at the end",
           runcmd[-2].startswith("systemctl enable --now named"))
     detect = runcmd[0]
@@ -76,8 +79,9 @@ try:
           and "zypper --non-interactive install bind" in detect and "dnf install -y bind" in detect)
     check("cloud-config installs no package itself: the package name differs per OS family",
           "packages" not in parsed)
-    check("non-Debian families include the zone stanza from /etc/named.conf",
-          any('include "/etc/named.lab.conf";' in c for c in runcmd))
+    check("the include of this project's own zone file is not written here either, since the file it would "
+          "include is written by ensure_zone() over SSH",
+          not any("include \"/etc/named.lab.conf\";" in c for c in runcmd))
     check("the server answers on every address, and recursion stays with the lab's own networks",
           any("listen-on port 53 { any; };" in c and "allow-recursion {" in c and "localnets;" in c
               for c in runcmd))
@@ -381,6 +385,19 @@ class _NoSubnet:
 
 check("a backend that cannot say what its subnet is still gets the private ranges",
       len(backends.dns_recursion_networks(_NoSubnet())) >= 4)
+
+# ── cloud_dns_vm_name(): the one place the DNS VM's name is formed ──────────
+class _Acct(object):
+    def __init__(self, account):
+        self.account = account
+
+
+check("cloud_dns_vm_name(): no account gives 'lab-dns-<backend>'",
+      backends.cloud_dns_vm_name(object(), "aws") == "lab-dns-aws")
+check("cloud_dns_vm_name(): the 'default' account keeps the plain name",
+      backends.cloud_dns_vm_name(_Acct("default"), "aws") == "lab-dns-aws")
+check("cloud_dns_vm_name(): a named account gets its own DNS VM",
+      backends.cloud_dns_vm_name(_Acct("aws-tmm"), "aws") == "lab-dns-aws-aws-tmm")
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

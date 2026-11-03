@@ -63,7 +63,9 @@ def kubectl_binary_script(version: str = KUBECTL_VERSION) -> str:
     ).format(v=version)
 
 
-def _read_os_release() -> Dict[str, str]:
+def read_os_release() -> Dict[str, str]:
+    """This host's /etc/os-release as a dict, empty when it cannot be read. The local counterpart of
+    lab_creation.detect_os(), which reads a remote host's over SSH."""
     info = {}
     try:
         for line in Path("/etc/os-release").read_text().splitlines():
@@ -436,7 +438,7 @@ def _family(os_id: str, os_like: str) -> Optional[str]:
 
 def detect_profile() -> Optional[HostOSProfile]:
     """Instantiate the profile for this host's /etc/os-release, or None for an unsupported OS."""
-    os_info = _read_os_release()
+    os_info = read_os_release()
     os_id = os_info.get("ID", "")
     major = os_info.get("VERSION_ID", "").split(".")[0]
     family = _family(os_id, os_info.get("ID_LIKE", "").lower())

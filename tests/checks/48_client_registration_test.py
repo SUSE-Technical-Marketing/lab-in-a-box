@@ -170,6 +170,31 @@ class _FakeSc:
     def ensure_client_registered(self, *a, **kw):
         self.calls.append(("ensure_client_registered", a, kw))
 
+    def forever_retry_log_path(self, key):
+        self.calls.append(("forever_retry_log_path", key))
+        return "/fake/log/path/for/{}.log".format(key)
+
+    def system_is_registered(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_is_registered", vm_name))
+        return self._registered.get(vm_name, True) if hasattr(self, "_registered") else True
+
+    def run_forever_retry_worker(self, key, attempt, retry_delay=60, heartbeat_interval=1800, verify=None):
+        # A small, local stand-in for the real forever loop (its own correctness — heartbeats, pid
+        # files, crash-proofing — is covered end to end in 09_spacecmd_common_test.py). This exists only
+        # to exercise WHAT _retry_until_registered() hands it: the right key, the right attempt() closure
+        # (does it really call ensure_spacecmd_config/wait_for_channels_synced/_register_now in order),
+        # and the right verify() closure (does a verify() that rejects actually keep it retrying).
+        self.calls.append(("run_forever_retry_worker:key", key))
+        while True:
+            try:
+                attempt()
+            except SystemExit:
+                continue
+            except Exception:  # noqa: BLE001 — matches the real loop's own deliberately broad catch
+                continue
+            if verify is None or verify():
+                return
+
 
 launch_calls = []
 icr._launch_background_retry = lambda json_file, vm_name: launch_calls.append((json_file, vm_name))
@@ -275,20 +300,28 @@ check("register_client(): dies with a clear message if asked to background-retry
       died)
 
 
-# ── _retry_until_registered(): the background worker's own retry-forever loop ──
-icr.time.sleep = lambda s: None  # no real waiting in tests
+# ── _retry_until_registered(): delegates the actual forever-retry loop to the shared mechanism ──
+# (libs/spacecmd_common.py's run_forever_retry_worker() — its own retry/heartbeat/crash-proofing
+# correctness is covered end to end in 09_spacecmd_common_test.py). What belongs here is whether THIS
+# function hands it the right key and the right attempt()/verify() closures.
 
-# Succeeds on the very first attempt.
+# Succeeds on the very first attempt, and verify() (system_is_registered) agrees.
 fake_sc5 = _FakeSc()
 icr.sc = fake_sc5
 icr._retry_until_registered("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-key",
 })
-check("_retry_until_registered(): a clean first attempt registers and returns (no retry loop)",
+check("_retry_until_registered(): hands the forever-retry mechanism a key scoped to this exact node",
+      ("run_forever_retry_worker:key", "client_registration:mercury.mydemo.lab") in fake_sc5.calls)
+check("_retry_until_registered(): a clean attempt registers (ensure_client_registered called)",
       sum(1 for c in fake_sc5.calls if c[0] == "ensure_client_registered") == 1)
+check("_retry_until_registered(): verify() really calls system_is_registered for this exact node",
+      ("system_is_registered", "mercury.mydemo.lab") in fake_sc5.calls)
 
-# Fails twice (once via SystemExit/die(), once via a plain exception), then succeeds on the third try.
+# Fails twice (once via SystemExit/die(), once via a plain exception), then succeeds on the third try —
+# exercising that attempt() really is the ensure_spacecmd_config/wait_for_channels_synced/
+# _register_now sequence, re-run whole on each pass, not something that only runs once.
 attempt_count = [0]
 
 
@@ -312,6 +345,31 @@ check("_retry_until_registered(): survives a SystemExit (die()) from one attempt
       attempt_count[0] == 3)
 check("_retry_until_registered(): survives a plain exception too, and eventually succeeds",
       any(c[0] == "ensure_client_registered" for c in fake_sc6.calls))
+
+# verify() rejecting even though attempt() itself raised nothing must still keep it retrying — the fix
+# for a real failure mode found live: a registration call returning cleanly while the server's own
+# system list still showed nothing registered.
+_reg_calls = [0]
+
+
+class _ScVerifyLagsBehind(_FakeSc):
+    def ensure_client_registered(self, *a, **kw):
+        _reg_calls[0] += 1
+        self.calls.append(("ensure_client_registered", a, kw))
+
+    def system_is_registered(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_is_registered", vm_name))
+        return _reg_calls[0] >= 3  # only "really" shows up on the server after the 3rd attempt
+
+
+fake_sc7 = _ScVerifyLagsBehind()
+icr.sc = fake_sc7
+icr._retry_until_registered("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+})
+check("_retry_until_registered(): a clean ensure_client_registered() is not enough on its own — keeps "
+      "retrying until system_is_registered() actually agrees too", _reg_calls[0] == 3)
 
 
 if failures:

@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -38,6 +39,8 @@ import lab_creation as lc  # noqa: E402
 import k8s  # noqa: E402
 import targets  # noqa: E402
 import apps  # noqa: E402
+import qr_util  # noqa: E402
+import spacecmd_common as sc  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
@@ -58,7 +61,10 @@ Options:
             Without this flag (default) every VM is destroyed and recreated.
   --debug   Stream the full output of every command that is run. Without it
             (default) only lab-in-a-box's own messages are shown; a command's
-            output is still shown if it fails or emits a warning/error.
+            output is still shown if it fails or emits a warning/error. Always
+            on, regardless of this flag, when LAB_STATUS_JOB/LAB_STATUS_TOKEN
+            are set in the environment (a run launched behind the webui's
+            live status page) — see _debug_wanted().
   --parallel[=N]
             Create up to N VMs at once instead of one at a time (default
             without this flag: strictly sequential). Bare --parallel uses a
@@ -123,6 +129,14 @@ class _RunReport:
                 or any(s == "FAILED" for _, s in self.clusters)
                 or any(s.startswith("FAILED") for _, _, s in self.addons))
 
+    @property
+    def pending(self):
+        """True when some addon handed off to a background forever-retry worker instead of actually
+        finishing (status "pending" — see _run_addon()'s caller). Distinct from `failed`: nothing is
+        broken, but the lab is not fully usable yet either, so the final banner must not claim
+        "everything OK" while this is true."""
+        return any(s == "pending" for _, _, s in self.addons)
+
 
 # Module-level: reset at the top of every setup_lab() run. The phase
 # functions append to this as they go; main() reads .failed for its exit code.
@@ -132,11 +146,44 @@ _report = _RunReport()
 _RULE = "═" * 64
 
 
-def print_summary():
+def _node_access_lines(definition):
+    """
+    One line per node in `definition`: its current IP (resolved via DNS — the one address source that
+    works the same way regardless of backend, since add_to_dns() records it there for every node once
+    created) and an ssh command, with a password ONLY when one is explicitly configured (node-level or
+    common VM_ROOT_PASS) — never guessed. A node whose IP doesn't resolve yet (not created, or DNS hasn't
+    propagated) says so instead of showing a stale or made-up address.
+    """
+    import socket
+    common = (definition or {}).get("common", {}) or {}
+    lines = []
+    for name, cfg in sorted(((definition or {}).get("nodes", {}) or {}).items()):
+        cfg = cfg or {}
+        try:
+            ip = socket.gethostbyname(name)
+        except OSError:
+            ip = None
+        pw = cfg.get("VM_ROOT_PASS") or common.get("VM_ROOT_PASS")
+        if ip:
+            line = "  {} — {}ssh root@{}{}".format(name, lc._WHITE, ip, lc._RESET)
+            line += " (password: {})".format(pw) if pw else ""
+        else:
+            line = "  {} — IP not resolvable yet (DNS not propagated, or not created)".format(name)
+        lines.append(line)
+    if not any(cfg.get("VM_ROOT_PASS") or common.get("VM_ROOT_PASS") for cfg in
+               (definition or {}).get("nodes", {}).values()):
+        lines.append("  (no plaintext password is configured for any node — see ROOT_PWD_HASH/"
+                      "ROOT_SSH_KEY in lab_creation.cfg, or this lab's own VM_ROOT_PASS, for how to log in)")
+    return lines
+
+
+def print_summary(definition=None):
     """Print a simple end-of-run summary of _report, grouped by outcome, with
     anything that FAILED in red so it stands out. Set apart from the execution
     log above by a full-width rule. Called once at the end of setup_lab() (and
-    by main() if a preflight check aborts the run early)."""
+    by main() if a preflight check aborts the run early). `definition`, when
+    given, adds an Access section with each node's current IP and how to log in —
+    omitted (not guessed) when not given, e.g. a preflight abort before it's loaded."""
     r = _report
     print("\n\n{}{}\n  LAB SUMMARY\n{}{}".format(lc._WHITE, _RULE, _RULE, lc._RESET))
 
@@ -181,8 +228,13 @@ def print_summary():
             g.setdefault(status, []).append("{} ({})".format(name, scope))
         print("Addons ({}):".format(len(r.addons)))
         for status in sorted(g):
-            col = lc._GREEN if status == "ok" else lc._RED
+            col = lc._GREEN if status == "ok" else (lc._ORANGE if status == "pending" else lc._RED)
             print("  {}{:<16}{} {}".format(col, status, lc._RESET, ", ".join(g[status])))
+
+    if definition is not None and (definition.get("nodes") or {}):
+        print("Access:")
+        for line in _node_access_lines(definition):
+            print(line)
 
     if r.warnings:
         print("{}Warnings ({}):{}".format(lc._ORANGE, len(r.warnings), lc._RESET))
@@ -194,16 +246,61 @@ def print_summary():
         for e in r.errors:
             print("  {}•{} {}".format(lc._RED, lc._RESET, e))
 
+    url = _status_page_url()
+    if url:
+        print("\nLive status page (share the link or QR code — no login needed, only whoever holds this "
+              "exact link can open it, and only over HTTPS):")
+        print("  " + url)
+        art = qr_util.render_ascii(url)
+        if art:
+            print(art)
+
     print("")
     if r.failed:
         print("{}✗ Lab setup finished WITH FAILURES{} — see the Errors list and the entries "
               "marked FAILED above for what to fix.".format(lc._RED, lc._RESET))
+    elif r.pending:
+        print("{}… Lab setup finished, but it is NOT fully usable yet{} — one or more addons are still "
+              "waiting on a background retry (see the "
+              "\"pending\" entries above and their own log under /var/log/lab-in-a-box/forever-retry/). "
+              "This is normal for a fresh deploy (SMLM channel sync can take hours); check back on the "
+              "live status page.".format(lc._ORANGE, lc._RESET))
     elif r.warnings:
         print("{}✓ Lab setup finished — OK, with {} warning(s){} (see the Warnings list above).".format(
             lc._GREEN, len(r.warnings), lc._RESET))
     else:
         print("{}✓ Lab setup finished — everything OK{}.".format(lc._GREEN, lc._RESET))
     print("{}{}{}".format(lc._WHITE, _RULE, lc._RESET))
+
+
+def _debug_wanted(args):
+    """
+    True when addon output should stream live (lc.set_debug()'s argument): either --debug was passed, or
+    this run was launched behind the live status page (LAB_STATUS_JOB/LAB_STATUS_TOKEN — see
+    lab_builder_helper.py's lab-create). The latter always streams, regardless of --debug: someone is
+    actively watching that page, and _run_addon()'s normal quiet-by-default capture means the page would
+    otherwise show nothing new for the entire length of a long addon (confirmed live 2026-11-03 —
+    install_smlm ran 45+ minutes with zero new log lines while real work was happening). A bare CLI run
+    with neither set keeps the original quiet default untouched.
+    """
+    return "--debug" in args or bool(os.environ.get("LAB_STATUS_JOB") and os.environ.get("LAB_STATUS_TOKEN"))
+
+
+def _status_page_url():
+    """
+    The public live-status page for this run, or None when there isn't one.
+
+    Only set when this run was launched as a lab-builder-helper job (LAB_STATUS_JOB/LAB_STATUS_TOKEN in
+    the environment — see scripts/lab_builder_helper.py's lab_create()); a bare CLI run has no such page
+    to point to. The job id and token are already URL-safe (job: NAME_RE in lab_builder_helper.py; token:
+    secrets.token_urlsafe()), so no extra quoting is needed.
+    """
+    job = os.environ.get("LAB_STATUS_JOB")
+    token = os.environ.get("LAB_STATUS_TOKEN")
+    if not job or not token:
+        return None
+    import socket
+    return "https://{}/lab-builder/status.html?job={}&token={}".format(socket.getfqdn(), job, token)
 
 
 def _lab_resources(definition):
@@ -214,6 +311,21 @@ def _lab_resources(definition):
     except Exception:
         cpu, mem, disk = 0, 0, 0
     return (cpu, mem, disk, len(definition.get("nodes", {}) or {}))
+
+
+def _addon_status(rc, started_at):
+    """
+    "ok", "pending" or "FAILED (exit N)" for an addon that exited `rc`, launched at `started_at`
+    (time.time()-style, taken right before running it). "pending" — a real status distinct from both —
+    is when the addon exited 0 but, while it ran, handed some step off to a background forever-retry
+    worker instead of actually finishing (sc.forever_retry_handoff_since()); print_summary() colors it
+    orange and the final banner stops short of claiming "everything OK" when any addon is in this state.
+    """
+    if rc != 0:
+        return "FAILED (exit {})".format(rc)
+    if sc.forever_retry_handoff_since(started_at):
+        return "pending"
+    return "ok"
 
 
 def _run_addon(cmd, env):
@@ -596,13 +708,12 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         # invocation in setup_lab.sh) — a failing addon does not stop the
         # pipeline. Matched exactly: run it, move on — but record the exit
         # code so the end-of-run summary can flag an addon that failed.
+        started_at = time.time()
         r = _run_addon([installer, json_file], env)
         installed.add(addon)
         rc = getattr(r, "returncode", 0)
-        if rc == 0:
-            _report.add_addon("cluster:{}".format(clu_name), addon, "ok")
-        else:
-            _report.add_addon("cluster:{}".format(clu_name), addon, "FAILED (exit {})".format(rc))
+        _report.add_addon("cluster:{}".format(clu_name), addon, _addon_status(rc, started_at))
+        if rc != 0:
             msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
             lc.error(msg)
             _report.add_error(msg)
@@ -695,12 +806,11 @@ def phase_vm_addons(definition, json_file):
             # Same as the cluster-addon loop: bash never checks this call's
             # exit code either, so a failing addon must not stop the pipeline —
             # but record it for the end-of-run summary.
+            started_at = time.time()
             r = _run_addon([installer, json_file], env)
             rc = getattr(r, "returncode", 0)
-            if rc == 0:
-                _report.add_addon("node:{}".format(vm_name), addon, "ok")
-            else:
-                _report.add_addon("node:{}".format(vm_name), addon, "FAILED (exit {})".format(rc))
+            _report.add_addon("node:{}".format(vm_name), addon, _addon_status(rc, started_at))
+            if rc != 0:
                 msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
                 lc.error(msg)
                 _report.add_error(msg)
@@ -751,7 +861,7 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
     phase_post_commands(definition)
 
     lc.log("LAB setup completed")
-    print_summary()
+    print_summary(definition)
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -790,7 +900,7 @@ def main():
         sys.exit(subprocess.run(["lab_schema", "--base", fmt]).returncode)
 
     keep = "--keep" in args
-    debug = "--debug" in args
+    debug = _debug_wanted(args)
     lc.set_debug(debug)
 
     # --parallel / --parallel=N: bare form defaults to 4 concurrent workers.
@@ -851,13 +961,13 @@ def main():
                                     vm_img_loc=vm_img_loc, issues_out=preflight_issues)
     _fold_issues_into_report(preflight_issues)
     if not ok:
-        print_summary()
+        print_summary(definition)
         sys.exit(1)
 
     addon_issues = []
     if not validate_addon_configs(definition, json_file, issues_out=addon_issues):
         _fold_issues_into_report(addon_issues)
-        print_summary()
+        print_summary(definition)
         sys.exit(1)
 
     setup_lab(definition, config, defaults, json_file, keep=keep, fresh=False, parallel=parallel)

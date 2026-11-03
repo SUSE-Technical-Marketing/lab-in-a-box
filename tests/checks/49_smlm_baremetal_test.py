@@ -528,7 +528,8 @@ ism.primary.load_definition = lambda path: podman_definition
 ism.primary.load_config = lambda: {"VIRT_SRV": "hypervisor1"}
 
 podman_calls = []
-ism.setup_smlm_podman = lambda vm_name, virt_srv, cfg: podman_calls.append((vm_name, virt_srv))
+ism.setup_smlm_podman = lambda vm_name, virt_srv, cfg, json_file=None, only_step=None: podman_calls.append(
+    (vm_name, virt_srv))
 
 k8s_setup_touched = []
 ism.setup_helm = lambda *a, **k: k8s_setup_touched.append("setup_helm")

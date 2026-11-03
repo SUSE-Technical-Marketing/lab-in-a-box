@@ -572,60 +572,36 @@ check("every site's server is listed",
 check("a site's own server is left out when it asks, since the local write already reached it",
       overlay.list_dns_servers("hub", exclude_site="home") == [("aws-tmm", "10.0.0.53")])
 
-# ── the whole zone, for the drift per-record writes cannot fix ────────────
+# ── which servers a reconciliation reaches, which is all the overlay decides ──
 reset()
 scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
                    FakeResult(stdout="home 192.168.88.73\naws-tmm 10.0.0.53\n")}
-with tempfile.TemporaryDirectory() as zone_dir:
-    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\nn1         IN  A       192.168.88.5\n")
-    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
-check("the zone reaches every registered site", (synced, failed) == (2, 0))
-pushed = [(host, body) for host, cmd, body in calls if "cat > " in cmd and body and "IN  A" in body]
-check("the file is replaced, not appended to",
-      pushed and all("cat > /var/lib/named/mydemo.lab.lan" in cmd
-                     for _h, cmd, body in calls if body and "IN  A" in body))
-check("it goes to both servers", sorted(host for host, _b in pushed) == ["10.0.0.53", "192.168.88.73"])
-check("named is reloaded where it landed",
-      any("reload named" in cmd for host, cmd, _b in calls if host == "10.0.0.53"))
+with mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
+    servers = overlay.dns_servers("hub", "mydemo.lab")
+check("every registered site's DNS server is a master to reconcile",
+      servers == [("home", "192.168.88.73"), ("aws-tmm", "10.0.0.53")])
+check("...named with its site, so the command can say which server it compared",
+      all(isinstance(entry, tuple) and len(entry) == 2 for entry in servers))
+
+# This node is a master of the zone itself, reached as the local server rather than over SSH, so listing it as a
+# remote one would have it compared against itself.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="home 192.168.88.73\naws 10.0.0.53\n")}
+with mock.patch.object(overlay.ipalloc, "local_ips", return_value={"192.168.88.73"}):
+    servers = overlay.dns_servers("hub", "mydemo.lab")
+check("a site served by this automation node itself is left out", servers == [("aws", "10.0.0.53")])
+check("nothing is written while deciding who the masters are",
+      not any(body for _h, _c, body in calls if body))
 
 reset()
-scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
-scripted["10.0.0.53"] = {"cat > ": FakeResult(returncode=255)}
-with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
-    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
-    check("a site that cannot be written to is counted, not fatal",
-          overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir) == (0, 1))
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="")}
+with mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
+    check("a hub with no registered server leaves nothing to compare against",
+          overlay.dns_servers("hub", "mydemo.lab") == [])
 
-# A zone file nothing reloads is a zone nobody serves. Confirmed live on 2026-10-17: a cloud DNS VM with no BIND
-# installed at all took the file, and the push was reported as a success.
-reset()
-scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="aws 10.0.0.53\n")}
-scripted["10.0.0.53"] = {"systemctl": FakeResult(returncode=1)}
-with tempfile.TemporaryDirectory() as zone_dir, mock.patch.object(overlay.ipalloc, "local_ips", return_value=set()):
-    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
-    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
-check("a server that took the zone but cannot reload it is a failure, not a success", (synced, failed) == (0, 1))
-check("both unit names are tried, since Debian calls it bind9",
-      any("reload named" in cmd and "bind9" in cmd for _h, cmd, _b in calls))
-
-# This node is where the zone comes from, so pushing it to itself would only rewrite the file with its own content.
-reset()
-scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73\naws 10.0.0.53\n")}
-with tempfile.TemporaryDirectory() as zone_dir, \
-     mock.patch.object(overlay.ipalloc, "local_ips", return_value={"192.168.88.73"}):
-    Path(zone_dir, "mydemo.lab.lan").write_text("$TTL 300\n")
-    synced, failed = overlay.sync_zone_to_sites("hub", "mydemo.lab", zone_dir=zone_dir)
-check("a site served by this automation node itself is skipped", (synced, failed) == (1, 0))
-check("...and nothing was written to its own address",
-      not any(host == "192.168.88.73" and body for host, _c, body in calls))
-
-reset()
-with tempfile.TemporaryDirectory() as zone_dir:
-    try:
-        overlay.sync_zone_to_sites("hub", "absent.lab", zone_dir=zone_dir)
-        check("pushing a zone this node does not have is an error", False)
-    except SystemExit:
-        pass
+check("the zone is no longer replaced from this node, since its copy holds every site's records only where it "
+      "drives every site", not hasattr(overlay, "sync_zone_to_sites"))
 
 # A retired site stops receiving records, which is the same cleanup as its routes.
 reset()
@@ -648,7 +624,16 @@ check("...and writes the node's record into the other sites' servers",
 check("a libvirt or harvester site is served by this automation node's own BIND",
       'site_dns_server = env.get("mydns", "")' in setup_vm_source)
 ctl = (_REPO / "scripts" / "overlay_ctl.py").read_text()
-check("the command can push the zone", "dns-sync" in ctl and "sync_zone_to_sites" in ctl)
+check("the command reconciles the sites' DNS servers",
+      "dns-sync" in ctl and "overlay.dns_servers(" in ctl)
+check("...by comparing what each one answers, not by overwriting it from this node",
+      "service.sync_zone(" in ctl and "cat > " not in ctl)
+check("...reporting only when asked, and removing only when asked",
+      "service.report_zone(" in ctl and "service.prune_zone(" in ctl)
+check("--check and --prune are rejected together, since they ask for opposite things",
+      "--check and --prune ask for opposite things" in ctl)
+check("the reverse zone can be compared too, so PTR drift is not invisible",
+      "mynet_reverse" in ctl)
 
 
 if failures:

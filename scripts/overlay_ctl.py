@@ -13,15 +13,24 @@ nobody can do automatically, because they are about a site whose lab is already 
     overlay_ctl.py --hub <host> retire <site>     take a site out: its peer, the hub's route for its subnet, its
                                                   lines in every registry, and the routes other sites' nodes hold
     overlay_ctl.py --hub <host> forget <node>     drop one node from the hub's node list
-    overlay_ctl.py --hub <host> dns-sync <domain> replace every site's copy of <domain>'s zone with this
-                                                  automation node's own, which is the one that holds every site's
-                                                  records
+    overlay_ctl.py --hub <host> dns-sync <domain> [<reverse>] [--check|--prune]
+                                                  compare what every site's DNS server answers for <domain> with
+                                                  what this node answers, and write each one the records it is
+                                                  missing. <reverse> ("88.168.192") compares the reverse zone too.
+                                                  --check reports and writes nothing; --prune also removes a
+                                                  record a single server holds alone
 
 <host> is the hub's gateway VM, the one OVERLAY_HUB_ACCOUNT names ("lab-overlay-gw-<backend>[-<account>]"), by name
 or address. It is given rather than looked up, so this never creates a hub that is not there.
 
 The hub is shared with every lab that uses the overlay, so `retire` prints what it is about to do and asks, unless
 --yes is given. Nothing here touches a VM: destroying a site's machines is destroy_lab.py's work.
+
+`dns-sync` compares the DNS servers rather than overwriting them from this node, because this node's copy holds
+every site's records only where it drives every site. It adds and never removes, so --prune is the only way a
+record is deleted. dns_sync.py is the same reconciliation for one lab definition, which states the domain and the
+reverse zone itself; this is the way in for an overlay, whose DNS servers the hub knows and a lab definition does
+not.
 """
 
 __version__ = "__LABVERSION__"
@@ -36,13 +45,14 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import overlay  # noqa: E402
 import primary  # noqa: E402
 from lab_creation import log, die  # noqa: E402
+from services import DNSService  # noqa: E402
 
 USAGE = (
     "Usage: overlay_ctl.py --hub <host> list\n"
     "       overlay_ctl.py --hub <host> refresh [<site>]\n"
     "       overlay_ctl.py --hub <host> retire <site> [--yes]\n"
     "       overlay_ctl.py --hub <host> forget <node>\n"
-    "       overlay_ctl.py --hub <host> dns-sync <domain>\n"
+    "       overlay_ctl.py --hub <host> dns-sync <domain> [<reverse>] [--check|--prune]\n"
 )
 
 
@@ -76,21 +86,43 @@ def cmd_refresh(hub, site=None):
     return 1 if unreachable else 0
 
 
-def cmd_dns_sync(hub, mydomain):
+def cmd_dns_sync(hub, mydomain, mynet_reverse="", check_only=False, prune=False):
     """
-    Push this automation node's zone for `mydomain` to every site's DNS server.
+    Compare what every site's DNS server answers for `mydomain` with what this node answers, and write each one
+    the records it is missing. `mynet_reverse` ("88.168.192") compares the reverse zone too.
 
-    A record written while a site's server was down never reached it, and a node destroyed later was only removed
-    from the servers its own teardown knew about. Both are drift in one direction: the site's copy is wrong and this
-    node's is right, so the fix is to replace the file rather than to append to it.
+    Each site's server and this node are masters of the same zone, and a record reaches one by being written into
+    its own zone file, with no transfer between them. A per-record write only reaches the servers that were up at
+    the time, so one that was down stays behind and nothing notices.
 
-    That holds only where this automation node drives every site, and so holds every record. Where each site has
-    its own automation node, this node's copy never held the other sites' records and replacing theirs with it
-    would delete them: dns_sync.py compares the masters instead, and is the one to use there.
+    The servers are compared rather than overwritten from this node, because this node's copy holds every site's
+    records only where it drives every site: where each site has its own automation node, replacing their copies
+    with this one would delete the records it never held. Records are therefore added and never removed, and a
+    record one server holds alone is reported, since it is as likely to be one the others have not been written
+    yet as one deleted from them. `prune` takes that decision for a record read in the report.
+
+    dns_sync.py does the same for one lab definition, which states the domain and the reverse zone itself; this is
+    the way in for an overlay, whose servers the hub knows and a lab definition does not.
     """
-    synced, failed = overlay.sync_zone_to_sites(hub, mydomain)
-    print("Pushed the '{}' zone to {} site(s); {} failed".format(mydomain, synced, failed))
-    return 1 if failed else 0
+    sites = overlay.dns_servers(hub, mydomain)
+    if not sites:
+        log("- The overlay hub registers no other site's DNS server for '{}': there is nothing to compare "
+            "against".format(mydomain))
+    for site_name, dns_ip in sites:
+        log("- Site '{}' serves '{}' from {}".format(site_name, mydomain, dns_ip))
+    servers = [dns_ip for _site, dns_ip in sites]
+
+    service = DNSService()
+    if check_only:
+        messages = service.report_zone(mydomain, mynet_reverse, remote_dns_servers=servers)
+    else:
+        messages = service.sync_zone(mydomain, mynet_reverse, remote_dns_servers=servers)
+        if prune:
+            messages += service.prune_zone(mydomain, mynet_reverse, remote_dns_servers=servers)
+    if not messages:
+        log("Every DNS server of '{}' loads its zones and holds the same records".format(mydomain))
+        return 0
+    return 1
 
 
 def cmd_retire(hub, site, assume_yes):
@@ -126,6 +158,14 @@ def main():
         if flag in args:
             assume_yes = True
             args.remove(flag)
+    check_only = "--check" in args
+    prune = "--prune" in args
+    for flag in ("--check", "--prune"):
+        while flag in args:
+            args.remove(flag)
+    if check_only and prune:
+        print(USAGE, file=sys.stderr)
+        die("--check and --prune ask for opposite things")
     if "--hub" not in args:
         print(USAGE, file=sys.stderr)
         die("--hub <host> is required: the overlay hub's own gateway VM")
@@ -149,7 +189,8 @@ def main():
     if action == "dns-sync":
         if not rest:
             die("dns-sync needs the domain, e.g. mydemo.lab")
-        return cmd_dns_sync(hub, rest[0])
+        return cmd_dns_sync(hub, rest[0], rest[1] if len(rest) > 1 else "",
+                            check_only=check_only, prune=prune)
     if action == "forget":
         if not rest:
             die("forget needs the node name")

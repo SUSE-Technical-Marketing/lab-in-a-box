@@ -2074,6 +2074,7 @@ async function openCreate() {
   $("#createGo").hidden = false;
   $("#createPass").value = "";
   $("#createMsg").hidden = true;
+  $("#jobStatusLink").hidden = true;
   showDialog("#createDialog");
 
   // A lab already being created cannot be started again, and the server says so only after the password has been
@@ -2085,6 +2086,10 @@ async function openCreate() {
       $("#createConfirm").hidden = true;
       $("#createGo").hidden = true;
       $("#createJob").hidden = false;
+      // job_state() rebuilds status_url/qr_svg from the job's own stored token whenever one exists, so
+      // reopening Create for an already-running job shows the same link/QR as the original create did,
+      // not just on that one first call.
+      showStatusLink(running.status_url, running.qr_svg);
       watchJob(running.job || running.id);
     }
   } catch (e) { /* the jobs list is a courtesy here: startCreate() reports anything that matters */ }
@@ -2103,6 +2108,7 @@ async function startCreate() {
     $("#createConfirm").hidden = true;
     $("#createGo").hidden = true;
     $("#createJob").hidden = false;
+    showStatusLink(r.status_url, r.qr_svg);
     watchJob(r.job);
   } catch (e) {
     // In the dialog, where the reader is looking, as well as in a toast: a failure here is the end of what they
@@ -2112,6 +2118,18 @@ async function startCreate() {
     msg.hidden = false;
     toastError("The lab was not started: " + e.message);
   }
+}
+
+// Shows the public status link + QR code: from "create"'s own answer the first time, or rebuilt by
+// job_state() from the job's own stored token when openCreate() resumes an already-running job (see
+// lab_builder_helper.py's job_state()) — either way just whatever url/qrSvg the caller already has.
+function showStatusLink(url, qrSvg) {
+  const box = $("#jobStatusLink");
+  if (!url) { box.hidden = true; return; }
+  $("#jobStatusUrl").href = url;
+  $("#jobStatusUrl").textContent = url;
+  $("#jobStatusQr").innerHTML = qrSvg || "";
+  box.hidden = false;
 }
 
 // Polls job `id` every 3 s and shows its state and log until it ends.
@@ -2125,7 +2143,7 @@ async function watchJob(id) {
     st.className = "job-state " + j.state;
     const log = $("#jobLog");
     const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-    log.textContent = j.log || "";
+    log.innerHTML = ansiToHtml(j.log || "");
     if (atEnd) log.scrollTop = log.scrollHeight;
     if (j.state === "running") watchJob._t = setTimeout(() => watchJob(id), 3000);
   } catch (e) { $("#jobState").textContent = "Cannot read the job: " + e.message; }

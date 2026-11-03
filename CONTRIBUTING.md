@@ -174,6 +174,16 @@ feedback than waiting on the full container run.
 > vendor renaming its images passes every one of them and fails only in a real
 > lab. It exits 0 and checks nothing when no credentials are configured.
 
+> [!TIP]
+> If your change touches how a DNS zone is written to another server
+> (`libs/services.py`'s `server` arguments, `libs/dns_zone.py`), run
+> `scripts/check_dns_masters.py <disposable server>` against a throwaway VM
+> running BIND. The container checks fake every zone file, so they prove the
+> shape of a zone and never that a given distribution's named will read it: a
+> zone under `/var/lib/named` is denied by AppArmor on Debian and Ubuntu and
+> passed every container check. It never touches this host's own BIND, and
+> prints its help and exits 0 with no server given.
+
 ## Commit messages
 
 Short, imperative, factual: `Add X`, `Fix Y`, `Retire Z`. Explain *why* in
