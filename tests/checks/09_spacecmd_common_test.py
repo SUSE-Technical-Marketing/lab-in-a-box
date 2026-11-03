@@ -2211,22 +2211,33 @@ check("ensure_client_registered: ACTIVATION_KEYS is set on the bootstrap command
 check("ensure_client_registered: REACTIVATION_KEY is passed through when given",
       bootstrap_cmd is not None and "REACTIVATION_KEY=react-1" in bootstrap_cmd)
 
-# Bootstrap script itself fails -> dies immediately, no polling.
+# Bootstrap script itself fails -> dies immediately, no polling. Its own real output (e.g. a package
+# manager error, found live 2026-11-03: "no package provides salt" from a not-yet-populated bootstrap
+# repo) must reach the die() message — previously only the bare return code did, so every such failure
+# looked identical and the real cause could only be found by re-running the command by hand.
 def _bootstrap_fails(hostname, cmd, **kwargs):
     if "saltkey.acceptedList" in cmd:
         return FakeResult(stdout="[]")
     if "curl -Sks" in cmd:
-        return FakeResult(returncode=1)
+        return FakeResult(returncode=1, stdout="installing...\n", stderr="ERROR: Failed to install all "
+                           "missing packages.\nno package provides salt\n")
     return FakeResult()
 
 
+import contextlib as _contextlib2  # noqa: E402
+import io as _io2  # noqa: E402
+
 sc.ssh_run = _bootstrap_fails
 died = False
-try:
-    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
-except SystemExit:
-    died = True
+_died_buf = _io2.StringIO()
+with _contextlib2.redirect_stderr(_died_buf):  # die() prints to stderr; never attaches the message to SystemExit
+    try:
+        sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+    except SystemExit:
+        died = True
 check("ensure_client_registered: dies immediately if the bootstrap script itself fails", died)
+check("...and the real error text (not just the bare rc) reaches the die() message",
+      "no package provides salt" in _died_buf.getvalue())
 
 # The bootstrap on a transactional-update client reboots it, so SSH returns 255. A new boot ID means it worked.
 def _bootstrap_reboots(hostname, cmd, **kwargs):

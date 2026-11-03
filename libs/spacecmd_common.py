@@ -3546,7 +3546,14 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
                 client_hostname))
         print("  '{}' rebooted after bootstrap".format(client_hostname))
     elif r.returncode != 0:
-        die("bootstrap script failed on '{}' (rc={})".format(client_hostname, r.returncode))
+        # The bootstrap script's own output is the only way to tell a real failure (e.g. a package
+        # manager error) from a transient one (e.g. the bootstrap repo not fully populated yet) apart —
+        # without it, every failure here looked identical ("rc=1"), confirmed live: a real failure
+        # ("no package provides salt", the bootstrap repo not yet carrying venv-salt-minion for a
+        # just-synced product) was only found by re-running the exact same command by hand.
+        tail = "\n".join(bootstrap_out.strip().splitlines()[-15:])
+        die("bootstrap script failed on '{}' (rc={}){}".format(
+            client_hostname, r.returncode, ":\n" + tail if tail else ""))
 
     def _wait_for_pending_key():
         for _ in range(retry_limit):
