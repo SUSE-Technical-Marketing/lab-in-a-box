@@ -635,6 +635,22 @@ def channel_sync_errors(hostname, exec_prefix, channel):
     return [ln for ln in (r.stdout or "").splitlines() if _REPOSYNC_ERROR_RE.match(ln)]
 
 
+def channel_package_count(hostname, exec_prefix, channel):
+    """
+    How many packages spacecmd's softwarechannel_listallpackages reports for `channel` right now — an
+    extra, API-based signal alongside channel_sync_errors(): the reposync log can say "Sync completed."
+    with no recorded error lines and the channel can still have ended up empty (e.g. an upstream repo
+    that returned zero packages for the sync). This checks the channel's own actual package list through
+    the real API, rather than inferring content from log text. Returns 0 both for a channel with
+    genuinely no packages and for one the command fails to look up (e.g. a typoed label) — either way
+    there is nothing to report as a count.
+    """
+    r = _spacecmd(hostname, exec_prefix, "softwarechannel_listallpackages {}".format(shlex.quote(channel)))
+    if r.returncode != 0:
+        return 0
+    return len([ln for ln in (r.stdout or "").splitlines() if ln.strip()])
+
+
 def pending_channels(hostname, exec_prefix, channels):
     """
     Return the subset of `channels` that have not finished syncing. An empty set means every channel is ready. A channel is
@@ -670,6 +686,10 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
     errors only warns, never dies or keeps this waiting longer: those errors already happened and are
     not something retrying registration will fix, but they are worth surfacing rather than silently
     registering a client against channel content that may be incomplete.
+
+    Each channel's real package count is also checked with channel_package_count() — a channel can log
+    "Sync completed." with no recorded errors and still have ended up with zero packages (e.g. an
+    upstream repo that synced clean but empty). Same as the log-error check, this only warns.
     """
     if not channels:
         return
@@ -696,6 +716,10 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
             warn("channel '{}' finished syncing, but its own reposync log recorded {} error(s) — "
                  "content for this channel may be incomplete: {}".format(
                      ch, len(errors), errors[-1]))
+        count = channel_package_count(hostname, exec_prefix, ch)
+        if count == 0:
+            warn("channel '{}' finished syncing, but softwarechannel_listallpackages reports 0 "
+                 "packages for it — its sync may have produced no usable content".format(ch))
 
 
 def _stage_remote_file(hostname, exec_prefix, remote_path, content):
@@ -3130,6 +3154,35 @@ def system_is_registered(hostname, exec_prefix, target_system):
     except (json.JSONDecodeError, TypeError):
         return False
     return len(matches) == 1
+
+
+def system_package_count(hostname, exec_prefix, target_system):
+    """
+    How many packages spacecmd's system_listinstalledpackages reports for `target_system` right now —
+    an extra, API-based health signal alongside system_is_registered(): a system can exist in
+    system.getId() before its package profile has actually uploaded, or if something went wrong during
+    bootstrap. Returns 0 both when the system genuinely has no packages and when the command fails
+    (not registered yet, wrong hostname, ...) — confirmed live that an unknown system exits non-zero
+    with "WARNING: No systems selected" rather than printing anything to count, so either case
+    collapses to the same "nothing to report yet" answer.
+    """
+    r = _spacecmd(hostname, exec_prefix, "system_listinstalledpackages {}".format(shlex.quote(target_system)))
+    if r.returncode != 0:
+        return 0
+    return len([ln for ln in (r.stdout or "").splitlines() if ln.strip()])
+
+
+def system_is_registered_and_healthy(hostname, exec_prefix, target_system, min_packages=20):
+    """
+    system_is_registered() plus a package-count sanity check via system_package_count(): a system that
+    exists server-side but reports fewer than `min_packages` installed packages (0 included) has not
+    really finished registering in any useful sense — no real Linux system has a believable package
+    inventory that small, so this catches a registration that is technically "there" but still broken,
+    the case system_is_registered() alone cannot see.
+    """
+    if not system_is_registered(hostname, exec_prefix, target_system):
+        return False
+    return system_package_count(hostname, exec_prefix, target_system) >= min_packages
 
 
 # ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────

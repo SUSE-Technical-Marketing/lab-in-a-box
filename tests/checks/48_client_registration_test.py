@@ -178,6 +178,14 @@ class _FakeSc:
         self.calls.append(("system_is_registered", vm_name))
         return self._registered.get(vm_name, True) if hasattr(self, "_registered") else True
 
+    def system_is_registered_and_healthy(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_is_registered_and_healthy", vm_name))
+        return self._registered.get(vm_name, True) if hasattr(self, "_registered") else True
+
+    def system_package_count(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_package_count", vm_name))
+        return 599
+
     def run_forever_retry_worker(self, key, attempt, retry_delay=60, heartbeat_interval=1800, verify=None):
         # A small, local stand-in for the real forever loop (its own correctness — heartbeats, pid
         # files, crash-proofing — is covered end to end in 09_spacecmd_common_test.py). This exists only
@@ -218,6 +226,34 @@ check("register_client(): checks pending_channels() on the UNION of sync_channel
 check("register_client(): fully synced -> registers synchronously (ensure_client_registered called)",
       "ensure_client_registered" in names)
 check("register_client(): fully synced -> no background retry launched", launch_calls == [])
+check("register_client(): fully synced -> checks the real package count via system_package_count()",
+      any(c[0] == "system_package_count" for c in fake_sc.calls))
+
+# -- same fast path, but the package profile hasn't uploaded yet -> warns, does NOT die or retry --
+launch_calls.clear()
+
+
+class _ScLowPackageCount(_FakeSc):
+    def system_package_count(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_package_count", vm_name))
+        return 3
+
+
+fake_sc_low = _ScLowPackageCount(pending=set())
+icr.sc = fake_sc_low
+_warn_buf = []
+_real_warn = icr.warn
+icr.warn = lambda msg: _warn_buf.append(msg)
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+    "client_registration_activation_key_base_channel": "sles15-sp7-pool",
+}, lab_file="lab.json")
+icr.warn = _real_warn
+check("register_client(): a suspiciously low post-registration package count warns, not dies, "
+      "and still completed registration synchronously",
+      len(_warn_buf) == 1 and "mercury.mydemo.lab" in _warn_buf[0] and "3" in _warn_buf[0]
+      and launch_calls == [])
 
 # -- slow path: channels NOT yet fully synced -> hands off, returns without registering --
 launch_calls.clear()
@@ -348,8 +384,8 @@ check("_retry_until_registered(): hands the forever-retry mechanism a key scoped
       ("run_forever_retry_worker:key", "client_registration:mercury.mydemo.lab") in fake_sc5.calls)
 check("_retry_until_registered(): a clean attempt registers (ensure_client_registered called)",
       sum(1 for c in fake_sc5.calls if c[0] == "ensure_client_registered") == 1)
-check("_retry_until_registered(): verify() really calls system_is_registered for this exact node",
-      ("system_is_registered", "mercury.mydemo.lab") in fake_sc5.calls)
+check("_retry_until_registered(): verify() really calls system_is_registered_and_healthy for this "
+      "exact node", ("system_is_registered_and_healthy", "mercury.mydemo.lab") in fake_sc5.calls)
 
 # Fails twice (once via SystemExit/die(), once via a plain exception), then succeeds on the third try —
 # exercising that attempt() really is the ensure_spacecmd_config/wait_for_channels_synced/
@@ -389,8 +425,8 @@ class _ScVerifyLagsBehind(_FakeSc):
         _reg_calls[0] += 1
         self.calls.append(("ensure_client_registered", a, kw))
 
-    def system_is_registered(self, hostname, exec_prefix, vm_name):
-        self.calls.append(("system_is_registered", vm_name))
+    def system_is_registered_and_healthy(self, hostname, exec_prefix, vm_name):
+        self.calls.append(("system_is_registered_and_healthy", vm_name))
         return _reg_calls[0] >= 3  # only "really" shows up on the server after the 3rd attempt
 
 
@@ -401,7 +437,7 @@ icr._retry_until_registered("mercury.mydemo.lab", {
     "client_registration_activation_key": "1-key",
 })
 check("_retry_until_registered(): a clean ensure_client_registered() is not enough on its own — keeps "
-      "retrying until system_is_registered() actually agrees too", _reg_calls[0] == 3)
+      "retrying until system_is_registered_and_healthy() actually agrees too", _reg_calls[0] == 3)
 
 
 if failures:

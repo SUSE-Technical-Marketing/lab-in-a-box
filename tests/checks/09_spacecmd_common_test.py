@@ -368,6 +368,7 @@ sc.time.sleep = lambda s: None
 fake = FakeSSH(responses=[
     ("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
     ("reposync/ch-a.log", FakeResult(returncode=0, stdout="ERROR: boom\nSync completed.\n")),
+    ("softwarechannel_listallpackages ch-a", FakeResult(returncode=0, stdout="pkg-a\npkg-b\n")),
 ])
 sc.ssh_run = fake
 _warn_buf = []
@@ -377,6 +378,21 @@ sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-a"])
 sc.warn = _real_warn
 check("wait_for_channels_synced: warns (never dies) when a completed channel's log recorded errors",
       len(_warn_buf) == 1 and "ch-a" in _warn_buf[0] and "ERROR: boom" in _warn_buf[0])
+
+# Separately: a channel with a CLEAN log but genuinely zero packages (e.g. an upstream repo that synced
+# clean but empty) still gets its own warning, via the API-based package-count check.
+fake = FakeSSH(responses=[
+    ("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/ch-empty.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("softwarechannel_listallpackages ch-empty", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+_warn_buf = []
+sc.warn = lambda msg: _warn_buf.append(msg)
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-empty"])
+sc.warn = _real_warn
+check("wait_for_channels_synced: warns when a completed, error-free channel reports 0 packages via the API",
+      len(_warn_buf) == 1 and "ch-empty" in _warn_buf[0] and "0 packages" in _warn_buf[0])
 
 # -- pending_channels: the one-shot, non-blocking check factored out above --
 fake = FakeSSH(responses=[
@@ -2956,6 +2972,65 @@ fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=1, stderr="no s
 sc.ssh_run = fake
 check("system_is_registered: False, not a raised exception, on a server-side failure",
       sc.system_is_registered("host1", "mgrctl exec --", "sol.mydemo.lab") is False)
+
+# -- system_package_count / system_is_registered_and_healthy: API-based package-count check ---------
+fake = FakeSSH(responses=[
+    ("system_listinstalledpackages mars.mydemoaws.lab",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(599)) + "\n")),
+])
+sc.ssh_run = fake
+check("system_package_count: counts non-empty lines of system_listinstalledpackages",
+      sc.system_package_count("host1", "mgrctl exec --", "mars.mydemoaws.lab") == 599)
+
+fake = FakeSSH(responses=[
+    ("system_listinstalledpackages doesnotexist.mydemo.lab",
+     FakeResult(returncode=1, stderr="WARNING: No systems selected")),
+])
+sc.ssh_run = fake
+check("system_package_count: 0, not an exception, for a system that isn't registered",
+      sc.system_package_count("host1", "mgrctl exec --", "doesnotexist.mydemo.lab") == 0)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "freshling.lab"}]))),
+    ("system_listinstalledpackages freshling.lab", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: False when registered but the package profile hasn't "
+      "uploaded yet (0 packages)",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "freshling.lab") is False)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "sol.mydemo.lab"}]))),
+    ("system_listinstalledpackages sol.mydemo.lab",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(599)) + "\n")),
+])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: True when registered AND the package count clears the "
+      "min_packages threshold",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "sol.mydemo.lab") is True)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: False when not even registered — never calls "
+      "system_listinstalledpackages at all",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "nosuch.lab") is False
+      and not any("system_listinstalledpackages" in c[1] for c in fake.calls))
+
+# -- channel_package_count: API-based package-count check, same idea for channels -------------------
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages centos7-x86_64",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(10073)) + "\n")),
+])
+sc.ssh_run = fake
+check("channel_package_count: counts non-empty lines of softwarechannel_listallpackages",
+      sc.channel_package_count("host1", "mgrctl exec --", "centos7-x86_64") == 10073)
+
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages bogus-channel", FakeResult(returncode=1, stderr="no such channel")),
+])
+sc.ssh_run = fake
+check("channel_package_count: 0, not an exception, when the lookup itself fails",
+      sc.channel_package_count("host1", "mgrctl exec --", "bogus-channel") == 0)
 
 # -- ensure_grafana_formula -----------------------------------------------
 fake = FakeSSH(responses=[

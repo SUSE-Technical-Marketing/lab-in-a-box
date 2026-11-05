@@ -116,7 +116,7 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import die  # noqa: E402
+from lab_creation import die, warn  # noqa: E402
 
 
 def _validate(v):
@@ -254,11 +254,13 @@ def _retry_until_registered(vm_name, cfg):
     shared mechanism (libs/spacecmd_common.py's run_forever_retry_worker()) — see that function's own
     docstring for the generic contract.
 
-    verify=sc.system_is_registered(...) is the fix for a real failure mode found live: _register_now()
-    (and the sc.ensure_client_registered() it calls) can return cleanly for reasons that are not the
-    system actually, really being registered yet, and a caller that only checks "did the call raise" can
-    end up reporting a node as registered while the server's own system list still shows nothing. Only a
-    real system.getId() match through this check counts as done.
+    verify=sc.system_is_registered_and_healthy(...) is the fix for a real failure mode found live:
+    _register_now() (and the sc.ensure_client_registered() it calls) can return cleanly for reasons that
+    are not the system actually, really being registered yet, and a caller that only checks "did the
+    call raise" can end up reporting a node as registered while the server's own system list still shows
+    nothing. A real system.getId() match is necessary but not sufficient on its own either — a system can
+    appear there before its package profile has actually uploaded — so this also requires a believable
+    installed-package count (system_package_count() >= 20) before counting registration as really done.
 
     Intended to be run standalone, as its own detached process (see _launch_background_retry()), never
     inline in the main deployment path.
@@ -277,7 +279,7 @@ def _retry_until_registered(vm_name, cfg):
 
     sc.run_forever_retry_worker(
         _background_retry_key(vm_name), attempt, retry_delay=retry_delay,
-        verify=lambda: sc.system_is_registered(server_node, exec_prefix, vm_name))
+        verify=lambda: sc.system_is_registered_and_healthy(server_node, exec_prefix, vm_name))
 
 
 def register_client(vm_name, cfg, lab_file=None):
@@ -348,6 +350,14 @@ def register_client(vm_name, cfg, lab_file=None):
         return
 
     _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activation_key)
+    # Non-blocking: the package profile can take a little while to upload after registration
+    # itself returns, so a low count here is only worth a warning, not a retry — unlike the
+    # background worker's own verify=sc.system_is_registered_and_healthy, this synchronous path
+    # has nothing further to retry against.
+    count = sc.system_package_count(server_node, exec_prefix, vm_name)
+    if count < 20:
+        warn("'{}' registered, but system_listinstalledpackages reports only {} package(s) so far — "
+             "its package profile may still be uploading".format(vm_name, count))
 
 
 def main():
