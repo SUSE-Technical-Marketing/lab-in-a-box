@@ -1012,6 +1012,99 @@ def detect_os(hostname):
     return {"id": os_id, "ver_id": os_ver_id, "like": os_like, "ver_major": os_ver_major}
 
 
+def ensure_centos7_vault_repos(hostname):
+    """
+    CentOS 7 reached end-of-life in June 2024 and its mirrorlist infrastructure
+    (mirrorlist.centos.org) was decommissioned along with it — every stock CentOS 7 repo file still
+    points there, so a plain `yum install` now fails outright on ANY CentOS 7 system anywhere, not
+    just this lab's: "Could not resolve host: mirrorlist.centos.org". This repoints the base/updates/
+    extras repos at vault.centos.org (CentOS's own permanent EOL archive) instead — the standard,
+    widely-documented fix for a CentOS 7 box post-EOL. No-op on anything that isn't CentOS 7, and
+    idempotent (skips a repo file that's already pointed at the vault).
+
+    Found live 2026-11-06: luna's client-registration bootstrap failed every single attempt with
+    exactly this error — a permanent external fact the bootstrap script's own retries can never work
+    around, so this runs once, ahead of it, instead.
+    """
+    os_info = detect_os(hostname)
+    if os_info.get("id") != "centos" or os_info.get("ver_major") != "7":
+        return True
+    cmd = (
+        "set -e\n"
+        "grep -ql vault.centos.org /etc/yum.repos.d/CentOS-Base.repo 2>/dev/null && exit 0\n"
+        "sed -i 's/^mirrorlist=/#mirrorlist=/; s/^#baseurl=http:\\/\\/mirror\\.centos\\.org/baseurl=http:\\/\\/vault.centos.org/' "
+        "/etc/yum.repos.d/CentOS-*.repo\n"
+        "yum clean all >/dev/null 2>&1 || true\n"
+    )
+    r = ssh_run(hostname, cmd, capture=True, check=False)
+    if r.returncode != 0:
+        warn("ensure_centos7_vault_repos: could not repoint '{}' at vault.centos.org: {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+        return False
+    log("- '{}' is CentOS 7 (EOL) — repointed its repos at vault.centos.org".format(hostname))
+    return True
+
+
+def ensure_swap(hostname, min_total_mb=2048, swap_mb=1024):
+    """
+    Idempotently ensure `hostname` has at least `min_total_mb` of RAM+swap combined, adding a
+    `swap_mb` swapfile at /var/lab-in-a-box-swapfile if it doesn't already. Never shrinks or
+    touches existing swap; a no-op when the node already clears the threshold.
+
+    Found live 2026-11-06: phobos (RHEL 9, common.VM_MEM's default 1024 MB, no override) got its
+    `yum install` OOM-killed mid client-registration bootstrap every single attempt — confirmed via
+    dmesg ("Out of memory: Killed process ... (yum)") — not a repo/subscription problem, despite a
+    misleading "not registered with an entitlement server" line earlier in the same output. yum/dnf's
+    dependency resolution is memory-hungry enough that a small cloud instance's bare RAM isn't
+    enough; adding swap fixes it without resizing the instance (no stop/start, no AWS API call, no
+    data at risk) or touching common.VM_MEM for every other node in the lab.
+
+    Best effort: warns and returns False on any failure (e.g. a read-only root filesystem with no
+    writable place for a swapfile) rather than dying — a registration step that already has its own
+    retry logic should get a chance to fail on its own, more specific error instead of being masked
+    by this safety net's.
+    """
+    mem_kb = ssh_run(hostname,
+                      "awk '/^(MemTotal|SwapTotal):/{sum+=$2} END{print sum+0}' /proc/meminfo",
+                      capture=True, check=False).stdout.strip()
+    try:
+        total_mb = int(mem_kb) // 1024
+    except ValueError:
+        warn("ensure_swap: could not read /proc/meminfo on '{}' — leaving swap as is".format(hostname))
+        return False
+    if total_mb >= min_total_mb:
+        return True
+
+    swapfile = "/var/lab-in-a-box-swapfile"
+    log("- '{}' has only {} MiB RAM+swap (< {}) — ensuring a {} MiB swapfile".format(
+        hostname, total_mb, min_total_mb, swap_mb))
+    # dd, never fallocate: fallocate can leave holes that some kernel/filesystem combinations refuse
+    # with "swapon: Invalid argument" (confirmed live on CentOS 7) — dd always writes real, contiguous
+    # zeroed blocks, so swapon never rejects it. The "is it already active" check runs FIRST and on
+    # its own, separate from the "is the file any good" probe below: swapon on an ALREADY-ACTIVE file
+    # also fails (EBUSY, "device or resource busy"), same as it does on a bad one — telling those two
+    # apart by swapon's exit code alone made this remove a swapfile that was actively in use
+    # (confirmed live: "rm: cannot remove ...: Operation not permitted", rhel9), so "already active"
+    # must be ruled out before a failed swapon is ever taken to mean "bad file, recreate it".
+    cmd = (
+        "set -e\n"
+        "swapon --show=NAME --noheadings | grep -qxF {swapfile} && exit 0\n"
+        "if test -f {swapfile} && ! swapon {swapfile} 2>/dev/null; then rm -f {swapfile}; fi\n"
+        "swapon --show=NAME --noheadings | grep -qxF {swapfile} && exit 0\n"
+        "dd if=/dev/zero of={swapfile} bs=1M count={swap_mb} status=none\n"
+        "chmod 600 {swapfile}\n"
+        "mkswap {swapfile} >/dev/null\n"
+        "swapon {swapfile}\n"
+        "grep -qF {swapfile} /etc/fstab || echo '{swapfile} none swap sw 0 0' >> /etc/fstab\n"
+    ).format(swapfile=swapfile, swap_mb=int(swap_mb))
+    r = ssh_run(hostname, cmd, capture=True, check=False)
+    if r.returncode != 0:
+        warn("ensure_swap: could not add a swapfile on '{}': {}".format(
+            hostname, (r.stderr or r.stdout or "").strip()))
+        return False
+    return True
+
+
 def scp_to(hostname, local_path, remote_path, user="root"):
     """
     Copies a local file to a remote host via real scp — binary-safe, unlike

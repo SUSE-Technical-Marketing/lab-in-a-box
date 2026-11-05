@@ -97,6 +97,14 @@ check("addon_node_config: overriding one node never mutates the shared top-level
 # ── install_client_registration: end-to-end through main() ──────────────
 icr = apps.load_addon_module("install_client_registration", str(_REPO / "scripts"))  # no .py: loaded by path
 
+# ensure_swap()/ensure_centos7_vault_repos() are real lab_creation.py code (their own coverage lives
+# in 10_lab_creation_core_test.py) — stubbed out everywhere in this file so register_client()'s own
+# tests below don't make a real SSH call. swap_calls lets specific tests confirm ensure_swap is
+# actually invoked, with the right node.
+swap_calls = []
+icr.ensure_swap = lambda vm_name, *a, **kw: swap_calls.append(vm_name)
+icr.ensure_centos7_vault_repos = lambda vm_name, *a, **kw: True
+
 _real_register_client = icr.register_client  # main() tests below stub this out
 
 calls = []
@@ -228,6 +236,9 @@ check("register_client(): fully synced -> registers synchronously (ensure_client
 check("register_client(): fully synced -> no background retry launched", launch_calls == [])
 check("register_client(): fully synced -> checks the real package count via system_package_count()",
       any(c[0] == "system_package_count" for c in fake_sc.calls))
+check("register_client(): ensures swap on the CLIENT (vm_name) before the real registration call,"
+      " not the server", swap_calls == ["mercury.mydemo.lab"])
+swap_calls.clear()
 
 # -- same fast path, but the package profile hasn't uploaded yet -> warns, does NOT die or retry --
 launch_calls.clear()

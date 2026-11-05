@@ -136,6 +136,52 @@ except RuntimeError:
     ok = False
 check("DNSService.add_service_dns: an unreachable secondary DNS server does not raise", ok)
 
+# -- add_service_dns: cloud nodes have no static 'myip' -> fall back to each node's backend.get_ip() --
+import primary  # noqa: E402
+
+
+class _FakeCloudBackend:
+    def __init__(self, ip):
+        self._ip = ip
+
+    def get_ip(self, vm_name):
+        return self._ip
+
+
+_real_get_backend = backends.get_backend
+_real_load_config = primary.load_config
+backends.get_backend = lambda definition, config, vm_name, **kw: _FakeCloudBackend({
+    "pluto.mydemoaws.lab": "63.179.193.145", "earth.mydemoaws.lab": "63.179.193.146",
+}.get(vm_name))
+primary.load_config = lambda: {}
+
+cloud_def = {"nodes": {
+    "pluto.mydemoaws.lab": {"kcluster": "ai-gpu"},
+    "earth.mydemoaws.lab": {"kcluster": "ai-gpu"},
+    "other.mydemoaws.lab": {"kcluster": "other-cluster", "myip": "10.0.0.5"},
+}}
+fake = FakeSSH()
+services.ssh_run = fake
+svc.add_service_dns(cloud_def, "ai-gpu", "rke2", "ollama.ai-gpu", "mydemoaws.lab")
+written = (Path(_zone_dir) / "mydemoaws.lab.lan").read_text()
+check("add_service_dns: falls back to backend.get_ip() when no node of the cluster has a 'myip'",
+      "63.179.193.145" in written and "63.179.193.146" in written)
+check("add_service_dns: only asks nodes that actually belong to this cluster",
+      "10.0.0.5" not in written)
+
+warned = []
+_real_warn = services.warn
+services.warn = lambda msg: warned.append(msg)
+backends.get_backend = lambda definition, config, vm_name, **kw: _FakeCloudBackend(None)
+fake = FakeSSH()
+services.ssh_run = fake
+svc.add_service_dns(cloud_def, "ai-gpu", "rke2", "ollama.ai-gpu", "mydemoaws.lab")
+check("add_service_dns: still just warns (never raises) when the backend fallback also finds no IP",
+      len(warned) == 1 and "NOT added" in warned[0])
+services.warn = _real_warn
+backends.get_backend = _real_get_backend
+primary.load_config = _real_load_config
+
 # And confirm it's genuinely check=False being passed, not just a lucky
 # no-op — every remote-server SSH call the two DNS-mutating paths make must
 # explicitly opt out of raising.

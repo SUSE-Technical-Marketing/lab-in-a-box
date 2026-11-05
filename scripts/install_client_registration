@@ -116,7 +116,7 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import die, warn  # noqa: E402
+from lab_creation import die, warn, ensure_swap, ensure_centos7_vault_repos  # noqa: E402
 
 
 def _validate(v):
@@ -207,6 +207,17 @@ def _register_now(vm_name, cfg, server_node, exec_prefix, server_fqdn, activatio
     if not base_channel and sc.activation_key_exists(server_node, exec_prefix, activation_key):
         real = sc.describe_activation_key(server_node, exec_prefix, activation_key, "client_registration")
         base_channel = real.get("client_registration_activation_key_base_channel")
+    # The bootstrap script below runs a real package-manager install (venv-salt-minion and its
+    # deps) on the CLIENT, not the server. Two real, pre-existing failure modes found live, both
+    # fixed here ahead of the bootstrap rather than inside it, since they're facts about the client
+    # itself that no amount of retrying the bootstrap would ever work around:
+    #   - a small cloud instance with little RAM and no swap can get its package install OOM-killed
+    #     outright (confirmed live: RHEL's yum, repeatedly, on a 1-vCPU/1GB node) — a no-op on any
+    #     node that already clears ensure_swap()'s own threshold.
+    #   - CentOS 7 is EOL; its repos' mirrorlist.centos.org is gone for good — a no-op on anything
+    #     that isn't CentOS 7.
+    ensure_swap(vm_name)
+    ensure_centos7_vault_repos(vm_name)
     sc.ensure_client_registered(
         server_node, exec_prefix, vm_name, server_fqdn, activation_key,
         reactivation_key=cfg.get("client_registration_reactivation_key"),

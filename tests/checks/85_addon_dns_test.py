@@ -59,6 +59,39 @@ ac.register_service_dns(definition, "c1", "ai.example.com")
 check("register_service_dns: a name outside mydomain is not registered", calls == [])
 check("register_service_dns: and a warning names it", len(warnings) == 1 and "ai.example.com" in warnings[0])
 
+# -- on a cloud backend, the cluster's own cloud DNS VM is added to the remote-server list too, so
+# the record reaches the server external clients are actually told to use, not just the on-prem one --
+import backends  # noqa: E402
+
+# register_service_dns()'s cloud-DNS-VM path reads /root/.ssh/id_rsa.pub, same as setup_vm.py's own
+# real code — ensure one exists rather than mock the read, same precedent as 10_lab_creation_core_test.py.
+_pubkey_path = Path("/root/.ssh/id_rsa.pub")
+_pubkey_path.parent.mkdir(parents=True, exist_ok=True)
+if not _pubkey_path.exists():
+    _pubkey_path.write_text("ssh-rsa AAAAtest test@test\n")
+
+cloud_def = {
+    "nodes": {"pluto.mydemoaws.lab": {"kcluster": "c1", "backend": "aws"}},
+    "kclusters": {"c1": {"clu_type": "rke2", "mydomain": "mydemo.lab"}},
+}
+_real_effective_backend_name = backends.effective_backend_name
+_real_get_backend = backends.get_backend
+_real_ensure_cloud_dns_vm = backends.ensure_cloud_dns_vm
+backends.effective_backend_name = lambda definition, config, vm_name: "aws"
+backends.get_backend = lambda definition, config, vm_name, **kw: object()
+ensure_calls = []
+backends.ensure_cloud_dns_vm = lambda *a, **kw: (ensure_calls.append((a, kw)), "63.179.193.145")[1]
+
+calls.clear()
+ac.register_service_dns(cloud_def, "c1", "ai.c1.mydemo.lab")
+check("register_service_dns: calls ensure_cloud_dns_vm on a cloud backend", len(ensure_calls) == 1)
+check("register_service_dns: appends the cloud DNS VM's IP to remote_dns_servers",
+      calls[0][1].get("remote_dns_servers") == ["dns2", "dns3", "63.179.193.145"])
+
+backends.effective_backend_name = _real_effective_backend_name
+backends.get_backend = _real_get_backend
+backends.ensure_cloud_dns_vm = _real_ensure_cloud_dns_vm
+
 # ── del_from_dns(): service records pointing at the node's IP ────────────────────────────────────────────────────────
 
 import services  # noqa: E402

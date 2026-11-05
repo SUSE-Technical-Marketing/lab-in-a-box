@@ -684,6 +684,11 @@ def setup_smlm_podman(hostname, virt_srv, cfg, lab_file=None, only_step=None):
     step definitions below are reused unchanged, rather than kept a second time in a separate registry
     that could drift out of sync with them. Dies if only_step names a step this function does not define
     (a provisioning_steps structure the lab's own config doesn't reach, or a stale/mistyped label).
+    Also skips the whole SCC-registration/podman-mgradm-install/channel-sync preamble above the step
+    dispatch: that's unconditional, one-time server setup, already done by the normal run that got far
+    enough to need a worker in the first place — re-running it from every single step's own worker
+    both wastes time and (confirmed live) makes concurrent workers collide on the same zypper/
+    SUSEConnect/mgr-sync calls against the same host.
 
     The function reuses the mgradm install and container health-wait helpers in libs/mgradm_common.py, which are shared with
     install_uyuni. The underlying tool and container mechanics are the same for Uyuni and SMLM. What differs is where mgradm,
@@ -704,198 +709,218 @@ def setup_smlm_podman(hostname, virt_srv, cfg, lab_file=None, only_step=None):
     """
     from mgradm_common import run_install_with_pg_hba_guard, ensure_server_container_active
 
-    regcode = cfg.get("smlm_scc_regcode")
-    product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
-    email = cfg.get("smlm_email") or "admin@lab.local"
-
-    scc_user = cfg.get("smlm_scc_user")
-    scc_password = cfg.get("smlm_scc_password")
-    # A pre-built image (smlm_preinstalled) already contains the registered tooling and the installed server, so SCC
-    # registration is skipped and no regcode is needed. The uyuni-server unit creates its container when it starts,
-    # which can be after SSH answers on a freshly booted image, so the unit is started (it returns once the container
-    # runs) before the container is looked for.
-    preinstalled = _is_true(cfg.get("smlm_preinstalled")) and ssh_run(
-        hostname, "systemctl cat uyuni-server.service >/dev/null 2>&1 && systemctl start uyuni-server.service; "
-                  "podman container exists uyuni-server", check=False).returncode == 0
-    if preinstalled:
-        print("- smlm_preinstalled: uyuni-server already present — skipping SCC registration "
-              "and mgradm tooling install")
-    elif not regcode:
-        print("ERROR: smlm_preinstalled is set but '{}' has no uyuni-server container, and no "
-              "smlm_scc_regcode is set to install one".format(hostname), file=sys.stderr)
-        sys.exit(1)
-    elif _is_true(cfg.get("smlm_byos")):
-        _register_byos_image(hostname, virt_srv, regcode)
-        _registry_login(hostname, scc_user, scc_password)
-    else:
-        print("- Registering the host with SCC")
-        ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
-        # sle-module-containers must be registered before the SMLM extension. SCC rejects the SMLM module with HTTP 422
-        # when the containers module is not already active. The module is free and needs no regcode. It is registered for
-        # every base OS, because the dependency check runs regardless of the base OS.
-        ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
-        r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
-                    check=False)
-        if r.returncode != 0:
-            die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
-                "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
-                "own docstring for how to find it)".format(product, hostname))
-
-        _registry_login(hostname, scc_user, scc_password)
-
-        print("- Installing mgradm tooling")
-        pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
-        is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
-        if is_transactional:
-            # SL Micro base — ships podman by default; package changes land in a
-            # new snapshot that only takes effect after a reboot, same as
-            # install_uyuni's own (Micro-only) assumption.
-            ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
-            reboot_vm(virt_srv, hostname)
-            time.sleep(5)
-            check_ssh_conn(hostname)
-        else:
-            # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
-            # does NOT ship podman by default; needs an explicit podman
-            # install/enable first (confirmed from the official docs). The
-            # containers module itself is already registered above, before the
-            # SMLM module registration attempt — no need to repeat it here.
-            ssh_run(hostname, "zypper --non-interactive install -y podman")
-            ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
-            ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
-
-    print("- Installing SUSE Multi-Linux Manager server")
+    # Needed by the only_step dispatch far below (the "organizations" step) too, so read before the
+    # `if not only_step` guard that skips the rest of this preamble — these two are plain cfg.get()
+    # reads, not SSH calls, so hoisting them costs nothing on the normal, non-worker path.
     admin = cfg.get("smlm_admin_user") or "admin"
     password = cfg.get("smlm_admin_pass") or "Smlm12345"
-    org = cfg.get("smlm_org") or "lab"
-    # Same flags as install_uyuni's `mgradm install podman` call. mgradm and podman behave the same for both products.
-    # Every value is shell-quoted. An unquoted multi-word value such as --organization "SUSE Test" is split by the remote
-    # shell, and mgradm then reads the leftover word as an FQDN.
-    #
-    # A previous `mgradm install` can fail after the bootstrap has finished (schema, organization and admin), for example
-    # while checking an optional image the subscription is not entitled to. The server is then healthy, but mgradm refuses
-    # a second install ("Server is already initialized!"), and the only other path is a full uninstall. The function
-    # detects an existing, populated server and goes straight to the health checks and post-install steps.
-    already_initialized = ssh_run(hostname, "podman container exists uyuni-server", check=False).returncode == 0
-    if already_initialized:
-        print("- uyuni-server container already exists — skipping mgradm install, resuming "
-              "from the post-install steps (a prior run's mgradm install likely died AFTER "
-              "the real bootstrap completed; see this line's own comment)")
-    else:
-        install_cmd = (
-            "mgradm install podman "
-            "--admin-login {} "
-            "--admin-password {} "
-            "--email {} "
-            "--ssl-password {} "
-            "--organization {}".format(
-                shlex.quote(admin), shlex.quote(password), shlex.quote(email),
-                shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
-        # Confidential Computing attestation container — see this JSON section's
-        # own smlm_coco_replicas doc comment above for the
-        # `mgradm install podman --help` flags this maps to.
-        for field in ("country", "state", "city", "org", "ou"):
-            if cfg.get("smlm_ssl_" + field):
-                install_cmd += " --ssl-{} {}".format(field, shlex.quote(str(cfg["smlm_ssl_" + field])))
-        if cfg.get("smlm_coco_replicas") is not None:
-            install_cmd += " --coco-replicas {}".format(shlex.quote(str(cfg["smlm_coco_replicas"])))
-        if cfg.get("smlm_coco_image"):
-            install_cmd += " --coco-image {}".format(shlex.quote(cfg["smlm_coco_image"]))
-        if cfg.get("smlm_coco_tag"):
-            install_cmd += " --coco-tag {}".format(shlex.quote(cfg["smlm_coco_tag"]))
-        run_install_with_pg_hba_guard(hostname, install_cmd)
 
-        time.sleep(60)
-        ssh_run(hostname, "reboot", check=False)
-        time.sleep(5)
-        check_ssh_conn(hostname)
-    ensure_server_container_active(hostname)
-    if cfg.get("smlm_image_admin_pass"):
-        rotate_admin_password(hostname, admin, password, cfg["smlm_image_admin_pass"])
-    if _is_true(cfg.get("smlm_salt_auto_accept")):
-        ensure_salt_auto_accept(hostname)
-    ensure_bootstrap_scripts(hostname, cfg.get("smlm_bootstrap_scripts") or [])
+    if not only_step:
+        # Everything below this point — SCC registration, the podman/mgradm install, the server
+        # bootstrap, and the channel-sync/mgr-sync-credentials setup — is unconditional, real SSH work
+        # against `hostname`, already done by the normal (non-worker) run that got far enough to need
+        # a --retry-step-worker for one specific step in the first place. Re-running it here on EVERY
+        # worker process would mean every step's own forever-retry worker does it again, and several
+        # of them do it concurrently: confirmed live 2026-11-06, six independent --retry-step-worker
+        # processes (action chains, image profiles, maintenance schedules, image build hosts, system
+        # custom values, recurring actions) each one re-ran this ENTIRE preamble — never just their
+        # own named step — before only_step's own gate further down even got a chance to apply.
+        # Five of them collided on the exact same zypper/SUSEConnect lock while re-registering the
+        # same host ("System management is locked by ... zypper"); the sixth's traceback shows it
+        # died inside this preamble's own "mgr-sync add channels" line, not its ensure_recurring_
+        # schedules step at all. All six died without ever succeeding. only_step is set ONLY by
+        # --retry-step-worker (see this function's own docstring), so this is exactly the one case
+        # that must skip straight to the step dispatch instead.
+        regcode = cfg.get("smlm_scc_regcode")
+        product = cfg.get("smlm_scc_product") or "Multi-Linux-Manager-Server-SLE/5.2/x86_64"
+        email = cfg.get("smlm_email") or "admin@lab.local"
 
-    print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
+        scc_user = cfg.get("smlm_scc_user")
+        scc_password = cfg.get("smlm_scc_password")
+        # A pre-built image (smlm_preinstalled) already contains the registered tooling and the installed server, so SCC
+        # registration is skipped and no regcode is needed. The uyuni-server unit creates its container when it starts,
+        # which can be after SSH answers on a freshly booted image, so the unit is started (it returns once the container
+        # runs) before the container is looked for.
+        preinstalled = _is_true(cfg.get("smlm_preinstalled")) and ssh_run(
+            hostname, "systemctl cat uyuni-server.service >/dev/null 2>&1 && systemctl start uyuni-server.service; "
+                      "podman container exists uyuni-server", check=False).returncode == 0
+        if preinstalled:
+            print("- smlm_preinstalled: uyuni-server already present — skipping SCC registration "
+                  "and mgradm tooling install")
+        elif not regcode:
+            print("ERROR: smlm_preinstalled is set but '{}' has no uyuni-server container, and no "
+                  "smlm_scc_regcode is set to install one".format(hostname), file=sys.stderr)
+            sys.exit(1)
+        elif _is_true(cfg.get("smlm_byos")):
+            _register_byos_image(hostname, virt_srv, regcode)
+            _registry_login(hostname, scc_user, scc_password)
+        else:
+            print("- Registering the host with SCC")
+            ssh_run(hostname, "SUSEConnect -r {}".format(shlex.quote(regcode)), check=False)
+            # sle-module-containers must be registered before the SMLM extension. SCC rejects the SMLM module with HTTP 422
+            # when the containers module is not already active. The module is free and needs no regcode. It is registered for
+            # every base OS, because the dependency check runs regardless of the base OS.
+            ssh_run(hostname, "SUSEConnect -p sle-module-containers/15.7/x86_64", check=False)
+            r = ssh_run(hostname, "SUSEConnect -p {} -r {}".format(shlex.quote(product), shlex.quote(regcode)),
+                        check=False)
+            if r.returncode != 0:
+                die("could not register the SUSE Multi-Linux Manager module ('{}') on '{}' via SUSEConnect "
+                    "— confirm smlm_scc_product is the real product identifier (see setup_smlm_podman()'s "
+                    "own docstring for how to find it)".format(product, hostname))
 
-    # smlm_channels is a JSON array in the lab definition. The command is built from a normalized list, which accepts
-    # either a list or a pre-joined string. Formatting a Python list directly would produce one malformed argument.
-    channels = cfg.get("smlm_channels") or []
-    if isinstance(channels, str):
-        channels = channels.split()
+            _registry_login(hostname, scc_user, scc_password)
 
-    # smlm_beta_channels is merged into the channel list. mgr-sync treats BETA channels like any other channel.
-    for c in cfg.get("smlm_beta_channels") or []:
-        if c not in channels:
-            channels.append(c)
+            print("- Installing mgradm tooling")
+            pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
+            is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
+            if is_transactional:
+                # SL Micro base — ships podman by default; package changes land in a
+                # new snapshot that only takes effect after a reboot, same as
+                # install_uyuni's own (Micro-only) assumption.
+                ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
+                reboot_vm(virt_srv, hostname)
+                time.sleep(5)
+                check_ssh_conn(hostname)
+            else:
+                # Plain SLES 15 SP7 base (the other officially-supported SMLM base) —
+                # does NOT ship podman by default; needs an explicit podman
+                # install/enable first (confirmed from the official docs). The
+                # containers module itself is already registered above, before the
+                # SMLM module registration attempt — no need to repeat it here.
+                ssh_run(hostname, "zypper --non-interactive install -y podman")
+                ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+                ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
 
-    # The child channels of each activation key are added to the set of channels to sync, de-duplicated against
-    # smlm_channels. An activation key refers to child channels that are otherwise never synced, such as the
-    # managertools channels that provide venv-salt-minion. Without them the link call fails with "Invalid channel", and
-    # clients bootstrapped with that key receive the wrong tooling.
-    for key_cfg in ([cfg] + list(cfg.get("smlm_activation_keys") or [])):
-        for c in (key_cfg.get("smlm_activation_key_child_channels") or "").split():
+        print("- Installing SUSE Multi-Linux Manager server")
+        org = cfg.get("smlm_org") or "lab"
+        # Same flags as install_uyuni's `mgradm install podman` call. mgradm and podman behave the same for both products.
+        # Every value is shell-quoted. An unquoted multi-word value such as --organization "SUSE Test" is split by the remote
+        # shell, and mgradm then reads the leftover word as an FQDN.
+        #
+        # A previous `mgradm install` can fail after the bootstrap has finished (schema, organization and admin), for example
+        # while checking an optional image the subscription is not entitled to. The server is then healthy, but mgradm refuses
+        # a second install ("Server is already initialized!"), and the only other path is a full uninstall. The function
+        # detects an existing, populated server and goes straight to the health checks and post-install steps.
+        already_initialized = ssh_run(hostname, "podman container exists uyuni-server", check=False).returncode == 0
+        if already_initialized:
+            print("- uyuni-server container already exists — skipping mgradm install, resuming "
+                  "from the post-install steps (a prior run's mgradm install likely died AFTER "
+                  "the real bootstrap completed; see this line's own comment)")
+        else:
+            install_cmd = (
+                "mgradm install podman "
+                "--admin-login {} "
+                "--admin-password {} "
+                "--email {} "
+                "--ssl-password {} "
+                "--organization {}".format(
+                    shlex.quote(admin), shlex.quote(password), shlex.quote(email),
+                    shlex.quote(cfg.get("smlm_ssl_password") or password), shlex.quote(org)))
+            # Confidential Computing attestation container — see this JSON section's
+            # own smlm_coco_replicas doc comment above for the
+            # `mgradm install podman --help` flags this maps to.
+            for field in ("country", "state", "city", "org", "ou"):
+                if cfg.get("smlm_ssl_" + field):
+                    install_cmd += " --ssl-{} {}".format(field, shlex.quote(str(cfg["smlm_ssl_" + field])))
+            if cfg.get("smlm_coco_replicas") is not None:
+                install_cmd += " --coco-replicas {}".format(shlex.quote(str(cfg["smlm_coco_replicas"])))
+            if cfg.get("smlm_coco_image"):
+                install_cmd += " --coco-image {}".format(shlex.quote(cfg["smlm_coco_image"]))
+            if cfg.get("smlm_coco_tag"):
+                install_cmd += " --coco-tag {}".format(shlex.quote(cfg["smlm_coco_tag"]))
+            run_install_with_pg_hba_guard(hostname, install_cmd)
+
+            time.sleep(60)
+            ssh_run(hostname, "reboot", check=False)
+            time.sleep(5)
+            check_ssh_conn(hostname)
+        ensure_server_container_active(hostname)
+        if cfg.get("smlm_image_admin_pass"):
+            rotate_admin_password(hostname, admin, password, cfg["smlm_image_admin_pass"])
+        if _is_true(cfg.get("smlm_salt_auto_accept")):
+            ensure_salt_auto_accept(hostname)
+        ensure_bootstrap_scripts(hostname, cfg.get("smlm_bootstrap_scripts") or [])
+
+        print("SUSE Multi-Linux Manager available at: https://{}  ({} / {})".format(hostname, admin, password))
+
+        # smlm_channels is a JSON array in the lab definition. The command is built from a normalized list, which accepts
+        # either a list or a pre-joined string. Formatting a Python list directly would produce one malformed argument.
+        channels = cfg.get("smlm_channels") or []
+        if isinstance(channels, str):
+            channels = channels.split()
+
+        # smlm_beta_channels is merged into the channel list. mgr-sync treats BETA channels like any other channel.
+        for c in cfg.get("smlm_beta_channels") or []:
             if c not in channels:
                 channels.append(c)
 
-    if preinstalled and channels:
-        present = _existing_channels(hostname, admin, password)
-        channels = [c for c in channels if c not in present]
-        print("- smlm_preinstalled: {} requested channel(s) missing from the image{}".format(
-            len(channels), (": " + " ".join(channels)) if channels else " — skipping mgr-sync"))
-    if channels or (cfg.get("smlm_activation_keys") and not preinstalled):
-        # Registering the mirror credentials is required, not optional. mgr-sync uses the server's SCC organization
-        # credentials to find the entitled channels and products. `mgr-sync add credentials` asks five questions: the
-        # local admin's login and password, then the SCC user, the SCC password and its confirmation. Each answer must be
-        # sent. Otherwise the call waits for input and ends with a general error, which this function does not report.
-        # The five-line input completes with "Successfully added credentials."
-        if not (scc_user and scc_password):
-            die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
-                "are not — mgr-sync cannot see any entitled channels without the SCC organization "
-                "credentials registered on '{}' first (`mgr-sync add credentials`)".format(hostname))
-        print("- Registering SCC organization (mirror) credentials with mgr-sync")
-        # -i is required. mgrctl exec does not forward stdin unless -i is given, so without it the input is dropped.
-        ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
-                input_text="{}\n{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password, scc_password),
-                check=False)
+        # The child channels of each activation key are added to the set of channels to sync, de-duplicated against
+        # smlm_channels. An activation key refers to child channels that are otherwise never synced, such as the
+        # managertools channels that provide venv-salt-minion. Without them the link call fails with "Invalid channel", and
+        # clients bootstrapped with that key receive the wrong tooling.
+        for key_cfg in ([cfg] + list(cfg.get("smlm_activation_keys") or [])):
+            for c in (key_cfg.get("smlm_activation_key_child_channels") or "").split():
+                if c not in channels:
+                    channels.append(c)
 
-    if channels:
-        # mgr-sync add credentials does not fill the product and channel catalog. A separate `mgr-sync refresh` is needed,
-        # and it contacts the SCC API. The wait loop below has a timeout, and a refresh runs first, so the loop does not
-        # depend on the server's own scheduled job.
-        print("- Refreshing mgr-sync's product/channel catalog from SCC")
-        ssh_run(hostname, "mgrctl exec -- mgr-sync refresh", check=False)
+        if preinstalled and channels:
+            present = _existing_channels(hostname, admin, password)
+            channels = [c for c in channels if c not in present]
+            print("- smlm_preinstalled: {} requested channel(s) missing from the image{}".format(
+                len(channels), (": " + " ".join(channels)) if channels else " — skipping mgr-sync"))
+        if channels or (cfg.get("smlm_activation_keys") and not preinstalled):
+            # Registering the mirror credentials is required, not optional. mgr-sync uses the server's SCC organization
+            # credentials to find the entitled channels and products. `mgr-sync add credentials` asks five questions: the
+            # local admin's login and password, then the SCC user, the SCC password and its confirmation. Each answer must be
+            # sent. Otherwise the call waits for input and ends with a general error, which this function does not report.
+            # The five-line input completes with "Successfully added credentials."
+            if not (scc_user and scc_password):
+                die("smlm_channels/smlm_activation_keys are set but smlm_scc_user/smlm_scc_password "
+                    "are not — mgr-sync cannot see any entitled channels without the SCC organization "
+                    "credentials registered on '{}' first (`mgr-sync add credentials`)".format(hostname))
+            print("- Registering SCC organization (mirror) credentials with mgr-sync")
+            # -i is required. mgrctl exec does not forward stdin unless -i is given, so without it the input is dropped.
+            ssh_run(hostname, "mgrctl exec -i -- mgr-sync add credentials",
+                    input_text="{}\n{}\n{}\n{}\n{}\n".format(admin, password, scc_user, scc_password, scc_password),
+                    check=False)
 
-        count = 0
-        max_retries = 60  # 10 min — the refresh above should make this near-instant; this
-                           # bound exists only as a safety net, not the primary fix.
-        print("- Waiting for channel list to sync")
-        while True:
-            time.sleep(10)
-            count += 1
-            print("Retry {}".format(count), end="\r")
-            out = ssh_run(hostname, "mgrctl exec -- mgr-sync list channels 2>/dev/null",
-                          check=False, capture=True).stdout or ""
-            if any("no channels found." not in line.lower() for line in out.splitlines()):
-                break
-            if count >= max_retries:
-                die("channel list on '{}' is still empty after mgr-sync refresh + {} retries "
-                    "({} min) — check 'mgrctl exec -- mgr-sync refresh' and 'mgrctl exec -- "
-                    "mgr-sync list channels' there directly".format(
-                        hostname, max_retries, max_retries * 10 // 60))
-        time.sleep(300)
-        channel_args = " ".join(shlex.quote(c) for c in channels)
-        ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
-        ensure_channel_sync_monitor(hostname, admin, password)
-        ensure_bootstrap_repo_monitor(hostname)
-        print("  NOTE: channels have been ADDED but not necessarily fully SYNCED yet — real "
-              "package content is now downloading from SCC in the background, one channel at "
-              "a time (see the channel-sync monitor above). Depending on how many channels and "
-              "how large they are, this can legitimately take SEVERAL HOURS to finish. Clients "
-              "registering against a channel that isn't fully synced yet won't fail — "
-              "install_client_registration detects this and retries automatically in the "
-              "background until it's ready — but don't expect every system to show up "
-              "registered right away.")
+        if channels:
+            # mgr-sync add credentials does not fill the product and channel catalog. A separate `mgr-sync refresh` is needed,
+            # and it contacts the SCC API. The wait loop below has a timeout, and a refresh runs first, so the loop does not
+            # depend on the server's own scheduled job.
+            print("- Refreshing mgr-sync's product/channel catalog from SCC")
+            ssh_run(hostname, "mgrctl exec -- mgr-sync refresh", check=False)
+
+            count = 0
+            max_retries = 60  # 10 min — the refresh above should make this near-instant; this
+                               # bound exists only as a safety net, not the primary fix.
+            print("- Waiting for channel list to sync")
+            while True:
+                time.sleep(10)
+                count += 1
+                print("Retry {}".format(count), end="\r")
+                out = ssh_run(hostname, "mgrctl exec -- mgr-sync list channels 2>/dev/null",
+                              check=False, capture=True).stdout or ""
+                if any("no channels found." not in line.lower() for line in out.splitlines()):
+                    break
+                if count >= max_retries:
+                    die("channel list on '{}' is still empty after mgr-sync refresh + {} retries "
+                        "({} min) — check 'mgrctl exec -- mgr-sync refresh' and 'mgrctl exec -- "
+                        "mgr-sync list channels' there directly".format(
+                            hostname, max_retries, max_retries * 10 // 60))
+            time.sleep(300)
+            channel_args = " ".join(shlex.quote(c) for c in channels)
+            ssh_run(hostname, "mgrctl exec -- mgr-sync add channels {}".format(channel_args))
+            ensure_channel_sync_monitor(hostname, admin, password)
+            ensure_bootstrap_repo_monitor(hostname)
+            print("  NOTE: channels have been ADDED but not necessarily fully SYNCED yet — real "
+                  "package content is now downloading from SCC in the background, one channel at "
+                  "a time (see the channel-sync monitor above). Depending on how many channels and "
+                  "how large they are, this can legitimately take SEVERAL HOURS to finish. Clients "
+                  "registering against a channel that isn't fully synced yet won't fail — "
+                  "install_client_registration detects this and retries automatically in the "
+                  "background until it's ready — but don't expect every system to show up "
+                  "registered right away.")
 
     sync_channels = (cfg.get("smlm_sync_channels") or "").split()
     config_channels = cfg.get("smlm_config_channels") or []

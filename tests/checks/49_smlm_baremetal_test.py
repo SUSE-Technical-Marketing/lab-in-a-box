@@ -15,6 +15,9 @@ import addon_common as ac  # noqa: E402
 import apps  # noqa: E402
 ism = apps.load_addon_module("install_smlm", str(_REPO / "scripts"))  # no .py: loaded by path
 import mgradm_common  # noqa: E402
+# Captured now, before any test below replaces ism.setup_smlm_podman itself with a mock (several do,
+# none restore it) — the only_step test near the end of this file needs the REAL function.
+_real_setup_smlm_podman = ism.setup_smlm_podman
 
 failures = []
 original_die = ism.die
@@ -591,6 +594,39 @@ check("_validate: kickstart-only fields on an agama_profile entry are rejected",
     "smlm_kickstart_profiles": [{"name": "k", "distribution": "d", "root_password": "x",
                                  "agama_profile": {"product": {"id": "openSUSE_Leap"}}}]})))
 
+
+# ── setup_smlm_podman(only_step=...): skips the WHOLE registration/install preamble, not just ──
+# ── the other provisioning steps — real bug found live 2026-11-06, see this fix's own comment ──
+_real_ssh_run = ism.ssh_run
+_real_run_forever = ism.sc.run_forever_retry_worker
+_real_ensure_action_chains = ism.sc.ensure_action_chains
+_real_ensure_spacecmd_config = ism.sc.ensure_spacecmd_config
+
+_only_step_calls = []
+ism.ssh_run = lambda hostname, cmd, **kw: (_only_step_calls.append(cmd), FakeResult())[1]
+ism.sc.ensure_spacecmd_config = lambda *a, **kw: None
+ism.sc.ensure_action_chains = lambda *a, **kw: _only_step_calls.append("<ensure_action_chains ran>")
+# run_forever_retry_worker normally loops forever — this test only needs to confirm the matched
+# step's own function is the thing handed to it, so it calls that closure exactly once instead.
+ism.sc.run_forever_retry_worker = lambda key, attempt: attempt()
+
+try:
+    _real_setup_smlm_podman("sol.mydemo.lab", "virt1.mydemo.lab",
+                             {"smlm_action_chains": [{"name": "ac1"}]}, only_step="action chains")
+except SystemExit as e:
+    check("setup_smlm_podman(only_step=...): exits 0 (the matched-step success path), "
+          "not 1 (the 'no step matched' die()) — got code {!r}".format(e.code), e.code in (0, None))
+
+check("setup_smlm_podman(only_step=...): runs the matched step itself",
+      "<ensure_action_chains ran>" in _only_step_calls)
+check("setup_smlm_podman(only_step=...): never touches SUSEConnect/zypper/mgradm/mgr-sync — the "
+      "whole registration preamble is skipped, not just the other provisioning steps",
+      not any(re.search(r"SUSEConnect|zypper|mgradm|mgr-sync", c) for c in _only_step_calls))
+
+ism.ssh_run = _real_ssh_run
+ism.sc.run_forever_retry_worker = _real_run_forever
+ism.sc.ensure_action_chains = _real_ensure_action_chains
+ism.sc.ensure_spacecmd_config = _real_ensure_spacecmd_config
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
