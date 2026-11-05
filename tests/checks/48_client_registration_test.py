@@ -235,8 +235,12 @@ check("register_client(): channels still pending -> does NOT register synchronou
       "(that's the whole point — don't block)",
       "ensure_client_registered" not in names2)
 
-# -- no local channel fields AND the key doesn't exist yet (e.g. about to be
-# created by ensure_activation_key right above) -> nothing to look up, registers synchronously --
+# -- the key doesn't exist yet AND this node has no base_channel to create it with -> hand off to a
+# background retry instead of dying — the fix for a real bug found live 2026-11-03: register_client()
+# used to call ensure_activation_key() unconditionally here, which die()s hard the instant base_channel
+# is missing, so a node failed outright (never even reaching the pending-channel handoff) purely
+# because its OWN activation key is defined elsewhere (e.g. install_smlm's smlm_activation_keys) and
+# just hadn't been created yet by the time this ran.
 launch_calls.clear()
 fake_sc3 = _FakeSc(key_exists=False)
 icr.sc = fake_sc3
@@ -244,12 +248,40 @@ _real_register_client("mercury.mydemo.lab", {
     "client_registration_server": "sol.mydemo.lab",
     "client_registration_activation_key": "1-key",
 }, lab_file="lab.json")
-check("register_client(): no sync_channels/activation-key-channels configured, key doesn't "
-      "exist yet -> nothing to wait on, registers synchronously without even calling "
-      "pending_channels()",
-      not any(c[0] == "pending_channels" for c in fake_sc3.calls)
-      and any(c[0] == "ensure_client_registered" for c in fake_sc3.calls)
-      and launch_calls == [])
+names3 = [c[0] for c in fake_sc3.calls]
+check("register_client(): key doesn't exist yet, no base_channel configured here -> checks "
+      "existence before giving up", any(c[0] == "activation_key_exists" for c in fake_sc3.calls))
+check("register_client(): ...and hands off to a background retry instead of dying or "
+      "trying (and failing) to create the key itself",
+      launch_calls == [("lab.json", "mercury.mydemo.lab")]
+      and "ensure_activation_key" not in names3 and "ensure_client_registered" not in names3)
+
+# -- same situation, but with no lab_file to hand off to -> THIS is a real, un-fixable
+# configuration problem, so it still dies, just with a clearer message than before --
+fake_sc3b = _FakeSc(key_exists=False)
+icr.sc = fake_sc3b
+died = False
+try:
+    _real_register_client("mercury.mydemo.lab", {
+        "client_registration_server": "sol.mydemo.lab",
+        "client_registration_activation_key": "1-key",
+    })  # lab_file omitted
+except SystemExit:
+    died = True
+check("register_client(): key doesn't exist, no base_channel, AND no lab_file to hand off to -> "
+      "dies (nothing else can resolve this)", died)
+
+# -- when base_channel IS configured here, this addon is meant to create the key itself, same as
+# before the fix --
+fake_sc3c = _FakeSc(key_exists=False, pending=set())
+icr.sc = fake_sc3c
+_real_register_client("mercury.mydemo.lab", {
+    "client_registration_server": "sol.mydemo.lab",
+    "client_registration_activation_key": "1-key",
+    "client_registration_activation_key_base_channel": "sles15-sp7-pool",
+}, lab_file="lab.json")
+check("register_client(): base_channel IS configured here -> still creates the key itself, "
+      "unchanged from before", any(c[0] == "ensure_activation_key" for c in fake_sc3c.calls))
 
 # -- Channels from the activation key ------------------------------------------
 # When the activation key is created elsewhere and the node sets only the key name, the channels are read from the server with

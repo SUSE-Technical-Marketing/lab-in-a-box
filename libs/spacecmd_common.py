@@ -609,6 +609,32 @@ def ensure_channels_synced(hostname, exec_prefix, channels):
             die("could not sync channel '{}'".format(ch))
 
 
+_REPOSYNC_ERROR_RE = re.compile(r"(?m)^(ERROR|Traceback|Exception)\b")
+
+
+def channel_sync_errors(hostname, exec_prefix, channel):
+    """
+    Lines in `channel`'s full reposync log (/var/log/rhn/reposync/<channel>.log inside the server
+    container) that look like a genuine reposync-reported error — a Python-logging-style line that
+    STARTS with "ERROR"/"Traceback"/"Exception" (anchored to the beginning of the line). Anchoring
+    matters: a naive case-insensitive "error" substring search is unusable on these logs — confirmed
+    live against this project's own real reposync output, which is full of legitimately-named packages
+    containing that text nowhere near an actual failure (libgpg-error, perl-Exception-Class,
+    maven-error-diagnostics, ...). Returns the matching lines verbatim (empty list = none seen).
+
+    Independent of whether the sync has FINISHED: reposync does not treat every individual package
+    failure as fatal to the whole run, so a channel can log a real error partway through and still go
+    on to print "Sync completed." (see pending_channels()) — completed and clean are two different
+    questions. Caller decides what a non-empty result means for them; this just surfaces what the log
+    itself says, same as pending_channels() does for completion.
+    """
+    log_path = "/var/log/rhn/reposync/{}.log".format(channel)
+    r = _run(hostname, exec_prefix, "test -f {p} && cat {p}".format(p=shlex.quote(log_path)), check=False)
+    if r.returncode != 0:
+        return []
+    return [ln for ln in (r.stdout or "").splitlines() if _REPOSYNC_ERROR_RE.match(ln)]
+
+
 def pending_channels(hostname, exec_prefix, channels):
     """
     Return the subset of `channels` that have not finished syncing. An empty set means every channel is ready. A channel is
@@ -637,6 +663,13 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
 
     timeout=None waits without a deadline, which a background retry worker relies on. Any other value dies after that many
     seconds, listing the channels that are still pending. An empty list is a no-op.
+
+    Once every channel reports complete, each one's full reposync log is also checked with
+    channel_sync_errors() — "finished" and "finished cleanly" are different questions (reposync does
+    not treat every individual package failure as fatal to the whole run). A channel with recorded
+    errors only warns, never dies or keeps this waiting longer: those errors already happened and are
+    not something retrying registration will fix, but they are worth surfacing rather than silently
+    registering a client against channel content that may be incomplete.
     """
     if not channels:
         return
@@ -657,6 +690,12 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
         time.sleep(poll_interval)
     if announced:
         print("  All required channels are now fully synced")
+    for ch in sorted(channels):
+        errors = channel_sync_errors(hostname, exec_prefix, ch)
+        if errors:
+            warn("channel '{}' finished syncing, but its own reposync log recorded {} error(s) — "
+                 "content for this channel may be incomplete: {}".format(
+                     ch, len(errors), errors[-1]))
 
 
 def _stage_remote_file(hostname, exec_prefix, remote_path, content):
@@ -1467,11 +1506,22 @@ def ensure_org(hostname, exec_prefix, org):
     name = org.get("name")
     if not name:
         die("orgs: an entry is missing required 'name'")
-    if org_exists(hostname, exec_prefix, name):
-        print("  Org '{}' already exists — leaving it alone".format(name))
-        return
 
     admin_user = org.get("admin_user")
+
+    if org_exists(hostname, exec_prefix, name):
+        print("  Org '{}' already exists — leaving it alone".format(name))
+        # Still worth making sure the designated admin actually has the org_admin role, even though
+        # org.create's own first-user grant should already cover a fresh creation: found live
+        # 2026-11-03 — an org that already existed (from an earlier run) had its designated admin
+        # authenticate fine but lack org_admin entirely (createRole and similar calls refused), with no
+        # way to tell from here whether that was always true or just never checked. ensure_user_role()
+        # itself only warns on failure, never dies, so this is safe to attempt unconditionally even if
+        # the current (default-administrator) session turns out not to have cross-org grant rights.
+        if admin_user:
+            ensure_user_role(hostname, exec_prefix, admin_user, "org_admin")
+        return
+
     admin_pass = org.get("admin_pass")
     admin_email = org.get("admin_email")
     if not (admin_user and admin_pass and admin_email):
@@ -1491,6 +1541,10 @@ def ensure_org(hostname, exec_prefix, org):
     if r.returncode != 0:
         die("could not create org '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
     print("  Created org '{}' (admin: {})".format(name, admin_user))
+    # Belt-and-suspenders: org.create is documented to grant its own first user org_admin already, but
+    # this costs nothing extra to confirm (ensure_user_role() warns, never dies, on failure) and removes
+    # any doubt for the access-group/role-management steps that run next and need it for real.
+    ensure_user_role(hostname, exec_prefix, admin_user, "org_admin")
 
 
 def ensure_org_trust(hostname, exec_prefix, org_a, org_b):

@@ -335,6 +335,49 @@ check("wait_for_channels_synced: dies with a clear message once the timeout is e
 sc.time.time = time.time
 sc.time.sleep = time.sleep
 
+# -- channel_sync_errors: completed is not the same question as completed cleanly --
+# Anchored to the start of the line, so real package names that happen to contain "error"/"exception"
+# (confirmed live against this project's own real reposync output: libgpg-error, perl-Exception-Class,
+# maven-error-diagnostics) are never mistaken for an actual failure.
+fake = FakeSSH(responses=[("reposync/noisy-but-clean.log", FakeResult(returncode=0, stdout=(
+    "2026/11/04 07:51:44 +02:00     4326/10072 : libgpg-error-1.12-3.el7.x86_64.rpm\n"
+    "2026/11/04 07:51:54 +02:00     5916/10072 : maven-error-diagnostics-2.2.1-47.el7.noarch.rpm\n"
+    "2026/11/04 07:52:01 +02:00     7009/10072 : perl-Exception-Class-1.37-3.el7.noarch.rpm\n"
+    "2026/11/04 07:56:08 +02:00 Sync completed.\n")))])
+sc.ssh_run = fake
+check("channel_sync_errors: package names containing 'error'/'exception' are never false positives",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "noisy-but-clean") == [])
+
+fake = FakeSSH(responses=[("reposync/really-failed.log", FakeResult(returncode=0, stdout=(
+    "2026/11/04 07:51:44 +02:00     4326/10072 : libgpg-error-1.12-3.el7.x86_64.rpm\n"
+    "ERROR: could not retrieve metadata for repository 'X'\n"
+    "2026/11/04 07:56:08 +02:00 Sync completed.\n")))])
+sc.ssh_run = fake
+check("channel_sync_errors: a real, line-anchored ERROR is found",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "really-failed")
+      == ["ERROR: could not retrieve metadata for repository 'X'"])
+
+fake = FakeSSH(responses=[("reposync/missing.log", FakeResult(returncode=1, stdout=""))])
+sc.ssh_run = fake
+check("channel_sync_errors: no log file yet -> empty, not an error",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "missing") == [])
+
+# wait_for_channels_synced() checks for this too, once every channel reports complete — but only warns,
+# never dies or blocks longer, since those errors already happened and retrying won't undo them.
+sc.time.sleep = lambda s: None
+fake = FakeSSH(responses=[
+    ("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/ch-a.log", FakeResult(returncode=0, stdout="ERROR: boom\nSync completed.\n")),
+])
+sc.ssh_run = fake
+_warn_buf = []
+_real_warn = sc.warn
+sc.warn = lambda msg: _warn_buf.append(msg)
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-a"])
+sc.warn = _real_warn
+check("wait_for_channels_synced: warns (never dies) when a completed channel's log recorded errors",
+      len(_warn_buf) == 1 and "ch-a" in _warn_buf[0] and "ERROR: boom" in _warn_buf[0])
+
 # -- pending_channels: the one-shot, non-blocking check factored out above --
 fake = FakeSSH(responses=[
     ("reposync/ready.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
@@ -604,6 +647,28 @@ sc.ensure_org("host1", "mgrctl exec --", {"name": "lab"})
 check("ensure_org: existing org -> no create call",
       len(fake.calls) == 1 and "org_create " not in fake.calls[0][1])
 
+# ensure_org: an org that already exists still gets its designated admin's org_admin role checked —
+# the fix for a real bug found live 2026-11-03: an org from an earlier run had its designated admin
+# authenticate fine but lack org_admin entirely, with nothing in this project ever checking for or
+# fixing that. ensure_user_role() itself only warns on failure, never dies, so this is safe even if the
+# current session cannot actually grant it.
+fake = FakeSSH(responses=[
+    ("org_list", FakeResult(stdout="edge\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Roles: regular_user")),
+])
+sc.ssh_run = fake
+sc.ensure_org("host1", "mgrctl exec --", {"name": "edge", "admin_user": "edgeadmin"})
+cmds = [c[1] for c in fake.calls]
+check("ensure_org: an already-existing org still checks/grants its admin's org_admin role",
+      any("user_addrole edgeadmin org_admin" in c for c in cmds))
+
+# ...but does nothing extra when no admin_user is given for an already-existing org (nothing to check).
+fake = FakeSSH(responses=[("org_list", FakeResult(stdout="lab\n"))])
+sc.ssh_run = fake
+sc.ensure_org("host1", "mgrctl exec --", {"name": "lab"})
+check("ensure_org: existing org with no admin_user given makes no role-related call",
+      not any("user_" in c[1] for c in fake.calls))
+
 # -- ensure_org: missing admin fields dies -----------------------------------
 fake = FakeSSH(responses=[("org_list", FakeResult(stdout=""))])
 sc.ssh_run = fake
@@ -627,6 +692,8 @@ check("ensure_org: create command carries -n/-u/-f/-l/-e/-p/-P/--pam",
       "-n OrgB" in create_cmd and "-u orgb-admin" in create_cmd and "-f Org" in create_cmd
       and "-l Bee" in create_cmd and "-e admin@orgb.lab" in create_cmd and "-p s3cr3t" in create_cmd
       and "-P mr" in create_cmd and "--pam" in create_cmd)
+check("ensure_org: a fresh creation also confirms its new admin's org_admin role, belt-and-suspenders",
+      any("user_addrole orgb-admin org_admin" in c[1] for c in fake.calls))
 
 # -- ensure_org: defaults first/last name, omits -P/--pam when unset --------
 fake = FakeSSH(responses=[("org_list", FakeResult(stdout=""))])

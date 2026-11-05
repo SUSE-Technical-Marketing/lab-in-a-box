@@ -48,7 +48,11 @@
 # OPTIONAL – activation key auto-creation, if client_registration_activation_key
 #            doesn't already exist on the server (same fields
 #            ensure_activation_key already expects under any prefix — see
-#            install_uyuni.py's own uyuni_activation_key_* for the full set)
+#            install_uyuni.py's own uyuni_activation_key_* for the full set).
+#            When unset, this addon never tries to CREATE the key itself — it just
+#            waits (forever-retry) for it to exist, e.g. created elsewhere by
+#            install_smlm's own smlm_activation_keys. Only set this when THIS
+#            addon is meant to be the one that creates the key.
 #   client_registration_activation_key_base_channel   : required to CREATE the key
 #   client_registration_activation_key_child_channels : space-separated
 #   client_registration_activation_key_desc           : default: the key name
@@ -287,7 +291,38 @@ def register_client(vm_name, cfg, lab_file=None):
     sc.ensure_spacecmd_config(server_node, exec_prefix, admin_user, admin_pass)
     sync_channels = (cfg.get("client_registration_sync_channels") or "").split()
     sc.ensure_channels_synced(server_node, exec_prefix, sync_channels)
-    sc.ensure_activation_key(server_node, exec_prefix, cfg, "client_registration")
+
+    # The key may not exist yet for a reason that is NOT a configuration error: it is common for the
+    # SAME key to also be defined under install_smlm's own smlm_activation_keys (with the base_channel
+    # etc. this addon's own config deliberately omits, relying on that other creation happening first),
+    # and a massively parallel deployment gives no ordering guarantee between the two. Previously this
+    # called ensure_activation_key() unconditionally, which die()s hard the instant base_channel is
+    # missing — found live 2026-11-03: a node failed outright (FAILED, not pending) purely because its
+    # own client_registration addon ran before install_smlm got around to creating this exact key,
+    # never even reaching the pending-channel handoff below. Per this project's mandatory forever-retry
+    # policy for anything depending on SMLM activation keys, that is the wrong failure mode: only die()
+    # when there is truly nothing that could ever create this key (no base_channel configured here
+    # EITHER), and even then only once there is no lab_file to hand off to in the first place.
+    base_channel = cfg.get("client_registration_activation_key_base_channel")
+    if sc.activation_key_exists(server_node, exec_prefix, activation_key):
+        pass  # already there — created by this addon on an earlier run, or by install_smlm elsewhere
+    elif base_channel:
+        sc.ensure_activation_key(server_node, exec_prefix, cfg, "client_registration")
+    else:
+        if not lab_file:
+            die("activation key '{}' does not exist yet and client_registration_activation_key_base_channel "
+                "is not set to create it here; register_client() also needs lab_file to wait for it to be "
+                "created elsewhere instead".format(activation_key))
+        _launch_background_retry(lab_file, vm_name)
+        print("  Activation key '{}' does not exist yet and this node has no "
+              "client_registration_activation_key_base_channel to create it with (most likely it is "
+              "defined elsewhere, e.g. install_smlm's own smlm_activation_keys, and just hasn't been "
+              "created yet) — launched a background retry that will keep trying until registration "
+              "succeeds; continuing with the rest of the deployment. Real status (this call returning "
+              "cleanly only means the retry was launched, never that registration has actually "
+              "finished — check the worker's own log): {}".format(
+                  activation_key, sc.forever_retry_log_path(_background_retry_key(vm_name))))
+        return
 
     # If every channel this registration depends on is ALREADY fully synced
     # (not just "exists" — ensure_channels_synced() above only checks
