@@ -2901,9 +2901,15 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     Idempotently ensure every system name in `systems` is a member of `group_name`, with group_addsystems. Only the names not
     already listed by group_listsystems are added. The function does nothing if `systems` is empty.
 
-    group_addsystems skips any name that is not a registered system, as long as at least one name in the same call is valid. If
-    every name is invalid, the call fails. A lab's hostname list often contains systems that are not registered yet, so the
-    failure is reported as a warning rather than a fatal error. Once those systems register, a later run adds them.
+    group_addsystems skips any name that is not a registered system, as long as at least one name in the same call is
+    valid — silently, with returncode 0, even when some or all of the requested systems never actually got added. This
+    function therefore verifies the real end state afterward (another group_listsystems) rather than trusting that
+    return code: die()s when any requested system is still missing, so this step is treated as genuinely incomplete and
+    picked up by the same forever-retry mechanism every other SMLM step depending on client registration already uses,
+    per this project's own forever-retry policy — not trusted to a "later run" that, for this specific step, never
+    actually happens on its own. Confirmed live 2026-11-06: every one of this lab's "themed" groups (terrestrial-planets,
+    martian-moons, moons, ...) ended up with zero members this way, silently, because every target system was still
+    mid-registration — an async, hours-long background process — the one time this step ran.
     """
     if not systems:
         return
@@ -2914,10 +2920,13 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
         return
     r = _spacecmd(hostname, exec_prefix, "group_addsystems {} {}".format(
         shlex.quote(group_name), " ".join(shlex.quote(s) for s in missing)))
-    if r.returncode != 0:
-        warn("could not add system(s) ({}) to group '{}' — they may not be registered systems yet: "
-             "{}".format(", ".join(missing), group_name, (r.stderr or r.stdout or "").strip()))
-        return
+    now_existing = list_group_systems(hostname, exec_prefix, group_name)
+    still_missing = [s for s in missing if s not in now_existing]
+    if still_missing:
+        die("system group '{}': {} of {} requested system(s) are still not members after group_addsystems "
+            "— most likely not registered systems yet ({}): {}".format(
+                group_name, len(still_missing), len(missing),
+                (r.stderr or r.stdout or "").strip() or "no error output", ", ".join(still_missing)))
     print("  Added {} system(s) to group '{}': {}".format(len(missing), group_name, ", ".join(missing)))
 
 

@@ -1875,11 +1875,48 @@ check("ensure_group_systems: all already members -> no addsystems call",
 
 fake = FakeSSH(responses=[("group_listsystems", FakeResult(returncode=0, stdout="dev1.lab\n"))])
 sc.ssh_run = fake
-sc.ensure_group_systems("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
-                         "dev-systems", ["dev1.lab", "dev2.lab"])
+died = False
+try:
+    sc.ensure_group_systems("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+                             "dev-systems", ["dev1.lab", "dev2.lab"])
+except SystemExit:
+    died = True
 add_cmd = next((c[1] for c in fake.calls if "group_addsystems" in c[1]), "")
 check("ensure_group_systems: adds only the missing systems",
       "group_addsystems dev-systems dev2.lab" in add_cmd)
+# The real bug fix below needs group_listsystems to reflect the real end state, not a response
+# that never changes — this particular fake's second group_listsystems call still returns the
+# ORIGINAL "dev1.lab\n" (dev2.lab was never actually added), so this is really exercising the new
+# verification path too: it correctly catches that dev2.lab is still missing and dies.
+check("ensure_group_systems: a static/unresponsive group_listsystems (dev2.lab never actually "
+      "shows up as a member) is correctly caught as still-incomplete, not trusted on say-so", died)
+
+# -- real bug fix: group_addsystems can return rc=0 while silently adding NOTHING (every name was
+# an unregistered system) — confirmed live 2026-11-06, every one of this lab's "themed" groups
+# (terrestrial-planets, martian-moons, moons, ...) ended up with zero members this exact way. The
+# function must verify the real end state, not trust group_addsystems' own return code either way.
+_gls_calls = [0]
+
+
+def _group_listsystems_then_added(hostname, cmd, **kwargs):
+    if "group_listsystems" in cmd:
+        _gls_calls[0] += 1
+        # First call (the "what's already there" check): empty. Second call (the verification
+        # after group_addsystems): now has what was actually added.
+        return FakeResult(returncode=0, stdout="" if _gls_calls[0] == 1 else "dev1.lab\n")
+    if "group_addsystems" in cmd:
+        return FakeResult(returncode=0, stdout="")  # rc=0 even though only dev1.lab was really added
+    return FakeResult()
+
+
+sc.ssh_run = _group_listsystems_then_added
+died = False
+try:
+    sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["dev1.lab", "dev2.lab"])
+except SystemExit:
+    died = True
+check("ensure_group_systems: dies when group_addsystems reports success (rc=0) but one of the "
+      "requested systems is verifiably still not a member — the real bug, found live", died)
 
 fake = FakeSSH(responses=[
     ("group_listsystems", FakeResult(returncode=0, stdout="")),
@@ -1891,8 +1928,9 @@ try:
     sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["bogus.lab"])
 except SystemExit:
     died = True
-check("ensure_group_systems: addsystems failure warns, doesn't die (not-yet-registered "
-      "systems are expected and self-heal on a later run)", died is False)
+check("ensure_group_systems: a totally-failed addsystems call (not-yet-registered system) now "
+      "dies — picked up by the same forever-retry mechanism every other SMLM step depending on "
+      "client registration already uses, per this project's own forever-retry policy", died)
 
 # -- ensure_system_groups: orchestration, no-op, validation ------------------
 fake = FakeSSH()
@@ -1900,14 +1938,24 @@ sc.ssh_run = fake
 sc.ensure_system_groups("host1", "mgrctl exec --", {}, "uyuni")
 check("ensure_system_groups: no-op when field unset", len(fake.calls) == 0)
 
-fake = FakeSSH(responses=[
-    ("group_listsystems", FakeResult(returncode=0, stdout="")),
-    ("group_list", FakeResult(returncode=0, stdout="")),
-])
-sc.ssh_run = fake
+_esg_gls_calls = [0]
+_esg_calls = []
+
+
+def _esg_fake(hostname, cmd, **kwargs):
+    _esg_calls.append((hostname, cmd, kwargs))
+    if "group_listsystems" in cmd:
+        _esg_gls_calls[0] += 1
+        return FakeResult(returncode=0, stdout="" if _esg_gls_calls[0] == 1 else "dev1.lab\n")
+    if "group_list" in cmd:
+        return FakeResult(returncode=0, stdout="")
+    return FakeResult()
+
+
+sc.ssh_run = _esg_fake
 cfg = {"uyuni_system_groups": [{"name": "dev-systems", "description": "Dev", "systems": ["dev1.lab"]}]}
 sc.ensure_system_groups("host1", "mgrctl exec --", cfg, "uyuni")
-cmds = [c[1] for c in fake.calls]
+cmds = [c[1] for c in _esg_calls]
 check("ensure_system_groups: creates the group and adds its systems",
       any("group_create dev-systems Dev" in c for c in cmds)
       and any("group_addsystems dev-systems dev1.lab" in c for c in cmds))
