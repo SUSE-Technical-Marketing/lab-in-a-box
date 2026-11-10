@@ -12,11 +12,11 @@
 # install_<addon> scripts are likewise separate processes, exactly as in bash.
 
 """
-setup_lab.py — provision all VMs defined in a lab JSON, set up Kubernetes
-clusters, and install cluster-level and VM-level addons in order.
+setup_lab.py — provision all VMs defined in a lab definition file, set up
+Kubernetes clusters, and install cluster-level and VM-level addons in order.
 
 Usage:
-    setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
+    setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>
 """
 
 __version__ = "__LABVERSION__"
@@ -48,10 +48,10 @@ from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import provision_vm  # noqa: E402
 
 _HELP_TEXT = """\
-Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>
+Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>
 
-Provisions all VMs defined in the lab JSON, sets up Kubernetes clusters, and
-installs cluster-level and VM-level addons in order.
+Provisions all VMs defined in the lab definition file, sets up Kubernetes
+clusters, and installs cluster-level and VM-level addons in order.
 
 Options:
   --help, -h
@@ -330,7 +330,7 @@ def _addon_status(rc, started_at):
 
 def _run_addon(cmd, env):
     """
-    Run an addon installer (`install_<addon> [--validate] <lab.json>`).
+    Run an addon installer (`install_<addon> [--validate] <lab-file>`).
 
     Default (no --debug): its stdout/stderr are captured and only printed if it
     exits non-zero or its output looks like it contains a warning/error — so a
@@ -359,9 +359,9 @@ def _merged_env(definition, config, defaults, vm_name):
     return env
 
 
-def validate_addon_configs(definition, json_file, issues_out=None):
+def validate_addon_configs(definition, lab_file, issues_out=None):
     """
-    Run `install_<addon> --validate <json_file>` for every addon in the lab definition: kclusters[x].addons and nodes[x].addons,
+    Run `install_<addon> --validate <lab_file>` for every addon in the lab definition: kclusters[x].addons and nodes[x].addons,
     collected by apps.collect_addon_names(). This happens before any VM or cluster work starts.
 
     Each addon's validators check its configuration values, such as a namespace. Without this step, the checks run only when an operator
@@ -387,7 +387,7 @@ def validate_addon_configs(definition, json_file, issues_out=None):
         status = apps.status_warning(apps.load_plugin(addon))
         if status:
             lc.warn(status)
-        r = subprocess.run([installer, "--validate", json_file],
+        r = subprocess.run([installer, "--validate", lab_file],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         if r.returncode != 0:
             for line in (r.stdout or "").splitlines():
@@ -461,7 +461,7 @@ def phase_dns(definition, remote_dns_servers):
     lc._level -= 1
 
 
-def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg, log_prefix=None):
+def _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg, log_prefix=None):
     """
     Create one node's VM: check an existing host, check --keep reusability, destroy the VM if it must be recreated, then provision
     it. phase_create_vms() runs this sequentially or in parallel, so both paths share one implementation.
@@ -552,20 +552,20 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
 
 
 
-def phase_allocate_ips(definition, config, json_file):
+def phase_allocate_ips(definition, config, lab_file):
     """
     Give every node that has no myip one, from the network the definition already describes. A cloud node is left
     alone, since its provider assigns the address; so is a node whose lab has no mygw and mymask to take one from.
 
     Returns the path the rest of the run must use as the lab definition: the sibling file the allocation was saved
-    to, or `json_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
+    to, or `lab_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
     file from disk, so a run that kept using the original would hand them a definition with no addresses in it, and
     anything reading myip there (a service's DNS records, for one) would quietly do nothing.
     """
     missing = [name for name, cfg in (definition.get("nodes") or {}).items()
                if not str((cfg or {}).get("myip") or "").strip()]
     if not missing:
-        return json_file
+        return lab_file
     for vm_name in missing:
         backend = backends.get_backend(definition, config, vm_name, for_existing=False)
         backend.check_or_generate_ip(vm_name, "", definition)
@@ -573,7 +573,7 @@ def phase_allocate_ips(definition, config, json_file):
     lc.log("The run continues with '{}', which holds the allocated addresses".format(allocated))
     return allocated
 
-def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
+def phase_create_vms(definition, config, defaults, lab_file, keep, parallel=0):
     """
     Create the VMs for all nodes.
 
@@ -592,18 +592,18 @@ def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
 
     if not parallel:
         for vm_name, node_cfg in nodes:
-            _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+            _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg)
     else:
         # A Harvester cluster's create node goes first: its VIP is in the other nodes' user-data.
         creators = {harvester.create_node(definition, c) for c, cfg in (definition.get("kclusters") or {}).items()
                     if (cfg or {}).get("clu_type") == harvester.CLU_TYPE}
         for vm_name, node_cfg in nodes:
             if vm_name in creators:
-                _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+                _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg)
         nodes = [(n, cfg) for n, cfg in nodes if n not in creators]
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = [
-                pool.submit(_create_one_vm, definition, config, defaults, json_file, keep,
+                pool.submit(_create_one_vm, definition, config, defaults, lab_file, keep,
                             vm_name, node_cfg, log_prefix="[{}] ".format(vm_name))
                 for vm_name, node_cfg in nodes
             ]
@@ -662,7 +662,7 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
     lc._level -= 1
 
 
-def _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg):
+def _install_cluster_addons(definition, config, defaults, lab_file, clu_name, clu_cfg):
     # The cluster addons list is read from the definition, not from clu_cfg. load_kclu_vars() keeps only scalar fields, so a list is
     # dropped there. Per-node addons use phase_vm_addons() instead.
     addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
@@ -709,7 +709,7 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         # pipeline. Matched exactly: run it, move on — but record the exit
         # code so the end-of-run summary can flag an addon that failed.
         started_at = time.time()
-        r = _run_addon([installer, json_file], env)
+        r = _run_addon([installer, lab_file], env)
         installed.add(addon)
         rc = getattr(r, "returncode", 0)
         _report.add_addon("cluster:{}".format(clu_name), addon, _addon_status(rc, started_at))
@@ -727,7 +727,7 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     lc.log("No more addons for cluster \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
 
 
-def phase_install_k8s_and_addons(definition, config, defaults, json_file):
+def phase_install_k8s_and_addons(definition, config, defaults, lab_file):
     delay_min = int(definition.get("common", {}).get("delay_min", defaults.get("delay_min", 2)))
     # A node whose VM creation failed has no VM, and install_cluster() reaches every node of a cluster by its
     # hostname. Installing Kubernetes on such a cluster would SSH to whatever that name currently resolves to,
@@ -771,10 +771,10 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
         else:
             lc.warn("cluster '{}' has no node to ask whether it has settled".format(clu_name))
 
-        _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg)
+        _install_cluster_addons(definition, config, defaults, lab_file, clu_name, clu_cfg)
 
 
-def phase_vm_addons(definition, json_file):
+def phase_vm_addons(definition, lab_file):
     # A node whose VM creation failed has no host, so its addons are skipped. Each addon would otherwise fail with a misleading error.
     # The creation failure is already listed in the Errors section of the summary.
     failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
@@ -807,7 +807,7 @@ def phase_vm_addons(definition, json_file):
             # exit code either, so a failing addon must not stop the pipeline —
             # but record it for the end-of-run summary.
             started_at = time.time()
-            r = _run_addon([installer, json_file], env)
+            r = _run_addon([installer, lab_file], env)
             rc = getattr(r, "returncode", 0)
             _report.add_addon("node:{}".format(vm_name), addon, _addon_status(rc, started_at))
             if rc != 0:
@@ -830,7 +830,7 @@ def phase_post_commands(definition):
             _report.add_error(msg)
 
 
-def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, parallel=0):
+def setup_lab(definition, config, defaults, lab_file, keep=False, fresh=True, parallel=0):
     # fresh=False is used by main(), which builds _report itself and seeds it
     # with the preflight's warnings/errors before this runs.
     global _report
@@ -839,7 +839,7 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
     if _report.resources is None:
         _report.resources = _lab_resources(definition)
 
-    lab_name = definition.get("common", {}).get("lab_name") or Path(json_file).name
+    lab_name = definition.get("common", {}).get("lab_name") or Path(lab_file).name
     has_k8s = bool(definition.get("kclusters"))
     kind = "VMs + Kubernetes clusters" if has_k8s else "VMs only"
     lc.log("\nSetup lab \"{}{}{}\" ({})".format(lc._RED, lab_name, lc._RESET, kind))
@@ -851,13 +851,13 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
     if has_k8s:
         phase_dns(definition, remote_dns_servers)
 
-    phase_create_vms(definition, config, defaults, json_file, keep, parallel=parallel)
+    phase_create_vms(definition, config, defaults, lab_file, keep, parallel=parallel)
 
     if has_k8s:
         phase_reboot_and_wait_kept_nodes(definition, config, keep)
-        phase_install_k8s_and_addons(definition, config, defaults, json_file)
+        phase_install_k8s_and_addons(definition, config, defaults, lab_file)
 
-    phase_vm_addons(definition, json_file)
+    phase_vm_addons(definition, lab_file)
     phase_post_commands(definition)
 
     lc.log("LAB setup completed")
@@ -922,17 +922,17 @@ def main():
     unknown = [a for a in args if a.startswith("-") and a not in ("--keep", "--debug", "--parallel")
                and not a.startswith("--parallel=")]
     if unknown:
-        lc.die("unknown option(s): {}. Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>".format(
+        lc.die("unknown option(s): {}. Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>".format(
             " ".join(unknown)))
     positional = [a for a in args if not a.startswith("-")]
     if not positional:
-        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab.json>")
-    json_file = positional[0]
+        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>")
+    lab_file = positional[0]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
-    migrations.require_current(definition, json_file)
+    definition = primary.load_definition(lab_file)
+    migrations.require_current(definition, lab_file)
 
     iso_loc        = defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
@@ -954,7 +954,7 @@ def main():
     # A node with no myip gets one before anything is validated, so the preflight sees the addresses the run will
     # actually use and the lab's own file can be written without any (see libs/ipalloc.py). Deterministic, so the
     # same definition always resolves to the same addresses.
-    json_file = phase_allocate_ips(definition, config, json_file)
+    lab_file = phase_allocate_ips(definition, config, lab_file)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,
@@ -965,12 +965,12 @@ def main():
         sys.exit(1)
 
     addon_issues = []
-    if not validate_addon_configs(definition, json_file, issues_out=addon_issues):
+    if not validate_addon_configs(definition, lab_file, issues_out=addon_issues):
         _fold_issues_into_report(addon_issues)
         print_summary(definition)
         sys.exit(1)
 
-    setup_lab(definition, config, defaults, json_file, keep=keep, fresh=False, parallel=parallel)
+    setup_lab(definition, config, defaults, lab_file, keep=keep, fresh=False, parallel=parallel)
 
     # Non-zero exit if any node / cluster / addon failed (or the preflight
     # raised an error), so a scripted caller (or a glance at $?) can tell a

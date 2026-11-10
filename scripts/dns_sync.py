@@ -9,9 +9,9 @@ Every DNS server this project writes to is a master of the same zone: records re
 its own zone file, with no transfer between them. A server that was unreachable while a record was added or
 removed therefore stays behind, and nothing notices.
 
-    dns_sync.py <lab.json>              report the differences and write the missing records to each master
-    dns_sync.py --check <lab.json>      report only, write nothing
-    dns_sync.py --prune <lab.json>      also remove every record a single master holds alone
+    dns_sync.py <lab-file>              report the differences and write the missing records to each master
+    dns_sync.py --check <lab-file>      report only, write nothing
+    dns_sync.py --prune <lab-file>      also remove every record a single master holds alone
     dns_sync.py --server <address> ...  add a DNS master to the ones the lab already names, repeatable
     dns_sync.py --help                  print this help
 
@@ -52,7 +52,7 @@ import primary  # noqa: E402
 from lab_creation import log, die  # noqa: E402
 from services import DNSService  # noqa: E402
 
-USAGE = "Usage: dns_sync.py [--check|--prune] [--server <address>]... <lab.json>\n"
+USAGE = "Usage: dns_sync.py [--check|--prune] [--server <address>]... <lab-file>\n"
 
 
 def zone_of(definition):
