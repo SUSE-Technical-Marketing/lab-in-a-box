@@ -3471,6 +3471,21 @@ def saltkey_accept(hostname, exec_prefix, minion_id):
         die("could not accept salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
 
 
+def saltkey_delete(hostname, exec_prefix, minion_id):
+    """
+    Remove minion_id's key via saltkey.delete — a real, confirmed-working API method (there is no
+    saltkey.reject that would leave an audit trail instead; delete is what this project uses). Needed
+    when a VM was destroyed and recreated under the same hostname: the master still has the OLD minion's
+    key accepted under that exact ID, so a fresh minion presenting a NEW key on the SAME ID is rejected by
+    Salt's own key-pinning (confirmed live, 2026-11-10 — the minion logs "The Salt Master has cached the
+    public key for this node" and retries forever without ever reaching accepted). Deleting the stale key
+    first lets the new one go through the normal pending -> accept flow. Dies on failure.
+    """
+    r = _api_call(hostname, exec_prefix, "saltkey.delete", [minion_id])
+    if r.returncode != 0:
+        die("could not delete the stale salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
+
+
 def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
     """
     Return the exact NVR-EA string for `pkg_name` in `channel`, as in "openssl-1.0.2k-19.el7:1.x86_64". The package list is
@@ -3617,8 +3632,8 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     """
     Register client_hostname as a Salt client of the Uyuni or SMLM server reached through (hostname, exec_prefix). The
     registration uses an activation key that the caller has already created with ensure_activation_key(). The function is
-    idempotent: it does nothing when the client's key is already accepted. The minion ID is client_hostname, unless profile_name is
-    given.
+    idempotent: it does nothing when the client is already a REAL, healthy registered system (see below) — not merely when
+    its salt key happens to be accepted. The minion ID is client_hostname, unless profile_name is given.
 
     The steps are:
       1. Generate a bootstrap script for this activation key on the server, with mgr-bootstrap --activation-keys=<key>. The file
@@ -3641,9 +3656,25 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     covers the script fetch, the checks inside the bootstrap, and the later salt connection.
     """
     minion_id = profile_name or client_hostname
-    if saltkey_accepted(hostname, exec_prefix, minion_id):
+    key_accepted = saltkey_accepted(hostname, exec_prefix, minion_id)
+    if key_accepted and system_is_registered_and_healthy(hostname, exec_prefix, minion_id):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
         return
+    if key_accepted:
+        # A real, live-reported failure (2026-11-10): a cloud VM destroyed and recreated under the SAME
+        # hostname (common after a stop/start or a manual re-provision) leaves its OLD minion's key
+        # accepted on the server, while the brand-new VM has no minion installed at all. The check above
+        # alone used to treat that stale acceptance as "already registered" and return immediately,
+        # silently skipping the bootstrap forever — found live on saturn.mydemoaws.lab, whose salt key
+        # stayed accepted from an earlier, since-destroyed instance while system_list had no entry for it
+        # and the current VM had never run venv-salt-minion at all. Salt also key-pins by minion ID: a new
+        # minion presenting a different key under an already-accepted ID is rejected outright ("The Salt
+        # Master has cached the public key for this node"), so the stale key must be deleted before the
+        # bootstrap below can ever succeed, not just before this check.
+        print("  '{}' has an accepted salt key but is not a real, healthy registered system (most likely "
+              "its VM was destroyed and recreated under the same name) — deleting the stale key and "
+              "re-bootstrapping".format(client_hostname))
+        saltkey_delete(hostname, exec_prefix, minion_id)
 
     _ensure_client_can_resolve_server(client_hostname, server_fqdn, server_ip)
 
