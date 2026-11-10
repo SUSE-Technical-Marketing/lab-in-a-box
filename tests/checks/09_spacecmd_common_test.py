@@ -2282,13 +2282,53 @@ _reboot_waits = []
 sc.boot_id = lambda hostname: "boot-1"
 sc.wait_for_reboot = lambda hostname, old: _reboot_waits.append((hostname, old)) or True
 
-# Already accepted: pure no-op, no bootstrap curl issued — confirms
-# _ensure_client_can_resolve_server() isn't even attempted for a client
-# that's already done, matching the existing early-return.
-fake = FakeSSH(responses=[("saltkey.acceptedList", FakeResult(stdout="['client1.mydemo.lab']"))])
+# Already accepted AND genuinely healthy (system.getId matches, package count clears the
+# threshold): pure no-op, no bootstrap curl issued — confirms
+# _ensure_client_can_resolve_server() isn't even attempted for a client that's really done.
+fake = FakeSSH(responses=[
+    ("saltkey.acceptedList", FakeResult(stdout="['client1.mydemo.lab']")),
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 1, "name": "client1.mydemo.lab"}]))),
+    ("system_listinstalledpackages client1.mydemo.lab",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(599)) + "\n")),
+])
 sc.ssh_run = fake
 sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
-check("ensure_client_registered: already-accepted client is a pure no-op", len(fake.calls) == 1)
+check("ensure_client_registered: already-accepted AND healthy client is a pure no-op, no bootstrap",
+      not any("curl -Sks" in c[1] for c in fake.calls))
+
+# Accepted key, but NOT a real healthy system (the live bug found on saturn.mydemoaws.lab, 2026-11-10:
+# a VM destroyed and recreated under the same hostname leaves its old minion's key accepted while the
+# new VM was never actually bootstrapped) -> deletes the stale key, then bootstraps and re-registers
+# exactly as if nothing had ever been accepted.
+_poll_count_stale = {"n": 0}
+_stale_key_calls = []
+
+
+def _stale_key_responder(hostname, cmd, **kwargs):
+    _stale_key_calls.append((hostname, cmd))
+    if "saltkey.acceptedList" in cmd:
+        return FakeResult(stdout="['client1.mydemo.lab']")
+    if "system.getId" in cmd:
+        return FakeResult(returncode=0, stdout=json.dumps([]))  # not really registered
+    if "saltkey.delete" in cmd:
+        return FakeResult(returncode=0)
+    if "saltkey.pendingList" in cmd:
+        _poll_count_stale["n"] += 1
+        return FakeResult(stdout="['client1.mydemo.lab']" if _poll_count_stale["n"] >= 2 else "[]")
+    if "saltkey.accept" in cmd:
+        return FakeResult(returncode=0)
+    if "curl -Sks" in cmd:
+        return FakeResult(returncode=0)
+    return FakeResult()
+
+
+sc.ssh_run = _stale_key_responder
+sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key",
+                             retry_limit=5, retry_interval=0)
+check("ensure_client_registered: an accepted-but-unhealthy (stale) key is deleted before re-bootstrapping",
+      any("saltkey.delete" in c[1] for c in _stale_key_calls)
+      and any("curl -Sks" in c[1] for c in _stale_key_calls)
+      and any("saltkey.accept" in c[1] for c in _stale_key_calls))
 
 # Not yet registered: bootstraps the client, then accepts once the key goes pending.
 _poll_count = {"n": 0}
