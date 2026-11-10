@@ -11,7 +11,7 @@
 setup_vm.py — provision a single VM from a lab definition.
 
 Usage:
-    setup_vm.py <lab.json> <vm_hostname>
+    setup_vm.py <lab-file> <vm_hostname>
 """
 
 __version__ = "__LABVERSION__"
@@ -385,7 +385,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 def main():
     if primary.wants_help(sys.argv[1:]):
         print(
-            "Usage: setup_vm.py <lab.json> <vm_hostname>\n\n"
+            "Usage: setup_vm.py <lab-file> <vm_hostname>\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"
             "(Ignition+Combustion or cloud-init), registers DNS, and calls virt-install.\n\n"
             "Run 'setup_lab.py --input-definition [json|yaml]' for the full lab definition schema."
@@ -404,13 +404,13 @@ def main():
     if len(sys.argv) < 3:
         die("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))
 
-    json_file = sys.argv[1]
+    lab_file = sys.argv[1]
     vm_name = sys.argv[2]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
-    migrations.require_current(definition, json_file)
+    definition = primary.load_definition(lab_file)
+    migrations.require_current(definition, lab_file)
 
     # Destroy-before-recreate: setup_lab.py's own orchestration already does this
     # (destroy_vm() unconditionally before provision_vm(), for every node, unless

@@ -210,8 +210,8 @@ check("each previewed address is held against the next node's",
       "_previewed_ips.add(would_get)" in source)
 _setup_lab = (_REPO / "scripts" / "setup_lab.py").read_text()
 check("the run allocates before it validates",
-      "json_file = phase_allocate_ips(definition, config, json_file)" in _setup_lab
-      and _setup_lab.index("phase_allocate_ips(definition, config, json_file)")
+      "lab_file = phase_allocate_ips(definition, config, lab_file)" in _setup_lab
+      and _setup_lab.index("phase_allocate_ips(definition, config, lab_file)")
       < _setup_lab.index("ok = lc.validate_lab_definition(")
       and "check_or_generate_ip" in (_REPO / "scripts" / "setup_vm.py").read_text())
 # Every add-on is its own process reading the lab file from disk, so the run has to continue with the file the
