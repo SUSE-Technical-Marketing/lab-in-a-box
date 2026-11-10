@@ -335,6 +335,65 @@ check("wait_for_channels_synced: dies with a clear message once the timeout is e
 sc.time.time = time.time
 sc.time.sleep = time.sleep
 
+# -- channel_sync_errors: completed is not the same question as completed cleanly --
+# Anchored to the start of the line, so real package names that happen to contain "error"/"exception"
+# (confirmed live against this project's own real reposync output: libgpg-error, perl-Exception-Class,
+# maven-error-diagnostics) are never mistaken for an actual failure.
+fake = FakeSSH(responses=[("reposync/noisy-but-clean.log", FakeResult(returncode=0, stdout=(
+    "2026/11/04 07:51:44 +02:00     4326/10072 : libgpg-error-1.12-3.el7.x86_64.rpm\n"
+    "2026/11/04 07:51:54 +02:00     5916/10072 : maven-error-diagnostics-2.2.1-47.el7.noarch.rpm\n"
+    "2026/11/04 07:52:01 +02:00     7009/10072 : perl-Exception-Class-1.37-3.el7.noarch.rpm\n"
+    "2026/11/04 07:56:08 +02:00 Sync completed.\n")))])
+sc.ssh_run = fake
+check("channel_sync_errors: package names containing 'error'/'exception' are never false positives",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "noisy-but-clean") == [])
+
+fake = FakeSSH(responses=[("reposync/really-failed.log", FakeResult(returncode=0, stdout=(
+    "2026/11/04 07:51:44 +02:00     4326/10072 : libgpg-error-1.12-3.el7.x86_64.rpm\n"
+    "ERROR: could not retrieve metadata for repository 'X'\n"
+    "2026/11/04 07:56:08 +02:00 Sync completed.\n")))])
+sc.ssh_run = fake
+check("channel_sync_errors: a real, line-anchored ERROR is found",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "really-failed")
+      == ["ERROR: could not retrieve metadata for repository 'X'"])
+
+fake = FakeSSH(responses=[("reposync/missing.log", FakeResult(returncode=1, stdout=""))])
+sc.ssh_run = fake
+check("channel_sync_errors: no log file yet -> empty, not an error",
+      sc.channel_sync_errors("host1", "mgrctl exec --", "missing") == [])
+
+# wait_for_channels_synced() checks for this too, once every channel reports complete — but only warns,
+# never dies or blocks longer, since those errors already happened and retrying won't undo them.
+sc.time.sleep = lambda s: None
+fake = FakeSSH(responses=[
+    ("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/ch-a.log", FakeResult(returncode=0, stdout="ERROR: boom\nSync completed.\n")),
+    ("softwarechannel_listallpackages ch-a", FakeResult(returncode=0, stdout="pkg-a\npkg-b\n")),
+])
+sc.ssh_run = fake
+_warn_buf = []
+_real_warn = sc.warn
+sc.warn = lambda msg: _warn_buf.append(msg)
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-a"])
+sc.warn = _real_warn
+check("wait_for_channels_synced: warns (never dies) when a completed channel's log recorded errors",
+      len(_warn_buf) == 1 and "ch-a" in _warn_buf[0] and "ERROR: boom" in _warn_buf[0])
+
+# Separately: a channel with a CLEAN log but genuinely zero packages (e.g. an upstream repo that synced
+# clean but empty) still gets its own warning, via the API-based package-count check.
+fake = FakeSSH(responses=[
+    ("tail -n 3", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("reposync/ch-empty.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
+    ("softwarechannel_listallpackages ch-empty", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+_warn_buf = []
+sc.warn = lambda msg: _warn_buf.append(msg)
+sc.wait_for_channels_synced("host1", "mgrctl exec --", ["ch-empty"])
+sc.warn = _real_warn
+check("wait_for_channels_synced: warns when a completed, error-free channel reports 0 packages via the API",
+      len(_warn_buf) == 1 and "ch-empty" in _warn_buf[0] and "0 packages" in _warn_buf[0])
+
 # -- pending_channels: the one-shot, non-blocking check factored out above --
 fake = FakeSSH(responses=[
     ("reposync/ready.log", FakeResult(returncode=0, stdout="...\nSync completed.\n")),
@@ -604,6 +663,28 @@ sc.ensure_org("host1", "mgrctl exec --", {"name": "lab"})
 check("ensure_org: existing org -> no create call",
       len(fake.calls) == 1 and "org_create " not in fake.calls[0][1])
 
+# ensure_org: an org that already exists still gets its designated admin's org_admin role checked —
+# the fix for a real bug found live 2026-11-03: an org from an earlier run had its designated admin
+# authenticate fine but lack org_admin entirely, with nothing in this project ever checking for or
+# fixing that. ensure_user_role() itself only warns on failure, never dies, so this is safe even if the
+# current session cannot actually grant it.
+fake = FakeSSH(responses=[
+    ("org_list", FakeResult(stdout="edge\n")),
+    ("user_details", FakeResult(returncode=0, stdout="Roles: regular_user")),
+])
+sc.ssh_run = fake
+sc.ensure_org("host1", "mgrctl exec --", {"name": "edge", "admin_user": "edgeadmin"})
+cmds = [c[1] for c in fake.calls]
+check("ensure_org: an already-existing org still checks/grants its admin's org_admin role",
+      any("user_addrole edgeadmin org_admin" in c for c in cmds))
+
+# ...but does nothing extra when no admin_user is given for an already-existing org (nothing to check).
+fake = FakeSSH(responses=[("org_list", FakeResult(stdout="lab\n"))])
+sc.ssh_run = fake
+sc.ensure_org("host1", "mgrctl exec --", {"name": "lab"})
+check("ensure_org: existing org with no admin_user given makes no role-related call",
+      not any("user_" in c[1] for c in fake.calls))
+
 # -- ensure_org: missing admin fields dies -----------------------------------
 fake = FakeSSH(responses=[("org_list", FakeResult(stdout=""))])
 sc.ssh_run = fake
@@ -627,6 +708,8 @@ check("ensure_org: create command carries -n/-u/-f/-l/-e/-p/-P/--pam",
       "-n OrgB" in create_cmd and "-u orgb-admin" in create_cmd and "-f Org" in create_cmd
       and "-l Bee" in create_cmd and "-e admin@orgb.lab" in create_cmd and "-p s3cr3t" in create_cmd
       and "-P mr" in create_cmd and "--pam" in create_cmd)
+check("ensure_org: a fresh creation also confirms its new admin's org_admin role, belt-and-suspenders",
+      any("user_addrole orgb-admin org_admin" in c[1] for c in fake.calls))
 
 # -- ensure_org: defaults first/last name, omits -P/--pam when unset --------
 fake = FakeSSH(responses=[("org_list", FakeResult(stdout=""))])
@@ -1792,11 +1875,48 @@ check("ensure_group_systems: all already members -> no addsystems call",
 
 fake = FakeSSH(responses=[("group_listsystems", FakeResult(returncode=0, stdout="dev1.lab\n"))])
 sc.ssh_run = fake
-sc.ensure_group_systems("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
-                         "dev-systems", ["dev1.lab", "dev2.lab"])
+died = False
+try:
+    sc.ensure_group_systems("host1", "kubectl exec -n ns deploy/uyuni -c uyuni --",
+                             "dev-systems", ["dev1.lab", "dev2.lab"])
+except SystemExit:
+    died = True
 add_cmd = next((c[1] for c in fake.calls if "group_addsystems" in c[1]), "")
 check("ensure_group_systems: adds only the missing systems",
       "group_addsystems dev-systems dev2.lab" in add_cmd)
+# The real bug fix below needs group_listsystems to reflect the real end state, not a response
+# that never changes — this particular fake's second group_listsystems call still returns the
+# ORIGINAL "dev1.lab\n" (dev2.lab was never actually added), so this is really exercising the new
+# verification path too: it correctly catches that dev2.lab is still missing and dies.
+check("ensure_group_systems: a static/unresponsive group_listsystems (dev2.lab never actually "
+      "shows up as a member) is correctly caught as still-incomplete, not trusted on say-so", died)
+
+# -- real bug fix: group_addsystems can return rc=0 while silently adding NOTHING (every name was
+# an unregistered system) — confirmed live 2026-11-06, every one of this lab's "themed" groups
+# (terrestrial-planets, martian-moons, moons, ...) ended up with zero members this exact way. The
+# function must verify the real end state, not trust group_addsystems' own return code either way.
+_gls_calls = [0]
+
+
+def _group_listsystems_then_added(hostname, cmd, **kwargs):
+    if "group_listsystems" in cmd:
+        _gls_calls[0] += 1
+        # First call (the "what's already there" check): empty. Second call (the verification
+        # after group_addsystems): now has what was actually added.
+        return FakeResult(returncode=0, stdout="" if _gls_calls[0] == 1 else "dev1.lab\n")
+    if "group_addsystems" in cmd:
+        return FakeResult(returncode=0, stdout="")  # rc=0 even though only dev1.lab was really added
+    return FakeResult()
+
+
+sc.ssh_run = _group_listsystems_then_added
+died = False
+try:
+    sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["dev1.lab", "dev2.lab"])
+except SystemExit:
+    died = True
+check("ensure_group_systems: dies when group_addsystems reports success (rc=0) but one of the "
+      "requested systems is verifiably still not a member — the real bug, found live", died)
 
 fake = FakeSSH(responses=[
     ("group_listsystems", FakeResult(returncode=0, stdout="")),
@@ -1808,8 +1928,9 @@ try:
     sc.ensure_group_systems("host1", "mgrctl exec --", "dev-systems", ["bogus.lab"])
 except SystemExit:
     died = True
-check("ensure_group_systems: addsystems failure warns, doesn't die (not-yet-registered "
-      "systems are expected and self-heal on a later run)", died is False)
+check("ensure_group_systems: a totally-failed addsystems call (not-yet-registered system) now "
+      "dies — picked up by the same forever-retry mechanism every other SMLM step depending on "
+      "client registration already uses, per this project's own forever-retry policy", died)
 
 # -- ensure_system_groups: orchestration, no-op, validation ------------------
 fake = FakeSSH()
@@ -1817,14 +1938,24 @@ sc.ssh_run = fake
 sc.ensure_system_groups("host1", "mgrctl exec --", {}, "uyuni")
 check("ensure_system_groups: no-op when field unset", len(fake.calls) == 0)
 
-fake = FakeSSH(responses=[
-    ("group_listsystems", FakeResult(returncode=0, stdout="")),
-    ("group_list", FakeResult(returncode=0, stdout="")),
-])
-sc.ssh_run = fake
+_esg_gls_calls = [0]
+_esg_calls = []
+
+
+def _esg_fake(hostname, cmd, **kwargs):
+    _esg_calls.append((hostname, cmd, kwargs))
+    if "group_listsystems" in cmd:
+        _esg_gls_calls[0] += 1
+        return FakeResult(returncode=0, stdout="" if _esg_gls_calls[0] == 1 else "dev1.lab\n")
+    if "group_list" in cmd:
+        return FakeResult(returncode=0, stdout="")
+    return FakeResult()
+
+
+sc.ssh_run = _esg_fake
 cfg = {"uyuni_system_groups": [{"name": "dev-systems", "description": "Dev", "systems": ["dev1.lab"]}]}
 sc.ensure_system_groups("host1", "mgrctl exec --", cfg, "uyuni")
-cmds = [c[1] for c in fake.calls]
+cmds = [c[1] for c in _esg_calls]
 check("ensure_system_groups: creates the group and adds its systems",
       any("group_create dev-systems Dev" in c for c in cmds)
       and any("group_addsystems dev-systems dev1.lab" in c for c in cmds))
@@ -2211,22 +2342,33 @@ check("ensure_client_registered: ACTIVATION_KEYS is set on the bootstrap command
 check("ensure_client_registered: REACTIVATION_KEY is passed through when given",
       bootstrap_cmd is not None and "REACTIVATION_KEY=react-1" in bootstrap_cmd)
 
-# Bootstrap script itself fails -> dies immediately, no polling.
+# Bootstrap script itself fails -> dies immediately, no polling. Its own real output (e.g. a package
+# manager error, found live 2026-11-03: "no package provides salt" from a not-yet-populated bootstrap
+# repo) must reach the die() message — previously only the bare return code did, so every such failure
+# looked identical and the real cause could only be found by re-running the command by hand.
 def _bootstrap_fails(hostname, cmd, **kwargs):
     if "saltkey.acceptedList" in cmd:
         return FakeResult(stdout="[]")
     if "curl -Sks" in cmd:
-        return FakeResult(returncode=1)
+        return FakeResult(returncode=1, stdout="installing...\n", stderr="ERROR: Failed to install all "
+                           "missing packages.\nno package provides salt\n")
     return FakeResult()
 
 
+import contextlib as _contextlib2  # noqa: E402
+import io as _io2  # noqa: E402
+
 sc.ssh_run = _bootstrap_fails
 died = False
-try:
-    sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
-except SystemExit:
-    died = True
+_died_buf = _io2.StringIO()
+with _contextlib2.redirect_stderr(_died_buf):  # die() prints to stderr; never attaches the message to SystemExit
+    try:
+        sc.ensure_client_registered("srv1", "mgrctl exec --", "client1.mydemo.lab", "uyuni.mydemo.lab", "1-key")
+    except SystemExit:
+        died = True
 check("ensure_client_registered: dies immediately if the bootstrap script itself fails", died)
+check("...and the real error text (not just the bare rc) reaches the die() message",
+      "no package provides salt" in _died_buf.getvalue())
 
 # The bootstrap on a transactional-update client reboots it, so SSH returns 255. A new boot ID means it worked.
 def _bootstrap_reboots(hostname, cmd, **kwargs):
@@ -2879,6 +3021,65 @@ sc.ssh_run = fake
 check("system_is_registered: False, not a raised exception, on a server-side failure",
       sc.system_is_registered("host1", "mgrctl exec --", "sol.mydemo.lab") is False)
 
+# -- system_package_count / system_is_registered_and_healthy: API-based package-count check ---------
+fake = FakeSSH(responses=[
+    ("system_listinstalledpackages mars.mydemoaws.lab",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(599)) + "\n")),
+])
+sc.ssh_run = fake
+check("system_package_count: counts non-empty lines of system_listinstalledpackages",
+      sc.system_package_count("host1", "mgrctl exec --", "mars.mydemoaws.lab") == 599)
+
+fake = FakeSSH(responses=[
+    ("system_listinstalledpackages doesnotexist.mydemo.lab",
+     FakeResult(returncode=1, stderr="WARNING: No systems selected")),
+])
+sc.ssh_run = fake
+check("system_package_count: 0, not an exception, for a system that isn't registered",
+      sc.system_package_count("host1", "mgrctl exec --", "doesnotexist.mydemo.lab") == 0)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "freshling.lab"}]))),
+    ("system_listinstalledpackages freshling.lab", FakeResult(returncode=0, stdout="")),
+])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: False when registered but the package profile hasn't "
+      "uploaded yet (0 packages)",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "freshling.lab") is False)
+
+fake = FakeSSH(responses=[
+    ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "sol.mydemo.lab"}]))),
+    ("system_listinstalledpackages sol.mydemo.lab",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(599)) + "\n")),
+])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: True when registered AND the package count clears the "
+      "min_packages threshold",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "sol.mydemo.lab") is True)
+
+fake = FakeSSH(responses=[("system.getId", FakeResult(returncode=0, stdout=json.dumps([])))])
+sc.ssh_run = fake
+check("system_is_registered_and_healthy: False when not even registered — never calls "
+      "system_listinstalledpackages at all",
+      sc.system_is_registered_and_healthy("host1", "mgrctl exec --", "nosuch.lab") is False
+      and not any("system_listinstalledpackages" in c[1] for c in fake.calls))
+
+# -- channel_package_count: API-based package-count check, same idea for channels -------------------
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages centos7-x86_64",
+     FakeResult(returncode=0, stdout="\n".join("pkg-{}".format(i) for i in range(10073)) + "\n")),
+])
+sc.ssh_run = fake
+check("channel_package_count: counts non-empty lines of softwarechannel_listallpackages",
+      sc.channel_package_count("host1", "mgrctl exec --", "centos7-x86_64") == 10073)
+
+fake = FakeSSH(responses=[
+    ("softwarechannel_listallpackages bogus-channel", FakeResult(returncode=1, stderr="no such channel")),
+])
+sc.ssh_run = fake
+check("channel_package_count: 0, not an exception, when the lookup itself fails",
+      sc.channel_package_count("host1", "mgrctl exec --", "bogus-channel") == 0)
+
 # -- ensure_grafana_formula -----------------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "sol.mydemo.lab"}]))),
@@ -2932,6 +3133,9 @@ check("ensure_grafana_formula: a real API failure (e.g. missing subscription) di
 # -- ensure_ansible_control_node -----------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "charon.mydemo.lab"}]))),
+    ("system.scheduleApplyHighstate", FakeResult(returncode=0, stdout="[22]")),
+    ("system.listSystemEvents", FakeResult(returncode=0, stdout=json.dumps(
+        [{"id": 22, "failed_count": 0, "successful_count": 1}]))),
 ])
 sc.ssh_run = fake
 cfg = {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}
@@ -2944,6 +3148,8 @@ check("ensure_ansible_control_node: enables the real 'ansible_control_node' enti
 check("ensure_ansible_control_node: schedules a highstate apply so 'ansible' actually gets installed",
       any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
           for c in cmds))
+check("ensure_ansible_control_node: verifies it via system.listSystemEvents, not just the schedule call",
+      any("system.listSystemEvents" in c and "-A 42" in c for c in cmds))
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -2975,6 +3181,9 @@ check("ensure_ansible_control_node: a real API failure dies with a clear message
 # -- ensure_container_build_hosts ------------------------------------------
 fake = FakeSSH(responses=[
     ("system.getId", FakeResult(returncode=0, stdout=json.dumps([{"id": 42, "name": "mercury.mydemo.lab"}]))),
+    ("system.scheduleApplyHighstate", FakeResult(returncode=0, stdout="[22]")),
+    ("system.listSystemEvents", FakeResult(returncode=0, stdout=json.dumps(
+        [{"id": 22, "failed_count": 0, "successful_count": 1}]))),
 ])
 sc.ssh_run = fake
 cfg = {"smlm_image_build_hosts": [{"system": "mercury.mydemo.lab"}]}
@@ -2988,6 +3197,8 @@ check("ensure_container_build_hosts: schedules a highstate apply so build toolin
       "gets installed",
       any("system.scheduleApplyHighstate" in c and '[[42], "' in c and ', false]' in c
           for c in cmds))
+check("ensure_container_build_hosts: verifies it via system.listSystemEvents too",
+      any("system.listSystemEvents" in c and "-A 42" in c for c in cmds))
 
 fake = FakeSSH()
 sc.ssh_run = fake
@@ -3014,6 +3225,99 @@ except SystemExit:
     died = True
 check("ensure_container_build_hosts: a real API failure dies with a clear message, not silently "
       "ignored", died)
+
+# -- ensure_highstate_applied: actually waits for and checks the real outcome, not just the schedule
+# call — the fix for a real gap found live 2026-11-03 (a highstate that fails completely on the minion,
+# e.g. a 403 on a channel the client should not need, went unnoticed by every caller here before this).
+_poll_calls = {"n": 0}
+
+
+def _highstate_eventually_succeeds(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[22]")
+    if "system.listSystemEvents" in cmd:
+        _poll_calls["n"] += 1
+        pending = _poll_calls["n"] < 2
+        return FakeResult(stdout=json.dumps(
+            [{"id": 22, "failed_count": 0, "successful_count": 0 if pending else 1}]))
+    return FakeResult()
+
+
+_poll_calls["n"] = 0
+sc.ssh_run = _highstate_eventually_succeeds
+sc.time.sleep = lambda s: None  # no real delay between polls
+sc.ensure_ansible_control_node(
+    "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+check("ensure_highstate_applied: polls system.listSystemEvents until the highstate actually reports "
+      "success, not just once", _poll_calls["n"] >= 2)
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+
+def _highstate_really_fails(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[23]")
+    if "system.listSystemEvents" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 23, "failed_count": 1, "successful_count": 0,
+                                               "result_msg": "Failed to apply state(s): [services.salt-minion]"}]))
+    return FakeResult()
+
+
+sc.ssh_run = _highstate_really_fails
+died = False
+_highstate_died_buf = _io2.StringIO()
+with _contextlib2.redirect_stderr(_highstate_died_buf):
+    try:
+        sc.ensure_ansible_control_node(
+            "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+    except SystemExit:
+        died = True
+check("ensure_highstate_applied: a highstate that SCHEDULES fine but FAILS on the minion now dies too "
+      "— previously this was invisible (the schedule call alone looked successful)", died)
+check("...with the server's own real failure message, not just 'scheduled successfully'",
+      "Failed to apply state(s)" in _highstate_died_buf.getvalue())
+
+# Never reports success or failure within the poll window -> times out (dies too, so the caller's own
+# forever-retry can reschedule a fresh highstate instead of blocking on this one forever).
+def _highstate_hangs(hostname, cmd, **kwargs):
+    if "system.getId" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 42}]))
+    if "system.addEntitlements" in cmd:
+        return FakeResult(stdout="[1]")
+    if "system.scheduleApplyHighstate" in cmd:
+        return FakeResult(stdout="[24]")
+    if "system.listSystemEvents" in cmd:
+        return FakeResult(stdout=json.dumps([{"id": 24, "failed_count": 0, "successful_count": 0}]))
+    return FakeResult()
+
+
+sc.ssh_run = _highstate_hangs
+_fake_now = {"t": 1000.0}
+sc.time.time = lambda: _fake_now["t"]
+
+
+def _fake_sleep_advancing(s):
+    _fake_now["t"] += s
+
+
+sc.time.sleep = _fake_sleep_advancing
+died = False
+try:
+    sc.ensure_ansible_control_node(
+        "host1", "mgrctl exec --", {"smlm_ansible_control_nodes": [{"system": "charon.mydemo.lab"}]}, "smlm")
+except SystemExit:
+    died = True
+check("ensure_highstate_applied: a highstate stuck neither succeeding nor failing eventually times "
+      "out, instead of blocking forever", died)
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+sc.time.time = _TRUE_REAL_TIME_TIME
 
 
 # -- ensure_mcp_server ------------------------------------------------------
@@ -4208,6 +4512,43 @@ check("run_forever_retry_worker: keeps retrying across real exceptions until the
 _, _flaky_pid_path = sc._forever_retry_paths("flaky-step")
 check("run_forever_retry_worker: removes its own pid file once it succeeds and returns",
       not Path(_flaky_pid_path).exists())
+sc.time.sleep = _TRUE_REAL_TIME_SLEEP
+
+# A failed attempt's own noisy print (simulating die()'s "ERROR: ..." text, which a real step like
+# ensure_container_build_hosts() prints on every call via libs/lab_creation.py's die()) must not flood
+# the real log once per retry attempt — found live 2026-11-03. It should still reach the log, just once
+# per heartbeat via the heartbeat's own "Last error:" field, and a SUCCESSFUL attempt's own output must
+# still go straight through immediately, not get held back.
+import contextlib as _contextlib  # noqa: E402
+import io as _io  # noqa: E402
+
+_noisy_state = {"n": 0}
+
+
+def _attempt_noisy_then_ok():
+    _noisy_state["n"] += 1
+    if _noisy_state["n"] < 4:
+        print("ERROR: no system named 'mercury' found on the server (attempt {})".format(_noisy_state["n"]))
+        raise SystemExit(1)
+    print("Enabled the Container Build Host entitlement on 'mercury'")
+
+
+sc.time.time = _TRUE_REAL_TIME_TIME
+sc.time.sleep = lambda s: None
+_noisy_buf = _io.StringIO()
+with _contextlib.redirect_stdout(_noisy_buf):
+    # heartbeat_interval=0: a heartbeat fires on every single failed attempt, deterministically — real
+    # wall-clock timing (heartbeat_interval=0.01) is too tight to reliably beat elapsed real time in a
+    # busy test run, as the 109_e2e test below also found (see its own heartbeat_interval=0 for the same
+    # reason).
+    sc.run_forever_retry_worker("noisy-step", _attempt_noisy_then_ok, retry_delay=0.01, heartbeat_interval=0)
+_noisy_output = _noisy_buf.getvalue()
+check("a failing attempt's own noisy print never reaches the real log as a bare, unprefixed line",
+      not re.search(r"(?m)^ERROR: no system named", _noisy_output))
+check("...but the real diagnostic message still reaches the log, via the heartbeat's throttled field",
+      "Last error: ERROR: no system named 'mercury' found on the server" in _noisy_output)
+check("a successful attempt's own output still goes straight through immediately",
+      "Enabled the Container Build Host entitlement on 'mercury'" in _noisy_output)
 sc.time.sleep = _TRUE_REAL_TIME_SLEEP
 
 # verify: attempt() returning cleanly is not enough on its own — this is the fix for a real failure mode

@@ -64,12 +64,12 @@ case "${1:-}" in
         ;;
     --version|-v) echo "install_${_section} ${_version}" ;;
     --help)
-        echo "Usage: install_${_section} <lab.json>   (the VM is taken from \$_vm_name)"
+        echo "Usage: install_${_section} <lab-file>   (the VM is taken from \$_vm_name)"
         sed -n '2,8p' "$0"
         ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *)
-        _lab="${1:?usage: install_${_section} <lab.json>}"
+        _lab="${1:?usage: install_${_section} <lab-file>}"
         _vm="${_vm_name:?_vm_name is not set (setup_lab.py sets it)}"
         _cfg=$(_config "${_lab}" "${_vm}")
         _message=$(jq -r '.example_motd_message // ""' <<<"${_cfg}")

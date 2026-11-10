@@ -158,7 +158,7 @@ check("setup_ansible_control_node: definition omitted entirely (back-compat) -> 
 
 # ── main(): defaults managed_nodes to every OTHER node in the lab ──────────
 calls.clear()
-acn.primary.load_definition = lambda json_file: {
+acn.primary.load_definition = lambda lab_file: {
     "nodes": {"charon.mydemo.lab": {"addons": ["ansible_control_node"]},
               "venus.mydemo.lab": {}, "mars.mydemo.lab": {}},
 }

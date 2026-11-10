@@ -140,9 +140,9 @@ f.close()
 
 buf = io.StringIO()
 with redirect_stdout(buf):
-    ac.print_help(f.name, usage="Usage: install_mariadb <lab.json>")
+    ac.print_help(f.name, usage="Usage: install_mariadb <lab-file>")
 out = buf.getvalue()
-check("print_help: prints the given usage line", "Usage: install_mariadb <lab.json>" in out)
+check("print_help: prints the given usage line", "Usage: install_mariadb <lab-file>" in out)
 check("print_help: re-emits the JSON section comment block", "mariadb_pass" in out)
 check("print_help: strips the leading '#' from each doc line",
       not any(line.startswith("#") for line in out.splitlines()))

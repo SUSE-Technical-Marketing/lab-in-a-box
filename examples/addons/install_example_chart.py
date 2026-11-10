@@ -70,7 +70,7 @@ def install(node: str, cfg: dict) -> None:
 def main() -> None:
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
     definition = primary.load_definition(sys.argv[1])
     node, clu_name = os.environ.get("_vm_name", ""), os.environ.get("clu_name", "")

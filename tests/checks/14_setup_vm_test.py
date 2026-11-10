@@ -240,7 +240,7 @@ check("main --help: exits 0 and prints usage", code == 0 and "Usage" in buf.getv
 # ── main(): destroy-before-recreate ──────────────────────────────────────────
 # setup_vm.py's standalone entrypoint does not do this. setup_lab.py's orchestration always calls destroy_vm() before
 # provision_vm() for every node (unless --keep says it's reusable), but a
-# direct `setup_vm.py <lab.json> <vm>` retry after a failed attempt died with
+# direct `setup_vm.py <lab-file> <vm>` retry after a failed attempt died with
 # "Disk ... is already in use by other guests" instead of just recreating,
 # forcing a manual destroy_vm.py call first every time. Mirrors setup_lab.py's
 # own try/except shape (destroy_vm() is already safe to call unconditionally),
@@ -248,7 +248,7 @@ check("main --help: exits 0 and prints usage", code == 0 and "Usage" in buf.getv
 # node" to continue on to the way setup_lab.py's multi-node loop has.
 setup_vm.primary.load_defaults = lambda: defaults
 setup_vm.primary.load_config = lambda: config
-setup_vm.primary.load_definition = lambda json_file: definition
+setup_vm.primary.load_definition = lambda lab_file: definition
 # provision_vm() returns the pre_commands failures of the VM it provisioned; main() adds its post_commands to them.
 setup_vm.provision_vm = _rec("provision_vm", ret=[])
 

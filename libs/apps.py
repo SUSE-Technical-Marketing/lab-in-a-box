@@ -18,7 +18,7 @@ binary, ...), written in any language. Its contract:
                                        2 this add-on implements no check. "check": true in its capabilities says it
                                        does (libs/addon_common.py's Checker)
     install_<addon> --version | --help
-    install_<addon> <lab.json>         installs it; the target VM is in $_vm_name, the cluster in $clu_name
+    install_<addon> <lab-file>         installs it; the target VM is in $_vm_name, the cluster in $clu_name
 
 Python add-ons get all of this from libs/addon_common.handle_common_args() and a module-level PLUGIN dict:
 

@@ -94,7 +94,7 @@ _tmp_audit = tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False).
 with mock.patch.object(mcp_server, "_cfg", return_value={"MCP_AUDIT_LOG": _tmp_audit}):
     raised = False
     try:
-        mcp_server._require_confirm("deploy_lab", "yes", "mylab.json", {"json_file": "mylab.json"})
+        mcp_server._require_confirm("deploy_lab", "yes", "mylab.json", {"lab_file": "mylab.json"})
     except ValueError:
         raised = True
     check("_require_confirm rejects a generic 'yes' instead of the real target", raised)
