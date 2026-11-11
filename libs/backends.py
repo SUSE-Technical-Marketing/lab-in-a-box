@@ -1826,7 +1826,6 @@ class AWSBackend(VMBackend):
         self.vm_img_loc = vm_img_loc
         self.lab_setup_path = lab_setup_path
         self._user_data_by_vm = {}  # populated by push_provisioning_files(), read by create_vm()
-        self._cached_public_ip = None  # see _own_public_ip()
         self._instance_id_by_vm = {}  # populated by create_vm(), read by _find_instance()
 
     @classmethod
@@ -2072,34 +2071,20 @@ class AWSBackend(VMBackend):
             die("cloud-init user-data not found for '{}' at {}".format(vm_name, userdata_path))
         self._user_data_by_vm[vm_name] = userdata_path.read_text()
 
-    def _own_public_ip(self):
-        """
-        Return this automation node's own public IP, as AWS sees it. The result is cached on the first call, because a
-        single setup_lab.py run creates many VMs and the host's outbound address does not change during it. The address
-        scopes the SSH rule in _ensure_security_group_access(), so port 22 is not opened to the whole internet.
-        """
-        if self._cached_public_ip is None:
-            try:
-                with urllib.request.urlopen("https://checkip.amazonaws.com", timeout=10) as resp:
-                    self._cached_public_ip = resp.read().decode("utf-8").strip()
-            except (urllib.error.URLError, OSError) as e:
-                die("backend 'aws': could not determine this automation node's own public IP "
-                    "(needed to open SSH access in the security group) — {}".format(e))
-        return self._cached_public_ip
-
     def _ensure_security_group_access(self, open_ports):
         """
-        Ensure self.security_group_id allows: (1) SSH from this automation node's public IP, always, since every AWS VM
-        needs it to be reachable (see _own_public_ip()); and (2) each port in `open_ports` (the lab-JSON aws_open_ports list,
-        e.g. ["443", "4505", "4506"] or ["69/udp"]; tcp by default) from anywhere, 0.0.0.0/0. The second group is for
-        public-facing service ports.
+        Ensure self.security_group_id allows: (1) SSH from anywhere, 0.0.0.0/0, always, since every AWS VM needs to be
+        reachable and this project's own default policy (confirmed explicitly, 2026-11-10 — SSH access to lab VMs is
+        meant to be open by default, not restricted to the automation node's own IP) is not to scope it down; and (2)
+        each port in `open_ports` (the lab-JSON aws_open_ports list, e.g. ["443", "4505", "4506"] or ["69/udp"]; tcp by
+        default) from anywhere, 0.0.0.0/0, for public-facing service ports.
 
         Rules are only added, never removed or revoked, so rules configured by hand outside this project are kept. The method
         does nothing if no security group is configured.
         """
         if not self.security_group_id:
             return
-        wanted = [(22, 22, "tcp", "{}/32".format(self._own_public_ip()))]
+        wanted = [(22, 22, "tcp", "0.0.0.0/0")]
         for entry in (open_ports or []):
             entry = str(entry)
             port_s, _, proto = entry.partition("/")
