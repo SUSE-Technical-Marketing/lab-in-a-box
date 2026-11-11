@@ -1263,18 +1263,36 @@ def check_ssh_conn(vm_name, tcp_port=22, retry_interval=2, retry_limit=100):
 
 
 
+# The longest a single wait_for_ssh_command() attempt may take. ServerAliveInterval should end a dead session well
+# inside it; this bounds the attempt even when ssh does not return at all.
+_SSH_WAIT_ATTEMPT_TIMEOUT = 60
+
+
 def wait_for_ssh_command(host: str, command: str, timeout: int = 300, interval: int = 5) -> bool:
     """
     Run `command` as root on `host` over SSH every `interval` seconds until it exits 0. Returns True once it does, or
     False when `timeout` seconds pass first. A refused or failed SSH connection counts as a failed attempt, so this also
     waits for a freshly created VM to accept root logins.
+
+    Each attempt is bounded twice over, because `timeout` cannot be honoured otherwise: ConnectTimeout covers only
+    the connection, so a session that is established and then loses its host — which is what waiting for a reboot
+    does — leaves ssh waiting for data that never arrives. ServerAliveInterval makes ssh itself give up on a peer
+    that has gone, and the subprocess timeout bounds the attempt whatever ssh does. An attempt that runs out of time
+    is a failed attempt, like a refused connection.
     """
     deadline = time.monotonic() + timeout
     while True:
-        attempt = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(host), command],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        attempt_timeout = max(interval, min(_SSH_WAIT_ATTEMPT_TIMEOUT, max(1, deadline - time.monotonic())))
+        try:
+            attempt = subprocess.run(
+                ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                 "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+                 "root@{}".format(host), command],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=attempt_timeout)
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                return False
+            continue
         if attempt.returncode == 0:
             return True
         if time.monotonic() + interval > deadline:

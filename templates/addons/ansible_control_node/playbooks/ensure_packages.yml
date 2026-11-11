@@ -1,5 +1,5 @@
 ---
-# Example playbook 2/3 — install a package across a genuinely mixed-OS
+# Example playbook — install a package across a genuinely mixed-OS
 # fleet (this lab's own real mix: SUSE/zypper, RHEL family/dnf, Debian/
 # Ubuntu/apt). ansible.builtin.package dispatches to the right module per
 # host automatically via ansible_pkg_mgr, so one task covers every family

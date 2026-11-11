@@ -7,7 +7,8 @@
   ],
   "addon:ansible_control_node": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "1.2", "breaking": false, "changes": "Playbooks are discovered under templates/addons/ansible_control_node/playbooks/ (every *.yml) instead of a hardcoded list of three; added deploy_k3s.yml as a new bundled example."}
   ],
   "addon:ansible_playbook": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}

@@ -15,7 +15,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.1
+# Schema version: 1.2
 #
 # JSON section: "ansible_control_node" — Provisions a real Ansible control node
 #   ansible_control_node_playbook_dir  : [OPTIONAL] where example/pushed playbooks land
@@ -23,11 +23,12 @@
 #   ansible_control_node_inventory_dir : [OPTIONAL] where the dynamic inventory script
 #                                         (and any static inventory files) land
 #                                         (default: /srv/ansible/inventory)
-#   ansible_control_node_examples      : [OPTIONAL] "true"/"false" — push this project's
-#                                         own bundled example playbooks (ping.yml,
-#                                         ensure_packages.yml, patch_and_reboot.yml) and
-#                                         the real Uyuni/SMLM dynamic inventory script
-#                                         (default: true)
+#   ansible_control_node_examples      : [OPTIONAL] "true"/"false" — push this project's own
+#                                         bundled example playbooks (every *.yml under
+#                                         templates/addons/ansible_control_node/playbooks/ —
+#                                         currently ping.yml, ensure_packages.yml,
+#                                         patch_and_reboot.yml, deploy_k3s.yml) and the real
+#                                         Uyuni/SMLM dynamic inventory script (default: true)
 #   ansible_control_node_ssh_key_path  : [OPTIONAL] path (on the control node itself) for
 #                                         the SSH keypair this node uses to reach managed
 #                                         targets (default: /root/.ssh/id_ansible_ed25519)
@@ -153,17 +154,19 @@ def _write_inventory_env(hostname, server_host, admin_user, admin_pass):
 
 
 def _push_examples(hostname, templ_addons_loc, playbook_dir, inventory_dir):
-    """Pushes this project's own bundled example playbooks + the real Uyuni/SMLM dynamic
-    inventory script — static content, no templating needed (the inventory script reads
-    its own UYUNI_HOST/USER/PASS from the environment, or _INVENTORY_ENV_PATH, at run time,
-    never baked in here)."""
+    """Pushes every *.yml playbook this addon bundles, plus the real Uyuni/SMLM dynamic inventory script.
+
+    The playbooks are discovered under the template directory, so adding one there is all it takes to ship it. Both
+    are static content needing no templating: the inventory script reads its own UYUNI_HOST/USER/PASS from the
+    environment, or _INVENTORY_ENV_PATH, at run time, never baked in here."""
     base = Path(str(templ_addons_loc).rstrip("/")) / "ansible_control_node"
 
-    for playbook in ("ping.yml", "ensure_packages.yml", "patch_and_reboot.yml"):
-        content = (base / "playbooks" / playbook).read_text()
+    playbooks = sorted(path for path in (base / "playbooks").glob("*.yml") if path.is_file())
+    for playbook in playbooks:
         ssh_run(hostname, "cat > {}/{} <<'LAB_IN_A_BOX_EOF'\n{}LAB_IN_A_BOX_EOF".format(
-            playbook_dir, playbook, content))
-    print("  Pushed 3 example playbooks to {}".format(playbook_dir))
+            playbook_dir, playbook.name, playbook.read_text()))
+    print("  Pushed {} example playbook(s) to {}: {}".format(
+        len(playbooks), playbook_dir, ", ".join(path.name for path in playbooks)))
 
     inventory_script = (base / "inventory" / "uyuni_dynamic_inventory.py").read_text()
     inventory_path = "{}/uyuni_dynamic_inventory.py".format(inventory_dir)

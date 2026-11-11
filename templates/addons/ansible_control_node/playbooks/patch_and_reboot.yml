@@ -1,5 +1,5 @@
 ---
-# Example playbook 3/3 — apply OS updates, then reboot only the hosts that
+# Example playbook — apply OS updates, then reboot only the hosts that
 # actually need it. ansible.builtin.package_facts/generic "update all"
 # semantics differ per package manager, so this one DOES branch on
 # ansible_pkg_mgr explicitly (unlike ensure_packages.yml, where "install

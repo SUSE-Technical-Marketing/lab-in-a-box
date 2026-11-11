@@ -150,6 +150,37 @@ with mock.patch.object(lc.subprocess, "run", return_value=subprocess.CompletedPr
     ok = lc.wait_for_ssh_command("10.0.0.7", "false", timeout=12, interval=5)
 check("wait_for_ssh_command: False after the timeout, without sleeping past it", ok is False and sum(sleeps) <= 12)
 
+# A session that connects, then loses its host mid-reboot: ssh itself never returns, so the subprocess
+# timeout (not ConnectTimeout, which only covers the connection) is what ends the attempt.
+clock[0] = 0.0
+sleeps.clear()
+with mock.patch.object(lc.subprocess, "run",
+                        side_effect=[subprocess.TimeoutExpired([], 60), subprocess.CompletedProcess([], 0)]) as run, \
+        mock.patch.object(lc.time, "monotonic", side_effect=lambda: clock[0]), \
+        mock.patch.object(lc.time, "sleep", side_effect=lambda t: sleeps.append(t) or clock.__setitem__(0, clock[0] + t)):
+    ok = lc.wait_for_ssh_command("10.0.0.7", "test -f /x", timeout=300, interval=5)
+check("wait_for_ssh_command: a hung attempt (TimeoutExpired) is retried, not raised", ok is True and run.call_count == 2)
+check("wait_for_ssh_command: a hung ssh is given ServerAliveInterval/CountMax so it gives up on a dead peer",
+      "ServerAliveInterval=5" in run.call_args_list[0][0][0] and "ServerAliveCountMax=3" in run.call_args_list[0][0][0])
+
+clock[0] = 0.0
+sleeps.clear()
+
+
+def _hang(*args, **kwargs):
+    # A real subprocess.run(timeout=N) blocks for N seconds before raising — the mock must advance
+    # the clock itself, or a loop bounded only by time.monotonic() never actually ends.
+    clock[0] += kwargs.get("timeout", 60)
+    raise subprocess.TimeoutExpired([], kwargs.get("timeout", 60))
+
+
+with mock.patch.object(lc.subprocess, "run", side_effect=_hang) as run, \
+        mock.patch.object(lc.time, "monotonic", side_effect=lambda: clock[0]), \
+        mock.patch.object(lc.time, "sleep", side_effect=lambda t: sleeps.append(t) or clock.__setitem__(0, clock[0] + t)):
+    ok = lc.wait_for_ssh_command("10.0.0.7", "test -f /x", timeout=10, interval=5)
+check("wait_for_ssh_command: False when every attempt hangs past the deadline, never hangs forever itself",
+      ok is False)
+
 # ── boot_id(), wait_for_reboot(), pending_snapshot(), reboot_into_pending_snapshot() ──
 with mock.patch.object(lc, "ssh_run", return_value=subprocess.CompletedProcess([], 0, stdout="abc-123\n")):
     check("boot_id: the stripped boot ID", lc.boot_id("vm1") == "abc-123")
