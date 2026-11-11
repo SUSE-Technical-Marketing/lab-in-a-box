@@ -257,6 +257,9 @@
    {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"},
    {"version": "2.3", "breaking": false, "changes": "rancher_install_appcollection: once Rancher is up, also register the SUSE Application Collection as a Rancher ClusterRepo, with no separate appcollection addon entry needed."}
   ],
+  "addon:rodeo_cli": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
   "addon:run_command": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
