@@ -98,7 +98,7 @@ chmod 0600 /etc/lab_creation.cfg.example
 # selection, pluggable VM backends, spacecmd_common.py, etc.) — one
 # directory, one loop. Used to also carry the bash helpers install_ds389
 # needed before it was ported to Python (2026-09-21); those were removed
-# once nothing live sourced them any more (see legacy_bash/README.md).
+# once nothing live sourced them any more (see legacy_bash.md).
 for i in libs/*
 do
     [[ -d "${i}" ]] && continue
@@ -255,8 +255,27 @@ _apache_enable_module() {
 }
 
 # Apply what the flags above call for to service ${1} (apache2 or httpd), and
-# say what was done. A service that is not running is started, whatever changed.
+# say what was done. A service that is not running is started, whatever changed. Before actually
+# restarting/reloading (never for a no-op "nothing changed, already running"), the configuration is
+# tested first: a deploy that writes an invalid Apache config must refuse to apply it, say so clearly
+# (with Apache's own error), and leave whatever was already running untouched and still serving —
+# never restart/reload into a config that would just fail to come back up.
 _apache_apply() {
+    if [[ ${_apache_restart} -eq 1 || ${_apache_reload} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
+    then
+        if [[ "${1}" == "apache2" ]]
+        then
+            _apache_configtest_cmd=(/usr/sbin/start_apache2 -t)
+        else
+            _apache_configtest_cmd=(httpd -t)
+        fi
+        if ! "${_apache_configtest_cmd[@]}" >/tmp/apache-configtest.log 2>&1
+        then
+            echo "ERROR: Apache configuration is invalid:"
+            cat /tmp/apache-configtest.log
+            exit 1
+        fi
+    fi
     if [[ ${_apache_restart} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
     then
         systemctl restart "${1}" 2>/dev/null || true
@@ -271,6 +290,24 @@ _apache_apply() {
     _apache_reload=0
     _apache_restart=0
 }
+
+# A version predating lab_creation-ssl.conf (below) had lab-builder-ssl.conf open its own Listen
+# directive, which collides with that config's own and stops Apache starting at all. Clean up any such
+# stale copy BEFORE lab_creation-ssl.conf is ever installed/validated below — not inside the webui
+# block further down, which runs too late to help the very first _apache_apply call in this script.
+# The current lab-builder-ssl.conf opens no port of its own (it only redirects /lab-builder to HTTPS),
+# so this always leaves it present and current, webui on or off; the later webui block reinstalls it
+# (and lab-builder.conf, the actual /lab-builder routing) only when _webui_mode is not "off".
+if [[ -d /etc/apache2/vhosts.d ]]
+then
+    _apache_remove_conf /etc/apache2/conf.d/lab-builder.conf
+    _apache_remove_conf /etc/apache2/conf.d/lab-builder-ssl.conf
+    _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
+    _apache_enable_module rewrite  # lab-builder-ssl.conf's RewriteEngine needs it, webui on or off
+elif [[ -d /etc/httpd/conf.d ]]
+then
+    _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
+fi
 
 
 # ── HTTPS for the provisioning web server ────────────────────────────────────

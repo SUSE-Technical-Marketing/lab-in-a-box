@@ -1320,6 +1320,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Eigenständiger Grafana-Server (Podman-Container, ohne Kubernetes). Richtet automatisch eine Prometheus-Datenquelle ein und optional das echte Community-Dashboard von Grafana Labs für die eigenen Exporter eines Servers <code>smlm</code>/<code>uyuni</code></td>
 </tr>
+<tr>
+<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
+<td>Eine Website aus einem SUSE-BCI-Image (Podman-Container, kein Kubernetes) — nginx und die Seite werden auf dem Knoten selbst in das Image gebaut; die Seite wird erzeugt oder von <code>bci_website_content_url</code> geladen</td>
+</tr>
 </tbody>
 </table>
 </details>

@@ -9,6 +9,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:ansible_playbook": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
   "addon:anthropic": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart anthropic_chart (default oci://ghcr.io/berriai/litellm-helm); anthropic_rel and anthropic_repo_url removed. No database; clients use the master key in the anthropic-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "anthropic_2_0"},
@@ -23,12 +26,16 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."},
    {"version": "2.0", "breaking": true, "changes": "Logs helm in to the OCI registry appcollection_registry (default dp.apps.rancher.io) with the new mandatory appcollection_user and appcollection_password, or the credential file appcollection_account; installs appcollection_chart from oci://<registry>/charts with the pull secret application-collection. appcollection_rel and appcollection_repo_url removed.", "migration": "appcollection_2_0"},
-   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "3.0", "breaking": true, "changes": "By default now requires Rancher on the same kcluster and automatically registers the Collection as a Rancher ClusterRepo; appcollection_standalone opts out (pre-3.0 behavior, Helm CLI only). Dependency check retries via addon_common.die_not_ready() if Rancher hasn't started yet.", "migration": "appcollection_3_0"}
   ],
   "addon:argocd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
    {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
+  ],
+  "addon:bci_website": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a website served from a SUSE BCI image by podman on the target node."}
   ],
   "addon:client_registration": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -139,6 +146,9 @@
    {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart kimi_chart (default oci://ghcr.io/berriai/litellm-helm); kimi_rel and kimi_repo_url removed. No database; clients use the master key in the kimi-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "kimi_2_0"},
    {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:kubectl_apply": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
   "addon:kubewarden": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -244,7 +254,11 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "An unset rancher_repo_url selects Rancher Prime (https://charts.rancher.com/server-charts/prime) instead of the stable repo, an unset rancher_rel is rancher-prime, an unset rancher_helm_chart is rancher-prime/rancher instead of none, and an unset rancher_initial_pwd lets Rancher generate the bootstrap password.", "migration": "rancher_2_0"},
    {"version": "2.1", "breaking": false, "changes": "rancher_admin_pwd: the install completes Rancher's first login and sets its server URL, without which no cluster can be imported"},
-   {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"}
+   {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"},
+   {"version": "2.3", "breaking": false, "changes": "rancher_install_appcollection: once Rancher is up, also register the SUSE Application Collection as a Rancher ClusterRepo, with no separate appcollection addon entry needed."}
+  ],
+  "addon:run_command": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:seafile": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

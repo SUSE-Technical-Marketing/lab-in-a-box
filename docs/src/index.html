@@ -1087,6 +1087,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Dedicated game-server hosting/scaling (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Applies one or more Kubernetes manifests (a local file, an http(s) or nfs:// URL, or inline YAML/JSON) to a kcluster via <code>kubectl apply</code> — a generic escape hatch for one-off resources that don't warrant their own addon</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1171,6 +1175,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Provisions a real Ansible control node: installs <code>ansible-core</code>, pushes example playbooks + a dynamic inventory script that queries <code>uyuni</code>/<code>smlm</code>'s own system list, sets up SSH access to the rest of the lab. Pairs with <code>uyuni</code>/<code>smlm</code>'s own <code>*_ansible_control_nodes</code> field, which enables the server-side "Ansible Control Node" entitlement</td>
 </tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Pushes and runs an arbitrary Ansible playbook (a local file, an http(s) or nfs:// URL, or inline YAML) against an already-provisioned <code>ansible_control_node</code>, using its own dynamic inventory</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1253,7 +1261,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
-<td>SUSE Application Collection</td>
+<td>SUSE Application Collection — logs Helm in, and by default also requires Rancher on the same kcluster and registers the Collection as a real Rancher ClusterRepo (Apps &amp; Marketplace UI), retrying automatically if Rancher hasn't started yet (<code>appcollection_standalone: true</code> skips both, Helm CLI only, no Rancher dependency). The <code>rancher</code> addon's own <code>rancher_install_appcollection</code> can also trigger this with no separate <code>appcollection</code> addon entry at all.</td>
 </tr>
 <tr>
 <td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
@@ -1270,6 +1278,14 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Standalone Grafana server (podman container, no Kubernetes) — auto-provisions a Prometheus datasource and, optionally, the real Grafana Labs community dashboard for an <code>smlm</code>/<code>uyuni</code> server's own exporters</td>
+</tr>
+<tr>
+<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
+<td>A website served from a SUSE BCI image (podman container, no Kubernetes) — nginx and the page are built into the image on the node itself; the page is generated, or downloaded from <code>bci_website_content_url</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Runs one or more shell commands, in order, on the target node — or a whole script fetched from a local file, an http(s) or nfs:// URL — a generic escape hatch for a one-off provisioning step that doesn't warrant its own addon</td>
 </tr>
 </tbody>
 </table>

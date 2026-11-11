@@ -269,6 +269,48 @@ except SystemExit:
 check("require_k8s_name: uppercase (not a valid k8s name) is rejected too", _require_k8s_name_died)
 
 
+# ── fetch_nfs_content: mount, read, always unmount ──────────────────────────
+class _FakeResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+_nfs_calls = []
+ac.ssh_run = lambda hostname, cmd, check=True, input_text=None, capture=False, user="root": (
+    _nfs_calls.append((hostname, cmd)) or _nfs_fake_result
+)
+
+_nfs_fake_result = _FakeResult(returncode=0, stdout="file content\n")
+content = ac.fetch_nfs_content("sol.mydemo.lab", "nfs://nfs1.mydemo.lab/exports/playbooks/deploy.yml")
+check("fetch_nfs_content: returns the real (mocked) file content", content == "file content\n")
+cmd = _nfs_calls[0][1]
+check("fetch_nfs_content: mounts the file's PARENT directory, not the file itself",
+      "mount -t nfs -o ro nfs1.mydemo.lab:/exports/playbooks" in cmd)
+check("fetch_nfs_content: reads the file's own basename from the mount",
+      "deploy.yml" in cmd and "cat" in cmd)
+check("fetch_nfs_content: always unmounts, even combined with a successful read",
+      "umount" in cmd and "rmdir" in cmd)
+
+died = []
+ac.die = lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)
+try:
+    ac.fetch_nfs_content("sol.mydemo.lab", "not-an-nfs-url")
+except SystemExit:
+    pass
+check("fetch_nfs_content: a malformed nfs:// URL dies with a clear message",
+      len(died) == 1 and "not-an-nfs-url" in died[0])
+
+died.clear()
+_nfs_fake_result = _FakeResult(returncode=1, stderr="mount failed")
+try:
+    ac.fetch_nfs_content("sol.mydemo.lab", "nfs://nfs1.mydemo.lab/exports/p.yml")
+except SystemExit:
+    pass
+check("fetch_nfs_content: a failed mount/read dies, not silently swallowed", len(died) == 1)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

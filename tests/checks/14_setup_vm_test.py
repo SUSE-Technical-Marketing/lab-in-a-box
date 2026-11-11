@@ -128,6 +128,37 @@ check("provision_vm: cloud_instance_type is threaded from env through to backend
       create_vm_kwargs.get("cloud_instance_type") == "m5.2xlarge")
 
 
+# ── provision_vm: a node's own scc_regcode/scc_email win over the lab-wide SUSE_regcode/SUSE_email ──
+# (e.g. a different subscription per node) — same SSH-based register_suse() either way, never cloud-init:
+# a credential belongs in a one-time, non-persisted SSH exchange, not baked into a boot-time file the
+# instance (or its cloud metadata service) keeps around.
+register_suse_calls = []
+setup_vm.register_suse = lambda *a, **kw: order.append("register_suse") or register_suse_calls.append(a)
+setup_vm.load_vm_vars = lambda definition, vm_name: {
+    "myip": "192.168.1.50", "mymac": "", "mydomain": "mydemo.lab",
+    "config_method": "cloud-init", "VM_CPU": "2", "VM_MEM": "4096", "VM_DSK": "40",
+    "SOURCE_IMAGE": "img.qcow2", "cloud_instance_type": "m5.2xlarge",
+    "SUSE_regcode": "LAB-WIDE-CODE", "SUSE_email": "lab@x.lab",
+    "scc_regcode": "NODE-OWN-CODE", "scc_email": "node@x.lab",
+}
+setup_vm.provision_vm(definition, config, defaults, "vm1")
+check("provision_vm: a node's own scc_regcode wins over the lab-wide SUSE_regcode",
+      register_suse_calls[-1][1] == "NODE-OWN-CODE")
+check("provision_vm: a node's own scc_email wins over the lab-wide SUSE_email",
+      register_suse_calls[-1][2] == "node@x.lab")
+
+register_suse_calls.clear()
+setup_vm.load_vm_vars = lambda definition, vm_name: {
+    "myip": "192.168.1.50", "mymac": "", "mydomain": "mydemo.lab",
+    "config_method": "cloud-init", "VM_CPU": "2", "VM_MEM": "4096", "VM_DSK": "40",
+    "SOURCE_IMAGE": "img.qcow2", "cloud_instance_type": "m5.2xlarge",
+    "SUSE_regcode": "LAB-WIDE-CODE", "SUSE_email": "lab@x.lab",
+}
+setup_vm.provision_vm(definition, config, defaults, "vm1")
+check("provision_vm: falls back to the lab-wide SUSE_regcode when the node sets none of its own",
+      register_suse_calls[-1][1] == "LAB-WIDE-CODE" and register_suse_calls[-1][2] == "lab@x.lab")
+
+
 # ── An "existing" node must never be provisioned ────────────────────────────
 setup_vm.is_existing_node = lambda node_cfg: True
 died = False

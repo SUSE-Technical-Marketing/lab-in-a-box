@@ -330,7 +330,11 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 
     # A BYOS SUSE image has no package repositories until it is registered, and everything from here on may install
     # packages. Done over SSH once the node is up, so it is the same for every provisioning method and backend.
-    register_suse(ssh_target, env.get("SUSE_regcode", ""), env.get("SUSE_email", ""), env.get("SUSE_url", ""))
+    # This node's own scc_regcode/scc_email (e.g. a different subscription per node) win over the single
+    # lab-wide SUSE_regcode/SUSE_email in lab_creation.cfg when set; register_suse() already pipes the code
+    # over stdin, never as a command-line argument or into any persisted provisioning file.
+    register_suse(ssh_target, env.get("scc_regcode") or env.get("SUSE_regcode", ""),
+                  env.get("scc_email") or env.get("SUSE_email", ""), env.get("SUSE_url", ""))
 
     # The VM is up and reachable: run its pre_commands before anything else is done to it (setup_lab.py's Kubernetes
     # and add-on phases come after this returns). A failure is reported and does not stop the rest of the lab.

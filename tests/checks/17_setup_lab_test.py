@@ -106,6 +106,59 @@ setup_lab._install_cluster_addons(definition2_empty, config, defaults, "lab.json
 check("_install_cluster_addons: no-op when the cluster has no addons", run_calls == [])
 
 
+# ── _install_cluster_addons: retries DEPENDENCY_NOT_READY_EXIT_CODE ─────────
+# "appcollection" is listed BEFORE "rancher" — fails once (dependency not up yet), succeeds on retry
+# once "rancher" has had its own turn. Exercises the real ordering problem this mechanism exists for.
+run_calls.clear()
+setup_lab._report = setup_lab._RunReport()
+_attempt_counts = {}
+
+
+def _retry_responder(args, env=None, **kw):
+    name = args[0]
+    run_calls.append((args, env))
+    _attempt_counts[name] = _attempt_counts.get(name, 0) + 1
+    if "appcollection" in name and _attempt_counts[name] == 1:
+        return FakeCompleted(returncode=setup_lab.ac.DEPENDENCY_NOT_READY_EXIT_CODE)
+    return FakeCompleted(returncode=0)
+
+
+setup_lab.subprocess.run = _retry_responder
+definition_retry = {
+    "nodes": {"srv1": {"kcluster": "c1"}},
+    "kclusters": {"c1": {"addons": ["appcollection", "rancher"]}},
+}
+setup_lab._install_cluster_addons(definition_retry, config, defaults, "lab.json", "c1", {"clu_type": "rke2", "mgm_node": "srv1"})
+check("retry: appcollection is attempted twice (deferred once, then succeeds)",
+      _attempt_counts.get("/fake/bin/install_appcollection", 0) == 2)
+check("retry: rancher only needed one attempt", _attempt_counts.get("/fake/bin/install_rancher", 0) == 1)
+check("retry: the eventually-successful addon is reported 'ok', not FAILED",
+      any(a == "appcollection" and s == "ok" for _, a, s in setup_lab._report.addons))
+check("retry: no error was recorded for an addon that succeeded on retry", setup_lab._report.errors == [])
+
+# A dependency that NEVER becomes ready (every attempt returns the retry code): reported as a real
+# failure once nothing more can change, not retried forever.
+run_calls.clear()
+setup_lab._report = setup_lab._RunReport()
+setup_lab.subprocess.run = lambda args, env=None, **kw: (
+    run_calls.append((args, env)) or FakeCompleted(returncode=setup_lab.ac.DEPENDENCY_NOT_READY_EXIT_CODE)
+)
+definition_stuck = {
+    "nodes": {"srv1": {"kcluster": "c1"}},
+    "kclusters": {"c1": {"addons": ["appcollection"]}},
+}
+setup_lab._install_cluster_addons(definition_stuck, config, defaults, "lab.json", "c1", {"clu_type": "rke2", "mgm_node": "srv1"})
+check("retry: a dependency that never resolves is attempted exactly once (no other addon could ever "
+      "unblock it, so the loop gives up on the very first pass, not endlessly)", len(run_calls) == 1)
+check("retry: a dependency that never resolves is reported as a real failure",
+      any(a == "appcollection" and "FAILED" in s and "never became ready" in s
+          for _, a, s in setup_lab._report.addons))
+check("retry: a never-resolving dependency's failure is also recorded as an error",
+      any("never became ready" in e for e in setup_lab._report.errors))
+setup_lab._report = setup_lab._RunReport()
+setup_lab.subprocess.run = lambda args, env=None, **kw: run_calls.append((args, env)) or FakeCompleted()
+
+
 # ── phase_vm_addons: per-node dispatch ───────────────────────────────────────
 run_calls.clear()
 setup_lab.apps.addon_installer = lambda name: "/fake/bin/install_{}".format(name)
@@ -127,6 +180,20 @@ check("phase_vm_addons: a node whose own VM creation FAILED never has its addons
 check("phase_vm_addons: a DIFFERENT node (not FAILED) still gets its addons installed normally",
       any(env.get("_vm_name") == "vm2" for _, env in run_calls))
 setup_lab._report = setup_lab._RunReport()
+
+# phase_vm_addons gets the same retry treatment: "appcollection" listed before "rancher" on the
+# same node, fails once, succeeds once "rancher" has had its own turn.
+run_calls.clear()
+_attempt_counts.clear()
+setup_lab.subprocess.run = _retry_responder
+definition3_retry = {"nodes": {"vm1": {"addons": ["appcollection", "rancher"]}}}
+setup_lab.phase_vm_addons(definition3_retry, "lab.json")
+check("phase_vm_addons retry: appcollection is attempted twice (deferred once, then succeeds)",
+      _attempt_counts.get("/fake/bin/install_appcollection", 0) == 2)
+check("phase_vm_addons retry: the eventually-successful addon is reported 'ok'",
+      any(a == "appcollection" and s == "ok" for _, a, s in setup_lab._report.addons))
+setup_lab._report = setup_lab._RunReport()
+setup_lab.subprocess.run = lambda args, env=None, **kw: run_calls.append((args, env)) or FakeCompleted()
 
 
 # ── apps.collect_addon_names: every addon referenced anywhere in the lab ───

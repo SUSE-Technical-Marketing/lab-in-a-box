@@ -37,6 +37,7 @@ import migrations  # noqa: E402
 import lab_creation as lc  # noqa: E402
 import k8s  # noqa: E402
 import targets  # noqa: E402
+import addon_common as ac  # noqa: E402
 import apps  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
@@ -241,6 +242,31 @@ def _run_addon(cmd, env):
     if out and (r.returncode != 0 or lc._looks_noisy(out)):
         print(out)
     return r
+
+
+def _dispatch_addons_with_retry(addon_list, attempt):
+    """
+    Run every entry of `addon_list` via `attempt(entry) -> real exit code`, retrying any that
+    signalled addon_common.DEPENDENCY_NOT_READY_EXIT_CODE once every other entry in the SAME pass
+    has had its own turn — so an addon listed before the one it depends on (e.g. "appcollection"
+    before "rancher" on the same kcluster) still succeeds once the dependency catches up, instead
+    of requiring the lab author to get the array order exactly right.
+
+    Stops once either nothing is left pending, or a full pass makes no further progress (nothing
+    newly resolved — succeeded or hard-failed) at all; what's still pending at that point is
+    returned, in original order, for the caller to report as failed (its dependency never showed
+    up, even after everything else got a chance to run). `attempt()` is responsible for its own
+    success/hard-failure reporting as a side effect each time it's actually called; this function
+    never reports anything itself — a still-pending entry at the end was NOT reported by attempt()
+    (it only reports resolved outcomes), so the caller must report those itself.
+    """
+    pending = list(addon_list)
+    while pending:
+        deferred = [entry for entry in pending if attempt(entry) == ac.DEPENDENCY_NOT_READY_EXIT_CODE]
+        if not deferred or len(deferred) == len(pending):
+            return deferred
+        pending = deferred
+    return []
 
 
 def _merged_env(definition, config, defaults, vm_name):
@@ -593,10 +619,8 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     lc.log("Installing cluster \"{}{}{}\" addon/s ( {} ) from \"{}{}{}\"".format(
         lc._RED, clu_name, lc._RESET, " ".join(addons), lc._RED, vm_name, lc._RESET))
     lc._level += 1
-    installed = set()
-    for addon in addons:
-        if addon in installed:
-            continue
+
+    def _attempt(addon):
         installer = apps.addon_installer(addon)
         if not installer:
             lc.die("FAILED! Addon script \"install_{}\" not found".format(addon))
@@ -612,17 +636,33 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         # pipeline. Matched exactly: run it, move on — but record the exit
         # code so the end-of-run summary can flag an addon that failed.
         r = _run_addon([installer, json_file], env)
-        installed.add(addon)
         rc = getattr(r, "returncode", 0)
         if rc == 0:
             _report.add_addon("cluster:{}".format(clu_name), addon, "ok")
+            lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
+                lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+        elif rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+            lc.log("Addon \"{}{}{}\" on cluster \"{}{}{}\" isn't ready yet — will retry once every "
+                    "other addon here has had its own turn".format(
+                        lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
         else:
             _report.add_addon("cluster:{}".format(clu_name), addon, "FAILED (exit {})".format(rc))
             msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
             lc.error(msg)
             _report.add_error(msg)
-        lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
-            lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+        return rc
+
+    # De-duplicate exact repeats up front (same as the old "installed" set) before the retry
+    # dispatch, which otherwise has no reason to know about duplicates at all.
+    unique_addons = list(dict.fromkeys(addons))
+    never_ready = _dispatch_addons_with_retry(unique_addons, _attempt)
+    for addon in never_ready:
+        _report.add_addon("cluster:{}".format(clu_name), addon, "FAILED (dependency never became ready)")
+        msg = ("cluster addon '{}' on '{}' never became ready — its dependency was still not "
+               "satisfied even after every other addon on this cluster had run".format(addon, clu_name))
+        lc.error(msg)
+        _report.add_error(msg)
+
     lc._level -= 1
     # bash prints its "No more addons" message from inside the per-addon loop
     # (bash:209), so it fires after every addon rather than once at the end —
@@ -693,12 +733,12 @@ def phase_vm_addons(definition, json_file):
         lc.log("Installing VM \"{}{}{}\" addons".format(lc._RED, vm_name, lc._RESET))
         lc._level += 1
         node_target = targets.node_kind(definition, vm_name)
-        for addon_entry in addons:
-            # addon_entry is a plain "<addon>" string, or a single-key
-            # {"<addon>": {...}} mapping carrying this node's own override of
-            # that addon's config (read by the addon script itself, via
-            # k8s.addon_node_config() — this loop only needs the name).
-            addon = apps.addon_entry_name(addon_entry)
+        # addon_entry is a plain "<addon>" string, or a single-key {"<addon>": {...}} mapping
+        # carrying this node's own override of that addon's config (read by the addon script
+        # itself, via k8s.addon_node_config() — only the name is needed here).
+        addon_names = [apps.addon_entry_name(entry) for entry in addons]
+
+        def _attempt(addon):
             installer = apps.addon_installer(addon)
             if not installer:
                 lc.die("Addon script \"install_{}\" not found".format(addon))
@@ -714,11 +754,24 @@ def phase_vm_addons(definition, json_file):
             rc = getattr(r, "returncode", 0)
             if rc == 0:
                 _report.add_addon("node:{}".format(vm_name), addon, "ok")
+            elif rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+                lc.log("Addon \"{}{}{}\" on \"{}{}{}\" isn't ready yet — will retry once every "
+                        "other addon on this node has had its own turn".format(
+                            lc._RED, addon, lc._RESET, lc._RED, vm_name, lc._RESET))
             else:
                 _report.add_addon("node:{}".format(vm_name), addon, "FAILED (exit {})".format(rc))
                 msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
                 lc.error(msg)
                 _report.add_error(msg)
+            return rc
+
+        never_ready = _dispatch_addons_with_retry(addon_names, _attempt)
+        for addon in never_ready:
+            _report.add_addon("node:{}".format(vm_name), addon, "FAILED (dependency never became ready)")
+            msg = ("node addon '{}' on '{}' never became ready — its dependency was still not "
+                   "satisfied even after every other addon on this node had run".format(addon, vm_name))
+            lc.error(msg)
+            _report.add_error(msg)
         lc._level -= 1
 
 

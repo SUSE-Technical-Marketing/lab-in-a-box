@@ -117,6 +117,41 @@ def appcollection_2_0(definition: dict) -> list:
                       "charts come from appcollection_registry")
 
 
+def appcollection_3_0(definition: dict) -> list:
+    """
+    addon:appcollection 3.0: by default now requires Rancher on the same kcluster, and automatically registers
+    the Collection as a Rancher ClusterRepo (appcollection_standalone opts out of both — the pre-3.0, Helm-CLI-only
+    behavior). For every kcluster (or the old single "cluster" format) that lists "appcollection" in its own
+    addons[] WITHOUT also listing "rancher" there, sets appcollection_standalone to "true" on that addon's own
+    entry — creating a {"appcollection": {...}} override out of a plain "appcollection" string entry if needed —
+    so an existing lab using appcollection without Rancher keeps behaving exactly as it did before. A
+    kcluster/cluster that already lists both addons is left alone: it now also gets the ClusterRepo registration,
+    which is the intended behavior change for that case, not something this migration needs to touch.
+    """
+    changes = []
+    owners = []
+    if isinstance(definition.get("kclusters"), dict):
+        owners = [("kcluster '{}'".format(name), cfg) for name, cfg in definition["kclusters"].items()]
+    elif isinstance(definition.get("cluster"), dict):
+        # Old single-cluster format: the addons[] list lives at the top level, not inside "cluster" itself.
+        owners = [("the lab's cluster", definition)]
+
+    for label, owner in owners:
+        entries = owner.get("addons") or []
+        names = [apps.addon_entry_name(e) for e in entries]
+        if "appcollection" not in names or "rancher" in names:
+            continue
+        idx = names.index("appcollection")
+        entry = entries[idx]
+        if isinstance(entry, dict):
+            entry["appcollection"].setdefault("appcollection_standalone", "true")
+        else:
+            entries[idx] = {"appcollection": {"appcollection_standalone": "true"}}
+        changes.append("{}: appcollection_standalone set to \"true\" (no 'rancher' addon on this same "
+                       "kcluster — preserves the pre-3.0 Helm-CLI-only behavior)".format(label))
+    return changes
+
+
 def keycloak_2_0(definition: dict) -> list:
     """
     addon:keycloak 2.0: the chart is codecentric/keycloakx instead of bitnami/keycloak. Removes keycloak_rel and
@@ -273,6 +308,7 @@ def _appcollection_default_2_0(name: str, prefix: str = ""):
 MIGRATIONS = {
     "anthropic_2_0": _litellm_2_0("anthropic"),
     "appcollection_2_0": appcollection_2_0,
+    "appcollection_3_0": appcollection_3_0,
     "argocd_2_0": _appcollection_default_2_0("argocd"),
     "complianceascode_2_0": complianceascode_2_0,
     "coredns_2_0": _appcollection_default_2_0("coredns"),
