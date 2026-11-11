@@ -35,9 +35,6 @@
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
    {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
   ],
-  "addon:bci_website": [
-   {"version": "1.0", "breaking": false, "changes": "First version: a website served from a SUSE BCI image by podman on the target node."}
-  ],
   "addon:client_registration": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: client_registration_admin_pass, client_registration_server_ip, client_registration_server_node, client_registration_server_type."},
