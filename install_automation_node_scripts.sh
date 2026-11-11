@@ -254,6 +254,24 @@ _apache_enable_module() {
     fi
 }
 
+# Check the whole Apache configuration before it is applied. A reload of an
+# invalid configuration fails and leaves the service stuck reloading, and the
+# restart that follows it would stop Apache altogether, so nothing is applied:
+# the error is shown and the deploy stops with the running server untouched.
+_apache_configtest() {
+    local _ctl _out
+    # SUSE's start_apache2 builds the module list from /etc/sysconfig/apache2
+    # first, as the service itself does, so a module enabled by this deploy is
+    # seen; a bare httpd -t there would miss it. Elsewhere apachectl or httpd.
+    _ctl="$(command -v start_apache2 || command -v apachectl || command -v httpd)" || return 0
+    if ! _out="$("${_ctl}" -t 2>&1)"
+    then
+        echo "ERROR: the Apache configuration is invalid, so it was not applied and the running server was left as it was:" >&2
+        echo "${_out}" >&2
+        exit 1
+    fi
+}
+
 # Apply what the flags above call for to service ${1} (apache2 or httpd), and
 # say what was done. A service that is not running is started, whatever changed. Before actually
 # restarting/reloading (never for a no-op "nothing changed, already running"), the configuration is
@@ -263,18 +281,7 @@ _apache_enable_module() {
 _apache_apply() {
     if [[ ${_apache_restart} -eq 1 || ${_apache_reload} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
     then
-        if [[ "${1}" == "apache2" ]]
-        then
-            _apache_configtest_cmd=(/usr/sbin/start_apache2 -t)
-        else
-            _apache_configtest_cmd=(httpd -t)
-        fi
-        if ! "${_apache_configtest_cmd[@]}" >/tmp/apache-configtest.log 2>&1
-        then
-            echo "ERROR: Apache configuration is invalid:"
-            cat /tmp/apache-configtest.log
-            exit 1
-        fi
+        _apache_configtest
     fi
     if [[ ${_apache_restart} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
     then
@@ -349,6 +356,18 @@ then
 fi
 chmod 0600 "${_tls_key}"
 chmod 0644 "${_tls_cert}"
+
+# lab_creation-ssl.conf opens port 443. Before it existed, lab-builder-ssl.conf
+# opened it, and Apache refuses a second Listen on the same port, so a server
+# deployed back then gets the current lab-builder-ssl.conf (no Listen) first.
+# The lab-builder section below installs that same file again, unchanged.
+for _lb_ssl_conf in /etc/apache2/vhosts.d/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
+do
+    if [[ -f "${_lb_ssl_conf}" ]] && grep -q "^[[:space:]]*Listen[[:space:]]" "${_lb_ssl_conf}"
+    then
+        _apache_install_conf webui/apache/lab-builder-ssl.conf "${_lb_ssl_conf}"
+    fi
+done
 
 if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
 then

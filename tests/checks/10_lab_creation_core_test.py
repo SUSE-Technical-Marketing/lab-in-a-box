@@ -1120,6 +1120,146 @@ check("prepare_virt_customize: still passes --hostname too (belt and suspenders,
       or '"--hostname", vmname' in _vc_script)
 
 
+# ── ensure_swap(): a small cloud node's package install can get OOM-killed, so add swap first ──
+_real_ssh_run = lc.ssh_run
+
+
+class _FakeSwapResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+_swap_calls = []
+
+
+def _meminfo_result(total_mb):
+    return _FakeSwapResult(stdout=str(total_mb * 1024))
+
+
+lc.ssh_run = lambda hostname, cmd, **kw: _meminfo_result(4096)
+check("ensure_swap: a node that already clears the threshold is left alone (no second ssh_run)",
+      lc.ensure_swap("big.mydemo.lab", min_total_mb=2048) is True)
+
+_swap_cmd = []
+
+
+def _small_then_add(hostname, cmd, **kw):
+    if "meminfo" in cmd:
+        return _meminfo_result(900)
+    _swap_cmd.append(cmd)
+    return _FakeSwapResult()
+
+
+lc.ssh_run = _small_then_add
+check("ensure_swap: a node below the threshold gets a swapfile added",
+      lc.ensure_swap("small.mydemo.lab", min_total_mb=2048, swap_mb=1024) is True)
+check("ensure_swap: the swap command creates, activates and persists the swapfile",
+      len(_swap_cmd) == 1 and "mkswap" in _swap_cmd[0] and "swapon" in _swap_cmd[0]
+      and "/etc/fstab" in _swap_cmd[0] and "1024" in _swap_cmd[0])
+check("ensure_swap: never uses fallocate — a sparse file can make swapon reject it "
+      "with 'Invalid argument' (confirmed live on CentOS 7)", "fallocate" not in _swap_cmd[0])
+check("ensure_swap: uses dd instead, which always writes real, contiguous blocks",
+      "dd if=/dev/zero" in _swap_cmd[0])
+check("ensure_swap: checks whether the swapfile is already active before anything else",
+      _swap_cmd[0].strip().startswith("set -e") and
+      _swap_cmd[0].split("\n")[1].startswith("swapon --show"))
+
+# A swapfile that's already active must never be touched again: swapon on an ALREADY-active file
+# fails too (EBUSY), same exit code as a genuinely bad one — telling those apart by swapon's exit
+# code alone (instead of checking "already active" first) was a real bug: it removed a swapfile
+# that was actively in use (confirmed live: "rm: cannot remove ...: Operation not permitted", rhel9).
+_already_active_cmds = []
+
+
+def _small_but_already_active(hostname, cmd, **kw):
+    if "meminfo" in cmd:
+        return _meminfo_result(900)
+    _already_active_cmds.append(cmd)
+    # The real remote script's own first line checks this and exits 0 immediately — simulate
+    # that exact outcome rather than re-implementing the script's logic here.
+    return _FakeSwapResult(returncode=0)
+
+
+lc.ssh_run = _small_but_already_active
+check("ensure_swap: still reports success when the remote script finds it already active",
+      lc.ensure_swap("active.mydemo.lab", min_total_mb=2048) is True)
+check("ensure_swap: sends exactly one remote command (the script decides on its own side, "
+      "nothing here branches on 'already active' separately)", len(_already_active_cmds) == 1)
+
+_warned = []
+_real_warn = lc.warn
+lc.warn = _warned.append
+
+
+def _small_then_fail(hostname, cmd, **kw):
+    if "meminfo" in cmd:
+        return _meminfo_result(900)
+    return _FakeSwapResult(returncode=1, stderr="no space left on device")
+
+
+lc.ssh_run = _small_then_fail
+check("ensure_swap: a failure to add swap warns (never dies) and reports False",
+      lc.ensure_swap("tiny.mydemo.lab", min_total_mb=2048) is False
+      and len(_warned) == 1 and "tiny.mydemo.lab" in _warned[0])
+
+lc.ssh_run = lambda hostname, cmd, **kw: _FakeSwapResult(stdout="not-a-number")
+check("ensure_swap: unparseable /proc/meminfo output warns and returns False, doesn't crash",
+      lc.ensure_swap("weird.mydemo.lab") is False)
+
+lc.ssh_run = _real_ssh_run
+lc.warn = _real_warn
+
+# ── ensure_centos7_vault_repos(): CentOS 7's mirrorlist.centos.org is gone for good post-EOL ──
+_os_calls = []
+
+
+def _os_release(hostname, cmd, **kw):
+    _os_calls.append((hostname, cmd))
+    if "os-release" in cmd:
+        return _FakeSwapResult(stdout="centos|7|rhel fedora")
+    return _FakeSwapResult()
+
+
+lc.ssh_run = _os_release
+check("ensure_centos7_vault_repos: a CentOS 7 node runs the vault repoint",
+      lc.ensure_centos7_vault_repos("luna.mydemo.lab") is True
+      and any("vault.centos.org" in cmd for _, cmd in _os_calls))
+
+_os_calls.clear()
+
+
+def _os_release_other(hostname, cmd, **kw):
+    _os_calls.append((hostname, cmd))
+    if "os-release" in cmd:
+        return _FakeSwapResult(stdout="sles|15.6|suse")
+    return _FakeSwapResult()
+
+
+lc.ssh_run = _os_release_other
+check("ensure_centos7_vault_repos: a no-op (and no second ssh_run at all) on anything but CentOS 7",
+      lc.ensure_centos7_vault_repos("mercury.mydemo.lab") is True and len(_os_calls) == 1)
+
+_warned = []
+_real_warn = lc.warn
+lc.warn = _warned.append
+
+
+def _os_release_fails(hostname, cmd, **kw):
+    if "os-release" in cmd:
+        return _FakeSwapResult(stdout="centos|7|rhel fedora")
+    return _FakeSwapResult(returncode=1, stderr="permission denied")
+
+
+lc.ssh_run = _os_release_fails
+check("ensure_centos7_vault_repos: a failure to patch the repos warns (never dies) and reports False",
+      lc.ensure_centos7_vault_repos("broken.mydemo.lab") is False
+      and len(_warned) == 1 and "broken.mydemo.lab" in _warned[0])
+
+lc.ssh_run = _real_ssh_run
+lc.warn = _real_warn
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

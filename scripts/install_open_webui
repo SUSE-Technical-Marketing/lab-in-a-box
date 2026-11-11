@@ -40,9 +40,11 @@
 #                                 accepts any bearer token, so "sk-anything" works unless the proxy was
 #                                 configured with LiteLLM's own key enforcement)
 #
-# The chart's PVCs need a StorageClass. A bare RKE2 cluster has none by default, and the pods then
-# stay Pending with no error in this addon's output. Install a storage addon (for example "longhorn")
-# or another default StorageClass before this addon.
+# The chart's PVCs need a StorageClass. requires_cluster below ("storageclass") makes
+# cluster_plan() (libs/k8s.py) add one automatically on a distribution that doesn't bundle its own
+# (e.g. a bare RKE2 cluster) — default "longhorn", override with the kcluster's own clu_storage
+# (e.g. "local-path" for a single-node cluster). Found live 2026-11-05: this field was missing here,
+# so a bare RKE2 cluster's pods stayed Pending with no error in this addon's own output at all.
 
 __version__ = "__LABVERSION__"
 
@@ -53,7 +55,7 @@ PLUGIN = {
     "targets": ["container"],
     "layers": ["kubernetes"],
     "requires_kubernetes": None,
-    "requires_cluster": ["ingress"],
+    "requires_cluster": ["ingress", "storageclass"],
     "aux_services": [],
 }
 
@@ -142,10 +144,10 @@ def main():
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
 
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
-    definition = primary.load_definition(json_file)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
 
     target = k8s.first_server_node(definition)
     if not target:

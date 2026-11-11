@@ -73,10 +73,10 @@ def main():
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
 
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
-    definition = primary.load_definition(json_file)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
 
     target = k8s.first_server_node(definition)
     if not target:

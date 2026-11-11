@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Warum lab-in-a-box?</a></li><li><a href="#architecture">Architektur</a></li><li><a href="#how-it-works">So funktioniert es</a></li><li><a href="#quick-start">Schnellstart</a></li><li><a href="#web-ui-lab-builder">Web-UI (lab-builder)</a></li><li><a href="#lab-definition-format">Format der Lab-Definition</a></li><li><a href="#examples">Beispiele</a></li><li><a href="#step-by-step-walkthroughs">Schritt-für-Schritt-Anleitungen</a></li><li><a href="#available-commands">Verfügbare Befehle</a></li><li><a href="#available-addons">Verfügbare Add-ons</a></li><li><a href="#configuration-reference">Konfigurationsreferenz</a></li><li><a href="#testing">Tests</a></li><li><a href="#contributing--developer-setup">Mitwirken / Entwicklungsumgebung</a></li><li><a href="#author">Autor</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">Warum lab-in-a-box?</a></li><li><a href="#architecture">Architektur</a></li><li><a href="#how-it-works">So funktioniert es</a></li><li><a href="#quick-start">Schnellstart</a></li><li><a href="#web-ui-lab-builder">Web-UI (lab-builder)</a></li><li><a href="#lab-definition-format">Format der Lab-Definition</a></li><li><a href="#examples">Beispiele</a></li><li><a href="#step-by-step-walkthroughs">Schritt-für-Schritt-Anleitungen</a></li><li><a href="#available-commands">Verfügbare Befehle</a></li><li><a href="#available-addons">Verfügbare Add-ons</a></li><li><a href="#configuration-reference">Konfigurationsreferenz</a></li><li><a href="#testing">Tests</a></li><li><a href="#contributing--developer-setup">Mitwirken / Entwicklungsumgebung</a></li><li><a href="#issues-and-feedback">Probleme und Feedback</a></li><li><a href="#author">Autor</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">Warum lab-in-a-box?</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">Konfigurationsreferenz</a></li>
 <li><a href="#testing">Tests</a></li>
 <li><a href="#contributing--developer-setup">Mitwirken / Entwicklungsumgebung</a></li>
+<li><a href="#issues-and-feedback">Probleme und Feedback</a></li>
 </ul>
 <p align="right"><a href="#top">↑ nach oben</a></p>
 
@@ -419,6 +420,18 @@ footer.site {
 <td>Das neueste openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, mit eigener Subscription (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server, veröffentlicht von Canonical</td>
 </tr>
@@ -446,8 +459,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>Das neueste Rocky Linux 10, veröffentlicht vom Rocky-Projekt</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>Das letzte CentOS Linux 7 (Supportende seit Juni 2024), veröffentlicht vom CentOS-Projekt. Nur x86_64</td>
+</tr>
 </tbody>
 </table>
+<p>Ein SUSE-Produktname mit angehängtem <code>-byos</code> wählt das Image mit eigener Subscription statt des Pay-as-you-go-Images. Dieses Image hat keine Repositories, bis es registriert ist: Ein Knoten, der über <code>client_registration</code> bei einem SMLM-Server registriert wird, erhält seine Pakete von dort, und ein Knoten, der vorher Pakete braucht, etwa ein Kubernetes-Knoten, setzt <code>scc_regcode</code> (und optional <code>scc_email</code>) in common oder pro Knoten, damit cloud-init ihn beim ersten Start mit <code>SUSEConnect</code> registriert.</p>
 <p>SUSEs eigene Produkte kommen aus SUSEs öffentlichem Image-Tracker, die übrigen aus dem öffentlichen AWS-Systems-Manager-Parameter des jeweiligen Herstellers oder aus seinem eigenen AWS-Konto, niemals aus einer Namenssuche, die ein anderes Konto treffen könnte. Ein Wert, der kein Produktname ist, einschließlich einer Image-ID oder eines Image-Dateinamens, wird unverändert durchgereicht.</p>
 <p>Ein Cloud-Lab braucht außerdem, dass seine Knoten einander auflösen. Eine kleine DNS-VM pro Cloud-Konto bedient die Lab-Domain, und das Netzwerk des Kontos wird so konfiguriert, dass es diesen Server an jede Instanz darin ausgibt. So tritt ein Knoten seinem Kubernetes-Cluster über den Hostnamen bei, ohne dass im Gast etwas konfiguriert wird. Auf AWS ist das ein VPC-DHCP-Optionssatz: er gilt für die ganze VPC, eine danach gestartete Instanz hat ihn sofort, und eine bereits laufende übernimmt ihn bei der Erneuerung ihres DHCP-Lease.</p>
 <h3 id="kubernetes-setup">Kubernetes-Einrichtung</h3>
@@ -1769,6 +1787,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>Eine Lab-Definition in YAML statt JSON (siehe <a href="#lab-definition-format">Format der Lab-Definition</a>) braucht zusätzlich:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">Probleme und Feedback</h2>
+<p>Einen Fehler gefunden, einen Wunsch für eine neue Funktion, oder einfach eine Frage? Nutzen Sie <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">Neues Issue erstellen</a></strong> — für einen Fehler, eine fehlende Funktion oder Feedback zu irgendetwas in diesem Projekt</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">Bestehende Issues durchsuchen</a></strong> — vielleicht ist jemand bereits auf dasselbe Problem gestoßen, oder es gibt eine Lösung in der Diskussion</li>
+</ul>
+<p>Beim Melden eines Fehlers sind folgende Angaben am hilfreichsten: der genaue ausgeführte Befehl, die verwendete Lab-Definition (JSON/YAML, ohne Geheimnisse), und der relevante Abschnitt der Ausgabe oder des Logs. Siehe <a href="#testing">Tests</a> oben für den Speicherort der Logs, und die <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">Beispiele</a> als bekannt funktionierenden Ausgangspunkt zum Vergleich.</p>
+<p>Eine Sicherheitslücke gefunden statt eines gewöhnlichen Fehlers? Bitte folgen Sie <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a>, anstatt ein öffentliches Issue zu erstellen.</p>
+<p align="right"><a href="#top">↑ nach oben</a></p>
+
 <hr />
 <h2 id="author">Autor</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

@@ -239,7 +239,8 @@ try:
     check("RKE2Distro first node: a shell metacharacter in install_method is quoted, not passed through raw",
           "INSTALL_RKE2_METHOD='tar; touch /tmp/pwned'" in install_cmd)
 
-    fake_ssh = FakeSSH()
+    # No zypper (e.g. Ubuntu/Debian): the plain, no-install_method, non-transactional case these next checks mean.
+    fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=1))])
     k8s.ssh_run = fake_ssh
     token, addr = distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"},
                                         "RKE2TOKEN", "vm1")
@@ -251,8 +252,23 @@ try:
           and any("token: RKE2TOKEN" in c for h, c, kw in fake_ssh.calls))
 
     # ── transactional-update nodes: RPM method, reboot into its snapshot, SELinux on ──
-    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional node without install_method",
+    check("RKE2Distro: no INSTALL_RKE2_METHOD value on a non-transactional, non-SUSE node without install_method",
           "INSTALL_RKE2_METHOD='' " in install_cmd)
+
+    # A non-transactional node that DOES have zypper (plain SLES, e.g. SLES 16 — pluto's own real case) also
+    # defaults to the RPM method. get.rke2.io's own install.sh auto-selects rpm itself only for SLES 16 with
+    # VARIANT_ID=server (and separately for RHEL/CentOS) — every other SUSE-family node would otherwise fall
+    # through to its tarball method, so this project sets INSTALL_RKE2_METHOD explicitly instead of relying on
+    # that narrower, version-specific auto-detection.
+    fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=0))])
+    k8s.ssh_run = fake_ssh
+    distro.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"}, "RKE2TOKEN", "vm1")
+    _plain_suse_cmds = [c for h, c, kw in fake_ssh.calls]
+    check("RKE2Distro: a non-transactional node with zypper (plain SLES) also defaults to the RPM method",
+          "INSTALL_RKE2_METHOD=rpm " in next(c for c in _plain_suse_cmds if "get.rke2.io" in c))
+    check("RKE2Distro: ...without updating the kernel first (that step is transactional-update specific)",
+          "<update_kernel>" not in _plain_suse_cmds)
+
     k8s.is_transactional = lambda hostname: True
     fake_ssh = FakeSSH()
     k8s.ssh_run = fake_ssh

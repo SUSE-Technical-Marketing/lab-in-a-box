@@ -5,7 +5,7 @@
 
 """
 libs/lab_schema_base.py: the schema of the base lab definition — the common, nodes and kclusters sections of a
-lab.json, every field with its type and, where it has one, its default, enum, pattern and bounds.
+lab definition file, every field with its type and, where it has one, its default, enum, pattern and bounds.
 
 The single source of truth for those three sections: `lab_schema --base` and `setup_lab.py --input-definition` emit
 it, the web builder renders its fields, and libs/schema_validate.py checks a lab definition's values against it.

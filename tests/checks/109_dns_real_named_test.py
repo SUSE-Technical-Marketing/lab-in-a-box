@@ -144,6 +144,43 @@ check("named no longer answers the PTR record after del_from_dns", NODE not in d
 check("the zone still loads after a removal",
       "status: NOERROR" in dig("SOA", DOMAIN))
 
+# ── add_to_dns keeps one A record per name: a recreated cloud node's new address replaces its old one ──
+
+# A record of an earlier instance of the same name, which nothing could remove because that instance's address
+# was no longer known, plus neighbours that must survive: a name node1 is a prefix of, and a service record.
+OLD, NEW = "203.0.113.7", "203.0.113.8"
+forward = zone_dir / dns_zone.forward_file(DOMAIN)
+with forward.open("a") as zone:
+    zone.write("node1         IN  A       {}\n".format(OLD))
+    zone.write("node10         IN  A       {}\n".format(OLD))
+    zone.write("svc1\tIN A  {}\n".format(OLD))
+
+svc.add_to_dns(NODE, NEW, DOMAIN, "")
+reload_named()
+check("add_to_dns replaces the node's own earlier record rather than leaving it beside the new one: " +
+      dig("+short", "A", NODE).strip(),
+      dig("+short", "A", NODE).split() == [NEW])
+check("...a name it is only a prefix of keeps its record",
+      dig("+short", "A", "node10." + DOMAIN).split() == [OLD])
+check("...and a service record at the old address is retargeted to the new one too",
+      dig("+short", "A", "svc1." + DOMAIN).split() == [NEW])
+check("the zone still loads after add_to_dns replaces a record", "status: NOERROR" in dig("SOA", DOMAIN))
+
+# The same two steps on a remote master (DNSService.add_to_dns()'s own _remote_set_node()/_remote_retarget_services())
+# run as real sed commands over SSH. Run here, for real, on a copy of a zone file holding the same records, so the
+# commands themselves are what is checked rather than their text.
+remote_copy = tmp / "remote.lan"
+remote_copy.write_text("node1         IN  A       {o}\nnode10   IN  A   {o}\nsvc1\tIN A  {o}\n".format(o=OLD))
+sent = []
+svc._remote = lambda server, cmd, check=True, capture=False: sent.append(cmd) or run("bash", "-c", cmd)
+svc._remote_set_node("dns2.lab", str(remote_copy), "node1", dns_zone.node_record("node1", NEW))
+svc._remote_retarget_services("dns2.lab", str(remote_copy), OLD, NEW)
+check("the remote set+retarget runs two commands on the master", len(sent) == 2)
+remote_records = dns_zone.records(remote_copy.read_text())
+check("the remote update leaves the new node record, its neighbour, and its retargeted service: {}".format(
+      sorted(remote_records)),
+      remote_records == {"node1 IN A " + NEW, "node10 IN A " + OLD, "svc1 IN A " + NEW})
+
 # ── zone validity, as named-checkzone itself judges it ──────────────────────
 
 # A damaged header is the case record comparison cannot see: records() drops the header on purpose, because the

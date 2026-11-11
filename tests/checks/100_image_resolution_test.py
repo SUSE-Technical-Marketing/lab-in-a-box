@@ -77,6 +77,18 @@ check("newest_sles(byos=True) still skips the other variants",
       suse_catalogue.newest_sles(IMAGES, "-x86_64", byos=True).get("id") not in ("ami-sles16-ecs", "ami-sles16"))
 check("newest_sles() returns {} for a version nobody publishes",
       suse_catalogue.newest_sles(IMAGES, "-x86_64", major=99) == {})
+check("newest_sles(byos=True) picks the bring-your-own-subscription image",
+      suse_catalogue.newest_sles(IMAGES, "-x86_64", byos=True).get("id") == "ami-sles16-byos")
+check("newest_sles(byos=True) honours major and minor like the plain picker",
+      suse_catalogue.newest_sles(IMAGES, "-x86_64", major=16, minor=0, byos=True).get("id") == "ami-sles16-byos")
+check("newest_sles(byos=True) never falls back to a pay-as-you-go image",
+      suse_catalogue.newest_sles(IMAGES, "-x86_64", major=15, byos=True) == {})
+check("newest_sles(byos=True) returns {} for an architecture with no BYOS image",
+      suse_catalogue.newest_sles(IMAGES, "-arm64", byos=True) == {})
+check("newest_sles(byos=True) still skips the other variants",
+      suse_catalogue.newest_sles(
+          IMAGES + [_img("suse-sles-16-0-byos-v20261212-ecs-hvm-ssd-x86_64", "ami-byos-ecs", "20261212")],
+          "-x86_64", byos=True).get("id") == "ami-sles16-byos")
 
 
 # ── suse_catalogue.newest_micro() ─────────────────────────────────────────
@@ -94,6 +106,10 @@ check("newest_micro(byos=True) returns {} where no BYOS image is published",
       suse_catalogue.newest_micro(IMAGES, "-arm64", byos=True) == {})
 check("newest_micro() returns {} for an architecture nobody publishes",
       suse_catalogue.newest_micro(IMAGES, "-riscv64") == {})
+check("newest_micro(byos=True) picks the bring-your-own-subscription image",
+      suse_catalogue.newest_micro(IMAGES, "-x86_64", major=6, minor=1, byos=True).get("id") == "ami-micro61-byos")
+check("newest_micro(byos=True) never falls back to a pay-as-you-go image",
+      suse_catalogue.newest_micro(IMAGES, "-x86_64", major=6, minor=0, byos=True) == {})
 check("newest_micro() is stable when two images differ only in billing entity",
       suse_catalogue.newest_micro(
           [_img("suse-sle-micro-6-1-v1-hvm-ssd-x86_64-ltd", "ami-ltd"),
@@ -101,7 +117,7 @@ check("newest_micro() is stable when two images differ only in billing entity",
 
 
 # ── cloud_images: the AWS product table ───────────────────────────────────
-for product in ("ubuntu24.04", "debian13", "amazonlinux2023", "rhel9", "rhel10", "alma10", "rocky10"):
+for product in ("ubuntu24.04", "debian13", "amazonlinux2023", "rhel9", "rhel10", "alma10", "rocky10", "centos7"):
     check("cloud_images lists '{}'".format(product), product in cloud_images.AWS_PRODUCTS)
 for product, entry in cloud_images.AWS_PRODUCTS.items():
     check("'{}' names either an ssm parameter or an owner, never both".format(product),
@@ -109,7 +125,11 @@ for product, entry in cloud_images.AWS_PRODUCTS.items():
     check("'{}' says in words what it resolves to".format(product),
           bool(entry.get("label")) and entry["label"] == cloud_images.product_names()[product])
     arches = entry.get("ssm") or entry.get("name")
-    check("'{}' covers both architectures".format(product), set(arches) == {"x86_64", "arm64"})
+    # Every product covers both architectures, except a product its vendor only ever published for x86_64
+    # (CentOS Linux 7), which an arm64 lookup reports as having no image for that architecture.
+    single_arch = {"centos7"}
+    check("'{}' covers {}".format(product, "x86_64" if product in single_arch else "both architectures"),
+          set(arches) == ({"x86_64"} if product in single_arch else {"x86_64", "arm64"}))
     if "owner" in entry:
         check("'{}' names a 12-digit AWS account as its owner".format(product),
               entry["owner"].isdigit() and len(entry["owner"]) == 12)
@@ -139,6 +159,17 @@ check("the owner lookup restricts describe-images to the vendor's own account",
       "--owners" in _calls[-1] and cloud_images.AWS_PRODUCTS["rhel9"]["owner"] in _calls[-1])
 check("the owner lookup filters on the architecture as well as the name",
       any("Name=architecture,Values=x86_64" == a for a in _calls[-1]))
+check("a current product's lookup leaves deprecated images out", "--include-deprecated" not in _calls[-1])
+_calls.clear()
+check("centos7 resolves to the newest matching image",
+      cloud_images.aws_product_image("centos7", "x86_64", _fake_aws) == "ami-newest")
+check("centos7's lookup includes deprecated images, which is all its end-of-life AMIs are",
+      "--include-deprecated" in _calls[-1] and cloud_images.AWS_PRODUCTS["centos7"]["owner"] in _calls[-1])
+try:
+    cloud_images.aws_product_image("centos7", "arm64", _fake_aws)
+    check("centos7 on arm64 raises, as no such image was ever published", False)
+except ValueError:
+    check("centos7 on arm64 raises, as no such image was ever published", True)
 
 try:
     cloud_images.aws_product_image("ubuntu24.04", "x86_64", lambda *a: {"Parameters": []})
@@ -189,27 +220,36 @@ RESOLVES = {
     ("leap", "t3.medium"): "ami-leap16",
     ("opensuse", "t3.medium"): "ami-leap16",
     ("leap16.0", "t3.medium"): "ami-leap16",
-    ("slmicro6.1-byos", "t3.medium"): "ami-micro61-byos",
     ("sles16-byos", "t3.medium"): "ami-sles16-byos",
+    ("sles-byos", "t3.medium"): "ami-sles16-byos",
+    ("slmicro6.1-byos", "t3.medium"): "ami-micro61-byos",
+    ("micro-byos", "t3.medium"): "ami-micro61-byos",
 }
 for (name, instance_type), expected in RESOLVES.items():
     check("resolve_image_name('{}', {}) is {}".format(name, instance_type, expected),
           b.resolve_image_name(name, instance_type=instance_type) == expected)
 
-for literal in ("ami-0123456789abcdef0", "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "", "sles16-custom-build"):
+for literal in ("ami-0123456789abcdef0", "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "", "sles16-custom-build",
+                "sles16-byosx"):
     check("resolve_image_name() returns '{}' unchanged".format(literal),
           b.resolve_image_name(literal, instance_type="t3.medium") == literal)
 
-_died = []
-_real_die = backends.die
-backends.die = lambda msg: _died.append(msg) or (_ for _ in ()).throw(SystemExit(1))
+for name in ("leap16-byos", "opensuse-byos"):
+    try:
+        b.resolve_image_name(name, instance_type="t3.medium")
+        check("resolve_image_name('{}') refuses: Leap has no BYOS image".format(name), False)
+    except SystemExit:
+        check("resolve_image_name('{}') refuses: Leap has no BYOS image".format(name), True)
 try:
-    b.resolve_image_name("leap16-byos", instance_type="t3.medium")
+    b.resolve_image_name("sles16-byos", instance_type="t4g.nano")
+    check("resolve_image_name('sles16-byos') on arm64 with no BYOS arm64 image dies rather than "
+          "picking a pay-as-you-go one", False)
 except SystemExit:
-    pass
-backends.die = _real_die
-check("resolve_image_name('leap16-byos') dies saying Leap has no BYOS image",
-      len(_died) == 1 and "no BYOS image" in _died[0])
+    check("resolve_image_name('sles16-byos') on arm64 with no BYOS arm64 image dies rather than "
+          "picking a pay-as-you-go one", True)
+for name in ("sles16-byos", "sles15.7-byos", "slmicro6.1-byos"):
+    check("cloud_images lists '{}' so preflight treats it as a product name, not a file".format(name),
+          name in cloud_images.product_names())
 
 check("opensuse_image() answers for the architecture it is asked about",
       b.opensuse_image("-x86_64") == "ami-leap16")

@@ -5,9 +5,9 @@ created them (libvirt KVM hosts are usually handled with virsh directly; this
 is mainly for cloud backends).
 
 Usage:
-    vm_power.py <lab.json> status [vm ...]
-    vm_power.py <lab.json> start  [vm ...]
-    vm_power.py <lab.json> stop   [vm ...]
+    vm_power.py <lab-file> status [vm ...]
+    vm_power.py <lab-file> start  [vm ...]
+    vm_power.py <lab-file> stop   [vm ...]
 
 Prints one JSON object, {vm name: state}. A backend without power support
 reports "unsupported"; any other failure reports "error: <message>" and makes
@@ -56,7 +56,7 @@ def main():
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
     if len(args) < 2 or args[1] not in ACTIONS:
-        print("Usage: {} <lab.json> {{{}}} [vm ...]".format(Path(sys.argv[0]).name, "|".join(ACTIONS)),
+        print("Usage: {} <lab-file> {{{}}} [vm ...]".format(Path(sys.argv[0]).name, "|".join(ACTIONS)),
               file=sys.stderr)
         sys.exit(2)
     definition = primary.load_definition(args[0])

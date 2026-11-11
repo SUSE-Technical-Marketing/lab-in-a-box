@@ -552,10 +552,10 @@ def main():
     ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
 
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json>".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
-    definition = primary.load_definition(json_file)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
     config = primary.load_config()
 
     # NOTE: same pattern as install_harvester — bash never scans for a node

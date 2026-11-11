@@ -24,13 +24,25 @@ Usage: lab-builder-helper <command> [argument]
   credentials-delete FILE     delete credential file FILE
   lab-create FILE [--keep]    start setup_lab.py on saved lab FILE in the
                               background (--keep: keep VMs that already exist);
-                              prints the job id. A JSON stdin {"passphrase":
-                              "..."} is passed to the job's own environment
-                              (LAB_CREDENTIALS_PASSPHRASE) so a lab with
-                              encrypted credentials can be created without a
-                              terminal; it is never logged or stored
+                              prints the job id, a public live-status page URL
+                              (job id + a random token, needing no login — see
+                              pub-status below) and that page's QR code as SVG
+                              markup (qrencode not installed: both are left
+                              out, nothing else changes). A JSON stdin
+                              {"passphrase": "..."} is passed to the job's own
+                              environment (LAB_CREDENTIALS_PASSPHRASE) so a lab
+                              with encrypted credentials can be created
+                              without a terminal; it is never logged or stored
   lab-status JOB              a job's state, exit code and the end of its log
   lab-jobs                    every job, newest first
+  pub-status JOB              a job's state and log for whoever holds its own
+                              token; stdin: {"token": "..."}. Deliberately
+                              answers the same generic refusal whether JOB or
+                              the token is wrong, so a guess learns nothing.
+                              This is the one command the webui exposes with
+                              no login (see webui/lib/api.py's "pub-status"),
+                              since all it hands back is what the lab's own
+                              random-token link is for.
 
 Paths (environment overrides, for tests): LABBUILDER_LABS_DIR (saved labs,
 /srv/www/lab-builder/labs), LABBUILDER_JOBS_DIR (job logs,
@@ -40,9 +52,12 @@ CREDENTIALS_PATH in /etc/lab_creation.cfg (credential files).
 
 __version__ = "__LABVERSION__"
 
+import hmac
 import json
 import os
 import re
+import secrets
+import socket
 import subprocess
 import sys
 import time
@@ -57,6 +72,7 @@ for _candidate in ("/usr/local/bin", str(Path(__file__).resolve().parent)):
 
 import crypto_store  # noqa: E402
 import primary  # noqa: E402
+import qr_util  # noqa: E402
 import setup_credentials  # noqa: E402
 
 LABS_DIR = Path(os.environ.get("LABBUILDER_LABS_DIR", "/srv/www/lab-builder/labs"))
@@ -219,7 +235,16 @@ def job_dir(job: str) -> Path:
 
 
 def job_state(d: Path) -> dict:
-    """Job directory `d` as {"job", "lab", "started", "state", "rc"}; state is running, done or failed."""
+    """
+    Job directory `d` as {"job", "lab", "started", "state", "rc", ...}; state is running, done or
+    failed. Includes "status_url" (rebuilt from job.json's own token) whenever that token exists, so an
+    admin reopening the Create dialog for an already-running job (admin.py's login-gated "job"/"jobs"
+    actions call this) can show the same link/QR lab_create() showed the first time, not just on the one
+    original call. This is safe specifically because only an already-authenticated admin reaches this —
+    pub_status() (no login) strips both "status_url" and "token" from its own answer before returning,
+    since an unauthenticated caller supplied that exact token to get here and gains nothing from having
+    it echoed back, and should not implicitly gain the ability to read it off some OTHER job's state.
+    """
     meta = json.loads((d / "job.json").read_text())
     rc_file = d / "rc"
     rc = int(rc_file.read_text().strip()) if rc_file.is_file() and rc_file.read_text().strip() else None
@@ -228,7 +253,17 @@ def job_state(d: Path) -> dict:
         state = "running" if alive else "failed"
     else:
         state = "done" if rc == 0 else "failed"
-    return dict(meta, job=d.name, state=state, rc=rc)
+    out = dict(meta, job=d.name, state=state, rc=rc)
+    if out.get("token"):
+        out["status_url"] = status_url(d.name, out["token"])
+        out["qr_svg"] = qr_util.render_svg(out["status_url"])
+    return out
+
+
+def status_url(job: str, token: str) -> str:
+    """The public live-status page URL for `job`/`token` (see pub_status()). Built from this node's own
+    FQDN, same as setup_lab.py's print_summary() builds it independently for a bare CLI run."""
+    return "https://{}/lab-builder/status.html?job={}&token={}".format(socket.getfqdn(), job, token)
 
 
 def lab_create(name: str, keep: bool, passphrase: str = "") -> dict:
@@ -258,20 +293,26 @@ def lab_create(name: str, keep: bool, passphrase: str = "") -> dict:
         except FileExistsError:
             attempt += 1
             job = "{}-{}".format(stamp, attempt)
+    # The token makes the public status page unguessable: the job id alone is a predictable
+    # <lab>-<timestamp>, but holding the id AND this token is what pub_status() actually checks.
+    token = secrets.token_urlsafe(32)
     cmd = [SETUP_LAB] + (["--keep"] if keep else []) + [str(lab)]
     env = dict(os.environ)
     if passphrase:
         env[crypto_store.PASSPHRASE_ENV] = passphrase
     else:
         env.pop(crypto_store.PASSPHRASE_ENV, None)
+    env["LAB_STATUS_JOB"] = job
+    env["LAB_STATUS_TOKEN"] = token
     with open(d / "log", "wb") as log:
         proc = subprocess.Popen(
             ["/bin/sh", "-c", '"$@"; echo $? > "$0"', str(d / "rc")] + cmd,
             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
             cwd=str(JOBS_DIR), env=env, start_new_session=True, close_fds=True)
     (d / "job.json").write_text(json.dumps({"lab": lab.name, "started": int(time.time()), "pid": proc.pid,
-                                            "keep": keep}))
-    return {"job": job}
+                                            "keep": keep, "token": token}))
+    url = status_url(job, token)
+    return {"job": job, "status_url": url, "qr_svg": qr_util.render_svg(url)}
 
 
 def lab_status(job: str) -> dict:
@@ -279,6 +320,24 @@ def lab_status(job: str) -> dict:
     d = job_dir(job)
     lines = (d / "log").read_text(errors="replace").splitlines() if (d / "log").is_file() else []
     return dict(job_state(d), log="\n".join(lines[-LOG_TAIL_LINES:]))
+
+
+def pub_status(job: str, token: str) -> dict:
+    """lab_status(job)'s answer, but only for whoever holds `job`'s own token — no login needed, since
+    the random token is itself the credential. A missing job and a wrong token get the exact same
+    message, so a guess against this command cannot tell which one it got wrong."""
+    d = JOBS_DIR / safe_name(job, "job")
+    meta_file = d / "job.json"
+    if not meta_file.is_file():
+        raise Refused("no such lab or wrong link")
+    meta = json.loads(meta_file.read_text())
+    if not token or not hmac.compare_digest(str(meta.get("token", "")), token):
+        raise Refused("no such lab or wrong link")
+    out = lab_status(job)
+    out.pop("token", None)
+    out.pop("status_url", None)
+    out.pop("qr_svg", None)
+    return out
 
 
 def lab_jobs() -> dict:
@@ -306,8 +365,11 @@ def run(args: list) -> dict:
         return lab_status(rest[0])
     if cmd == "lab-jobs" and not rest:
         return lab_jobs()
+    if cmd == "pub-status" and len(rest) == 1:
+        return pub_status(rest[0], read_stdin().get("token", ""))
     raise Refused("usage: lab-builder-helper {credentials-list|credentials-add|credentials-encrypt FILE|"
-                  "credentials-delete FILE|lab-create FILE [--keep]|lab-status JOB|lab-jobs}")
+                  "credentials-delete FILE|lab-create FILE [--keep]|lab-status JOB|lab-jobs|"
+                  "pub-status JOB}")
 
 
 def main() -> None:

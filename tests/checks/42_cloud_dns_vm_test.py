@@ -442,6 +442,19 @@ class _NoSubnet:
 check("a backend that cannot say what its subnet is still gets the private ranges",
       len(backends.dns_recursion_networks(_NoSubnet())) >= 4)
 
+# ── cloud_dns_vm_name(): the one place the DNS VM's name is formed ──────────
+class _Acct(object):
+    def __init__(self, account):
+        self.account = account
+
+
+check("cloud_dns_vm_name(): no account gives 'lab-dns-<backend>'",
+      backends.cloud_dns_vm_name(object(), "aws") == "lab-dns-aws")
+check("cloud_dns_vm_name(): the 'default' account keeps the plain name",
+      backends.cloud_dns_vm_name(_Acct("default"), "aws") == "lab-dns-aws")
+check("cloud_dns_vm_name(): a named account gets its own DNS VM",
+      backends.cloud_dns_vm_name(_Acct("aws-tmm"), "aws") == "lab-dns-aws-aws-tmm")
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

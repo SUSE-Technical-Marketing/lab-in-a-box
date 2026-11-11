@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">lab-in-a-box を使う理由</a></li><li><a href="#architecture">アーキテクチャ</a></li><li><a href="#how-it-works">仕組み</a></li><li><a href="#quick-start">クイックスタート</a></li><li><a href="#web-ui-lab-builder">Web UI（lab-builder）</a></li><li><a href="#lab-definition-format">ラボ定義の形式</a></li><li><a href="#examples">例</a></li><li><a href="#step-by-step-walkthroughs">ステップバイステップガイド</a></li><li><a href="#available-commands">使用できるコマンド</a></li><li><a href="#available-addons">使用できるアドオン</a></li><li><a href="#configuration-reference">設定リファレンス</a></li><li><a href="#testing">テスト</a></li><li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li><li><a href="#author">作者</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">lab-in-a-box を使う理由</a></li><li><a href="#architecture">アーキテクチャ</a></li><li><a href="#how-it-works">仕組み</a></li><li><a href="#quick-start">クイックスタート</a></li><li><a href="#web-ui-lab-builder">Web UI（lab-builder）</a></li><li><a href="#lab-definition-format">ラボ定義の形式</a></li><li><a href="#examples">例</a></li><li><a href="#step-by-step-walkthroughs">ステップバイステップガイド</a></li><li><a href="#available-commands">使用できるコマンド</a></li><li><a href="#available-addons">使用できるアドオン</a></li><li><a href="#configuration-reference">設定リファレンス</a></li><li><a href="#testing">テスト</a></li><li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li><li><a href="#issues-and-feedback">問題とフィードバック</a></li><li><a href="#author">作者</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">lab-in-a-box を使う理由</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">設定リファレンス</a></li>
 <li><a href="#testing">テスト</a></li>
 <li><a href="#contributing--developer-setup">コントリビューション / 開発環境</a></li>
+<li><a href="#issues-and-feedback">問題とフィードバック</a></li>
 </ul>
 <p align="right"><a href="#top">↑ トップへ戻る</a></p>
 
@@ -419,6 +420,18 @@ footer.site {
 <td>最新の openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1（お手持ちのサブスクリプションを使用、BYOS）</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Canonical が公開する Ubuntu 24.04 LTS Server</td>
 </tr>
@@ -446,8 +459,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>Rocky プロジェクトが公開する最新の Rocky Linux 10</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>CentOS プロジェクトが公開した最後の CentOS Linux 7（2024 年 6 月にサポート終了）。x86_64 のみ</td>
+</tr>
 </tbody>
 </table>
+<p>SUSE の製品名の後ろに <code>-byos</code> を付けると、従量課金のイメージではなく、お手持ちのサブスクリプションを使う (BYOS) イメージが選ばれます。このイメージは登録されるまでリポジトリを持ちません。<code>client_registration</code> で SMLM サーバーに登録されるノードはそこからパッケージを取得し、それより前にパッケージが必要なノード (Kubernetes ノードなど) は common またはノードごとに <code>scc_regcode</code> (必要なら <code>scc_email</code> も) を設定します。cloud-init が初回起動時に <code>SUSEConnect</code> で登録します。</p>
 <p>SUSE 自身の製品は SUSE の公開イメージトラッカーから、それ以外は各ベンダーの AWS Systems Manager 公開パラメーターまたはそのベンダー自身の AWS アカウントから取得されます。別のアカウントが一致しうる名前検索は決して使いません。製品名でない値は、イメージ ID やイメージファイル名も含めて、そのまま渡されます。</p>
 <p>クラウドラボでは、ノードが互いの名前を解決できることも必要です。クラウドアカウントごとに 1 台の小さな DNS VM がラボのドメインを提供し、アカウントのネットワークはその中のすべてのインスタンスにそのサーバーを配布するよう構成されます。これにより、ゲスト内で何も設定せずに、ノードはホスト名で Kubernetes クラスターに参加できます。AWS では VPC の DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。</p>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
@@ -1867,6 +1885,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>JSON ではなく YAML の<a href="#lab-definition-format">ラボ定義</a>を使うには、さらに次が必要です：
 <code>pyyaml</code>（<code>pip install pyyaml</code>）</p>
+<hr />
+<h2 id="issues-and-feedback">問題とフィードバック</h2>
+<p>バグを見つけた、機能のリクエストがある、あるいは単に質問したい場合は、<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a> を使ってください：</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">新しい Issue を開く</a></strong> — バグ、未実装の機能、またはこのプロジェクトに関するフィードバックのため</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">既存の Issue を見る</a></strong> — 同じ問題に既に誰かが遭遇している場合や、議論の中に回避策がある場合があります</li>
+</ul>
+<p>バグを報告する際に最も役立つのは、実行した正確なコマンド、使用したラボ定義（JSON/YAML、機密情報は削除）、および出力やログの関連部分です。ログの場所については上記の<a href="#testing">テスト</a>を、比較のための動作確認済みの出発点については<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">例</a>を参照してください。</p>
+<p>通常のバグではなくセキュリティの脆弱性を見つけましたか？公開の Issue を開く代わりに <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> の手順に従ってください。</p>
+<p align="right"><a href="#top">↑ トップへ戻る</a></p>
+
 <hr />
 <h2 id="author">作者</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

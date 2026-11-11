@@ -9,7 +9,7 @@
 # The design and the task breakdown are described in the repo TODO.
 #
 # Usage:
-#   build_lab_usb.py <lab.json> [--build-only]
+#   build_lab_usb.py <lab-file> [--build-only]
 #
 # --build-only stops when the lab-host VM's raw disk is a complete, shut-down image, and prints its path. It does not write to a
 # USB device. Writing to a real device (selection, confirmation, dd and growing the partition) is not implemented yet, so pass
@@ -75,7 +75,7 @@ def _find_repo_root():
     die("build_lab_usb.py must be run from inside a real lab-in-a-box git checkout — it needs "
         "the full repo tree (setup_demo_server/, libs/, the whole thing to rsync onto the nested "
         "automation VM), not just what install_automation_node_scripts.sh deploys individually. "
-        "Run it as e.g. 'cd /path/to/lab-in-a-box && python3.11 scripts/build_lab_usb.py <lab.json>', "
+        "Run it as e.g. 'cd /path/to/lab-in-a-box && python3.11 scripts/build_lab_usb.py <lab-file>', "
         "not the installed /usr/local/bin/build_lab_usb.py copy.")
 
 
@@ -382,7 +382,7 @@ def configure_handoff(definition):
 
 
 _HELP_TEXT = """\
-Usage: build_lab_usb.py <lab.json> [--build-only]
+Usage: build_lab_usb.py <lab-file> [--build-only]
 
 Builds a lab-host VM that runs the whole lab, so its disk can be written to a USB stick and run on other hardware.
 
@@ -398,16 +398,16 @@ def main():
         print(_HELP_TEXT, end="")
         sys.exit(0)
     if len(sys.argv) < 2:
-        print("Usage: {} <lab.json> [--build-only]".format(Path(sys.argv[0]).name))
+        print("Usage: {} <lab-file> [--build-only]".format(Path(sys.argv[0]).name))
         sys.exit(1)
-    json_file = sys.argv[1]
+    lab_file = sys.argv[1]
     build_only = "--build-only" in sys.argv[2:]
     if "--build-only" not in sys.argv[2:] and len(sys.argv) > 2:
         die("Unknown argument(s): {}".format(" ".join(a for a in sys.argv[2:] if a != "--build-only")))
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
+    definition = primary.load_definition(lab_file)
 
     total_cpu, total_mem, total_disk = total_lab_resources(definition)
     log("Lab totals: {} vCPU, {} MiB RAM, {} GiB disk across {} node(s)".format(

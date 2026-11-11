@@ -146,6 +146,7 @@ HTTPS to use this UI", no login answers 401.
 | GET  | `api?action=status`         | cached hypervisor status snapshot (see below) |
 | GET  | `api?action=auth`           | `{login_configured, user}`: whether a login exists |
 | POST | `api?action=validate`       | validate a lab via `libs/primary` |
+| GET  | `api?action=pub-status&job=J&token=T` | one job's state and log, for whoever holds its own random `token` (from `create`'s own answer) — no login, HTTPS only; a wrong job or token gets the same generic refusal |
 | POST | `admin?action=save`         | `{filename, config}`: write `lab.json` to the output dir |
 | GET  | `admin?action=labs`         | the saved labs, newest first |
 | GET  | `admin?action=lab&name=X.json` | one saved lab |
@@ -153,9 +154,17 @@ HTTPS to use this UI", no login answers 401.
 | POST | `admin?action=credentials-add` | `{kind: cloud\|service, type, account, fields, passphrase\|null}`: write `<type>-<account>.yaml` |
 | POST | `admin?action=credentials-encrypt` | `{file, passphrase}`: write `<file>.encrypted.yaml` with its secrets encrypted |
 | POST | `admin?action=credentials-delete` | `{file}`: delete a credential file |
-| POST | `admin?action=create`       | `{filename, keep}`: run `setup_lab.py [--keep]` on a saved lab as a job |
+| POST | `admin?action=create`       | `{filename, keep}`: run `setup_lab.py [--keep]` on a saved lab as a job; the answer also carries `status_url` and `qr_svg` — the job's public, token-protected live-status page (see `status.html` below) and its QR code as inline SVG (both omitted if the `qrencode` package is not installed) |
 | GET  | `admin?action=job&id=J`     | a job's state (`running`/`done`/`failed`), exit code and log tail |
 | GET  | `admin?action=jobs`         | every job, newest first |
+
+`status.html` (served statically, no login) is the page `pub-status`'s `status_url` points at: it polls
+`api?action=pub-status` on its own, shows the tailing log until the job ends, and pulls out the
+"LAB SUMMARY" block `setup_lab.py` prints at the end of a run — node IPs, credentials and access
+instructions — into its own card once it appears. The same link and an ASCII-art QR code for it are also
+printed at the end of `setup_lab.py`'s own terminal output when it was started as one of these jobs
+(`LAB_STATUS_JOB`/`LAB_STATUS_TOKEN` in its environment); a bare CLI run of `setup_lab.py` has neither set,
+so it prints no such link.
 
 ## Links and embedding
 

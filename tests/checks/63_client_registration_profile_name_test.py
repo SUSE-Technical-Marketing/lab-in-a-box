@@ -10,6 +10,10 @@ sys.path.insert(0, str(_REPO / "scripts"))
 import spacecmd_common as sc  # noqa: E402
 import apps  # noqa: E402
 icr = apps.load_addon_module("install_client_registration", str(_REPO / "scripts"))  # no .py: loaded by path
+# Real lab_creation.py code (own coverage in 10_lab_creation_core_test.py) — stubbed out so
+# _register_now() below doesn't make a real SSH call to a host that doesn't exist in this container.
+icr.ensure_swap = lambda *a, **kw: True
+icr.ensure_centos7_vault_repos = lambda *a, **kw: True
 
 failures = []
 _real_resolve = sc._ensure_client_can_resolve_server

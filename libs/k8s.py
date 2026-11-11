@@ -344,7 +344,14 @@ class RKE2Distro(K8sDistro):
         # through transactional-update, and needs a reboot. Under that policy the SL Micro 6.1 GM kernel (6.4.0-19) denies
         # RKE2 its MPTCP connections and 6.4.0-52 does not, so the kernel is updated first.
         transactional = is_transactional(hostname)
-        if not install_method and transactional:
+        # get.rke2.io's own install.sh auto-selects rpm only for SLES 16 with VARIANT_ID=server and for the
+        # RHEL/CentOS family (docs.rke2.io/install/methods) — every other SUSE-family node (SLES 15, Leap, a
+        # SLES 16 build with no VARIANT_ID) falls through to its tarball method unless INSTALL_RKE2_METHOD=rpm
+        # is passed explicitly. zypper is this project's own signal for "SUSE family" — the same one the
+        # install script itself documents using ("the script will check your system for zypper... and
+        # determines that the system is SUSE based") — so the variable is always defined explicitly here
+        # rather than left to that narrower, version-specific auto-detection.
+        if not install_method and (transactional or ssh_run(hostname, "command -v zypper", check=False).returncode == 0):
             install_method = "rpm"
 
         prepare_local_as_kubeclient()

@@ -335,7 +335,8 @@ check("create_vm(): a requested vm_dsk_gb already BIGGER than the AMI's minimum 
 
 
 # ── create_vm(): security-group access management ───────────────────────────
-# create_vm() always allows SSH from this automation node's public IP, and any ports listed in aws_open_ports, for example 443, 4505 and 4506.
+# create_vm() always allows SSH from anywhere (0.0.0.0/0 — this project's own default policy,
+# confirmed explicitly 2026-11-10), and any ports listed in aws_open_ports, for example 443, 4505 and 4506.
 def _fake_run_sg(existing_rules, calls_out):
     def _run(args, **kwargs):
         calls_out.append(args)
@@ -356,14 +357,13 @@ def _fake_run_sg(existing_rules, calls_out):
 
 b_sg = backends.AWSBackend("eu-central-1", profile="lab", security_group_id="sg-1")
 b_sg._user_data_by_vm["vm1"] = ""
-b_sg._cached_public_ip = "198.51.100.7"  # avoid a real network call in this test
 sg_calls = []
 with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], sg_calls)):
     b_sg.create_vm("vm1", 1, 512, 40, None, config_method="cloud-init", iso_image="ami-x",
                     open_ports=["443", "4505", "4506"])
 authorize_calls = [c for c in sg_calls if "authorize-security-group-ingress" in c]
-check("create_vm(): opens SSH (22) from this automation node's own public IP",
-      any("22" in c and "198.51.100.7/32" in c for c in authorize_calls))
+check("create_vm(): opens SSH (22) to 0.0.0.0/0, the project's default policy",
+      any("22" in c and "0.0.0.0/0" in c for c in authorize_calls))
 check("create_vm(): opens every extra port from aws_open_ports, to 0.0.0.0/0",
       all(any(p in c and "0.0.0.0/0" in c for c in authorize_calls) for p in ("443", "4505", "4506")))
 check("create_vm(): authorizes exactly 4 rules (SSH + 3 open_ports), no more",
@@ -372,7 +372,7 @@ check("create_vm(): authorizes exactly 4 rules (SSH + 3 open_ports), no more",
 # Already-open rules are never re-authorized (idempotent).
 sg_calls = []
 existing = [
-    {"FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "IpRanges": [{"CidrIp": "198.51.100.7/32"}]},
+    {"FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
     {"FromPort": 443, "ToPort": 443, "IpProtocol": "tcp", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
 ]
 with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg(existing, sg_calls)):
@@ -404,15 +404,14 @@ check("create_vm(): aws_open_ports entries support an explicit '<port>/<protocol
 # ── ensure_ports_open(): standalone override, without create_vm() ──────────
 # Opens a port for an existing host, such as the overlay hub named by OVERLAY_HUB_HOST, without creating or changing a VM.
 b_ports = backends.AWSBackend("eu-central-1", profile="lab", security_group_id="sg-1")
-b_ports._cached_public_ip = "198.51.100.7"
 ports_calls = []
 with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_sg([], ports_calls)):
     b_ports.ensure_ports_open(["51820/udp"])
 authorize_calls = [c for c in ports_calls if "authorize-security-group-ingress" in c]
 check("ensure_ports_open(): opens the requested port with no VM name/create_vm() call involved",
       any("51820" in c and "udp" in c and "0.0.0.0/0" in c for c in authorize_calls))
-check("ensure_ports_open(): still opens SSH from this automation node's own IP, same as create_vm()",
-      any("22" in c and "198.51.100.7/32" in c for c in authorize_calls))
+check("ensure_ports_open(): still opens SSH to 0.0.0.0/0, same default policy as create_vm()",
+      any("22" in c and "0.0.0.0/0" in c for c in authorize_calls))
 
 check("VMBackend.ensure_ports_open() base implementation is a documented no-op for every "
       "other backend (LibvirtBackend has no override)",
@@ -479,43 +478,6 @@ check("VMBackend base defaults: get_private_ip/get_subnet_cidr/disable_source_de
       backends.LibvirtBackend.get_private_ip is backends.VMBackend.get_private_ip
       and backends.LibvirtBackend.get_subnet_cidr is backends.VMBackend.get_subnet_cidr
       and backends.LibvirtBackend.disable_source_dest_check is backends.VMBackend.disable_source_dest_check)
-
-
-# ── _own_public_ip(): fetched once via checkip.amazonaws.com, then cached ──
-class _FakeUrlopenResponse:
-    def __init__(self, text):
-        self._text = text
-
-    def read(self):
-        return self._text.encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
-b_ip = backends.AWSBackend("eu-central-1", profile="lab")
-with mock.patch.object(backends.urllib.request, "urlopen",
-                        return_value=_FakeUrlopenResponse("203.0.113.55\n")) as m_urlopen:
-    ip1 = b_ip._own_public_ip()
-    ip2 = b_ip._own_public_ip()
-check("_own_public_ip(): returns the real (mocked) response, stripped of whitespace",
-      ip1 == "203.0.113.55")
-check("_own_public_ip(): only fetches once — the second call is served from cache",
-      m_urlopen.call_count == 1)
-
-died = []
-b_ip_fail = backends.AWSBackend("eu-central-1", profile="lab")
-with mock.patch.object(backends.urllib.request, "urlopen", side_effect=OSError("network unreachable")), \
-     mock.patch.object(backends, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)):
-    try:
-        b_ip_fail._own_public_ip()
-    except SystemExit:
-        pass
-check("_own_public_ip(): dies clearly if it can't reach the public-IP-lookup service at all",
-      any("public IP" in m for m in died))
 
 
 # ── cloud_instance_type: explicit override ──

@@ -7,7 +7,7 @@
 setup_automation_node.py — build a lab-in-a-box automation node on a cloud provider.
 
 Usage:
-    setup_automation_node.py <lab.json> <node_hostname>
+    setup_automation_node.py <lab-file> <node_hostname>
 
 The node is an ordinary node of the lab definition, on a cloud backend, so it is created by the same
 provisioning path every other node uses: its security group, internet gateway, image resolution,
@@ -184,15 +184,15 @@ def main():
     if len(sys.argv) < 3:
         die("Usage:\n{} <configuration file> <node_hostname>".format(sys.argv[0]))
 
-    json_file, vm_name = sys.argv[1], sys.argv[2]
+    lab_file, vm_name = sys.argv[1], sys.argv[2]
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
-    json_file = migrations.ensure_current(definition, json_file)
+    definition = primary.load_definition(lab_file)
+    lab_file = migrations.ensure_current(definition, lab_file)
 
     if vm_name not in (definition.get("nodes") or {}):
         die("'{}' is not a node of '{}' — the automation node is defined as one of its nodes".format(
-            vm_name, json_file))
+            vm_name, lab_file))
 
     backend_name = backends.effective_backend_name(definition, config, vm_name)
     if backend_name not in backends.CLOUD_BACKEND_NAMES:

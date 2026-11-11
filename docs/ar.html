@@ -225,7 +225,7 @@ footer.site {
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">لماذا lab-in-a-box؟</a></li><li><a href="#architecture">البنية</a></li><li><a href="#how-it-works">آلية العمل</a></li><li><a href="#quick-start">البدء السريع</a></li><li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li><li><a href="#lab-definition-format">صيغة تعريف المختبر</a></li><li><a href="#examples">أمثلة</a></li><li><a href="#step-by-step-walkthroughs">أدلة خطوة بخطوة</a></li><li><a href="#available-commands">الأوامر المتاحة</a></li><li><a href="#available-addons">الإضافات المتاحة</a></li><li><a href="#configuration-reference">مرجع الإعدادات</a></li><li><a href="#testing">الاختبار</a></li><li><a href="#contributing--developer-setup">المساهمة / بيئة التطوير</a></li><li><a href="#author">المؤلف</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#why-lab-in-a-box">لماذا lab-in-a-box؟</a></li><li><a href="#architecture">البنية</a></li><li><a href="#how-it-works">آلية العمل</a></li><li><a href="#quick-start">البدء السريع</a></li><li><a href="#web-ui-lab-builder">واجهة الويب (lab-builder)</a></li><li><a href="#lab-definition-format">صيغة تعريف المختبر</a></li><li><a href="#examples">أمثلة</a></li><li><a href="#step-by-step-walkthroughs">أدلة خطوة بخطوة</a></li><li><a href="#available-commands">الأوامر المتاحة</a></li><li><a href="#available-addons">الإضافات المتاحة</a></li><li><a href="#configuration-reference">مرجع الإعدادات</a></li><li><a href="#testing">الاختبار</a></li><li><a href="#contributing--developer-setup">المساهمة / بيئة التطوير</a></li><li><a href="#issues-and-feedback">المشكلات والملاحظات</a></li><li><a href="#author">المؤلف</a></li></ol></aside>
 <main class="doc">
 
 <h2 id="why-lab-in-a-box">لماذا lab-in-a-box؟</h2>
@@ -253,6 +253,7 @@ footer.site {
 <li><a href="#configuration-reference">مرجع الإعدادات</a></li>
 <li><a href="#testing">الاختبار</a></li>
 <li><a href="#contributing--developer-setup">المساهمة / بيئة التطوير</a></li>
+<li><a href="#issues-and-feedback">المشكلات والملاحظات</a></li>
 </ul>
 <p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
@@ -419,6 +420,18 @@ footer.site {
 <td>أحدث إصدار من openSUSE Leap</td>
 </tr>
 <tr>
+<td><code>sles16-byos</code></td>
+<td>SUSE Linux Enterprise Server 16.x، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
+<td><code>sles15.7-byos</code></td>
+<td>SUSE Linux Enterprise Server 15 SP7، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1، باشتراكك الخاص (BYOS)</td>
+</tr>
+<tr>
 <td><code>ubuntu24.04</code></td>
 <td>Ubuntu 24.04 LTS Server، تنشره Canonical</td>
 </tr>
@@ -446,8 +459,13 @@ footer.site {
 <td><code>rocky10</code></td>
 <td>أحدث إصدار من Rocky Linux 10، ينشره مشروع Rocky</td>
 </tr>
+<tr>
+<td><code>centos7</code></td>
+<td>آخر إصدار من CentOS Linux 7 (انتهى دعمه في يونيو 2024)، ينشره مشروع CentOS. لمعمارية x86_64 فقط</td>
+</tr>
 </tbody>
 </table>
+<p>اسم منتج من SUSE متبوعًا بـ <code>-byos</code> يختار صورة الاشتراك الخاص (BYOS) بدلًا من صورة الدفع حسب الاستخدام. لا تحتوي هذه الصورة على مستودعات حتى يتم تسجيلها: العقدة المسجلة في خادم SMLM عبر <code>client_registration</code> تحصل على حزمها منه، والعقدة التي تحتاج إلى حزم قبل ذلك، مثل عقدة Kubernetes، تضبط <code>scc_regcode</code> (واختياريًا <code>scc_email</code>) في common أو لكل عقدة، فيسجلها cloud-init باستخدام <code>SUSEConnect</code> عند أول إقلاع.</p>
 <p>تأتي منتجات SUSE نفسها من متتبّع الصور العام الخاص بـ SUSE، ويأتي الباقي من معامل AWS Systems Manager العام لكل مزوّد أو من حسابه الخاص على AWS، ولا يأتي أبداً من بحث بالاسم قد يطابقه حساب آخر. وأي قيمة ليست اسم منتج، بما في ذلك مُعرّف صورة أو اسم ملف صورة، تُمرّر كما هي.</p>
 <p>يحتاج المختبر السحابي أيضاً إلى أن تحلّ عقده أسماء بعضها. يخدم جهاز ظاهري صغير واحد لـ DNS لكل حساب سحابي نطاق المختبر، وتُضبط شبكة الحساب لتسليم ذلك الخادم إلى كل نسخة فيها، فتنضم العقدة إلى عنقود Kubernetes الخاص بها باسم المضيف دون أي ضبط داخل النظام الضيف. وعلى AWS يكون ذلك مجموعة خيارات DHCP لشبكة VPC: تنطبق على VPC بأكملها، وتسري فوراً على أي نسخة تُطلق بعدها، وتتبنّاها نسخة تعمل بالفعل عند تجديد عقد DHCP الخاص بها.</p>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
@@ -1869,6 +1887,17 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <code>podman</code></p>
 <p>يتطلب استخدام <a href="#lab-definition-format">تعريف مختبر</a> بصيغة YAML (بدلًا من JSON) أيضًا:
 <code>pyyaml</code> (<code>pip install pyyaml</code>)</p>
+<hr />
+<h2 id="issues-and-feedback">المشكلات والملاحظات</h2>
+<p>عثرت على خطأ، أو لديك طلب لميزة جديدة، أو تريد فقط طرح سؤال؟ استخدم <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">GitHub Issues</a>:</p>
+<ul>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues/new">فتح مشكلة جديدة</a></strong> — لخطأ، أو ميزة مفقودة، أو ملاحظات حول أي شيء في هذا المشروع</li>
+<li><strong><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/issues">تصفح المشكلات الحالية</a></strong> — قد يكون شخص آخر واجه نفس المشكلة من قبل، أو قد يكون هناك حل بديل في النقاش</li>
+</ul>
+<p>عند الإبلاغ عن خطأ، أكثر الأمور المفيدة لتضمينها هي: الأمر الدقيق الذي نفذته، وتعريف المعمل (JSON/YAML) الذي استخدمته (بعد إزالة الأسرار)، والجزء المتعلق من المخرجات أو السجل. راجع <a href="#testing">الاختبار</a> أعلاه لمعرفة مكان السجلات، و<a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/tests/examples/README.md">الأمثلة</a> كنقطة انطلاق معروفة تعمل للمقارنة.</p>
+<p>عثرت على ثغرة أمنية بدلاً من خطأ عادي؟ يرجى اتباع <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/blob/main/SECURITY.md">SECURITY.md</a> بدلاً من فتح مشكلة علنية.</p>
+<p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
+
 <hr />
 <h2 id="author">المؤلف</h2>
 <p>Raul Mahiques — <a href="https://github.com/rmahique">github.com/rmahique</a></p>

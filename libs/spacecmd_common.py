@@ -43,12 +43,16 @@ Feature areas:
 # License: GPLv3
 
 import base64
+import contextlib
 import hashlib
+import io
 import json
+import os
 import re
 import shlex
 import socket
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,7 +60,8 @@ from pathlib import Path
 from lab_creation import ssh_run, scp_to, die, warn, error, boot_id, wait_for_reboot
 
 
-def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwargs):
+def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, forever=False, retry_argv=None,
+                           retry_key=None, **kwargs):
     """
     Run one config-provisioning step from install_smlm's or install_uyuni's setup orchestration, and report a
     failure without stopping the remaining steps.
@@ -67,11 +72,21 @@ def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwarg
 
     retries and retry_delay: some steps depend on state that another process is still producing, for example a client that
     background workers have not registered yet. With retries > 1 the step is retried up to `retries` times, sleeping
-    `retry_delay` seconds between attempts, before the failure is reported. The default is no retry, so a real configuration
-    error is reported at once.
+    `retry_delay` seconds between attempts, before the failure is reported. This bounded pass is for ordinary, short
+    server-side propagation lag (a group that was just created, say) — not a substitute for `forever` below.
 
-    The wait is bounded. A dependency that takes longer than retries * retry_delay seconds is picked up by a later
-    configuration run.
+    forever, retry_argv and retry_key: this project's mandatory policy for anything depending on SMLM server state (see
+    the "Forever-retry background workers" section of this module) — when forever=True and every bounded attempt above
+    has failed, retry_argv (an argv list that ultimately calls run_forever_retry_worker() for this exact step) is
+    launched as a detached background worker via launch_forever_retry() instead of giving up. The step is then reported
+    as handed off, not failed: its real eventual outcome is in that worker's own log (forever_retry_log_path()), never
+    in this function's return value, which carries no result at all either way.
+
+    retry_key is the forever-retry mechanism's own key for this step — unique across every server AND every label, so
+    two servers' same-named step (install_smlm's and install_uyuni's "organizations", say, or two SMLM nodes in one
+    lab) never collide into one shared pid/log file. The caller, which alone knows which host and which script this
+    step belongs to, must pass one whenever forever=True; "step:{label}" alone (not scoped to a host) is used only as
+    a last resort when forever=True but retry_key is left unset.
     """
     last_err = None
     for attempt in range(1, retries + 1):
@@ -85,9 +100,260 @@ def run_provisioning_step(label, func, *args, retries=1, retry_delay=15, **kwarg
                      "catching up elsewhere in the automation; retrying in {}s".format(
                          label, attempt, retries, retry_delay))
                 time.sleep(retry_delay)
+    if forever and retry_argv:
+        launch_forever_retry(retry_key or "step:{}".format(label), retry_argv)
+        return
     error("config step '{}' failed after {} attempt{} — see the ERROR(s) above; continuing "
           "with the rest of the configuration".format(
               label, retries, "" if retries == 1 else "s"))
+
+
+# ── Forever-retry background workers for SMLM-dependent operations ──────────────────────────────────────
+#
+# Mandatory project policy: any operation whose success depends on SMLM/Uyuni server-side state — channel
+# sync, activation-key-to-group propagation, client registration, content lifecycle builds, bootstrap
+# repository generation, anything of that kind — must keep retrying rather than give up. Real channel sync
+# is a serial, one-channel-at-a-time background job (taskomatic) that can legitimately take many hours
+# when dozens of channels are queued, so a bounded retry count or timeout on a step that depends on it is
+# a failure waiting to happen, not a safety net.
+#
+# The mechanism below generalizes this project's own original pattern (install_client_registration's
+# detached per-node retry worker): a fully independent OS process keeps retrying one named operation
+# forever, printing one INFO heartbeat every heartbeat_interval seconds (elapsed time, that it keeps going
+# indefinitely, and the most recent failure's own text) so a human watching its log always sees real
+# status instead of long silence. Several such workers run at once, each its own process, so one step's
+# long wait never blocks another's, and nothing in the main deployment path blocks on any of them either.
+
+_FOREVER_RETRY_STATE_DIR = "/var/log/lab-in-a-box/forever-retry"
+
+
+def _forever_retry_paths(key):
+    """(log_path, pid_path) for the forever-retry worker named `key` (e.g. "smlm:channels sync" or
+    "client_registration:mercury.mydemoaws.lab") — one pair per distinct operation, so two unrelated
+    operations never share or clobber each other's state."""
+    Path(_FOREVER_RETRY_STATE_DIR).mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", key)
+    base = Path(_FOREVER_RETRY_STATE_DIR) / safe
+    return str(base) + ".log", str(base) + ".pid"
+
+
+def forever_retry_handoff_since(ts):
+    """
+    True when some forever-retry worker's pid file was written at or after `ts` (a time.time()-style
+    timestamp), minus a small grace window — i.e. some step handed off to a background retry instead of
+    actually finishing, in the time since `ts`. The grace window (2s) absorbs ordinary clock skew between
+    Python's time.time() and the filesystem's own mtime clock — confirmed live: a pid file written mere
+    milliseconds after `ts` was captured can still report an mtime a few ms BEFORE `ts`, which a strict
+    `>=` would wrongly call "no handoff happened". A handoff that lands just outside a caller's own
+    before/after window by a couple of seconds is a harmless false positive (reported "pending" instead
+    of "ok"); missing one it should have caught is the failure mode that actually matters here.
+
+    This is how scripts/setup_lab.py tells an addon that genuinely succeeded apart from one that just
+    launched a background retry and returned 0 anyway (register_client() and friends: "returning cleanly
+    only means the retry was launched, never that the real work finished"). It cannot rely on scanning the
+    addon's own captured stdout for a marker line, because a run launched behind the live status page
+    streams addon output live instead of capturing it (see _debug_wanted()) — stdout is None then, nothing
+    to scan. Checking the forever-retry state directory instead works the same way regardless of capture
+    mode, since it is the one place every handoff (install_client_registration, install_smlm's per-step
+    retries, install_uyuni's CLM wait) is guaranteed to leave a trace, via this module's own
+    launch_forever_retry().
+    """
+    d = Path(_FOREVER_RETRY_STATE_DIR)
+    if not d.is_dir():
+        return False
+    ts -= 2
+    for p in d.glob("*.pid"):
+        try:
+            if p.stat().st_mtime >= ts:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def forever_retry_log_path(key):
+    """The log path a forever-retry worker for `key` writes to (and will write to once launched, whether
+    or not one is running right now) — what a status report reads to show real progress/errors, instead
+    of trusting a launcher's own immediate return (which only ever means "a worker exists", never that the
+    operation itself has finished)."""
+    log_path, _ = _forever_retry_paths(key)
+    return log_path
+
+
+def forever_retry_running(key):
+    """
+    Whether a forever-retry worker for `key` is alive right now.
+
+    A pid file naming a process that is no longer running — crashed, killed, the host rebooted — is a
+    half-finished, falsely-"in progress" state: left alone, a later launch_forever_retry() for the same
+    key would see the stale file and wrongly skip relaunching it forever. Cleaning it up here, the one
+    place this check is made, is that cleanup: the next launch_forever_retry() call starts fresh instead
+    of silently doing nothing.
+    """
+    _, pid_path = _forever_retry_paths(key)
+    if not Path(pid_path).is_file():
+        return False
+    try:
+        pid = int(Path(pid_path).read_text().strip())
+    except ValueError:
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
+        return False
+    try:
+        # A worker's own launcher process (launch_forever_retry()'s own caller) is its real OS parent only
+        # for as long as it stays running itself — in every normal use here that process exits within
+        # moments of launching it, so by the time anything checks, the worker has long since been
+        # reparented away (to init or an equivalent subreaper), which then reaps it on exit automatically
+        # and os.kill(pid, 0) below is a correct liveness check. The one case that would NOT hold is the
+        # launching process itself still being alive and checking its own just-launched child: without
+        # reaping it, a child that has already finished sits as a zombie, which os.kill(pid, 0) still
+        # reports as "exists" — so that case is reaped outright here first, rather than trusting kill().
+        reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped_pid == pid:
+            try:
+                Path(pid_path).unlink()
+            except OSError:
+                pass
+            return False
+    except ChildProcessError:
+        pass  # not this process's own child (the normal case) — fall through to the kill(pid, 0) check
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
+        return False
+
+
+def launch_forever_retry(key, argv, env=None):
+    """
+    Ensure a detached background worker is retrying `key` forever. If one is already running
+    (forever_retry_running()), does nothing — the guard that stops a rerun of the same deployment from
+    piling up a second worker racing the first one for the very same operation. Otherwise spawns `argv` —
+    expected to end by invoking this project's own --retry-step-worker-style entry point, and to include
+    "-u" (or an equivalent unbuffered mode) so its heartbeat is actually visible in the log file while it
+    runs, not trapped in Python's own stdout buffer — as a new process: output to its own per-key log
+    file (appended, so a relaunch after a genuinely dead worker keeps the earlier history), stdin from
+    /dev/null, detached into its own session so it outlives the process that launched it. `env`, when
+    given, replaces the worker's environment entirely (pass a full dict, e.g. dict(os.environ, _vm_name=...),
+    not a partial one) — None inherits this process's own environment unchanged, same as subprocess.Popen's
+    own default. Always returns the log path, whether a new worker was started or one was already running.
+    """
+    log_path, pid_path = _forever_retry_paths(key)
+    if forever_retry_running(key):
+        print("  '{}' is already being retried in the background — log: {}".format(key, log_path))
+        return log_path
+    with open(log_path, "a") as logf, open(os.devnull) as devnull:
+        proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT, stdin=devnull,
+                                 env=env, start_new_session=True)
+    Path(pid_path).write_text(str(proc.pid))
+    print("  '{}' launched as a background retry (runs forever until it succeeds) — log: {}".format(
+        key, log_path))
+    return log_path
+
+
+def _last_captured_line(buf_out, buf_err):
+    """The last non-empty line written to `buf_out`/`buf_err` (io.StringIO), or "" if both are empty —
+    used by run_forever_retry_worker() to pull a failed attempt()'s real error message (e.g. die()'s own
+    "ERROR: ..." text) out of its captured output, instead of only ever knowing a bare exit code."""
+    lines = [ln for ln in (buf_out.getvalue() + buf_err.getvalue()).splitlines() if ln.strip()]
+    return lines[-1].strip() if lines else ""
+
+
+def run_forever_retry_worker(key, attempt, retry_delay=60, heartbeat_interval=1800, verify=None):
+    """
+    The body of a forever-retry worker process (what launch_forever_retry()'s argv must ultimately run):
+    calls the zero-argument callable `attempt()` and keeps retrying — sleeping retry_delay seconds between
+    tries — until it stops raising AND, if `verify` is given, `verify()` also returns true. No deadline, by
+    design: see this section's own module-level docstring for why a bounded retry is wrong for anything
+    depending on SMLM server state.
+
+    verify: an optional zero-argument callable that checks the REAL end state through a read-only API call
+    — does the activation key now exist with the right channels, is the system now actually in
+    system_list, does the channel's own reposync log really say "Sync completed." — rather than trusting
+    `attempt()` merely not having raised. This is the fix for a real failure mode found live: a step (or
+    its caller) reporting success because its own call returned cleanly, while the thing it was supposed
+    to produce still did not exist — attempt() can return cleanly for reasons that are not the real,
+    intended end state (e.g. client_registration handing off to ITS OWN background worker and returning
+    immediately, counted as "done" by a caller that never checked whether registration itself had actually
+    finished). When verify() returns falsy, or raises, the attempt is NOT considered successful — the
+    specific exception is reported as "attempt() returned but verify() rejected it: <error>" and the loop
+    retries exactly as it would for a raised exception. verify() itself must be read-only: it runs after
+    EVERY attempt, successful or not, that could plausibly need re-checking.
+
+    Writes its own pid file first (removed on return, success or not) so forever_retry_running() sees it
+    as live for exactly as long as it actually is, then loops, printing one INFO heartbeat every
+    heartbeat_interval seconds: how long it has been retrying, that it keeps going indefinitely, and the
+    exact text of the most recent failure, with every print flushed immediately — the fix for this
+    mechanism's own precursor (install_client_registration's original worker going completely silent for
+    hours because Python block-buffers stdout once it is redirected to a file).
+
+    A FAILED attempt()'s own stdout/stderr is captured and discarded, not let straight through to this
+    worker's log — otherwise a step whose own die()/error() fires on an expected ordering failure (e.g.
+    a system that hasn't registered yet) would print that same line once every retry_delay seconds
+    instead of once per heartbeat_interval (confirmed live). A SUCCESSFUL attempt's own output still
+    goes straight through immediately, since it is real progress information, not noise.
+    """
+    _, pid_path = _forever_retry_paths(key)
+    Path(pid_path).write_text(str(os.getpid()))
+    start = time.time()
+    next_heartbeat = start + heartbeat_interval
+    attempt_n = 0
+    last_error = "(no attempt has failed yet)"
+    try:
+        while True:
+            attempt_n += 1
+            # attempt()'s own stdout/stderr is captured, not let straight through: a step that calls
+            # die() (print an ERROR, then raise) on an EXPECTED ordering failure — e.g. "no system named
+            # 'X' found" before X has registered yet — would otherwise flood the log with that same
+            # ERROR line once every retry_delay seconds (confirmed live, install_smlm's
+            # ensure_container_build_hosts() before its target system registered). A failed attempt's
+            # captured text is used to build `last_error` below (its last non-empty line — die()'s own
+            # message, not just the exit code SystemExit itself carries) and then discarded: the real
+            # diagnostic text still reaches the log, just once per heartbeat_interval via "Last error:"
+            # instead of once per attempt. A SUCCESSFUL attempt's output (e.g. "Enabled the Container
+            # Build Host entitlement...") is real information and is written through immediately, not
+            # held back for the next heartbeat.
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                    attempt()
+                sys.stdout.write(buf_out.getvalue())
+                sys.stdout.flush()
+                sys.stderr.write(buf_err.getvalue())
+                sys.stderr.flush()
+                if verify is not None:
+                    ok = verify()
+                    if not ok:
+                        raise RuntimeError("attempt() returned but verify() rejected it (returned {!r})"
+                                           .format(ok))
+                elapsed_min = int((time.time() - start) / 60)
+                print("[{}] '{}' succeeded on attempt {} after {} minute(s) — stopping.".format(
+                    datetime.now(timezone.utc).isoformat(), key, attempt_n, elapsed_min), flush=True)
+                return
+            except SystemExit as e:
+                last_error = _last_captured_line(buf_out, buf_err) or "exit {}".format(e.code)
+            except Exception as e:  # noqa: BLE001 — this loop must never die on the step's own failure
+                last_error = _last_captured_line(buf_out, buf_err) or "{}: {}".format(type(e).__name__, e)
+            now = time.time()
+            if now >= next_heartbeat:
+                elapsed_min = int((now - start) / 60)
+                print("[{}] INFO '{}': still retrying after {} minute(s) (attempt {}) — will keep "
+                      "retrying indefinitely until it succeeds. Last error: {}".format(
+                          datetime.now(timezone.utc).isoformat(), key, elapsed_min, attempt_n, last_error),
+                      flush=True)
+                next_heartbeat = now + heartbeat_interval
+            time.sleep(retry_delay)
+    finally:
+        try:
+            Path(pid_path).unlink()
+        except OSError:
+            pass
 
 
 def _run(hostname, exec_prefix, remote_cmd, **kwargs):
@@ -343,6 +609,48 @@ def ensure_channels_synced(hostname, exec_prefix, channels):
             die("could not sync channel '{}'".format(ch))
 
 
+_REPOSYNC_ERROR_RE = re.compile(r"(?m)^(ERROR|Traceback|Exception)\b")
+
+
+def channel_sync_errors(hostname, exec_prefix, channel):
+    """
+    Lines in `channel`'s full reposync log (/var/log/rhn/reposync/<channel>.log inside the server
+    container) that look like a genuine reposync-reported error — a Python-logging-style line that
+    STARTS with "ERROR"/"Traceback"/"Exception" (anchored to the beginning of the line). Anchoring
+    matters: a naive case-insensitive "error" substring search is unusable on these logs — confirmed
+    live against this project's own real reposync output, which is full of legitimately-named packages
+    containing that text nowhere near an actual failure (libgpg-error, perl-Exception-Class,
+    maven-error-diagnostics, ...). Returns the matching lines verbatim (empty list = none seen).
+
+    Independent of whether the sync has FINISHED: reposync does not treat every individual package
+    failure as fatal to the whole run, so a channel can log a real error partway through and still go
+    on to print "Sync completed." (see pending_channels()) — completed and clean are two different
+    questions. Caller decides what a non-empty result means for them; this just surfaces what the log
+    itself says, same as pending_channels() does for completion.
+    """
+    log_path = "/var/log/rhn/reposync/{}.log".format(channel)
+    r = _run(hostname, exec_prefix, "test -f {p} && cat {p}".format(p=shlex.quote(log_path)), check=False)
+    if r.returncode != 0:
+        return []
+    return [ln for ln in (r.stdout or "").splitlines() if _REPOSYNC_ERROR_RE.match(ln)]
+
+
+def channel_package_count(hostname, exec_prefix, channel):
+    """
+    How many packages spacecmd's softwarechannel_listallpackages reports for `channel` right now — an
+    extra, API-based signal alongside channel_sync_errors(): the reposync log can say "Sync completed."
+    with no recorded error lines and the channel can still have ended up empty (e.g. an upstream repo
+    that returned zero packages for the sync). This checks the channel's own actual package list through
+    the real API, rather than inferring content from log text. Returns 0 both for a channel with
+    genuinely no packages and for one the command fails to look up (e.g. a typoed label) — either way
+    there is nothing to report as a count.
+    """
+    r = _spacecmd(hostname, exec_prefix, "softwarechannel_listallpackages {}".format(shlex.quote(channel)))
+    if r.returncode != 0:
+        return 0
+    return len([ln for ln in (r.stdout or "").splitlines() if ln.strip()])
+
+
 def pending_channels(hostname, exec_prefix, channels):
     """
     Return the subset of `channels` that have not finished syncing. An empty set means every channel is ready. A channel is
@@ -371,6 +679,17 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
 
     timeout=None waits without a deadline, which a background retry worker relies on. Any other value dies after that many
     seconds, listing the channels that are still pending. An empty list is a no-op.
+
+    Once every channel reports complete, each one's full reposync log is also checked with
+    channel_sync_errors() — "finished" and "finished cleanly" are different questions (reposync does
+    not treat every individual package failure as fatal to the whole run). A channel with recorded
+    errors only warns, never dies or keeps this waiting longer: those errors already happened and are
+    not something retrying registration will fix, but they are worth surfacing rather than silently
+    registering a client against channel content that may be incomplete.
+
+    Each channel's real package count is also checked with channel_package_count() — a channel can log
+    "Sync completed." with no recorded errors and still have ended up with zero packages (e.g. an
+    upstream repo that synced clean but empty). Same as the log-error check, this only warns.
     """
     if not channels:
         return
@@ -391,6 +710,16 @@ def wait_for_channels_synced(hostname, exec_prefix, channels, timeout=1800, poll
         time.sleep(poll_interval)
     if announced:
         print("  All required channels are now fully synced")
+    for ch in sorted(channels):
+        errors = channel_sync_errors(hostname, exec_prefix, ch)
+        if errors:
+            warn("channel '{}' finished syncing, but its own reposync log recorded {} error(s) — "
+                 "content for this channel may be incomplete: {}".format(
+                     ch, len(errors), errors[-1]))
+        count = channel_package_count(hostname, exec_prefix, ch)
+        if count == 0:
+            warn("channel '{}' finished syncing, but softwarechannel_listallpackages reports 0 "
+                 "packages for it — its sync may have produced no usable content".format(ch))
 
 
 def _stage_remote_file(hostname, exec_prefix, remote_path, content):
@@ -1108,7 +1437,11 @@ def import_images(hostname, exec_prefix, cfg, prefix):
     SEPARATE, explicit trigger (install_smlm's own
     --import-images/--run-recurring-schedules-style flag), never part of
     the automatic install flow: entry shape is {"name", "version",
-    "build_host_id", "store", "activation_key"}.
+    "build_host" or "build_host_id", "store", "activation_key"}.
+
+    build_host is the build system's hostname, resolved to its numeric id with _system_id() as <prefix>_image_builds
+    does, so a lab names the system rather than an id the server only assigns once it registers. build_host_id, the
+    numeric id itself, is used unchanged when given.
     """
     imports = cfg.get("{}_image_imports".format(prefix)) or []
     if not imports:
@@ -1118,8 +1451,11 @@ def import_images(hostname, exec_prefix, cfg, prefix):
         name = entry.get("name")
         build_host_id = entry.get("build_host_id")
         store = entry.get("store")
-        if not (name and build_host_id and store):
-            die("{}_image_imports: an entry needs 'name', 'build_host_id' and 'store'".format(prefix))
+        if not (name and (build_host_id or entry.get("build_host")) and store):
+            die("{}_image_imports: an entry needs 'name', 'store' and either 'build_host' or "
+                "'build_host_id'".format(prefix))
+        if not build_host_id:
+            build_host_id = _system_id(hostname, exec_prefix, entry["build_host"])
         import_container_image(hostname, exec_prefix, name, entry.get("version"), build_host_id,
                                 store, entry.get("activation_key") or "")
 
@@ -1194,11 +1530,22 @@ def ensure_org(hostname, exec_prefix, org):
     name = org.get("name")
     if not name:
         die("orgs: an entry is missing required 'name'")
-    if org_exists(hostname, exec_prefix, name):
-        print("  Org '{}' already exists — leaving it alone".format(name))
-        return
 
     admin_user = org.get("admin_user")
+
+    if org_exists(hostname, exec_prefix, name):
+        print("  Org '{}' already exists — leaving it alone".format(name))
+        # Still worth making sure the designated admin actually has the org_admin role, even though
+        # org.create's own first-user grant should already cover a fresh creation: found live
+        # 2026-11-03 — an org that already existed (from an earlier run) had its designated admin
+        # authenticate fine but lack org_admin entirely (createRole and similar calls refused), with no
+        # way to tell from here whether that was always true or just never checked. ensure_user_role()
+        # itself only warns on failure, never dies, so this is safe to attempt unconditionally even if
+        # the current (default-administrator) session turns out not to have cross-org grant rights.
+        if admin_user:
+            ensure_user_role(hostname, exec_prefix, admin_user, "org_admin")
+        return
+
     admin_pass = org.get("admin_pass")
     admin_email = org.get("admin_email")
     if not (admin_user and admin_pass and admin_email):
@@ -1218,6 +1565,10 @@ def ensure_org(hostname, exec_prefix, org):
     if r.returncode != 0:
         die("could not create org '{}': {}".format(name, (r.stderr or r.stdout or "").strip()))
     print("  Created org '{}' (admin: {})".format(name, admin_user))
+    # Belt-and-suspenders: org.create is documented to grant its own first user org_admin already, but
+    # this costs nothing extra to confirm (ensure_user_role() warns, never dies, on failure) and removes
+    # any doubt for the access-group/role-management steps that run next and need it for real.
+    ensure_user_role(hostname, exec_prefix, admin_user, "org_admin")
 
 
 def ensure_org_trust(hostname, exec_prefix, org_a, org_b):
@@ -1481,6 +1832,54 @@ def ensure_users(hostname, exec_prefix, cfg, prefix):
         ensure_user(hostname, exec_prefix, user)
 
 
+def ensure_highstate_applied(hostname, exec_prefix, sid, label, timeout=400, poll_interval=15):
+    """
+    Schedule a highstate apply on system `sid` with system.scheduleApplyHighstate, then actually wait for
+    it to finish and check whether it succeeded — the fix for a real gap found live 2026-11-03:
+    scheduleApplyHighstate() is fire-and-forget by itself (every prior caller here only checked whether
+    the SCHEDULING call succeeded, never the real outcome), so a highstate that fails completely on the
+    minion side — confirmed live: a 403 "Permission ... denied" on a channel the client should not even
+    need, which broke the salt-minion package reinstall — went unnoticed by every tool in this project.
+
+    Polls system.listSystemEvents(sid) for the scheduled action's own id (scheduleApplyHighstate's return
+    value — a one-element list, [action_id], not a bare int) up to `timeout` seconds, matching Uyuni's own
+    event-history shape: {"id", "failed_count", "successful_count", "result_msg", ...}. dies (die()) with
+    the server's own result_msg on a real failure, or on a timeout (treated the same way, since the
+    caller's own forever-retry handoff can reschedule a fresh highstate rather than this function blocking
+    on one that may be stuck) — either way the caller's normal retry path takes over exactly as it already
+    does for every die() elsewhere in this module.
+    """
+    earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
+    if r.returncode != 0:
+        die("could not schedule a highstate apply on sid {} ({}): {}".format(
+            sid, label, (r.stderr or r.stdout or "").strip()))
+    try:
+        action_id = json.loads(r.stdout)[0]
+    except (json.JSONDecodeError, TypeError, IndexError):
+        die("system.scheduleApplyHighstate(sid {}) returned unparseable output: {}".format(sid, r.stdout))
+
+    deadline = time.time() + timeout
+    while True:
+        rr = _api_call(hostname, exec_prefix, "system.listSystemEvents", [sid])
+        if rr.returncode == 0:
+            try:
+                events = json.loads(rr.stdout)
+            except (json.JSONDecodeError, TypeError):
+                events = []
+            match = next((e for e in events if e.get("id") == action_id), None)
+            if match:
+                if match.get("failed_count"):
+                    die("highstate apply ({}) failed on sid {}: {}".format(
+                        label, sid, match.get("result_msg") or "see the server's own Event History for details"))
+                if match.get("successful_count"):
+                    return
+        if time.time() >= deadline:
+            die("highstate apply ({}) on sid {} did not complete within {}s (action {} still pending)".format(
+                label, sid, timeout, action_id))
+        time.sleep(poll_interval)
+
+
 def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_access_groups, a list of {label, description, permissions_from, permissions: [{namespace, mode}],
@@ -1508,8 +1907,9 @@ def ensure_access_groups(hostname, exec_prefix, cfg, prefix):
 def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_ansible_control_nodes, a list of {system} dicts. For each system, it enables the "Ansible
-    Control Node" add-on entitlement with system.addEntitlements, using the label "ansible_control_node". Then it schedules a
-    highstate apply with system.scheduleApplyHighstate, which installs the ansible package on the system.
+    Control Node" add-on entitlement with system.addEntitlements, using the label "ansible_control_node". Then
+    ensure_highstate_applied() schedules a highstate apply that installs the ansible package on the system, and —
+    unlike a bare system.scheduleApplyHighstate() call — actually waits for and checks whether it really succeeded.
 
     The call is idempotent and safe on every configuration pass. addEntitlements ignores an entitlement the system already has,
     and a repeated highstate is idempotent on the Salt side. The function does nothing if the field is unset or empty. The
@@ -1532,22 +1932,18 @@ def ensure_ansible_control_node(hostname, exec_prefix, cfg, prefix):
             die("could not enable the Ansible Control Node entitlement on '{}': {}".format(
                 system, (r.stderr or r.stdout or "").strip()))
 
-        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
-        if r.returncode != 0:
-            die("could not schedule a highstate apply on '{}' to install ansible: {}".format(
-                system, (r.stderr or r.stdout or "").strip()))
-        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and scheduled a "
-              "highstate apply to install ansible".format(system, sid))
+        ensure_highstate_applied(hostname, exec_prefix, sid, "install ansible on '{}'".format(system))
+        print("  Enabled the Ansible Control Node entitlement on '{}' (sid {}) and verified the "
+              "highstate apply that installs ansible actually succeeded".format(system, sid))
 
 
 def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
     """
     Orchestrate <prefix>_image_build_hosts, a list of {system} dicts. For each system, it enables the "Container Build Host"
     add-on entitlement with system.addEntitlements, using the label "container_build_host". This entitlement is separate from
-    "osimage_build_host", which belongs to the Kiwi-based OS-image build path. Then it schedules a highstate apply with
-    system.scheduleApplyHighstate, which installs the container build tooling on the system. The two steps match
-    ensure_ansible_control_node().
+    "osimage_build_host", which belongs to the Kiwi-based OS-image build path. Then ensure_highstate_applied() schedules a
+    highstate apply that installs the container build tooling on the system, verifying it really succeeded instead of just
+    trusting the schedule call. The two steps match ensure_ansible_control_node().
 
     An image import's build_host_id must name a system that has this entitlement. This function grants it, so a single list entry
     gives a working build host, with no manual step.
@@ -1570,13 +1966,10 @@ def ensure_container_build_hosts(hostname, exec_prefix, cfg, prefix):
             die("could not enable the Container Build Host entitlement on '{}': {}".format(
                 system, (r.stderr or r.stdout or "").strip()))
 
-        earliest = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        r = _api_call(hostname, exec_prefix, "system.scheduleApplyHighstate", [[sid], earliest, False])
-        if r.returncode != 0:
-            die("could not schedule a highstate apply on '{}' to install container build tooling: {}".format(
-                system, (r.stderr or r.stdout or "").strip()))
-        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and scheduled a "
-              "highstate apply to install container build tooling".format(system, sid))
+        ensure_highstate_applied(hostname, exec_prefix, sid,
+                                  "install container build tooling on '{}'".format(system))
+        print("  Enabled the Container Build Host entitlement on '{}' (sid {}) and verified the "
+              "highstate apply that installs container build tooling actually succeeded".format(system, sid))
 
 
 def ensure_mcp_server(hostname, exec_prefix, cfg, prefix):
@@ -2508,9 +2901,15 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
     Idempotently ensure every system name in `systems` is a member of `group_name`, with group_addsystems. Only the names not
     already listed by group_listsystems are added. The function does nothing if `systems` is empty.
 
-    group_addsystems skips any name that is not a registered system, as long as at least one name in the same call is valid. If
-    every name is invalid, the call fails. A lab's hostname list often contains systems that are not registered yet, so the
-    failure is reported as a warning rather than a fatal error. Once those systems register, a later run adds them.
+    group_addsystems skips any name that is not a registered system, as long as at least one name in the same call is
+    valid — silently, with returncode 0, even when some or all of the requested systems never actually got added. This
+    function therefore verifies the real end state afterward (another group_listsystems) rather than trusting that
+    return code: die()s when any requested system is still missing, so this step is treated as genuinely incomplete and
+    picked up by the same forever-retry mechanism every other SMLM step depending on client registration already uses,
+    per this project's own forever-retry policy — not trusted to a "later run" that, for this specific step, never
+    actually happens on its own. Confirmed live 2026-11-06: every one of this lab's "themed" groups (terrestrial-planets,
+    martian-moons, moons, ...) ended up with zero members this way, silently, because every target system was still
+    mid-registration — an async, hours-long background process — the one time this step ran.
     """
     if not systems:
         return
@@ -2521,10 +2920,13 @@ def ensure_group_systems(hostname, exec_prefix, group_name, systems):
         return
     r = _spacecmd(hostname, exec_prefix, "group_addsystems {} {}".format(
         shlex.quote(group_name), " ".join(shlex.quote(s) for s in missing)))
-    if r.returncode != 0:
-        warn("could not add system(s) ({}) to group '{}' — they may not be registered systems yet: "
-             "{}".format(", ".join(missing), group_name, (r.stderr or r.stdout or "").strip()))
-        return
+    now_existing = list_group_systems(hostname, exec_prefix, group_name)
+    still_missing = [s for s in missing if s not in now_existing]
+    if still_missing:
+        die("system group '{}': {} of {} requested system(s) are still not members after group_addsystems "
+            "— most likely not registered systems yet ({}): {}".format(
+                group_name, len(still_missing), len(missing),
+                (r.stderr or r.stdout or "").strip() or "no error output", ", ".join(still_missing)))
     print("  Added {} system(s) to group '{}': {}".format(len(missing), group_name, ", ".join(missing)))
 
 
@@ -2740,6 +3142,56 @@ def _system_id(hostname, exec_prefix, target_system):
         die("more than one system named '{}' found on the server — genuinely ambiguous".format(
             target_system))
     return matches[0]["id"]
+
+
+def system_is_registered(hostname, exec_prefix, target_system):
+    """
+    Whether `target_system` (a hostname/minion id) is really, right now, a registered system on the
+    server reached through exec_prefix — the same system.getId() lookup _system_id() uses, but never
+    dies: a plain True/False answer, meant for a forever-retry worker's own verify() check (see
+    run_forever_retry_worker()'s docstring for why that check exists — a registration call returning
+    cleanly is not proof the system actually exists yet). False for zero matches, a failed call, or
+    unparseable output; also False for more than one match, since this check's only job is "is the ONE
+    expected system genuinely there", not resolving an ambiguity — a real one is still something
+    _system_id()'s own die() should catch wherever this project treats the id as actually needed.
+    """
+    r = _api_call(hostname, exec_prefix, "system.getId", [target_system])
+    if r.returncode != 0:
+        return False
+    try:
+        matches = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return len(matches) == 1
+
+
+def system_package_count(hostname, exec_prefix, target_system):
+    """
+    How many packages spacecmd's system_listinstalledpackages reports for `target_system` right now —
+    an extra, API-based health signal alongside system_is_registered(): a system can exist in
+    system.getId() before its package profile has actually uploaded, or if something went wrong during
+    bootstrap. Returns 0 both when the system genuinely has no packages and when the command fails
+    (not registered yet, wrong hostname, ...) — confirmed live that an unknown system exits non-zero
+    with "WARNING: No systems selected" rather than printing anything to count, so either case
+    collapses to the same "nothing to report yet" answer.
+    """
+    r = _spacecmd(hostname, exec_prefix, "system_listinstalledpackages {}".format(shlex.quote(target_system)))
+    if r.returncode != 0:
+        return 0
+    return len([ln for ln in (r.stdout or "").splitlines() if ln.strip()])
+
+
+def system_is_registered_and_healthy(hostname, exec_prefix, target_system, min_packages=20):
+    """
+    system_is_registered() plus a package-count sanity check via system_package_count(): a system that
+    exists server-side but reports fewer than `min_packages` installed packages (0 included) has not
+    really finished registering in any useful sense — no real Linux system has a believable package
+    inventory that small, so this catches a registration that is technically "there" but still broken,
+    the case system_is_registered() alone cannot see.
+    """
+    if not system_is_registered(hostname, exec_prefix, target_system):
+        return False
+    return system_package_count(hostname, exec_prefix, target_system) >= min_packages
 
 
 # ── Virtual Host Managers (Systems -> Virtual Host Managers) ────────────────
@@ -3019,6 +3471,21 @@ def saltkey_accept(hostname, exec_prefix, minion_id):
         die("could not accept salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
 
 
+def saltkey_delete(hostname, exec_prefix, minion_id):
+    """
+    Remove minion_id's key via saltkey.delete — a real, confirmed-working API method (there is no
+    saltkey.reject that would leave an audit trail instead; delete is what this project uses). Needed
+    when a VM was destroyed and recreated under the same hostname: the master still has the OLD minion's
+    key accepted under that exact ID, so a fresh minion presenting a NEW key on the SAME ID is rejected by
+    Salt's own key-pinning (confirmed live, 2026-11-10 — the minion logs "The Salt Master has cached the
+    public key for this node" and retries forever without ever reaching accepted). Deleting the stale key
+    first lets the new one go through the normal pending -> accept flow. Dies on failure.
+    """
+    r = _api_call(hostname, exec_prefix, "saltkey.delete", [minion_id])
+    if r.returncode != 0:
+        die("could not delete the stale salt key for '{}': {}".format(minion_id, (r.stderr or r.stdout or "").strip()))
+
+
 def _channel_package_nvr(hostname, exec_prefix, channel, pkg_name):
     """
     Return the exact NVR-EA string for `pkg_name` in `channel`, as in "openssl-1.0.2k-19.el7:1.x86_64". The package list is
@@ -3165,8 +3632,8 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     """
     Register client_hostname as a Salt client of the Uyuni or SMLM server reached through (hostname, exec_prefix). The
     registration uses an activation key that the caller has already created with ensure_activation_key(). The function is
-    idempotent: it does nothing when the client's key is already accepted. The minion ID is client_hostname, unless profile_name is
-    given.
+    idempotent: it does nothing when the client is already a REAL, healthy registered system (see below) — not merely when
+    its salt key happens to be accepted. The minion ID is client_hostname, unless profile_name is given.
 
     The steps are:
       1. Generate a bootstrap script for this activation key on the server, with mgr-bootstrap --activation-keys=<key>. The file
@@ -3189,9 +3656,25 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
     covers the script fetch, the checks inside the bootstrap, and the later salt connection.
     """
     minion_id = profile_name or client_hostname
-    if saltkey_accepted(hostname, exec_prefix, minion_id):
+    key_accepted = saltkey_accepted(hostname, exec_prefix, minion_id)
+    if key_accepted and system_is_registered_and_healthy(hostname, exec_prefix, minion_id):
         print("  '{}' is already a registered client — leaving it alone".format(client_hostname))
         return
+    if key_accepted:
+        # A real, live-reported failure (2026-11-10): a cloud VM destroyed and recreated under the SAME
+        # hostname (common after a stop/start or a manual re-provision) leaves its OLD minion's key
+        # accepted on the server, while the brand-new VM has no minion installed at all. The check above
+        # alone used to treat that stale acceptance as "already registered" and return immediately,
+        # silently skipping the bootstrap forever — found live on saturn.mydemoaws.lab, whose salt key
+        # stayed accepted from an earlier, since-destroyed instance while system_list had no entry for it
+        # and the current VM had never run venv-salt-minion at all. Salt also key-pins by minion ID: a new
+        # minion presenting a different key under an already-accepted ID is rejected outright ("The Salt
+        # Master has cached the public key for this node"), so the stale key must be deleted before the
+        # bootstrap below can ever succeed, not just before this check.
+        print("  '{}' has an accepted salt key but is not a real, healthy registered system (most likely "
+              "its VM was destroyed and recreated under the same name) — deleting the stale key and "
+              "re-bootstrapping".format(client_hostname))
+        saltkey_delete(hostname, exec_prefix, minion_id)
 
     _ensure_client_can_resolve_server(client_hostname, server_fqdn, server_ip)
 
@@ -3252,7 +3735,14 @@ def ensure_client_registered(hostname, exec_prefix, client_hostname, server_fqdn
                 client_hostname))
         print("  '{}' rebooted after bootstrap".format(client_hostname))
     elif r.returncode != 0:
-        die("bootstrap script failed on '{}' (rc={})".format(client_hostname, r.returncode))
+        # The bootstrap script's own output is the only way to tell a real failure (e.g. a package
+        # manager error) from a transient one (e.g. the bootstrap repo not fully populated yet) apart —
+        # without it, every failure here looked identical ("rc=1"), confirmed live: a real failure
+        # ("no package provides salt", the bootstrap repo not yet carrying venv-salt-minion for a
+        # just-synced product) was only found by re-running the exact same command by hand.
+        tail = "\n".join(bootstrap_out.strip().splitlines()[-15:])
+        die("bootstrap script failed on '{}' (rc={}){}".format(
+            client_hostname, r.returncode, ":\n" + tail if tail else ""))
 
     def _wait_for_pending_key():
         for _ in range(retry_limit):

@@ -80,6 +80,17 @@ AWS_PRODUCTS = {
             "arm64": "Rocky-10-EC2-Base-*.aarch64",
         },
     },
+    # CentOS Linux 7 reached end of life in June 2024 and the CentOS project deprecated its AMIs, which describe-images
+    # then leaves out unless asked for them with --include-deprecated. A deprecated AMI still launches. The project
+    # published CentOS Linux 7 for x86_64 only (its arm64 AMIs are CentOS Stream), so no arm64 pattern is listed.
+    "centos7": {
+        "label": "the last CentOS Linux 7 (end of life since June 2024), published by the CentOS project",
+        "owner": "125523088429",
+        "include_deprecated": True,
+        "name": {
+            "x86_64": "CentOS Linux 7 x86_64*",
+        },
+    },
 }
 
 
@@ -111,7 +122,8 @@ def aws_product_image(product: str, arch: str, run_aws) -> str:
     pattern = entry["name"].get(arch)
     if not pattern:
         raise ValueError("no {} image is published for architecture '{}'".format(product, arch))
-    result = run_aws("ec2", "describe-images", "--owners", entry["owner"],
+    deprecated = ["--include-deprecated"] if entry.get("include_deprecated") else []
+    result = run_aws("ec2", "describe-images", "--owners", entry["owner"], *deprecated,
                      "--filters", "Name=name,Values={}".format(pattern),
                      "Name=architecture,Values={}".format(arch),
                      "Name=state,Values=available")
@@ -133,6 +145,11 @@ SUSE_PRODUCTS = {
     "slmicro6.1-byos": "SUSE Linux Micro 6.1, bring your own subscription (unregistered: no repositories)",
     "sles16-byos": "SUSE Linux Enterprise Server 16.x, bring your own subscription (unregistered: no repositories)",
     "leap": "the newest openSUSE Leap",
+    # "-byos" after any SLES or SL Micro name picks the same product's Bring-Your-Own-Subscription image, which has no
+    # repositories until it is registered (scc_regcode, or an SMLM server through client_registration).
+    "sles16-byos": "SUSE Linux Enterprise Server 16.x, bring your own subscription",
+    "sles15.7-byos": "SUSE Linux Enterprise Server 15 SP7, bring your own subscription",
+    "slmicro6.1-byos": "SUSE Linux Micro 6.1, bring your own subscription",
 }
 
 

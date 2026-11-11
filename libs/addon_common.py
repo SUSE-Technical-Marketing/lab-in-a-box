@@ -416,7 +416,7 @@ def print_help(script_path, usage=None):
     parses for --input-definition/--schema).
     """
     name = Path(script_path).name
-    print(usage or "Usage: {} <lab.json> [<vm_name>]".format(name))
+    print(usage or "Usage: {} <lab-file> [<vm_name>]".format(name))
     print()
     text = Path(script_path).read_text(errors="replace")
     in_block = False
@@ -515,13 +515,13 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
 
     if argv and argv[0] == "--validate":
         if len(argv) < 2:
-            print("[ERROR] --validate requires a JSON file path")
+            print("[ERROR] --validate requires a lab file path")
             sys.exit(1)
         sys.exit(run_validate(argv[1], validate_fn, plugin=plugin, script_path=script_path))
 
     if argv and argv[0] == "--check":
         if len(argv) < 2:
-            print("[FAIL] --check requires a JSON file path")
+            print("[FAIL] --check requires a lab file path")
             sys.exit(CHECK_MISMATCH)
         sys.exit(run_check(argv[1], check_fn, plugin=plugin))
 
@@ -607,9 +607,17 @@ def register_service_dns(definition: dict, clu_name: str, fqdn: str) -> None:
     Point `fqdn`, a hostname an add-on exposes under the kcluster's mydomain, at that kcluster's nodes: round-robin A records
     written by add_service_dns() to the local BIND zone and to every REMOTE_DNS_SERVERS server of lab_creation.cfg. A name
     outside mydomain is not registered; a warning names it.
+
+    On a cloud backend, the cluster's own DNS VM (backends.ensure_cloud_dns_vm(), already created by setup_vm.py
+    when the node was provisioned) is added to that remote list too — the same server external clients are told
+    to use (see the lab's own access instructions), not just automation.mydemo.lab's on-prem BIND, which a cloud
+    node's own home network can't reach anyway. Found live 2026-11-06: ollama/open_webui's ingress hostnames were
+    only ever written to the on-prem zone, invisible to anyone actually using the AWS-hosted DNS server.
     """
     import k8s
+    import backends
     from lab_creation import add_service_dns, warn
+    from pathlib import Path
 
     clu_cfg = k8s.load_kclu_vars(definition, clu_name)
     mydomain = clu_cfg.get("mydomain", "")
@@ -617,6 +625,24 @@ def register_service_dns(definition: dict, clu_name: str, fqdn: str) -> None:
     if not mydomain or not fqdn.endswith(suffix) or fqdn == suffix:
         warn("'{}' is not under the lab domain '{}': add its DNS record yourself".format(fqdn, mydomain))
         return
-    remote = (primary.load_config().get("REMOTE_DNS_SERVERS") or "").split() or None
+    config = primary.load_config()
+    remote = (config.get("REMOTE_DNS_SERVERS") or "").split()
+
+    cluster_nodes = [name for name, cfg in (definition.get("nodes") or {}).items()
+                      if cfg.get("kcluster") == clu_name]
+    if cluster_nodes:
+        vm_name = cluster_nodes[0]
+        backend_name = backends.effective_backend_name(definition, config, vm_name)
+        if backend_name in backends.CLOUD_BACKEND_NAMES:
+            backend = backends.get_backend(definition, config, vm_name, for_existing=True)
+            node_cfg = definition.get("nodes", {}).get(vm_name, {}) or {}
+            dns_vm_ip = backends.ensure_cloud_dns_vm(
+                backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(), mydomain,
+                node_cfg.get("SOURCE_IMAGE") or node_cfg.get("ISO_IMAGE", ""),
+                config.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation"),
+                preferred_image=backends.cloud_dns_image(definition, config, vm_name))
+            if dns_vm_ip:
+                remote.append(dns_vm_ip)
+
     add_service_dns(definition, clu_name, clu_cfg.get("clu_type", ""), fqdn[:-len(suffix)], mydomain,
-                    remote_dns_servers=remote)
+                    remote_dns_servers=remote or None)

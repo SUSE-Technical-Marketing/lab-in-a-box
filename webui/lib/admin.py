@@ -130,3 +130,10 @@ def dispatch(action, method, params, data):
     if action == "jobs" and method == "GET":
         return helper(["lab-jobs"])
     raise ValueError("unknown action %r (%s)" % (action, method))
+
+
+def pub_status(job, token):
+    """A job's state and log for whoever holds its own token (see lab_builder_helper.pub_status()) — the
+    one job action that needs neither login nor admin.ACTIONS, since the token itself is the credential.
+    Called from api.dispatch() directly, not through this module's own login-gated dispatch()."""
+    return helper(["pub-status", job], {"token": token})

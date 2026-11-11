@@ -12,8 +12,8 @@
 # install_<addon> scripts are likewise separate processes, exactly as in bash.
 
 """
-setup_lab.py — provision all VMs defined in a lab JSON, set up Kubernetes
-clusters, and install cluster-level and VM-level addons in order.
+setup_lab.py — provision all VMs defined in a lab definition file, set up
+Kubernetes clusters, and install cluster-level and VM-level addons in order.
 
 Usage:
     setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
@@ -39,6 +40,8 @@ import k8s  # noqa: E402
 import targets  # noqa: E402
 import addon_common as ac  # noqa: E402
 import apps  # noqa: E402
+import qr_util  # noqa: E402
+import spacecmd_common as sc  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
@@ -48,8 +51,8 @@ from setup_vm import provision_vm, refresh_kept_node_dns  # noqa: E402
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
 
-Provisions all VMs defined in the lab JSON, sets up Kubernetes clusters, and
-installs cluster-level and VM-level addons in order.
+Provisions all VMs defined in the lab definition file, sets up Kubernetes
+clusters, and installs cluster-level and VM-level addons in order.
 
 Options:
   --help, -h
@@ -59,7 +62,10 @@ Options:
             Without this flag (default) every VM is destroyed and recreated.
   --debug   Stream the full output of every command that is run. Without it
             (default) only lab-in-a-box's own messages are shown; a command's
-            output is still shown if it fails or emits a warning/error.
+            output is still shown if it fails or emits a warning/error. Always
+            on, regardless of this flag, when LAB_STATUS_JOB/LAB_STATUS_TOKEN
+            are set in the environment (a run launched behind the webui's
+            live status page) — see _debug_wanted().
   --cloud-account <name>
             Use cloud account <name> (a credentials file under
             /etc/lab_creation/credentials/) for every cloud node of this run.
@@ -132,6 +138,14 @@ class _RunReport:
                 or any(s == "FAILED" for _, s in self.clusters)
                 or any(s.startswith("FAILED") for _, _, s in self.addons))
 
+    @property
+    def pending(self):
+        """True when some addon handed off to a background forever-retry worker instead of actually
+        finishing (status "pending" — see _run_addon()'s caller). Distinct from `failed`: nothing is
+        broken, but the lab is not fully usable yet either, so the final banner must not claim
+        "everything OK" while this is true."""
+        return any(s == "pending" for _, _, s in self.addons)
+
 
 # Module-level: reset at the top of every setup_lab() run. The phase
 # functions append to this as they go; main() reads .failed for its exit code.
@@ -141,11 +155,44 @@ _report = _RunReport()
 _RULE = "═" * 64
 
 
-def print_summary():
+def _node_access_lines(definition):
+    """
+    One line per node in `definition`: its current IP (resolved via DNS — the one address source that
+    works the same way regardless of backend, since add_to_dns() records it there for every node once
+    created) and an ssh command, with a password ONLY when one is explicitly configured (node-level or
+    common VM_ROOT_PASS) — never guessed. A node whose IP doesn't resolve yet (not created, or DNS hasn't
+    propagated) says so instead of showing a stale or made-up address.
+    """
+    import socket
+    common = (definition or {}).get("common", {}) or {}
+    lines = []
+    for name, cfg in sorted(((definition or {}).get("nodes", {}) or {}).items()):
+        cfg = cfg or {}
+        try:
+            ip = socket.gethostbyname(name)
+        except OSError:
+            ip = None
+        pw = cfg.get("VM_ROOT_PASS") or common.get("VM_ROOT_PASS")
+        if ip:
+            line = "  {} — {}ssh root@{}{}".format(name, lc._WHITE, ip, lc._RESET)
+            line += " (password: {})".format(pw) if pw else ""
+        else:
+            line = "  {} — IP not resolvable yet (DNS not propagated, or not created)".format(name)
+        lines.append(line)
+    if not any(cfg.get("VM_ROOT_PASS") or common.get("VM_ROOT_PASS") for cfg in
+               (definition or {}).get("nodes", {}).values()):
+        lines.append("  (no plaintext password is configured for any node — see ROOT_PWD_HASH/"
+                      "ROOT_SSH_KEY in lab_creation.cfg, or this lab's own VM_ROOT_PASS, for how to log in)")
+    return lines
+
+
+def print_summary(definition=None):
     """Print a simple end-of-run summary of _report, grouped by outcome, with
     anything that FAILED in red so it stands out. Set apart from the execution
     log above by a full-width rule. Called once at the end of setup_lab() (and
-    by main() if a preflight check aborts the run early)."""
+    by main() if a preflight check aborts the run early). `definition`, when
+    given, adds an Access section with each node's current IP and how to log in —
+    omitted (not guessed) when not given, e.g. a preflight abort before it's loaded."""
     r = _report
     print("\n\n{}{}\n  LAB SUMMARY\n{}{}".format(lc._WHITE, _RULE, _RULE, lc._RESET))
 
@@ -190,8 +237,13 @@ def print_summary():
             g.setdefault(status, []).append("{} ({})".format(name, scope))
         print("Addons ({}):".format(len(r.addons)))
         for status in sorted(g):
-            col = lc._GREEN if status == "ok" else lc._RED
+            col = lc._GREEN if status == "ok" else (lc._ORANGE if status == "pending" else lc._RED)
             print("  {}{:<16}{} {}".format(col, status, lc._RESET, ", ".join(g[status])))
+
+    if definition is not None and (definition.get("nodes") or {}):
+        print("Access:")
+        for line in _node_access_lines(definition):
+            print(line)
 
     if r.warnings:
         print("{}Warnings ({}):{}".format(lc._ORANGE, len(r.warnings), lc._RESET))
@@ -203,16 +255,61 @@ def print_summary():
         for e in r.errors:
             print("  {}•{} {}".format(lc._RED, lc._RESET, e))
 
+    url = _status_page_url()
+    if url:
+        print("\nLive status page (share the link or QR code — no login needed, only whoever holds this "
+              "exact link can open it, and only over HTTPS):")
+        print("  " + url)
+        art = qr_util.render_ascii(url)
+        if art:
+            print(art)
+
     print("")
     if r.failed:
         print("{}✗ Lab setup finished WITH FAILURES{} — see the Errors list and the entries "
               "marked FAILED above for what to fix.".format(lc._RED, lc._RESET))
+    elif r.pending:
+        print("{}… Lab setup finished, but it is NOT fully usable yet{} — one or more addons are still "
+              "waiting on a background retry (see the "
+              "\"pending\" entries above and their own log under /var/log/lab-in-a-box/forever-retry/). "
+              "This is normal for a fresh deploy (SMLM channel sync can take hours); check back on the "
+              "live status page.".format(lc._ORANGE, lc._RESET))
     elif r.warnings:
         print("{}✓ Lab setup finished — OK, with {} warning(s){} (see the Warnings list above).".format(
             lc._GREEN, len(r.warnings), lc._RESET))
     else:
         print("{}✓ Lab setup finished — everything OK{}.".format(lc._GREEN, lc._RESET))
     print("{}{}{}".format(lc._WHITE, _RULE, lc._RESET))
+
+
+def _debug_wanted(args):
+    """
+    True when addon output should stream live (lc.set_debug()'s argument): either --debug was passed, or
+    this run was launched behind the live status page (LAB_STATUS_JOB/LAB_STATUS_TOKEN — see
+    lab_builder_helper.py's lab-create). The latter always streams, regardless of --debug: someone is
+    actively watching that page, and _run_addon()'s normal quiet-by-default capture means the page would
+    otherwise show nothing new for the entire length of a long addon (confirmed live 2026-11-03 —
+    install_smlm ran 45+ minutes with zero new log lines while real work was happening). A bare CLI run
+    with neither set keeps the original quiet default untouched.
+    """
+    return "--debug" in args or bool(os.environ.get("LAB_STATUS_JOB") and os.environ.get("LAB_STATUS_TOKEN"))
+
+
+def _status_page_url():
+    """
+    The public live-status page for this run, or None when there isn't one.
+
+    Only set when this run was launched as a lab-builder-helper job (LAB_STATUS_JOB/LAB_STATUS_TOKEN in
+    the environment — see scripts/lab_builder_helper.py's lab_create()); a bare CLI run has no such page
+    to point to. The job id and token are already URL-safe (job: NAME_RE in lab_builder_helper.py; token:
+    secrets.token_urlsafe()), so no extra quoting is needed.
+    """
+    job = os.environ.get("LAB_STATUS_JOB")
+    token = os.environ.get("LAB_STATUS_TOKEN")
+    if not job or not token:
+        return None
+    import socket
+    return "https://{}/lab-builder/status.html?job={}&token={}".format(socket.getfqdn(), job, token)
 
 
 def _lab_resources(definition):
@@ -225,9 +322,24 @@ def _lab_resources(definition):
     return (cpu, mem, disk, len(definition.get("nodes", {}) or {}))
 
 
+def _addon_status(rc, started_at):
+    """
+    "ok", "pending" or "FAILED (exit N)" for an addon that exited `rc`, launched at `started_at`
+    (time.time()-style, taken right before running it). "pending" — a real status distinct from both —
+    is when the addon exited 0 but, while it ran, handed some step off to a background forever-retry
+    worker instead of actually finishing (sc.forever_retry_handoff_since()); print_summary() colors it
+    orange and the final banner stops short of claiming "everything OK" when any addon is in this state.
+    """
+    if rc != 0:
+        return "FAILED (exit {})".format(rc)
+    if sc.forever_retry_handoff_since(started_at):
+        return "pending"
+    return "ok"
+
+
 def _run_addon(cmd, env):
     """
-    Run an addon installer (`install_<addon> [--validate] <lab.json>`).
+    Run an addon installer (`install_<addon> [--validate] <lab-file>`).
 
     Default (no --debug): its stdout/stderr are captured and only printed if it
     exits non-zero or its output looks like it contains a warning/error — so a
@@ -281,9 +393,9 @@ def _merged_env(definition, config, defaults, vm_name):
     return env
 
 
-def validate_addon_configs(definition, json_file, issues_out=None):
+def validate_addon_configs(definition, lab_file, issues_out=None):
     """
-    Run `install_<addon> --validate <json_file>` for every addon in the lab definition: kclusters[x].addons and nodes[x].addons,
+    Run `install_<addon> --validate <lab_file>` for every addon in the lab definition: kclusters[x].addons and nodes[x].addons,
     collected by apps.collect_addon_names(). This happens before any VM or cluster work starts.
 
     Each addon's validators check its configuration values, such as a namespace. Without this step, the checks run only when an operator
@@ -309,7 +421,7 @@ def validate_addon_configs(definition, json_file, issues_out=None):
         status = apps.status_warning(apps.load_plugin(addon))
         if status:
             lc.warn(status)
-        r = subprocess.run([installer, "--validate", json_file],
+        r = subprocess.run([installer, "--validate", lab_file],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         if r.returncode != 0:
             for line in (r.stdout or "").splitlines():
@@ -383,7 +495,7 @@ def phase_dns(definition, remote_dns_servers):
     lc._level -= 1
 
 
-def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg, log_prefix=None):
+def _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg, log_prefix=None):
     """
     Create one node's VM: check an existing host, check --keep reusability, destroy the VM if it must be recreated, then provision
     it. phase_create_vms() runs this sequentially or in parallel, so both paths share one implementation.
@@ -481,20 +593,20 @@ def _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_
 
 
 
-def phase_allocate_ips(definition, config, json_file):
+def phase_allocate_ips(definition, config, lab_file):
     """
     Give every node that has no myip one, from the network the definition already describes. A cloud node is left
     alone, since its provider assigns the address; so is a node whose lab has no mygw and mymask to take one from.
 
     Returns the path the rest of the run must use as the lab definition: the sibling file the allocation was saved
-    to, or `json_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
+    to, or `lab_file` unchanged when nothing needed allocating. Every add-on runs as its own process and reads this
     file from disk, so a run that kept using the original would hand them a definition with no addresses in it, and
     anything reading myip there (a service's DNS records, for one) would quietly do nothing.
     """
     missing = [name for name, cfg in (definition.get("nodes") or {}).items()
                if not str((cfg or {}).get("myip") or "").strip()]
     if not missing:
-        return json_file
+        return lab_file
     for vm_name in missing:
         backend = backends.get_backend(definition, config, vm_name, for_existing=False)
         backend.check_or_generate_ip(vm_name, "", definition)
@@ -502,7 +614,7 @@ def phase_allocate_ips(definition, config, json_file):
     lc.log("The run continues with '{}', which holds the allocated addresses".format(allocated))
     return allocated
 
-def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
+def phase_create_vms(definition, config, defaults, lab_file, keep, parallel=0):
     """
     Create the VMs for all nodes.
 
@@ -521,18 +633,18 @@ def phase_create_vms(definition, config, defaults, json_file, keep, parallel=0):
 
     if not parallel:
         for vm_name, node_cfg in nodes:
-            _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+            _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg)
     else:
         # A Harvester cluster's create node goes first: its VIP is in the other nodes' user-data.
         creators = {harvester.create_node(definition, c) for c, cfg in (definition.get("kclusters") or {}).items()
                     if (cfg or {}).get("clu_type") == harvester.CLU_TYPE}
         for vm_name, node_cfg in nodes:
             if vm_name in creators:
-                _create_one_vm(definition, config, defaults, json_file, keep, vm_name, node_cfg)
+                _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_cfg)
         nodes = [(n, cfg) for n, cfg in nodes if n not in creators]
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = [
-                pool.submit(_create_one_vm, definition, config, defaults, json_file, keep,
+                pool.submit(_create_one_vm, definition, config, defaults, lab_file, keep,
                             vm_name, node_cfg, log_prefix="[{}] ".format(vm_name))
                 for vm_name, node_cfg in nodes
             ]
@@ -591,7 +703,7 @@ def _install_k8s_on_cluster(definition, clu_name, clu_type, clu_cfg):
     lc._level -= 1
 
 
-def _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg):
+def _install_cluster_addons(definition, config, defaults, lab_file, clu_name, clu_cfg):
     # The cluster addons list is read from the definition, not from clu_cfg. load_kclu_vars() keeps only scalar fields, so a list is
     # dropped there. Per-node addons use phase_vm_addons() instead.
     addons = (definition.get("kclusters", {}).get(clu_name, {}) or {}).get("addons", []) or []
@@ -635,21 +747,23 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
         # invocation in setup_lab.sh) — a failing addon does not stop the
         # pipeline. Matched exactly: run it, move on — but record the exit
         # code so the end-of-run summary can flag an addon that failed.
-        r = _run_addon([installer, json_file], env)
+        started_at = time.time()
+        r = _run_addon([installer, lab_file], env)
         rc = getattr(r, "returncode", 0)
-        if rc == 0:
-            _report.add_addon("cluster:{}".format(clu_name), addon, "ok")
-            lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
-                lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
-        elif rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+        if rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
             lc.log("Addon \"{}{}{}\" on cluster \"{}{}{}\" isn't ready yet — will retry once every "
                     "other addon here has had its own turn".format(
                         lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
         else:
-            _report.add_addon("cluster:{}".format(clu_name), addon, "FAILED (exit {})".format(rc))
-            msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
-            lc.error(msg)
-            _report.add_error(msg)
+            status = _addon_status(rc, started_at)
+            _report.add_addon("cluster:{}".format(clu_name), addon, status)
+            if status == "ok":
+                lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
+                    lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+            if rc != 0:
+                msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
+                lc.error(msg)
+                _report.add_error(msg)
         return rc
 
     # De-duplicate exact repeats up front (same as the old "installed" set) before the retry
@@ -671,7 +785,7 @@ def _install_cluster_addons(definition, config, defaults, json_file, clu_name, c
     lc.log("No more addons for cluster \"{}{}{}\"".format(lc._RED, clu_name, lc._RESET))
 
 
-def phase_install_k8s_and_addons(definition, config, defaults, json_file):
+def phase_install_k8s_and_addons(definition, config, defaults, lab_file):
     delay_min = int(definition.get("common", {}).get("delay_min", defaults.get("delay_min", 2)))
     # A node whose VM creation failed has no VM, and install_cluster() reaches every node of a cluster by its
     # hostname. Installing Kubernetes on such a cluster would SSH to whatever that name currently resolves to,
@@ -715,10 +829,10 @@ def phase_install_k8s_and_addons(definition, config, defaults, json_file):
         else:
             lc.warn("cluster '{}' has no node to ask whether it has settled".format(clu_name))
 
-        _install_cluster_addons(definition, config, defaults, json_file, clu_name, clu_cfg)
+        _install_cluster_addons(definition, config, defaults, lab_file, clu_name, clu_cfg)
 
 
-def phase_vm_addons(definition, json_file):
+def phase_vm_addons(definition, lab_file):
     # A node whose VM creation failed has no host, so its addons are skipped. Each addon would otherwise fail with a misleading error.
     # The creation failure is already listed in the Errors section of the summary.
     failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
@@ -750,19 +864,19 @@ def phase_vm_addons(definition, json_file):
             # Same as the cluster-addon loop: bash never checks this call's
             # exit code either, so a failing addon must not stop the pipeline —
             # but record it for the end-of-run summary.
-            r = _run_addon([installer, json_file], env)
+            started_at = time.time()
+            r = _run_addon([installer, lab_file], env)
             rc = getattr(r, "returncode", 0)
-            if rc == 0:
-                _report.add_addon("node:{}".format(vm_name), addon, "ok")
-            elif rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+            if rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
                 lc.log("Addon \"{}{}{}\" on \"{}{}{}\" isn't ready yet — will retry once every "
                         "other addon on this node has had its own turn".format(
                             lc._RED, addon, lc._RESET, lc._RED, vm_name, lc._RESET))
             else:
-                _report.add_addon("node:{}".format(vm_name), addon, "FAILED (exit {})".format(rc))
-                msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
-                lc.error(msg)
-                _report.add_error(msg)
+                _report.add_addon("node:{}".format(vm_name), addon, _addon_status(rc, started_at))
+                if rc != 0:
+                    msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
+                    lc.error(msg)
+                    _report.add_error(msg)
             return rc
 
         never_ready = _dispatch_addons_with_retry(addon_names, _attempt)
@@ -788,7 +902,7 @@ def phase_post_commands(definition):
             _report.add_error(msg)
 
 
-def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, parallel=0):
+def setup_lab(definition, config, defaults, lab_file, keep=False, fresh=True, parallel=0):
     # fresh=False is used by main(), which builds _report itself and seeds it
     # with the preflight's warnings/errors before this runs.
     global _report
@@ -797,7 +911,7 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
     if _report.resources is None:
         _report.resources = _lab_resources(definition)
 
-    lab_name = definition.get("common", {}).get("lab_name") or Path(json_file).name
+    lab_name = definition.get("common", {}).get("lab_name") or Path(lab_file).name
     has_k8s = bool(definition.get("kclusters"))
     kind = "VMs + Kubernetes clusters" if has_k8s else "VMs only"
     lc.log("\nSetup lab \"{}{}{}\" ({})".format(lc._RED, lab_name, lc._RESET, kind))
@@ -809,17 +923,17 @@ def setup_lab(definition, config, defaults, json_file, keep=False, fresh=True, p
     if has_k8s:
         phase_dns(definition, remote_dns_servers)
 
-    phase_create_vms(definition, config, defaults, json_file, keep, parallel=parallel)
+    phase_create_vms(definition, config, defaults, lab_file, keep, parallel=parallel)
 
     if has_k8s:
         phase_reboot_and_wait_kept_nodes(definition, config, keep)
-        phase_install_k8s_and_addons(definition, config, defaults, json_file)
+        phase_install_k8s_and_addons(definition, config, defaults, lab_file)
 
-    phase_vm_addons(definition, json_file)
+    phase_vm_addons(definition, lab_file)
     phase_post_commands(definition)
 
     lc.log("LAB setup completed")
-    print_summary()
+    print_summary(definition)
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -862,7 +976,7 @@ def main():
     args = backends.take_cloud_account_option(args)
 
     keep = "--keep" in args
-    debug = "--debug" in args
+    debug = _debug_wanted(args)
     lc.set_debug(debug)
 
     # --parallel / --parallel=N: bare form defaults to 4 concurrent workers.
@@ -890,12 +1004,12 @@ def main():
     positional = [a for a in args if not a.startswith("-")]
     if not positional:
         lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>")
-    json_file = positional[0]
+    lab_file = positional[0]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
-    json_file = migrations.ensure_current(definition, json_file)
+    definition = primary.load_definition(lab_file)
+    lab_file = migrations.ensure_current(definition, lab_file)
 
     iso_loc        = defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
@@ -917,23 +1031,23 @@ def main():
     # A node with no myip gets one before anything is validated, so the preflight sees the addresses the run will
     # actually use and the lab's own file can be written without any (see libs/ipalloc.py). Deterministic, so the
     # same definition always resolves to the same addresses.
-    json_file = phase_allocate_ips(definition, config, json_file)
+    lab_file = phase_allocate_ips(definition, config, lab_file)
 
     preflight_issues = []
     ok = lc.validate_lab_definition(definition, config, iso_loc, lab_setup_path,
                                     vm_img_loc=vm_img_loc, issues_out=preflight_issues)
     _fold_issues_into_report(preflight_issues)
     if not ok:
-        print_summary()
+        print_summary(definition)
         sys.exit(1)
 
     addon_issues = []
-    if not validate_addon_configs(definition, json_file, issues_out=addon_issues):
+    if not validate_addon_configs(definition, lab_file, issues_out=addon_issues):
         _fold_issues_into_report(addon_issues)
-        print_summary()
+        print_summary(definition)
         sys.exit(1)
 
-    setup_lab(definition, config, defaults, json_file, keep=keep, fresh=False, parallel=parallel)
+    setup_lab(definition, config, defaults, lab_file, keep=keep, fresh=False, parallel=parallel)
 
     # Non-zero exit if any node / cluster / addon failed (or the preflight
     # raised an error), so a scripted caller (or a glance at $?) can tell a

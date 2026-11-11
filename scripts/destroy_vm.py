@@ -10,7 +10,7 @@
 destroy_vm.py — destroy a single VM from a lab definition.
 
 Usage:
-    destroy_vm.py <lab.json> <vm_hostname>
+    destroy_vm.py <lab-file> <vm_hostname>
 """
 
 __version__ = "__LABVERSION__"
@@ -75,7 +75,7 @@ def destroy_vm(definition, config, defaults, vm_name):
             myip = backend.get_ip(vm_name) or ""
         # Best-effort: the DNS VM itself (see ensure_cloud_dns_vm()) is a shared, persistent
         # resource, never created here — only looked up, and skipped if it doesn't exist (nothing
-        # to clean an entry off of).
+        # to clean an entry off of). Per-account name when this node uses a named cloud_account.
         dns_vm_name = backends.cloud_dns_vm_name(backend, backend_name)
         if backend.vm_exists(dns_vm_name):
             dns_vm_ip = backend.get_ip(dns_vm_name)
@@ -116,12 +116,12 @@ def main():
         print("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))
         sys.exit(1)
 
-    json_file = sys.argv[1]
+    lab_file = sys.argv[1]
     vm_name = sys.argv[2]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
-    definition = primary.load_definition(json_file)
+    definition = primary.load_definition(lab_file)
 
     destroy_vm(definition, config, defaults, vm_name)
 
