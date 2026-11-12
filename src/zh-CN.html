@@ -207,6 +207,10 @@
 <td>SUSE Linux Micro 6.1</td>
 </tr>
 <tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>自带订阅 (BYOS) 的 SUSE Linux Micro 6.1。<code>-byos</code> 可追加到任意 <code>sles</code> 或 <code>slmicro</code> 名称后：无需 AWS Marketplace 订阅，节点在首次启动后使用 <code>lab_creation.cfg</code> 中的 <code>SUSE_regcode</code> 注册，未设置时节点没有软件包仓库</td>
+</tr>
+<tr>
 <td><code>leap</code></td>
 <td>最新的 openSUSE Leap</td>
 </tr>
@@ -498,7 +502,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><code>disabled_nodes</code> 接受与 <code>nodes</code> 完全相同形式的条目，用于属于实验室设计但不予部署的节点。没有任何代码读取它们：不会创建虚拟机，不会添加 DNS 记录，也不会运行任何插件。把节点停放在这里而不是删除，这样当它等待的条件得到满足时（后端没有对应的镜像、某个发行版已终止支持、硬件尚未到位），只需把该条目原样移回 <code>nodes</code> 即可。</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
-    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
+    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: SOURCE_IMAGE, VM_MEM, VM_DSK...&quot;]
     Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type, clu_rel, mydomain, addons&quot;]
     Lab --&gt; AddonSections[&quot;one section per add-on&lt;br/&gt;e.g. rancher, longhorn&quot;]
     Nodes -. &quot;kcluster&quot; .-&gt; KClusters
@@ -512,18 +516,18 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
     &quot;node101.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.101&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
       &quot;kcluster&quot;: &quot;cluster1&quot;           // which kclusters entry this node belongs to
     },
     &quot;node102.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.102&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;agent&quot;,
       &quot;kcluster&quot;: &quot;cluster1&quot;
     }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;:     &quot;24576&quot;,
     &quot;VM_DSK&quot;:     &quot;80&quot;,
     &quot;VM_CPU&quot;:     &quot;6&quot;,
@@ -560,16 +564,16 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   node101.mydemo.lab:
     myip: &quot;192.168.88.101&quot;
     mymac: &quot;34:8a:b1:4b:1a:c1&quot;
-    INSTALL_RKE2_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
+    KUBERNETES_NODE_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
     kcluster: cluster1          # which kclusters entry this node belongs to
   node102.mydemo.lab:
     myip: &quot;192.168.88.102&quot;
     mymac: &quot;34:8a:b1:4b:1a:c2&quot;
-    INSTALL_RKE2_TYPE: agent
+    KUBERNETES_NODE_TYPE: agent
     kcluster: cluster1
 
 common:
-  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  SOURCE_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
   VM_MEM: &quot;24576&quot;
   VM_DSK: &quot;80&quot;
   VM_CPU: &quot;6&quot;
@@ -691,7 +695,7 @@ setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclu
 <p>实验室定义在其顶层 <code>schema_versions</code> 对象中记录编写时所针对的版本；Web UI 会写入该对象。未记录任何版本的定义视为每个模式的 1.0 版本。</p>
 <pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
 </code></pre>
-<p>当实验室定义仍需迁移时，<code>setup_lab.py</code> 和 <code>setup_vm.py</code> 会停止并列出所需的变更。<code>migrate_config.py</code> 会执行这些变更：</p>
+<p>当实验室定义仍需迁移时，<code>setup_lab.py</code>、<code>setup_vm.py</code> 和 <code>setup_automation_node.py</code> 会自行完成迁移：每项变更警告一次，将结果保存到 <code>&lt;file&gt;.system_modified.json</code>，并继续使用该文件，本次运行的所有附加组件也读取该文件。用它替换原文件即可不再出现这些警告。<code>migrate_config.py</code> 会在不运行任何内容的情况下执行相同的变更：</p>
 <pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
 migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
 </code></pre>
@@ -707,7 +711,7 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
     &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
     &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
   }
@@ -729,7 +733,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
     &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
 }
 </code></pre>
@@ -740,7 +744,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
     &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;uyuni&quot;: {
     &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
     &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
@@ -770,7 +774,7 @@ cloud-init，因此 <code>config_method</code> 必须为 <code>virt_customize</c
     &quot;legacy1.mydemo.lab&quot;: {
       &quot;myip&quot;: &quot;192.168.88.120&quot;,
       &quot;config_method&quot;: &quot;virt_customize&quot;,
-      &quot;ISO_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
+      &quot;SOURCE_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
       &quot;VM_BOOT&quot;: &quot;bios&quot;,
       &quot;VM_MACHINE&quot;: &quot;pc&quot;
     }
@@ -799,15 +803,15 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
   "nodes": {
     "node101.mydemo.lab": {
       "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
-      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "server", "kcluster": "cluster1"
     },
     "node102.mydemo.lab": {
       "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
-      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "agent", "kcluster": "cluster1"
     }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
   },
@@ -830,7 +834,7 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>ISO_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。</p>
+<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>SOURCE_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。</p>
 <p>依次执行：在 DNS 中注册两个节点 → 创建两台虚拟机（复制 QCOW2 镜像、生成 Combustion 文件、启动并等待 SSH）→ 在 <code>node101</code> 上以 server 身份安装 RKE2，然后在 <code>node102</code> 上以 agent 身份安装 → 在集群的管理节点（<code>mgm_node</code>，默认为第一个 server 节点，此处为 <code>node101</code>）上安装 <code>rancher</code> 和 <code>longhorn</code>。带 Rancher 的 2 节点集群通常需要 15–25 分钟，大部分时间用于 RKE2 引导和 Rancher 的 Helm 安装。</p>
 <ol start="3">
 <li><strong>验证 DNS 解析</strong>（在您自己的桌面上，<a href="#step-5--point-your-client-dns-at-the-automation-vm">指向自动化虚拟机的 DNS</a> 之后）：</li>
@@ -864,7 +868,7 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
     "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
   },
@@ -1243,6 +1247,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>独立的 Grafana 服务器（podman 容器，无 Kubernetes）：自动配置 Prometheus 数据源，并可选择为 <code>smlm</code>/<code>uyuni</code> 服务器的导出器配置 Grafana Labs 官方社区仪表板</td>
 </tr>
+<tr>
+<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
+<td>由 SUSE BCI 映像提供的网站（podman 容器，无 Kubernetes）— nginx 和页面在节点上直接构建进映像；页面可生成或从 <code>bci_website_content_url</code> 下载</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1350,6 +1358,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>SUSE Virtualization（Harvester/KubeVirt）节点预配</td>
+</tr>
+<tr>
+<td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
+<td>安装 rodeo-cli——一个 Terraform 风格的 CLI，用于部署嵌套的 KVM 实验环境（Harvester HCI、Rancher Prime 或两者），在目标节点上即装即用——rodeo-cli 自身的计划/密钥文件不在本插件的职责范围内</td>
 </tr>
 </tbody>
 </table>
@@ -1508,6 +1520,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
+<p><strong>一次运行使用哪个账户</strong>也可以在执行时决定：<code>setup_lab.py</code>、<code>setup_vm.py</code>、<code>destroy_lab.py</code> 和 <code>destroy_vm.py</code> 上的 <code>--cloud-account &lt;名称&gt;</code> 适用于该次运行的所有云节点，并优先于实验定义中的 <code>cloud_account</code>，因此同一个实验文件仍可在各自拥有账户的操作者之间共享。当有多个凭据文件与某个节点的后端匹配时，此选项是必需的：它们是彼此独立的平台，各有自己的区域、网络、安全组、镜像和地址，没有可以猜测的正确答案，因此运行会拒绝执行而不是自行选择。只要一次运行选中了多个账户，就会警告：不同账户下的节点不在同一网络中，只能通过<a href="#overlay">叠加网络</a>相互访问。</p>
 <p>加密方式（请参阅 <code>libs/crypto_store.py</code>）：口令先经过 <strong>Argon2id</strong>（一种故意设计得缓慢且耗内存的 KDF；对于用口令加密的文件，真正的安全边界是它，而不是密码算法）派生出 512 位主密钥；随后 <strong>HKDF-SHA512</strong> 派生出两个独立的 256 位子密钥（按标签进行域分离，而不只是一分为二）；数据<strong>先用 AES-256-GCM、再用 ChaCha20-Poly1305 级联</strong>加密，这是两种结构不同、密钥独立的 AEAD 算法，因此即使其中一种算法被彻底攻破，单靠它也不够。任何需要凭据的工具（<code>setup_lab.py</code>、<code>setup_vm.py</code> 等）都会通过 <code>libs/primary.py</code> 的 <code>try_load_cloud_account()</code>（所有调用都经过的唯一函数）在每次运行时询问一次口令（只缓存在进程内存中，从不写入任何地方）。 无法交互询问的运行（Web UI 的 <strong>Create lab</strong>、计划任务、流水线）会改用 <code>LAB_CREDENTIALS_PASSPHRASE</code> 中的口令，只尝试一次，且不会写到任何地方；设置新口令始终会交互询问，因此该变量不会悄悄加密文件。</p>
 <p>文件可以在顶层设置 <code>unencrypted: true</code> 来放弃加密（这不是默认设置，<code>setup_credentials.py</code> 在写入这种文件前会询问）。<code>--encrypt-existing</code> 只就地加密看起来敏感的字段（名称像密钥、密码或令牌的字段），让 <code>AWS_REGION</code>/<code>AWS_PROFILE</code> 等保持可读，并且从不覆盖输入文件：它会在旁边写出 <code>&lt;name&gt;.encrypted.yaml</code>，供您检查后放到正确位置。需要在自动化虚拟机上安装 Python 包 <code>cryptography</code>（<code>python311-cryptography</code>，或 <code>pip install cryptography</code>，Argon2id 需要 ≥41）；它只在实际处理加密文件时才会被导入，因此从不设置 <code>cloud_account</code> 的实验室不需要任何新依赖。</p>
 <p><strong>外部服务凭据（SCC、SUSE Application Collection、Hermes 等）。</strong>同一个 <code>/etc/lab_creation/credentials/</code> 存储、同样的加密和同一个 <code>setup_credentials.py</code> 工具也适用于非云的外部服务凭据，而不仅限于云提供商。这类文件用 <code>credential_kind</code>（例如 <code>scc</code>、<code>appcollection</code>、<code>hermes</code>）而非 <code>cloudtype</code> 标记，因此两种概念共用目录和格式，但永不冲突。每个需要外部服务凭据的附加组件都会说明自己的可选字段 <code>&lt;field&gt;_account</code>（例如 <code>smlm_scc_account</code>、<code>suse_ai_registry_account</code>、<code>hermes_account</code>），用于显式指定凭据；未设置时，与 <code>cloud_account</code> 一样，会自动使用唯一匹配该 <code>credential_kind</code> 的文件。<strong>在实验室 JSON 中写明文凭据仍然完全有效</strong>：此存储只是凭据的可选替代方案，绝非必需；即使您从不使用凭据存储，每个附加组件自己的明文字段（<code>smlm_scc_user</code>、<code>suse_ai_registry_user</code>、<code>hermes_llm_api_key</code> 等）也照常工作。</p>
@@ -1515,7 +1528,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>每种类型一个凭据文件，即可供所有需要该类型的附加组件重复使用（例如一个 <code>scc</code> 文件即可涵盖任意附加组件的 SCC 凭据），与各附加组件 JSON 字段的前缀无关；底层机制请参阅 <code>libs/addon_common.py</code> 的 <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> 以及 <code>libs/primary.py</code> 的 <code>*_service_credential*</code> 函数。</p>
 <p><strong>云后端（Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale）与 <code>myip</code>：</strong>在实验室 JSON 中让云后端节点的 <code>myip</code> 保持为空：真实 IP 只有在创建时由提供商分配后才能知道，不能像 libvirt/Harvester 的静态 IP 那样预先决定。<code>setup_vm.py</code> 从 <code>create_vm()</code> 的返回值获取真实 IP，并在节点真正存在<em>之后</em>（而不是之前）将其注册到 DNS（这是在实测 AWSBackend 时发现的真实缺陷，2026-09-06；请参阅 TODO）。<code>mymac</code> 对云后端同样没有意义：请不要设置；它会被忽略，而不是被生成或做冲突检查。</p>
-<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。节点由各后端自身的 <code>use_dns_server()</code> 指向这台服务器，该方法在确保 DNS 虚拟机就绪后立即调用：它会配置云网络本身来分发该服务器，于是节点无需在客户机内部做任何配置，即可按主机名解析同一实验室的其他节点。在 AWS 上这是一个 VPC DHCP 选项集，将该 DNS 虚拟机设为 VPC 唯一的 DNS 服务器，并将实验室域名设为搜索域；它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。<code>AmazonProvidedDNS</code> 不能与自定义服务器并列，因此该 DNS 虚拟机会递归解析实验室域名之外的一切。<strong>尚存一项已知限制：</strong>节点通过私有 IP 查询这台 DNS 虚拟机；从云外部向其公网 IP 发出的 DNS 查询可能被路径上的网络拦截，因为一些 ISP 和路由器会自行应答所有 DNS 流量。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。</p>
+<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。每个云节点一旦可达、在首次重启之前，就会在客户机内部被指向这台服务器的私有地址：NetworkManager 获得全局 DNS 配置，wicked 获得静态 netconfig 策略，systemd-resolved 获得实验室服务器以及一个按链路忽略云服务商 DHCP 所分发 DNS 服务器的设置。云服务商的网络本身不做改动，因此在每个云上都以相同方式工作。该 DNS 虚拟机以两个视图应答。从私有地址访问它的客户端（该云网络中的节点，或经由覆盖网络路由到该网络的节点）得到的是该网络中实验室节点的私有地址，因此节点之间的流量留在网络内部，而不会经互联网网关出去、再从网络自身防火墙规则不允许的公网地址返回。其他所有客户端得到的公网地址与实验室中其他每台 DNS 服务器给出的相同。被 <code>setup_lab.py --keep</code> 复用的节点会重新写入其记录和 DNS 设置，因此现有实验室在下次运行时就会改用这种方式。该 DNS 虚拟机会递归解析实验室域名之外的一切。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。</p>
 <p><strong>云实例规格：</strong>每个云后端都会根据一个小型内置表（每行的“备注”列说明使用哪一个），把 <code>VM_CPU</code>/<code>VM_MEM</code> 映射为提供商满足要求的最小实例类型、服务器类型、套餐或规格；该表从来不是上限。AWS 是例外：它会读取本区域实际提供的实例类型及其按需价格，选出同时满足 <code>VM_CPU</code> 和 <code>VM_MEM</code> 且最便宜的 x86_64 类型，只有在该查询不可用时才使用内置表。有两种覆盖方式，按优先级排列：
 1. <strong><code>cloud_instance_type</code></strong>（在 common 中或按节点设置，节点优先）：实例类型、服务器类型、套餐或规格的确切名称，原样使用，完全不做自动选择。在所有云后端上用法相同，包括 OVHcloud（跳过实时查询规格列表的 API 调用）和 GCP（不创建自定义类型 <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>；请改为指定真实的预定义类型，如 <code>n2-standard-4</code>）。
 2. <strong><code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> 配置键</strong>（见下表中各提供商所在行）：完整替换内置表，因此基于 <code>VM_CPU</code>/<code>VM_MEM</code> 的自动选择仍然有效，但改为针对您自己的列表。格式：<code>name:cores:mem_gb,name:cores:mem_gb,...</code>，例如 <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>。它会整体替换而不是合并该表：如需保留内置条目，请重复写出。GCP 和 OVHcloud 没有此键：GCP 直接根据 <code>VM_CPU</code>/<code>VM_MEM</code> 构建真实的自定义机器类型（没有可替换的目录），OVHcloud 则在创建时实时查询其真实的规格列表（见其所在行）。</p>
@@ -1531,47 +1544,47 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <tr>
 <td><code>harvester</code></td>
 <td><code>HARVESTER_KUBECONFIG</code>（必需）、<code>HARVESTER_NAMESPACE</code>（可选，默认 <code>default</code>）、<code>HARVESTER_NETWORK</code>（可选，已存在的 Multus NetworkAttachmentDefinition）</td>
-<td>仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是已导入 Harvester 的 VirtualMachineImage</td>
+<td>仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是已导入 Harvester 的 VirtualMachineImage</td>
 </tr>
 <tr>
 <td><code>hetzner</code></td>
 <td><code>HETZNER_TOKEN</code>（必需，限定于一个项目的 Hetzner Cloud API 令牌）、<code>HETZNER_LOCATION</code>（可选，例如 <code>nbg1</code>/<code>fsn1</code>/<code>hel1</code>/<code>ash</code>/<code>hil</code>）、<code>HETZNER_SERVER_TYPES</code>（可选，覆盖内置的 server_type 表，见上文）</td>
-<td>仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 Hetzner 镜像名称（例如 <code>ubuntu-24.04</code>）或您自己的快照 ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到同时满足两者的最小 Hetzner server_type，且 vm_dsk_gb 不能超过该 server_type 自带的磁盘。当前服务器类型：<a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a>（Hetzner 没有独立于 API 的单一列表页面；云控制台或价格页面是实际的信息来源）。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>HetznerBackend</code> 类的文档字符串</td>
+<td>仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 Hetzner 镜像名称（例如 <code>ubuntu-24.04</code>）或您自己的快照 ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到同时满足两者的最小 Hetzner server_type，且 vm_dsk_gb 不能超过该 server_type 自带的磁盘。当前服务器类型：<a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a>（Hetzner 没有独立于 API 的单一列表页面；云控制台或价格页面是实际的信息来源）。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>HetznerBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>aws</code></td>
 <td><code>AWS_REGION</code>（必需），以及 <code>AWS_PROFILE</code> 或 <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code>（必需）；<code>AWS_SESSION_TOKEN</code>（对于 STS 签发的临时密钥，即以 <code>ASIA</code> 而非 <code>AKIA</code> 开头的密钥，例如来自 SSO/IAM Identity Center 或所承担角色的密钥，实际上是必需的；若该类型的密钥缺少它，<code>resolve()</code> 会以明确的消息退出）；<code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code>（均为可选；未设置时使用账户默认的 VPC 和安全组，而许多真实账户并没有这些；请参阅 TODO 中的实测结果）；<code>AWS_INSTANCE_TYPES</code>（可选，覆盖内置的实例类型表，见上文）</td>
-<td>需要在自动化虚拟机上安装真实的 <code>aws</code> CLI；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 AMI ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到该区域实际提供的、满足要求且最便宜的 x86_64 EC2 实例类型（通过 <code>describe-instance-types</code> 和 Price List API 实时读取并按区域缓存；任一查询不可用时回退到内置表。arm64 虽然更便宜，但绝不会被自动选中，需要时请在 <code>cloud_instance_type</code> 中指定），但 vm_dsk_gb（与 Hetzner 不同）会通过 AMI 真实的根 EBS 卷直接生效。当前实例类型：<a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>；按节点或在 common 中设置 <code>aws_nested_virtualization: "true"</code>（可选，默认关闭）会使用 AWS 真实的嵌套 KVM 支持启动实例（<code>--cpu-options "NestedVirtualization=enabled"</code>，文档：<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>），从而让本项目的 kickstart/combustion 流程（包括真实的 Harvester HCI ISO 安装）能像在真实物理机上一样，在云上预配的“虚拟化主机”节点上运行；需要显式指定来自真实受支持系列（M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i 及其 <code>-flex</code> 变体）的 <code>cloud_instance_type</code>（如果解析出的实例类型不在其中，会以列出确切清单的明确消息退出，因为任何可突增（burstable）类型都不支持该功能，而对于实验室规模的节点，实时价格查询和内置表最终选出的都是可突增类型）。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>AWSBackend</code> 类的文档字符串</td>
+<td>需要在自动化虚拟机上安装真实的 <code>aws</code> CLI；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 AMI ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到该区域实际提供的、满足要求且最便宜的 x86_64 EC2 实例类型（通过 <code>describe-instance-types</code> 和 Price List API 实时读取并按区域缓存；任一查询不可用时回退到内置表。arm64 虽然更便宜，但绝不会被自动选中，需要时请在 <code>cloud_instance_type</code> 中指定），但 vm_dsk_gb（与 Hetzner 不同）会通过 AMI 真实的根 EBS 卷直接生效。当前实例类型：<a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>；按节点或在 common 中设置 <code>aws_nested_virtualization: "true"</code>（可选，默认关闭）会使用 AWS 真实的嵌套 KVM 支持启动实例（<code>--cpu-options "NestedVirtualization=enabled"</code>，文档：<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>），从而让本项目的 kickstart/combustion 流程（包括真实的 Harvester HCI ISO 安装）能像在真实物理机上一样，在云上预配的“虚拟化主机”节点上运行；需要显式指定来自真实受支持系列（M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i 及其 <code>-flex</code> 变体）的 <code>cloud_instance_type</code>（如果解析出的实例类型不在其中，会以列出确切清单的明确消息退出，因为任何可突增（burstable）类型都不支持该功能，而对于实验室规模的节点，实时价格查询和内置表最终选出的都是可突增类型）。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>AWSBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>gcp</code></td>
 <td><code>GCP_PROJECT</code>/<code>GCP_ZONE</code>（均为必需）、<code>GCP_SERVICE_ACCOUNT_KEY</code>（服务账户 JSON 密钥文件的路径）；<code>GCP_IMAGE_PROJECT</code>/<code>GCP_NETWORK</code>/<code>GCP_SUBNET</code>（均为可选）</td>
-<td>需要在自动化虚拟机上安装真实的 <code>gcloud</code> CLI；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 GCE 镜像名称，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会构建真正的自定义机器类型（<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>，这里唯一不从固定 SKU 表中选择的后端，因此没有 <code>*_INSTANCE_TYPES</code> 之类的覆盖键；请使用 <code>cloud_instance_type</code> 强制指定真实的预定义类型）。预定义机器类型：<a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>。自定义规格的取整规则和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>GCPBackend</code> 类的文档字符串</td>
+<td>需要在自动化虚拟机上安装真实的 <code>gcloud</code> CLI；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 GCE 镜像名称，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会构建真正的自定义机器类型（<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>，这里唯一不从固定 SKU 表中选择的后端，因此没有 <code>*_INSTANCE_TYPES</code> 之类的覆盖键；请使用 <code>cloud_instance_type</code> 强制指定真实的预定义类型）。预定义机器类型：<a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>。自定义规格的取整规则和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>GCPBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>alibaba</code></td>
 <td><code>ALIBABA_ACCESS_KEY_ID</code>/<code>ALIBABA_ACCESS_KEY_SECRET</code>/<code>ALIBABA_REGION</code>（均为必需）、<code>ALIBABA_SECURITY_GROUP_ID</code>/<code>ALIBABA_VSWITCH_ID</code>（均为必需：与 AWS/GCP 不同，没有默认 VPC 可以回退）、<code>ALIBABA_INSTANCE_TYPES</code>（可选，覆盖内置的实例类型表，见上文）</td>
-<td>需要在自动化虚拟机上安装真实的 <code>aliyun</code> CLI；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 Alibaba Cloud ImageId，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 ECS InstanceType，vm_dsk_gb 通过 <code>--SystemDisk.Size</code> 直接生效。当前实例系列：<a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>AlibabaBackend</code> 类的文档字符串</td>
+<td>需要在自动化虚拟机上安装真实的 <code>aliyun</code> CLI；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 Alibaba Cloud ImageId，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 ECS InstanceType，vm_dsk_gb 通过 <code>--SystemDisk.Size</code> 直接生效。当前实例系列：<a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>。内置表和完整的限制列表请参阅 <code>libs/backends.py</code> 中 <code>AlibabaBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>scaleway</code></td>
 <td><code>SCALEWAY_SECRET_KEY</code>/<code>SCALEWAY_PROJECT_ID</code>/<code>SCALEWAY_ZONE</code>（均为必需）、<code>SCALEWAY_SERVER_TYPES</code>（可选，覆盖内置的 commercial_type 表，见上文）</td>
-<td>直接调用 <code>api.scaleway.com</code> 的 REST 接口（无需 CLI）；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 Scaleway 镜像 ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>commercial_type</code>（DEV1-S/M/L、GP1-S）。当前商业类型：<a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>；cloud-init 在创建服务器后通过单独的 <code>PATCH .../user_data/cloud-init</code> 调用传入。<strong>本次会话中没有独立地重新实测这一具体机制</strong>，<code>libs/backends.py</code> 中 <code>ScalewayBackend</code> 类的文档字符串也将其标记为该后端验证最薄弱的部分</td>
+<td>直接调用 <code>api.scaleway.com</code> 的 REST 接口（无需 CLI）；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 Scaleway 镜像 ID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>commercial_type</code>（DEV1-S/M/L、GP1-S）。当前商业类型：<a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>；cloud-init 在创建服务器后通过单独的 <code>PATCH .../user_data/cloud-init</code> 调用传入。<strong>本次会话中没有独立地重新实测这一具体机制</strong>，<code>libs/backends.py</code> 中 <code>ScalewayBackend</code> 类的文档字符串也将其标记为该后端验证最薄弱的部分</td>
 </tr>
 <tr>
 <td><code>upcloud</code></td>
 <td><code>UPCLOUD_USERNAME</code>/<code>UPCLOUD_PASSWORD</code>/<code>UPCLOUD_ZONE</code>（均为必需：在控制面板中启用了 API 访问的 UpCloud 子账户）、<code>UPCLOUD_PLANS</code>（可选，覆盖内置的套餐表，见上文）</td>
-<td>通过 HTTP Basic 认证直接调用 <code>api.upcloud.com</code> 的 REST 接口（无需 CLI，不支持令牌认证）；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是真实的 UpCloud 存储/模板 UUID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>plan</code>（采用 UpCloud 自己的“NxCPU-MGB”命名）。当前套餐：<a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>；vm_dsk_gb 通过存储设备的 <code>size</code> 字段直接生效；按名称查找服务器是在完整服务器列表上进行的客户端过滤（尚未确认服务器端是否有名称过滤）。内置表和完整的限制列表（包括尚未确认的 <code>user_data</code> 字段）请参阅 <code>libs/backends.py</code> 中 <code>UpCloudBackend</code> 类的文档字符串</td>
+<td>通过 HTTP Basic 认证直接调用 <code>api.upcloud.com</code> 的 REST 接口（无需 CLI，不支持令牌认证）；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是真实的 UpCloud 存储/模板 UUID，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>plan</code>（采用 UpCloud 自己的“NxCPU-MGB”命名）。当前套餐：<a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>；vm_dsk_gb 通过存储设备的 <code>size</code> 字段直接生效；按名称查找服务器是在完整服务器列表上进行的客户端过滤（尚未确认服务器端是否有名称过滤）。内置表和完整的限制列表（包括尚未确认的 <code>user_data</code> 字段）请参阅 <code>libs/backends.py</code> 中 <code>UpCloudBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>ovhcloud</code></td>
 <td><code>OVH_APPLICATION_KEY</code>/<code>OVH_APPLICATION_SECRET</code>/<code>OVH_CONSUMER_KEY</code>/<code>OVH_SERVICE_NAME</code>/<code>OVH_REGION</code>（均为必需）、<code>OVH_ENDPOINT</code>（可选，默认 <code>https://eu.api.ovh.com/1.0</code>；对于在 <code>ca</code>/<code>us</code> 注册的 OVH 账户请修改）</td>
-<td>使用 OVH 自己的请求签名方案直接调用 OVHcloud API 的 REST 接口（不是简单的 Bearer 令牌或 Basic 认证；这是本文件中验证最少的后端，没有任何部分在真实的 OVHcloud 账户上运行过）；仅支持 <code>config_method: cloud-init</code>；ISO_IMAGE 必须是按区域划分的真实 OVHcloud Public Cloud imageId（UUID）；规格大小不像其他后端那样是静态表（因此这里也没有 <code>*_INSTANCE_TYPES</code> 之类的配置键）：OVH 的规格 ID 是按区域划分的 UUID，所以 <code>_pick_flavor()</code> 会在创建时真正调用 API；使用 <code>cloud_instance_type</code> 可跳过该调用并直接指定真实的 flavorId。当前规格和价格：<a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a>（按区域划分的真实规格 UUID 只能通过 API 或控制台查看，该价格页面上没有）。仍未确认的完整清单（已明确标出）请参阅 <code>libs/backends.py</code> 中 <code>OVHcloudBackend</code> 类的文档字符串</td>
+<td>使用 OVH 自己的请求签名方案直接调用 OVHcloud API 的 REST 接口（不是简单的 Bearer 令牌或 Basic 认证；这是本文件中验证最少的后端，没有任何部分在真实的 OVHcloud 账户上运行过）；仅支持 <code>config_method: cloud-init</code>；SOURCE_IMAGE 必须是按区域划分的真实 OVHcloud Public Cloud imageId（UUID）；规格大小不像其他后端那样是静态表（因此这里也没有 <code>*_INSTANCE_TYPES</code> 之类的配置键）：OVH 的规格 ID 是按区域划分的 UUID，所以 <code>_pick_flavor()</code> 会在创建时真正调用 API；使用 <code>cloud_instance_type</code> 可跳过该调用并直接指定真实的 flavorId。当前规格和价格：<a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a>（按区域划分的真实规格 UUID 只能通过 API 或控制台查看，该价格页面上没有）。仍未确认的完整清单（已明确标出）请参阅 <code>libs/backends.py</code> 中 <code>OVHcloudBackend</code> 类的文档字符串</td>
 </tr>
 <tr>
 <td><code>exoscale</code></td>
 <td><code>EXOSCALE_API_KEY</code>/<code>EXOSCALE_API_SECRET</code>/<code>EXOSCALE_ZONE</code>（均为必需）、<code>EXOSCALE_INSTANCE_TYPES</code>（可选，覆盖内置的实例类型表，见上文）</td>
-<td>需要在自动化虚拟机上安装真实的 <code>exo</code> CLI；仅支持 <code>config_method: cloud-init</code>（直接传给 <code>exo</code> 的 <code>--cloud-init &lt;file&gt;</code> 选项，是这里所有云后端中最简单的 cloud-init 传递方式）；ISO_IMAGE 必须是真实的 Exoscale 模板 ID 或名称，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>instance-type</code>（Exoscale 自己的“standard.<size>”系列）。当前实例类型：运行 <code>exo compute instance-type list</code>（根据 <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>，这是权威来源；本次会话中没有用该命令重新确认内置表中确切的 vCPU/内存数值）；vm_dsk_gb 通过 <code>--disk-size</code> 直接生效。请参阅 <code>libs/backends.py</code> 中 <code>ExoscaleBackend</code> 类的文档字符串</td>
+<td>需要在自动化虚拟机上安装真实的 <code>exo</code> CLI；仅支持 <code>config_method: cloud-init</code>（直接传给 <code>exo</code> 的 <code>--cloud-init &lt;file&gt;</code> 选项，是这里所有云后端中最简单的 cloud-init 传递方式）；SOURCE_IMAGE 必须是真实的 Exoscale 模板 ID 或名称，而不是 qcow2/ISO 文件名；VM_CPU/VM_MEM 会匹配到满足要求的最小 <code>instance-type</code>（Exoscale 自己的“standard.<size>”系列）。当前实例类型：运行 <code>exo compute instance-type list</code>（根据 <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>，这是权威来源；本次会话中没有用该命令重新确认内置表中确切的 vCPU/内存数值）；vm_dsk_gb 通过 <code>--disk-size</code> 直接生效。请参阅 <code>libs/backends.py</code> 中 <code>ExoscaleBackend</code> 类的文档字符串</td>
 </tr>
 </tbody>
 </table>

@@ -207,6 +207,10 @@
 <td>SUSE Linux Micro 6.1</td>
 </tr>
 <tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1, bring your own subscription. <code>-byos</code> works on any <code>sles</code> or <code>slmicro</code> name: no AWS Marketplace subscription is needed, and the node is registered after its first boot with <code>SUSE_regcode</code> from <code>lab_creation.cfg</code>, without which it has no package repositories</td>
+</tr>
+<tr>
 <td><code>leap</code></td>
 <td>The newest openSUSE Leap</td>
 </tr>
@@ -497,7 +501,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><code>disabled_nodes</code> takes entries in exactly the form <code>nodes</code> does, for nodes that are part of a lab's design but are not deployed. Nothing reads them: no VM is created, no DNS record is added and no add-on runs. A node is parked there instead of being deleted, so whatever it is waiting for, an image the backend has no equivalent for, a release that is end of life, hardware that is not available yet, can be answered by moving its entry back into <code>nodes</code> unchanged.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
-    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
+    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: SOURCE_IMAGE, VM_MEM, VM_DSK...&quot;]
     Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type, clu_rel, mydomain, addons&quot;]
     Lab --&gt; AddonSections[&quot;one section per add-on&lt;br/&gt;e.g. rancher, longhorn&quot;]
     Nodes -. &quot;kcluster&quot; .-&gt; KClusters
@@ -511,18 +515,18 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
     &quot;node101.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.101&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
       &quot;kcluster&quot;: &quot;cluster1&quot;           // which kclusters entry this node belongs to
     },
     &quot;node102.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.102&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;agent&quot;,
       &quot;kcluster&quot;: &quot;cluster1&quot;
     }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;:     &quot;24576&quot;,
     &quot;VM_DSK&quot;:     &quot;80&quot;,
     &quot;VM_CPU&quot;:     &quot;6&quot;,
@@ -559,16 +563,16 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   node101.mydemo.lab:
     myip: &quot;192.168.88.101&quot;
     mymac: &quot;34:8a:b1:4b:1a:c1&quot;
-    INSTALL_RKE2_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
+    KUBERNETES_NODE_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
     kcluster: cluster1          # which kclusters entry this node belongs to
   node102.mydemo.lab:
     myip: &quot;192.168.88.102&quot;
     mymac: &quot;34:8a:b1:4b:1a:c2&quot;
-    INSTALL_RKE2_TYPE: agent
+    KUBERNETES_NODE_TYPE: agent
     kcluster: cluster1
 
 common:
-  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  SOURCE_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
   VM_MEM: &quot;24576&quot;
   VM_DSK: &quot;80&quot;
   VM_CPU: &quot;6&quot;
@@ -693,7 +697,7 @@ setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclu
 <p>A lab definition records the versions it was written for in its top-level <code>schema_versions</code> object; the web UI writes it. A definition that records none counts as version 1.0 of every schema.</p>
 <pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
 </code></pre>
-<p><code>setup_lab.py</code> and <code>setup_vm.py</code> stop when a lab definition still needs a migration, and list the changes. <code>migrate_config.py</code> makes them:</p>
+<p><code>setup_lab.py</code>, <code>setup_vm.py</code> and <code>setup_automation_node.py</code> migrate a lab definition that still needs it: they warn once per change, save the result to <code>&lt;file&gt;.system_modified.json</code> and carry on with that file, which every add-on of the run reads too. Replace the original with it to stop the warnings. <code>migrate_config.py</code> makes the same changes without running anything:</p>
 <pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
 migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
 </code></pre>
@@ -709,7 +713,7 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
     &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
     &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
   }
@@ -731,7 +735,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
     &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
 }
 </code></pre>
@@ -742,7 +746,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
     &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;uyuni&quot;: {
     &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
     &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
@@ -811,7 +815,7 @@ on an in-guest agent. Two more overrides matter for an image this old:</p>
     &quot;legacy1.mydemo.lab&quot;: {
       &quot;myip&quot;: &quot;192.168.88.120&quot;,
       &quot;config_method&quot;: &quot;virt_customize&quot;,
-      &quot;ISO_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
+      &quot;SOURCE_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
       &quot;VM_BOOT&quot;: &quot;bios&quot;,
       &quot;VM_MACHINE&quot;: &quot;pc&quot;
     }
@@ -841,15 +845,15 @@ so this section doesn't grow without bound.</p>
   "nodes": {
     "node101.mydemo.lab": {
       "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
-      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "server", "kcluster": "cluster1"
     },
     "node102.mydemo.lab": {
       "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
-      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "agent", "kcluster": "cluster1"
     }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
   },
@@ -872,7 +876,7 @@ so this section doesn't grow without bound.</p>
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>ISO_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building. Every value is checked against the schema that declares it, too: an <code>myip</code> that is not an IP address, a <code>VM_MEM</code> that is not a number or below its minimum, a <code>clu_type</code> that is not one of the declared Kubernetes cluster types. Each add-on's <code>--validate</code> does the same for its own fields and for a per-node override of them.</p>
+<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>SOURCE_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building. Every value is checked against the schema that declares it, too: an <code>myip</code> that is not an IP address, a <code>VM_MEM</code> that is not a number or below its minimum, a <code>clu_type</code> that is not one of the declared Kubernetes cluster types. Each add-on's <code>--validate</code> does the same for its own fields and for a per-node override of them.</p>
 <p>In order, this: registers both nodes in DNS → creates both VMs (copies the QCOW2 image, generates Combustion files, boots them, waits for SSH) → installs RKE2 on <code>node101</code> as server, then <code>node102</code> as agent → installs <code>rancher</code> and <code>longhorn</code> on the cluster's management node (<code>mgm_node</code>, defaulting to the first server node — <code>node101</code> here). A 2-node cluster with Rancher typically takes 15–25 minutes; most of it is RKE2 bootstrapping and Rancher's own Helm install.</p>
 <ol start="3">
 <li><strong>Verify DNS resolves</strong> (from your own desktop, once it's <a href="#step-5--point-your-client-dns-at-the-automation-vm">pointed at the automation VM's DNS</a>):</li>
@@ -906,7 +910,7 @@ so this section doesn't grow without bound.</p>
     "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
   },
@@ -1101,6 +1105,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Dedicated game-server hosting/scaling (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Applies one or more Kubernetes manifests (a local file, an http(s) or nfs:// URL, or inline YAML/JSON) to a kcluster via <code>kubectl apply</code> — a generic escape hatch for one-off resources that don't warrant their own addon</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1185,6 +1193,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Provisions a real Ansible control node: installs <code>ansible-core</code>, pushes example playbooks + a dynamic inventory script that queries <code>uyuni</code>/<code>smlm</code>'s own system list, sets up SSH access to the rest of the lab. Pairs with <code>uyuni</code>/<code>smlm</code>'s own <code>*_ansible_control_nodes</code> field, which enables the server-side "Ansible Control Node" entitlement</td>
 </tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Pushes and runs an arbitrary Ansible playbook (a local file, an http(s) or nfs:// URL, or inline YAML) against an already-provisioned <code>ansible_control_node</code>, using its own dynamic inventory</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1267,7 +1279,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://apps.rancher.io/"><code>appcollection</code></a></td>
-<td>SUSE Application Collection</td>
+<td>SUSE Application Collection — logs Helm in, and by default also requires Rancher on the same kcluster and registers the Collection as a real Rancher ClusterRepo (Apps &amp; Marketplace UI), retrying automatically if Rancher hasn't started yet (<code>appcollection_standalone: true</code> skips both, Helm CLI only, no Rancher dependency). The <code>rancher</code> addon's own <code>rancher_install_appcollection</code> can also trigger this with no separate <code>appcollection</code> addon entry at all.</td>
 </tr>
 <tr>
 <td><a href="https://www.stackstate.com/"><code>stackpack</code></a></td>
@@ -1284,6 +1296,14 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Standalone Grafana server (podman container, no Kubernetes) — auto-provisions a Prometheus datasource and, optionally, the real Grafana Labs community dashboard for an <code>smlm</code>/<code>uyuni</code> server's own exporters</td>
+</tr>
+<tr>
+<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
+<td>A website served from a SUSE BCI image (podman container, no Kubernetes) — nginx and the page are built into the image on the node itself; the page is generated, or downloaded from <code>bci_website_content_url</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Runs one or more shell commands, in order, on the target node — or a whole script fetched from a local file, an http(s) or nfs:// URL — a generic escape hatch for a one-off provisioning step that doesn't warrant its own addon</td>
 </tr>
 </tbody>
 </table>
@@ -1392,6 +1412,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>SUSE Virtualization (Harvester/KubeVirt) node provisioning</td>
+</tr>
+<tr>
+<td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
+<td>Installs rodeo-cli, a Terraform-style CLI that deploys nested KVM labs (Harvester HCI, Rancher Prime, or both), ready to use on the target node — rodeo-cli's own plan/secrets files are not this addon's concern</td>
 </tr>
 </tbody>
 </table>
@@ -1566,6 +1590,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
+<p><strong>Which account a run uses</strong> can also be decided at the execution point: <code>--cloud-account &lt;name&gt;</code> on <code>setup_lab.py</code>, <code>setup_vm.py</code>, <code>destroy_lab.py</code> and <code>destroy_vm.py</code> applies to every cloud node of that run and takes precedence over <code>cloud_account</code> in the lab definition, so one lab file stays shareable between operators who each have their own account. It is required when several credentials files match a node's backend: those are separate platforms, each with its own region, network, security group, images and addresses, so there is no right one to guess and the run refuses rather than picking. Whenever a single run selects more than one account, it warns that nodes under different accounts are not on one network and reach each other only through the <a href="#overlay">overlay</a>.</p>
 <p>Cipher (see <code>libs/crypto_store.py</code>): the passphrase runs through <strong>Argon2id</strong> (a deliberately slow, memory-hard KDF — this, not the cipher, is the real security boundary for a passphrase-encrypted file) to derive a 512-bit master secret; <strong>HKDF-SHA512</strong> then derives two independent 256-bit subkeys (domain-separated by label, not just split in half); the data is encrypted with <strong>AES-256-GCM then ChaCha20-Poly1305 in cascade</strong> — two structurally different, independently-keyed AEAD ciphers, so a catastrophic break of either single algorithm still isn't enough on its own. Any tool that needs a credential (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) prompts for its passphrase once per run (cached in process memory only, never written anywhere) via <code>libs/primary.py</code>'s <code>try_load_cloud_account()</code> — the one function everything goes through. A run that cannot be asked — the web UI's <strong>Create lab</strong>, a scheduled run, a pipeline — takes the passphrase from <code>LAB_CREDENTIALS_PASSPHRASE</code> instead, tried once and never written anywhere; setting a new passphrase always asks, so the variable can never silently encrypt a file.</p>
 <p>A file can opt out of encryption with a top-level <code>unencrypted: true</code> (not the default — <code>setup_credentials.py</code> asks before writing one this way). <code>--encrypt-existing</code> encrypts only the sensitive-looking fields (secret/password/token-shaped names) in place, leaving e.g. <code>AWS_REGION</code>/<code>AWS_PROFILE</code> readable, and never overwrites its input — it writes <code>&lt;name&gt;.encrypted.yaml</code> alongside it for you to review and move into place. Requires the <code>cryptography</code> Python package (<code>python311-cryptography</code>, or <code>pip install cryptography</code>, ≥41 for Argon2id) on the automation VM — imported lazily, only when an actually-encrypted file is touched, so a lab that never sets <code>cloud_account</code> needs no new dependency.</p>
 <p><strong>External-service credentials (SCC, SUSE Application Collection, Hermes, …).</strong> The same <code>/etc/lab_creation/credentials/</code> store, encryption, and <code>setup_credentials.py</code> tool also cover non-cloud external-service credentials — not just cloud providers. A file is marked with <code>credential_kind</code> (e.g. <code>scc</code>, <code>appcollection</code>, <code>hermes</code>) instead of <code>cloudtype</code>, so the two concepts share the directory/format without ever colliding. Each addon that needs an external-service credential documents its own optional <code>&lt;field&gt;_account</code> (e.g. <code>smlm_scc_account</code>, <code>suse_ai_registry_account</code>, <code>hermes_account</code>) to name one explicitly; left unset, exactly one matching <code>credential_kind</code> file auto-discovers the same way <code>cloud_account</code> does. <strong>Plaintext-in-lab-JSON remains fully valid either way</strong> — this store is an optional alternative for the credential, never a requirement; every addon's own plaintext fields (<code>smlm_scc_user</code>, <code>suse_ai_registry_user</code>, <code>hermes_llm_api_key</code>, …) still work unchanged if you never touch the credential store at all.</p>
@@ -1573,7 +1598,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>One credential file per kind is reusable across every addon that needs that kind (e.g. a single <code>scc</code> file covers any addon's own SCC credentials), regardless of each addon's own JSON-field prefix — see <code>libs/addon_common.py</code>'s <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> and <code>libs/primary.py</code>'s <code>*_service_credential*</code> functions for the underlying mechanism.</p>
 <p><strong>Cloud backends (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) and <code>myip</code>:</strong> leave a cloud-backend node's <code>myip</code> empty in the lab JSON — the real IP is only known once the provider assigns it at create time, not something you can decide in advance the way a static libvirt/Harvester IP works. <code>setup_vm.py</code> picks up the real IP from <code>create_vm()</code>'s own return value and registers it in DNS <em>after</em> the node actually exists, not before (a real bug found live-testing AWSBackend, 2026-09-06 — see TODO). <code>mymac</code> is similarly meaningless for a cloud backend — leave it unset; it's ignored rather than generated/conflict-checked.</p>
-<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. It boots from the newest openSUSE Leap image the provider publishes (on AWS, taken from SUSE's public cloud image list), or from the lab's own image on a provider without one; Debian/Ubuntu, SUSE and Fedora-family (RHEL, Amazon Linux) images are supported. Set <code>CLOUD_DNS_IMAGE</code> in the cloud account (or <code>lab_creation.cfg</code>) to boot it from a specific image instead. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. Nodes are pointed at this server by the backend's own <code>use_dns_server()</code>, called right after the DNS VM is ensured: it configures the cloud network itself to hand that server out, so a node resolves its lab peers by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set naming the DNS VM as the VPC's only DNS server and the lab domain as its search domain; it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews. <code>AmazonProvidedDNS</code> cannot be listed alongside a custom server, so the DNS VM recurses for everything outside the lab domain. <strong>One known gap:</strong> nodes query this DNS VM through its private IP; DNS queries to its public IP from outside the cloud can be intercepted by networks on the path, since some ISPs and routers answer all DNS traffic themselves. See the <code>ensure_cloud_dns_vm()</code> docstring in <code>libs/backends.py</code>.</p>
+<p><strong>Cloud DNS VM:</strong> the first time any lab node uses a given cloud backend, <code>setup_vm.py</code> also provisions (or reuses, if one already exists) a small, cheap DNS-serving VM inside that same cloud network — <code>lab-dns-&lt;backend&gt;</code>, e.g. <code>lab-dns-aws</code> — running BIND. It boots from the newest openSUSE Leap image the provider publishes (on AWS, taken from SUSE's public cloud image list), or from the lab's own image on a provider without one; Debian/Ubuntu, SUSE and Fedora-family (RHEL, Amazon Linux) images are supported. Set <code>CLOUD_DNS_IMAGE</code> in the cloud account (or <code>lab_creation.cfg</code>) to boot it from a specific image instead. This exists because cloud nodes generally cannot reach <code>automation.mydemo.lab</code>'s own BIND server at all (it sits behind the home lab's own NAT/router, not internet-reachable); a real multi-node cloud cluster needs its own DNS server living inside that same cloud network for its nodes to resolve each other. Every cloud node's DNS entry is registered in <em>both</em> this DNS VM and the central <code>automation.mydemo.lab</code> zone. Each cloud node is pointed at this server's private address from inside the guest as soon as it is reachable, before its first reboot: NetworkManager gets a global DNS configuration, wicked a static netconfig policy, and systemd-resolved the lab server plus a per-link setting that ignores the DNS servers the provider's DHCP hands out. The provider's network itself is left alone, so this works the same on every cloud. The DNS VM answers in two views. A client reaching it from a private address, which is a node of that cloud network or one routed to it through the overlay, gets the lab's nodes of that network at their private addresses, so traffic between them stays inside the network instead of leaving through its internet gateway and coming back from a public address its own firewall rules do not admit. Every other client gets the public addresses every other DNS server of the lab answers with. A node <code>setup_lab.py --keep</code> reuses has its records and its DNS setting written again, so an existing lab moves to this on its next run. The DNS VM recurses for everything outside the lab domain. See the <code>ensure_cloud_dns_vm()</code> docstring in <code>libs/backends.py</code>.</p>
 <p><strong>Cloud instance sizing:</strong> every cloud backend maps <code>VM_CPU</code>/<code>VM_MEM</code> to the provider's own smallest sufficient instance type/server type/plan/flavor from a small built-in table (each one's own "Notes" column below says which) — that table was never meant to be a ceiling. AWS is the exception: it reads the instance types its own region actually offers together with their on-demand prices, and buys the cheapest x86_64 type satisfying both <code>VM_CPU</code> and <code>VM_MEM</code>, using the table only when that lookup is unavailable. Two ways to override it, in order of precedence:
 1. <strong><code>cloud_instance_type</code></strong> (common or per-node, per-node wins) — an exact instance type/server type/plan/flavor name, used verbatim instead of auto-picking one at all. Works the same way on every cloud backend, including OVHcloud (skips its own live flavor-list API call) and GCP (skips building a custom <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code> type — give it a real predefined type like <code>n2-standard-4</code> instead).
 2. <strong>A <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> config key</strong> (see each provider's own row below) — a full replacement of the built-in table itself, so <code>VM_CPU</code>/<code>VM_MEM</code> auto-picking keeps working but against your own list. Format: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, e.g. <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. This replaces the table entirely, not merges with it — repeat any built-in entries you still want. GCP and OVHcloud have no such key: GCP builds a real custom machine type directly from <code>VM_CPU</code>/<code>VM_MEM</code> (no catalog to override), and OVHcloud already queries its own real flavor list live at create time (see its own row).</p>
@@ -1589,47 +1614,47 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <tr>
 <td><code>harvester</code></td>
 <td><code>HARVESTER_KUBECONFIG</code> (required), <code>HARVESTER_NAMESPACE</code> (optional, default <code>default</code>), <code>HARVESTER_NETWORK</code> (optional, a pre-existing Multus NetworkAttachmentDefinition)</td>
-<td><code>config_method: cloud-init</code> only; ISO_IMAGE must already be an imported Harvester VirtualMachineImage</td>
+<td><code>config_method: cloud-init</code> only; SOURCE_IMAGE must already be an imported Harvester VirtualMachineImage</td>
 </tr>
 <tr>
 <td><code>hetzner</code></td>
 <td><code>HETZNER_TOKEN</code> (required, a Hetzner Cloud API token scoped to one project), <code>HETZNER_LOCATION</code> (optional, e.g. <code>nbg1</code>/<code>fsn1</code>/<code>hel1</code>/<code>ash</code>/<code>hil</code>), <code>HETZNER_SERVER_TYPES</code> (optional, overrides the built-in server_type table — see above)</td>
-<td><code>config_method: cloud-init</code> only; ISO_IMAGE must be a real Hetzner image name (e.g. <code>ubuntu-24.04</code>) or your own snapshot ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest Hetzner server_type that satisfies both, and vm_dsk_gb can't exceed that server_type's own bundled disk — current server types: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (Hetzner has no single dedicated API-independent listing page; the Cloud Console/pricing page is the practical source) — see <code>libs/backends.py</code>'s <code>HetznerBackend</code> class docstring for the built-in table and full list of limitations</td>
+<td><code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real Hetzner image name (e.g. <code>ubuntu-24.04</code>) or your own snapshot ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest Hetzner server_type that satisfies both, and vm_dsk_gb can't exceed that server_type's own bundled disk — current server types: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (Hetzner has no single dedicated API-independent listing page; the Cloud Console/pricing page is the practical source) — see <code>libs/backends.py</code>'s <code>HetznerBackend</code> class docstring for the built-in table and full list of limitations</td>
 </tr>
 <tr>
 <td><code>aws</code></td>
 <td><code>AWS_REGION</code> (required), plus either <code>AWS_PROFILE</code> or <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code> (required); <code>AWS_SESSION_TOKEN</code> (required in practice for a temporary/STS-issued key — one starting <code>ASIA</code> rather than <code>AKIA</code>, e.g. from SSO/IAM Identity Center or an assumed role; <code>resolve()</code> dies with a clear message if it's missing for that key type); <code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code> (all optional, default to the account's own default VPC/security group when unset — many real accounts have none, see the live-test findings in TODO); <code>AWS_INSTANCE_TYPES</code> (optional, overrides the built-in instance-type table — see above)</td>
-<td>Requires the real <code>aws</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real AMI ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the cheapest sufficient x86_64 EC2 instance type the region actually offers, read live from <code>describe-instance-types</code> plus the Price List API and cached per region, falling back to the built-in table when either lookup is unavailable (arm64 is never picked automatically, although it is cheaper: name one in <code>cloud_instance_type</code> to use it), but vm_dsk_gb DOES map directly (unlike Hetzner) via the AMI's own real root EBS volume — current instance types: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>; per-node/common <code>aws_nested_virtualization: "true"</code> (opt-in, off by default) launches the instance with AWS's own real nested-KVM support (<code>--cpu-options "NestedVirtualization=enabled"</code>, docs: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>), letting this project's own kickstart/combustion pipeline — including a real Harvester HCI ISO install — run on a cloud-provisioned "hypervisor" node the same way it runs on real bare metal; requires an explicit <code>cloud_instance_type</code> from a real supported family (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i and their <code>-flex</code> variants — dies with a clear message naming the exact list if the resolved instance type isn't one of these, since no burstable type supports it, and a burstable type is what both the live price lookup and the built-in table settle on for a lab-sized node) — see <code>libs/backends.py</code>'s <code>AWSBackend</code> class docstring for the built-in table and full list of limitations</td>
+<td>Requires the real <code>aws</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real AMI ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the cheapest sufficient x86_64 EC2 instance type the region actually offers, read live from <code>describe-instance-types</code> plus the Price List API and cached per region, falling back to the built-in table when either lookup is unavailable (arm64 is never picked automatically, although it is cheaper: name one in <code>cloud_instance_type</code> to use it), but vm_dsk_gb DOES map directly (unlike Hetzner) via the AMI's own real root EBS volume — current instance types: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>; per-node/common <code>aws_nested_virtualization: "true"</code> (opt-in, off by default) launches the instance with AWS's own real nested-KVM support (<code>--cpu-options "NestedVirtualization=enabled"</code>, docs: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>), letting this project's own kickstart/combustion pipeline — including a real Harvester HCI ISO install — run on a cloud-provisioned "hypervisor" node the same way it runs on real bare metal; requires an explicit <code>cloud_instance_type</code> from a real supported family (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i and their <code>-flex</code> variants — dies with a clear message naming the exact list if the resolved instance type isn't one of these, since no burstable type supports it, and a burstable type is what both the live price lookup and the built-in table settle on for a lab-sized node) — see <code>libs/backends.py</code>'s <code>AWSBackend</code> class docstring for the built-in table and full list of limitations</td>
 </tr>
 <tr>
 <td><code>gcp</code></td>
 <td><code>GCP_PROJECT</code>/<code>GCP_ZONE</code> (both required), <code>GCP_SERVICE_ACCOUNT_KEY</code> (path to a service-account JSON key file); <code>GCP_IMAGE_PROJECT</code>/<code>GCP_NETWORK</code>/<code>GCP_SUBNET</code> (all optional)</td>
-<td>Requires the real <code>gcloud</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real GCE image name, not a qcow2/ISO filename; VM_CPU/VM_MEM build a genuine custom machine type (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>, the only backend here that doesn't pick from a fixed SKU table, so no <code>*_INSTANCE_TYPES</code>-style override key — use <code>cloud_instance_type</code> instead to force a real predefined type) — predefined machine types: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a> — see <code>libs/backends.py</code>'s <code>GCPBackend</code> class docstring for the custom-shape rounding rules and full list of limitations</td>
+<td>Requires the real <code>gcloud</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real GCE image name, not a qcow2/ISO filename; VM_CPU/VM_MEM build a genuine custom machine type (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>, the only backend here that doesn't pick from a fixed SKU table, so no <code>*_INSTANCE_TYPES</code>-style override key — use <code>cloud_instance_type</code> instead to force a real predefined type) — predefined machine types: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a> — see <code>libs/backends.py</code>'s <code>GCPBackend</code> class docstring for the custom-shape rounding rules and full list of limitations</td>
 </tr>
 <tr>
 <td><code>alibaba</code></td>
 <td><code>ALIBABA_ACCESS_KEY_ID</code>/<code>ALIBABA_ACCESS_KEY_SECRET</code>/<code>ALIBABA_REGION</code> (all required), <code>ALIBABA_SECURITY_GROUP_ID</code>/<code>ALIBABA_VSWITCH_ID</code> (both required — unlike AWS/GCP, there's no default-VPC fallback), <code>ALIBABA_INSTANCE_TYPES</code> (optional, overrides the built-in instance-type table — see above)</td>
-<td>Requires the real <code>aliyun</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real Alibaba Cloud ImageId, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient ECS InstanceType, vm_dsk_gb maps directly via <code>--SystemDisk.Size</code> — current instance families: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a> — see <code>libs/backends.py</code>'s <code>AlibabaBackend</code> class docstring for the built-in table and full list of limitations</td>
+<td>Requires the real <code>aliyun</code> CLI on the automation VM; <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real Alibaba Cloud ImageId, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient ECS InstanceType, vm_dsk_gb maps directly via <code>--SystemDisk.Size</code> — current instance families: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a> — see <code>libs/backends.py</code>'s <code>AlibabaBackend</code> class docstring for the built-in table and full list of limitations</td>
 </tr>
 <tr>
 <td><code>scaleway</code></td>
 <td><code>SCALEWAY_SECRET_KEY</code>/<code>SCALEWAY_PROJECT_ID</code>/<code>SCALEWAY_ZONE</code> (all required), <code>SCALEWAY_SERVER_TYPES</code> (optional, overrides the built-in commercial_type table — see above)</td>
-<td>Raw REST against <code>api.scaleway.com</code> (no CLI needed); <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real Scaleway image ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>commercial_type</code> (DEV1-S/M/L, GP1-S) — current commercial types: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>; cloud-init is delivered via a separate <code>PATCH .../user_data/cloud-init</code> call after server creation — <strong>this specific mechanism was NOT independently re-verified live this session</strong>, flagged in <code>libs/backends.py</code>'s <code>ScalewayBackend</code> class docstring as the weakest-verified part of this backend</td>
+<td>Raw REST against <code>api.scaleway.com</code> (no CLI needed); <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real Scaleway image ID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>commercial_type</code> (DEV1-S/M/L, GP1-S) — current commercial types: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>; cloud-init is delivered via a separate <code>PATCH .../user_data/cloud-init</code> call after server creation — <strong>this specific mechanism was NOT independently re-verified live this session</strong>, flagged in <code>libs/backends.py</code>'s <code>ScalewayBackend</code> class docstring as the weakest-verified part of this backend</td>
 </tr>
 <tr>
 <td><code>upcloud</code></td>
 <td><code>UPCLOUD_USERNAME</code>/<code>UPCLOUD_PASSWORD</code>/<code>UPCLOUD_ZONE</code> (all required — an UpCloud subaccount with API access enabled in the control panel), <code>UPCLOUD_PLANS</code> (optional, overrides the built-in plan table — see above)</td>
-<td>Raw REST against <code>api.upcloud.com</code> over HTTP Basic Auth (no CLI needed, no token-auth support); <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real UpCloud storage/template UUID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>plan</code> (UpCloud's own "NxCPU-MGB" naming) — current plans: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>; vm_dsk_gb maps directly via the storage device's own <code>size</code> field; server lookup by name is a client-side filter over the full server list (no confirmed server-side name filter) — see <code>libs/backends.py</code>'s <code>UpCloudBackend</code> class docstring for the built-in table and full list of limitations, including the unconfirmed <code>user_data</code> field</td>
+<td>Raw REST against <code>api.upcloud.com</code> over HTTP Basic Auth (no CLI needed, no token-auth support); <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real UpCloud storage/template UUID, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>plan</code> (UpCloud's own "NxCPU-MGB" naming) — current plans: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>; vm_dsk_gb maps directly via the storage device's own <code>size</code> field; server lookup by name is a client-side filter over the full server list (no confirmed server-side name filter) — see <code>libs/backends.py</code>'s <code>UpCloudBackend</code> class docstring for the built-in table and full list of limitations, including the unconfirmed <code>user_data</code> field</td>
 </tr>
 <tr>
 <td><code>ovhcloud</code></td>
 <td><code>OVH_APPLICATION_KEY</code>/<code>OVH_APPLICATION_SECRET</code>/<code>OVH_CONSUMER_KEY</code>/<code>OVH_SERVICE_NAME</code>/<code>OVH_REGION</code> (all required), <code>OVH_ENDPOINT</code> (optional, default <code>https://eu.api.ovh.com/1.0</code> — override for a <code>ca</code>/<code>us</code>-registered OVH account)</td>
-<td>Raw REST against the OVHcloud API using OVH's own request-signing scheme (no simple bearer token/Basic Auth — this is the least-verified backend in this file, none of it exercised against a real OVHcloud account); <code>config_method: cloud-init</code> only; ISO_IMAGE must be a real region-scoped OVHcloud Public Cloud imageId (UUID); flavor sizing is NOT a static table like the other backends (so no <code>*_INSTANCE_TYPES</code>-style config key here either) — OVH flavor IDs are per-region UUIDs, so <code>_pick_flavor()</code> does a real API call at create time; use <code>cloud_instance_type</code> to skip that call and give a real flavorId directly — current flavors/pricing: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (the real, per-region flavor UUIDs are only visible via the API/console, not that pricing page) — see <code>libs/backends.py</code>'s <code>OVHcloudBackend</code> class docstring for the full, explicitly-flagged list of what remains unconfirmed</td>
+<td>Raw REST against the OVHcloud API using OVH's own request-signing scheme (no simple bearer token/Basic Auth — this is the least-verified backend in this file, none of it exercised against a real OVHcloud account); <code>config_method: cloud-init</code> only; SOURCE_IMAGE must be a real region-scoped OVHcloud Public Cloud imageId (UUID); flavor sizing is NOT a static table like the other backends (so no <code>*_INSTANCE_TYPES</code>-style config key here either) — OVH flavor IDs are per-region UUIDs, so <code>_pick_flavor()</code> does a real API call at create time; use <code>cloud_instance_type</code> to skip that call and give a real flavorId directly — current flavors/pricing: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (the real, per-region flavor UUIDs are only visible via the API/console, not that pricing page) — see <code>libs/backends.py</code>'s <code>OVHcloudBackend</code> class docstring for the full, explicitly-flagged list of what remains unconfirmed</td>
 </tr>
 <tr>
 <td><code>exoscale</code></td>
 <td><code>EXOSCALE_API_KEY</code>/<code>EXOSCALE_API_SECRET</code>/<code>EXOSCALE_ZONE</code> (all required), <code>EXOSCALE_INSTANCE_TYPES</code> (optional, overrides the built-in instance-type table — see above)</td>
-<td>Requires the real <code>exo</code> CLI on the automation VM; <code>config_method: cloud-init</code> only (passed straight to <code>exo</code>'s own <code>--cloud-init &lt;file&gt;</code> flag, the simplest cloud-init delivery of any cloud backend here); ISO_IMAGE must be a real Exoscale template ID/name, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>instance-type</code> (Exoscale's own "standard.<size>" family) — current instance types: run <code>exo compute instance-type list</code> (the authoritative source per <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a> — the built-in table's exact vCPU/RAM figures were NOT independently re-confirmed against that command this session); vm_dsk_gb maps directly via <code>--disk-size</code> — see <code>libs/backends.py</code>'s <code>ExoscaleBackend</code> class docstring</td>
+<td>Requires the real <code>exo</code> CLI on the automation VM; <code>config_method: cloud-init</code> only (passed straight to <code>exo</code>'s own <code>--cloud-init &lt;file&gt;</code> flag, the simplest cloud-init delivery of any cloud backend here); SOURCE_IMAGE must be a real Exoscale template ID/name, not a qcow2/ISO filename; VM_CPU/VM_MEM are matched to the smallest sufficient <code>instance-type</code> (Exoscale's own "standard.<size>" family) — current instance types: run <code>exo compute instance-type list</code> (the authoritative source per <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a> — the built-in table's exact vCPU/RAM figures were NOT independently re-confirmed against that command this session); vm_dsk_gb maps directly via <code>--disk-size</code> — see <code>libs/backends.py</code>'s <code>ExoscaleBackend</code> class docstring</td>
 </tr>
 </tbody>
 </table>
