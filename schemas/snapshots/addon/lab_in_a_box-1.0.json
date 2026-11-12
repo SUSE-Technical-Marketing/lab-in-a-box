@@ -1,0 +1,16 @@
+{
+ "fields": {
+  "lab_in_a_box_args": {
+   "default": "[\"--fetch-only\"]",
+   "required": false,
+   "type": "string"
+  },
+  "lab_in_a_box_install_url": {
+   "default": "https://raw.githubusercontent.com/SUSE-Technical-Marketing/lab-in-a-box/main/install_demo_server_scripts.sh",
+   "required": false,
+   "type": "url"
+  }
+ },
+ "schema": "addon:lab_in_a_box",
+ "version": "1.0"
+}

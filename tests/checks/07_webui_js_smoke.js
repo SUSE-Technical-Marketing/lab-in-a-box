@@ -629,7 +629,9 @@ async function urlParamChecks() {
   check("the model restored on load is loaded before the catalogue/base fetches, not after",
         /const draft = readDraft\(DRAFT_KEY\);[\s\S]*?loadComponents\(\)/.test(src));
 
-  const htmlFiles = ["index.html", "index-static.html", "lab-builder-static.html"];
+  // index-static.html/lab-builder-static.html are build artifacts (gitignored, scripts/build-cube-static.py's
+  // output) that don't exist on a clean checkout — only index.html, the real source, is checked here.
+  const htmlFiles = ["index.html"];
   htmlFiles.forEach((f) => {
     const h = fs.readFileSync("webui/htdocs/" + f, "utf8");
     check(f + ": has a Start fresh button", /id="startFreshBtn"/.test(h));

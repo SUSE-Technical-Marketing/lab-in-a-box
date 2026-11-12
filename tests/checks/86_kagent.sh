@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_kagent
 # install_kagent: OCI charts in order, provider values, the API-key secret, the UI ingress and validation. SSH is faked.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail

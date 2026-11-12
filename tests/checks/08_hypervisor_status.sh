@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/refresh_hypervisor_status.py webui/lib/discovery.py
 # Pure-logic unit tests for the hypervisor status snapshot feature
 # (scripts/refresh_hypervisor_status.py + webui/lib/discovery.py's
 # status()/dynamic SOURCE_IMAGE enum injection) — SSH is mocked. Independent container — see

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/appco_common.py
 # Installing an add-on's product from the SUSE Application Collection instead of its upstream chart: the shared
 # mechanism in libs/appco_common.py and longhorn (SUSE Storage), the first add-on to offer it.
 # Independent container — see tests/run_tests.sh.

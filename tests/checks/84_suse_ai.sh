@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_suse_ai
 # install_suse_ai: component order, derived chart values, pull secrets, cert-manager and registry logins. SSH and the credential
 # store are faked. Independent container — see tests/run_tests.sh.
 set -uo pipefail

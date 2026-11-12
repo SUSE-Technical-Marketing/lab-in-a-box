@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/destroy_lab.py
 # Mocked unit tests for scripts/destroy_lab.py — whole-lab
 # teardown orchestration. destroy_vm() and
 # subprocess.run (ssh-keygen) are both monkeypatched. Independent container

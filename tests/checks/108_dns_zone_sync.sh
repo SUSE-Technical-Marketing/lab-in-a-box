@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/dns_zone.py libs/services.py
 # The shape of a BIND zone this project manages (libs/dns_zone.py) and the DNS master handling in
 # libs/services.py: zone creation before a record is written, the once-per-process reachability gate, the
 # additive sync, the deliberate prune, and the reported removal. Independent container — see tests/run_tests.sh.

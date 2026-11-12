@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: webui/lib/discovery.py
 # Unit tests for webui/lib/discovery.py's schema()/discover() attaching
 # PLUGIN capabilities (targets/layers), and the _def_path() fix that makes
 # schema() actually find a ported addon in a repo checkout (not just

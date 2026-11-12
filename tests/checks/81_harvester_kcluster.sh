@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/harvester.py
 # Unit tests for libs/harvester.py: Harvester kclusters (clu_type "harvester") on the aws backend — node configuration,
 # preflight problems, and the HTTPS, kubeconfig, Ready-node and Settings steps with urllib, SSH and kubectl mocked.
 # Independent container — see tests/run_tests.sh.

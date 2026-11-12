@@ -40,7 +40,9 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 0
 fi
 
-"${_repo_root}/tests/run_tests.sh" || exit 1
+# Scope the suite to what's actually staged (tests/select_checks.py): a check that declares no
+# dependency still always runs, so this is additive-safe, not a narrower gate than before.
+TESTS_CHANGED_FILES="$(git diff --cached --name-only)" "${_repo_root}/tests/run_tests.sh" || exit 1
 
 # install_demo_server_scripts.sh's own multi-OS test (tests/install_test/run.sh) pulls several
 # external OS images and runs real package installs — slow and network-dependent, so it only

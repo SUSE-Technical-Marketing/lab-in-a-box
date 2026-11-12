@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_smlm
 # Unit tests for install_smlm's traditional mgradm/podman (bare-metal)
 # deployment mode. Independent container — see tests/run_tests.sh.
 set -uo pipefail

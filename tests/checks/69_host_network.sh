@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/host_network.py
 # Unit tests for libs/host_network.py (bridge renderers and rollback handling).
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail

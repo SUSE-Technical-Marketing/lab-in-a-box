@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/lab_schema
 # py_compile over every .py file in the repo, plus scripts/lab_schema (Python
 # with no .py suffix — matches how it's actually deployed). Independent
 # container — see tests/run_tests.sh.

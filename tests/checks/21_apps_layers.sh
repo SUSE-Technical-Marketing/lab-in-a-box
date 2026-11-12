@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/layers.py
 # Pure-logic unit tests for libs/layers.py and the
 # layers-related additions to apps.py. Independent container — see
 # tests/run_tests.sh.
