@@ -29,6 +29,7 @@ Usage:
 # Author/s: Raul Mahiques
 # License: GPLv3
 
+import os
 import platform
 import re
 import subprocess
@@ -451,3 +452,47 @@ def detect_profile() -> Optional[HostOSProfile]:
     if cls is None:
         profile.verified = False
     return profile
+
+
+# ── generic host capability checks (any Linux target, not this dev box specifically) ────────
+# Both of these are facts about whichever machine calls them — never assume a particular host.
+
+_VIRT_DMI_STRINGS = ("qemu", "kvm", "innotek gmbh", "virtualbox", "microsoft corporation",
+                     "amazon ec2", "google", "vmware", "xen")
+
+
+def host_resources() -> Dict[str, int]:
+    """{"vcpus": N, "mem_mib": N} for the machine this runs on. mem_mib is 0 if /proc/meminfo
+    can't be read (e.g. not Linux)."""
+    vcpus = os.cpu_count() or 1
+    mem_mib = 0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                mem_mib = int(line.split()[1]) // 1024
+                break
+    except OSError:
+        pass
+    return {"vcpus": vcpus, "mem_mib": mem_mib}
+
+
+def is_virtualized_guest() -> bool:
+    """True if this machine is itself a VM, detected from DMI/firmware facts (not an init-system
+    tool like systemd-detect-virt, which only works where systemd is PID 1). False — never
+    "unknown" — when nothing says otherwise, since that's the safer default for a hypervisor
+    candidate: wrongly assuming "not a VM" just asks the usual questions, while wrongly assuming
+    "is a VM" would silently skip real KVM-host setup."""
+    for name in ("sys_vendor", "product_name"):
+        try:
+            value = Path("/sys/class/dmi/id/" + name).read_text().strip().lower()
+        except OSError:
+            continue
+        if any(s in value for s in _VIRT_DMI_STRINGS):
+            return True
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("flags") and " hypervisor" in line:
+                return True
+    except OSError:
+        pass
+    return False

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
@@ -162,6 +163,26 @@ with tempfile.TemporaryDirectory() as tmp:
     check("outside any git checkout, the underlying git command fails the way "
           "_find_repo_root() relies on to trigger its own clear die() message",
           result.returncode != 0)
+
+
+# ── render_cfg_lines(): the automation.cfg/kvm_host.cfg override rendering used by
+# bootstrap_lab_host_vm() to pre-seed the lab-host VM before setup_kvm_node.py runs there ───────
+template = "_myip=1.2.3.4\n_mygw=1.2.3.1\n# a comment, never touched\n_untouched=keep\n"
+out = build_lab_usb.render_cfg_lines(template, {"_myip": "\"9.9.9.9\""}, "automation.cfg.template")
+check("render_cfg_lines replaces only the named key, on its own line",
+      out == ["_myip=\"9.9.9.9\"", "_mygw=1.2.3.1", "# a comment, never touched", "_untouched=keep"])
+check("render_cfg_lines never touches a comment line even if its text looks like a match",
+      "# a comment, never touched" in out)
+
+died = []
+with mock.patch.object(build_lab_usb, "die", side_effect=lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)):
+    try:
+        build_lab_usb.render_cfg_lines(template, {"_no_such_key": "x"}, "kvm_host.cfg.template")
+    except SystemExit:
+        pass
+check("render_cfg_lines dies loudly (not a silent drop) when an override names a key the "
+      "template has no line for",
+      died and "_no_such_key" in died[0] and "kvm_host.cfg.template" in died[0])
 
 
 if failures:

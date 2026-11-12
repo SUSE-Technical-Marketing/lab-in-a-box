@@ -30,7 +30,7 @@ __version__ = "1"
 
 # Version of the credentials-file schema (PROVIDER_FIELDS and SERVICE_CREDENTIAL_FIELDS), written to every file as
 # schema_version; see schemas/compatibility.json.
-CREDENTIALS_SCHEMA_VERSION = "1.0"
+CREDENTIALS_SCHEMA_VERSION = "1.1"
 
 import sys
 from pathlib import Path
@@ -124,6 +124,8 @@ SERVICE_CREDENTIAL_FIELDS = {
         ("scc_user", True, False),
         ("scc_password", True, True),
         ("scc_regcode", False, True),
+        ("scc_email", False, False),
+        ("scc_url", False, False),
     ],
     "appcollection": [
         ("appcollection_user", True, False),

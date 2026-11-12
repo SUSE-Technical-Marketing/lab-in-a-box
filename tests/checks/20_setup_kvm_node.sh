@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests-paths: setup_demo_server/setup_kvm_node.py
+# Tests-paths: setup_demo_server/setup_kvm_node.py libs/kvm_host_profiles.py scripts/setup_credentials.py
 # Pure-logic unit tests for setup_demo_server/setup_kvm_node.py
 # — image-URL construction and bridge-configuration wiring. Independent
 # container — see tests/run_tests.sh.

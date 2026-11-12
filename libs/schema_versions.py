@@ -41,7 +41,8 @@ _SHELL_ASSIGNMENT = re.compile(r"^#?([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\])?=", re.
 CONFIGS = {
     "config:lab_creation.cfg": ("shell", "templates/lab_creation.cfg.example"),
     "config:lab_creation.defaults": ("shell", "lab_creation.defaults"),
-    "config:lab.cfg": ("shell", "setup_demo_server/lab.cfg.template"),
+    "config:automation.cfg": ("shell", "setup_demo_server/automation.cfg.template"),
+    "config:kvm_host.cfg": ("shell", "setup_demo_server/kvm_host.cfg.template"),
     "config:harvester-cluster.json": ("json", "templates/harvester-cluster.json.example"),
     "config:credentials": ("credentials", "scripts/setup_credentials.py"),
 }

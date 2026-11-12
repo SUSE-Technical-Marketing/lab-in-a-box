@@ -202,7 +202,7 @@ def load_shell_vars(path):
     Parse an arbitrary simple-shell-variable config file at an exact path
     (unlike load_config/load_defaults, which search a list of default
     locations for a specific filename). Used for config files outside the
-    lab_creation.cfg/.defaults pair — e.g. setup_demo_server/lab.cfg.
+    lab_creation.cfg/.defaults pair — e.g. setup_demo_server/automation.cfg or kvm_host.cfg.
     Returns a dict. Raises SystemExit if the file doesn't exist.
     """
     p = Path(path)

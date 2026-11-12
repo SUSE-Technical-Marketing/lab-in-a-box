@@ -344,14 +344,18 @@
   "addon:wordpress": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "config:automation.cfg": [
+   {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. The automation node's own identity (network, hostname, vm/container/kubernetes shape) -- needed regardless of whether a KVM host is even involved."}
+  ],
   "config:credentials": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "scc gained scc_email/scc_url fields, so a host's SUSE registration email/URL can live in the encrypted credential store instead of plaintext in a config file."}
   ],
   "config:harvester-cluster.json": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
-  "config:lab.cfg": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  "config:kvm_host.cfg": [
+   {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. This host becoming a KVM hypervisor (bridge/NAT networking, storage, VM-build specifics) -- needed only when setup_kvm_node.py actually prepares a KVM host."}
   ],
   "config:lab_creation.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

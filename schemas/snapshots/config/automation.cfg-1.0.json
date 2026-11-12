@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "AUTOMATION_HOSTNAME": {},
+  "MYREG": {},
+  "ROOT_PWD_HASH": {},
+  "ROOT_SSH_PUB_KEY": {},
+  "_automation_image": {},
+  "_automation_node": {},
+  "_k8s_kubeconfig": {},
+  "_k8s_macvlan_master": {},
+  "_k8s_namespace": {},
+  "_k8s_network": {},
+  "_k8s_storage_class": {},
+  "_k8s_volume_size": {},
+  "_mydns": {},
+  "_mydomain": {},
+  "_mygw": {},
+  "_myip": {},
+  "_mynet": {},
+  "_mynetrev": {},
+  "_timezone": {},
+  "root_pwd": {}
+ },
+ "schema": "config:automation.cfg",
+ "version": "1.0"
+}
