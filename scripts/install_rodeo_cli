@@ -4,12 +4,16 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 1.0
+# Schema version: 1.1
 #
 # JSON section: "rodeo_cli" — Installs rodeo-cli
 #   rodeo_cli_install_url : [OPTIONAL] URL of the install script to fetch and run on the
 #                            target node — rodeo-cli's own documented one-liner by default
 #                            (default: https://raw.githubusercontent.com/avaleror/rodeo-cli/main/install.sh)
+#   rodeo_cli_install_lab_in_a_box : [OPTIONAL] "true"/"false" — also install lab-in-a-box itself on
+#                            this node first, if it isn't already there, since rodeo-cli deploys
+#                            nested KVM labs and needs something to deploy (see install_lab_in_a_box;
+#                            same libs/lab_in_a_box_common.py the two addons share) (default: "false")
 #
 # Target node(s): any node listing "rodeo_cli" in its own addons[] list — same dispatch shape
 # as install_client_registration.py. This only installs the tool; rodeo-cli's own
@@ -43,12 +47,14 @@ import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
 from lab_creation import ssh_run, die  # noqa: E402
+from lab_in_a_box_common import install_lab_in_a_box, lab_in_a_box_installed  # noqa: E402
 
 DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/avaleror/rodeo-cli/main/install.sh"
 
 
 def _validate(v):
     v.vurl_field("rodeo_cli", "rodeo_cli_install_url")
+    v.vbool("rodeo_cli", "rodeo_cli_install_lab_in_a_box")
 
 
 def setup_rodeo_cli(hostname, install_url):
@@ -87,6 +93,9 @@ def main():
     env_vm_name = os.environ.get("_vm_name") or None
     for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "rodeo_cli", vm_name=env_vm_name):
         cfg = k8s.addon_node_config(definition, "rodeo_cli", vm_name)
+        want_lab_in_a_box = (cfg.get("rodeo_cli_install_lab_in_a_box") or "false").lower() == "true"
+        if want_lab_in_a_box and not lab_in_a_box_installed(vm_name):
+            install_lab_in_a_box(vm_name)
         install_url = cfg.get("rodeo_cli_install_url") or DEFAULT_INSTALL_URL
         setup_rodeo_cli(vm_name, install_url)
 

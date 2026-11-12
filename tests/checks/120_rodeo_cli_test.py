@@ -121,6 +121,11 @@ class FakeValidator:
         if v and not str(v).startswith(("http://", "https://")):
             self.errors.append("[ERROR] bad url")
 
+    def vbool(self, section, field):
+        v = (self.definition.get(section, {}) or {}).get(field)
+        if v and str(v).lower() not in ("true", "false"):
+            self.errors.append("[ERROR] bad bool")
+
 
 v = FakeValidator({"rodeo_cli": {}})
 rc._validate(v)
@@ -133,6 +138,38 @@ check("_validate: a non-http(s) install URL is an error", v.errors != [])
 v = FakeValidator({"rodeo_cli": {"rodeo_cli_install_url": "https://example.com/install.sh"}})
 rc._validate(v)
 check("_validate: a valid https install URL has no error", v.errors == [])
+
+
+# ── rodeo_cli_install_lab_in_a_box: the opt-in lab-in-a-box tie-in ──────────
+lic_calls = []
+rc.install_lab_in_a_box = lambda hostname: lic_calls.append(hostname)
+rc.setup_rodeo_cli = lambda hostname, install_url: None
+
+rc.lab_in_a_box_installed = lambda hostname: False
+definition_tiein = primary.LabDefinition({
+    "nodes": {"sol.mydemo.lab": {"addons": [{"rodeo_cli": {"rodeo_cli_install_lab_in_a_box": "true"}}]}},
+    "rodeo_cli": {},
+}, source_path="/tmp/fake.json", fmt="json")
+primary.load_definition = lambda path: definition_tiein
+sys.argv = ["install_rodeo_cli", "/tmp/fake.json"]
+rc.main()
+check("main(): rodeo_cli_install_lab_in_a_box=true installs lab-in-a-box first when it's missing",
+      lic_calls == ["sol.mydemo.lab"])
+
+lic_calls.clear()
+rc.lab_in_a_box_installed = lambda hostname: True
+rc.main()
+check("main(): already-installed lab-in-a-box is not reinstalled", lic_calls == [])
+
+lic_calls.clear()
+rc.lab_in_a_box_installed = lambda hostname: False
+definition_no_tiein = primary.LabDefinition({
+    "nodes": {"sol.mydemo.lab": {"addons": ["rodeo_cli"]}},
+    "rodeo_cli": {},
+}, source_path="/tmp/fake.json", fmt="json")
+primary.load_definition = lambda path: definition_no_tiein
+rc.main()
+check("main(): the tie-in is opt-in — unset means no lab-in-a-box install at all", lic_calls == [])
 
 
 # ── main(): per-node dispatch, and the default install URL ──────────────────

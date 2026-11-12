@@ -1431,10 +1431,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>خادم Grafana مستقل (حاوية podman دون Kubernetes): يضبط تلقائيًا مصدر بيانات Prometheus، واختياريًا لوحة المعلومات الرسمية من مجتمع Grafana Labs لمصدّرات خادم <code>smlm</code>/<code>uyuni</code></td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>موقع ويب يُقدّم من صورة SUSE BCI (حاوية podman، بدون Kubernetes) — يُبنى nginx والصفحة داخل الصورة على العقدة نفسها؛ وتُنشأ الصفحة أو تُحمّل من <code>bci_website_content_url</code></td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1546,6 +1542,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>يثبّت rodeo-cli، أداة سطر أوامر على طراز Terraform تنشر معامل KVM متداخلة (Harvester HCI وRancher Prime أو كلاهما)، جاهزة للاستخدام على العقدة الهدف — ملفات rodeo-cli الخاصة بالخطة/الأسرار ليست من مسؤولية هذه الإضافة</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>يثبّت lab-in-a-box نفسها على العقدة الهدف — غير مُخرّبة افتراضيًا (تُثبّت git وpython وتستنسخ المستودع)، مع خيار لبناء معامل KVM/عقدة أتمتة متداخلة دون تدخل بشري أيضًا</td>
 </tr>
 </tbody>
 </table>

@@ -151,6 +151,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:lab_in_a_box": [
+   {"version": "1.0", "breaking": false, "changes": "First version: installs lab-in-a-box itself onto a node over SSH, so a lab can bootstrap another lab-in-a-box host/automation-node from inside a running lab. Non-destructive by default (--fetch-only)."}
+  ],
   "addon:linkerd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "Installs from the edge channel (linkerd_rel linkerd-edge, linkerd_repo_url https://helm.linkerd.io/edge; the stable channel ended at 2.14). The mesh identity is generated once and kept in the linkerd-lab-identity secret; the Gateway API CRDs are installed only when the cluster has none.", "migration": "linkerd_2_0"},
@@ -256,7 +259,8 @@
    {"version": "2.3", "breaking": false, "changes": "rancher_install_appcollection: once Rancher is up, also register the SUSE Application Collection as a Rancher ClusterRepo, with no separate appcollection addon entry needed."}
   ],
   "addon:rodeo_cli": [
-   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."},
+   {"version": "1.1", "breaking": false, "changes": "rodeo_cli_install_lab_in_a_box opts in to installing lab-in-a-box itself on the node first, if not already present, since rodeo-cli needs something to deploy nested KVM labs into."}
   ],
   "addon:run_command": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}

@@ -1431,10 +1431,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Serveur Grafana autonome (conteneur podman, sans Kubernetes) : provisionne automatiquement une source de données Prometheus et, en option, le tableau de bord communautaire officiel de Grafana Labs pour les exportateurs d'un serveur <code>smlm</code>/<code>uyuni</code></td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>Un site web servi depuis une image SUSE BCI (conteneur podman, sans Kubernetes) — nginx et la page sont intégrés à l'image sur le nœud lui-même ; la page est générée ou téléchargée depuis <code>bci_website_content_url</code></td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1546,6 +1542,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>Installe rodeo-cli, une CLI de type Terraform qui déploie des labs KVM imbriqués (Harvester HCI, Rancher Prime, ou les deux), prête à l'emploi sur le nœud cible — les propres fichiers de plan/secrets de rodeo-cli ne relèvent pas de cet addon</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>Installe lab-in-a-box lui-même sur le nœud cible — non destructif par défaut (installe git+python, clone le dépôt), avec l'option de construire en plus un hyperviseur KVM/nœud d'automatisation imbriqué sans surveillance</td>
 </tr>
 </tbody>
 </table>
