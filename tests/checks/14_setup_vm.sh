@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/setup_vm.py
 # Mocked unit tests for scripts/setup_vm.py — single-VM
 # provisioning orchestration. Every lab_creation call is monkeypatched; this verifies call ordering and dispatch, not
 # real provisioning. Independent container — see tests/run_tests.sh.

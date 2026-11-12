@@ -81,7 +81,7 @@ def lab_for(schema: dict, name: str, with_defaults: bool = False) -> dict:
     section.update(EXTRA_CONFIG.get(name, {}))
     sec = schema["section"]
     return {"common": {"online": "1"},
-            "nodes": {"vm1.mydemo.lab": {"myip": "192.168.1.10", "kcluster": "c1", "INSTALL_RKE2_TYPE": "server",
+            "nodes": {"vm1.mydemo.lab": {"myip": "192.168.1.10", "kcluster": "c1", "KUBERNETES_NODE_TYPE": "server",
                                          "addons": [sec]}},
             "kclusters": {"c1": {"clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab", "addons": [sec]}},
             sec: section}

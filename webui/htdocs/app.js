@@ -44,6 +44,65 @@ const state = {
   previewAddr: {},   // {vm: ip} the run would allocate for a VM with no address (api "addresses")
 };
 
+// ---- draft persistence (a page refresh must not lose in-progress work) -----
+// labbuilder.draft: the live model, re-saved after every renderCanvas() (so after every
+// drag/drop, editor apply, remove, or lab.json text edit — see the "persistDraft()" call at
+// the end of renderCanvas()). Restored automatically on load. labbuilder.lastDraft: a single
+// backup slot, written by "Start fresh" right before it clears the canvas, so "Restore" can
+// undo that one step. Browser-local only: never read back by the server, never shared between
+// browsers/devices — same per-viewer-convenience role as labbuilder.requiredOnly below.
+const DRAFT_KEY = "labbuilder.draft";
+const LAST_DRAFT_KEY = "labbuilder.lastDraft";
+const EMPTY_MODEL = { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 };
+
+function isModelEmpty(m) {
+  return !m.items.length && !Object.keys(m.common).length && !Object.keys(m.extra).length;
+}
+function readDraft(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function persistDraft(model = state.model) {
+  try {
+    if (isModelEmpty(model)) { localStorage.removeItem(DRAFT_KEY); return; }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ model }));
+  } catch (e) { /* storage unavailable/full: the draft just won't survive a refresh */ }
+}
+function updateRestoreAvailability() {
+  const btn = $("#restoreBtn");
+  if (btn) btn.disabled = !readDraft(LAST_DRAFT_KEY);
+}
+// Clears the canvas, keeping the just-cleared draft in the one-slot backup so Restore can
+// bring it back. loadLab({}) is the same reset path "Open a file"/an example takes.
+function startFresh() {
+  if (!isModelEmpty(state.model) &&
+      !window.confirm("Start a fresh lab? The current one will be cleared — Restore brings it back.")) return;
+  try {
+    const current = localStorage.getItem(DRAFT_KEY);
+    if (current) localStorage.setItem(LAST_DRAFT_KEY, current);
+  } catch (e) { /* ignore */ }
+  loadLab({});
+  $("#labName").value = "lab";
+  updateRestoreAvailability();
+  toast("Started a fresh lab");
+}
+// Undoes the last "Start fresh" (or brings back whatever was last cleared).
+function restoreDraft() {
+  const saved = readDraft(LAST_DRAFT_KEY);
+  if (!saved || !saved.model) { toastError("Nothing to restore"); return; }
+  if (!isModelEmpty(state.model) &&
+      !window.confirm("Restore the previous lab? The current one will be replaced.")) return;
+  state.model = Object.assign({}, EMPTY_MODEL, saved.model);
+  state.sel = "common";
+  state.textError = "";
+  renderCanvas();
+  refreshLab();
+  preloadMissingSchemas();
+  toast("Restored");
+}
+
 // ---- tiny DOM helpers ------------------------------------------------------
 const $ = (s, r = document) => r.querySelector(s);
 function el(tag, cls, txt) {
@@ -336,7 +395,7 @@ const HIDDEN_CLUSTER_FIELDS = new Set(["addons"]);
 /* The fields of `fields` that apply to an instance configured as `cfg`: a
    field's "show_if" names another field it depends on, and it applies only
    while that field has a value. The Kubernetes node fields
-   (KUBERNETES_NODE_TYPE, harvester_role, INSTALL_RKE2_TYPE) depend on
+   (KUBERNETES_NODE_TYPE, harvester_role) depend on
    "kcluster", so a VM in no Kubernetes cluster does not offer them. */
 function shownFields(fields, cfg) {
   const set = (k) => { const v = (cfg || {})[k]; return v !== undefined && v !== null && v !== ""; };
@@ -623,8 +682,7 @@ function lintLab(model) {
 
   const secs = state.base && state.base.sections;
   if (secs) {
-    const aliases = { SOURCE_IMAGE: ["ISO_IMAGE"] };
-    const set = (o, k) => has(o, k) || (aliases[k] || []).some((a) => has(o, a));
+    const set = (o, k) => has(o, k);
     secs.common.fields.filter((f) => f.required && (f.default === undefined || f.default === "")).forEach((f) => {
       if (set(model.common, f.name)) return;
       const without = nodes.filter((n) => !n.cfg.existing && !set(n.cfg, f.name)).map((n) => n.name);
@@ -833,7 +891,7 @@ function blockEl(item, mini) {
     if (c.VM_MEM) bits.push(c.VM_MEM + " MiB");
     if (c.VM_CPU) bits.push(c.VM_CPU + " vCPU");
     if (c.VM_DSK) bits.push(c.VM_DSK + " GiB");
-    if (c.ISO_IMAGE) bits.push(c.ISO_IMAGE);
+    if (c.SOURCE_IMAGE) bits.push(c.SOURCE_IMAGE);
     sub = bits.length ? bits.join(" · ") : "defaults for every VM — double-click to set";
     letter = "C";
   } else if (type === "node") {
@@ -929,6 +987,7 @@ function renderCanvas() {
     wrap.appendChild(row);
     zone.appendChild(wrap);
   }
+  persistDraft();
 }
 
 // ---- editor (double-click) ------------------------------------------------------
@@ -964,7 +1023,7 @@ async function openEditor(id) {
   const form = $("#schemaForm");
   let kind, title, desc = "", layers = [];
   try {
-    const base = await loadBase();   // fresh each time: ISO_IMAGE choices follow the hypervisor
+    const base = await loadBase();   // fresh each time: SOURCE_IMAGE choices follow the hypervisor
     const secs = base.sections;
     form.innerHTML = "";
     state.commonDefaults = {};
@@ -1256,10 +1315,8 @@ function fieldRow(field, outPath, repeatMode) {
  * even before the user touches it — only the option relabeling runs. A
  * flat/common select auto-filling its default is harmless (it's the exact
  * value setup_lab.py would have used anyway), but for a per-node override
- * field it silently wrote an explicit value into the saved lab.json for
- * every instance the user never actually configured (reported live
- * 2026-09-01: INSTALL_RKE2_TYPE always present, "server", regardless of
- * whether that node's role was ever actually selected) — leaving it unset
+ * field it would write an explicit value into the saved lab.json for
+ * every instance the user never configured — leaving it unset
  * lets the node genuinely inherit common/the addon's own default instead,
  * matching how a plain text field's placeholder-only default already works. */
 function applyFieldDefault(input, liveVal) {
@@ -1608,15 +1665,22 @@ function renderIssues() {
 
 // Replaces the canvas with lab definition `lab` and loads its add-ons' schemas,
 // so their required fields are checked.
+// Schemas for addon components the model now references but hasn't fetched yet — needed so the
+// lab.json preview/issues are accurate right after loading a model from somewhere else (a file,
+// an example, a restored draft), not only once the user happens to open that addon's editor.
+function preloadMissingSchemas() {
+  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp && !state.schemaCache[i.comp]).map((i) => i.comp));
+  return Promise.all([...comps].map((c) => loadAddonSchema(c).catch(() => null)))
+    .then(() => { if (comps.size) { renderCanvas(); renderIssues(); } });
+}
+
 function loadLab(lab, fromText) {
   state.model = decompileLab(lab);
   state.sel = "common";
   state.textError = "";
   renderCanvas();
   refreshLab(fromText);
-  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp && !state.schemaCache[i.comp]).map((i) => i.comp));
-  Promise.all([...comps].map((c) => loadAddonSchema(c).catch(() => null)))
-    .then(() => { if (comps.size) { renderCanvas(); renderIssues(); } });
+  preloadMissingSchemas();
 }
 
 // The lab.json text was edited: rebuild the canvas once it parses.
@@ -1639,16 +1703,15 @@ function openLabFile(file) {
 }
 
 // ---- refresh available images without losing the form ---------------------
-// Reported live 2026-09-01: the only way to get a fresh ISO_IMAGE list was
-// to re-select the component/base topology, which wipes every value already
+// Re-selecting the component/base topology would wipe every value already
 // typed in. This re-fetches just the "status" snapshot (already used for the
-// status panel) and rebuilds ONLY the ISO_IMAGE field(s) currently on the
+// status panel) and rebuilds ONLY the SOURCE_IMAGE field(s) currently on the
 // form — via fieldRow(), so the rebuilt widget gets the exact same wiring
 // (cascade/validation/userTouched) a freshly-rendered one would — leaving
 // every other field's value untouched. The field's current value is kept
 // even if it no longer matches any listed image (added as a synthetic extra
 // option) rather than silently dropped.
-const IMAGE_FIELDS = new Set(["SOURCE_IMAGE", "ISO_IMAGE"]);
+const IMAGE_FIELDS = new Set(["SOURCE_IMAGE"]);
 
 // The images on each host, as the renderer's enum entries: value is the file name a lab stores, label is
 // "<host> - <file name>". Mirrors discovery.image_choices() for the live refresh below.
@@ -2151,6 +2214,17 @@ async function watchJob(id) {
 
 // ---- wire up ---------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
+  // Restore whatever was being edited before the last refresh (see persistDraft()/renderCanvas()).
+  const draft = readDraft(DRAFT_KEY);
+  let restoredOnLoad = false;
+  if (draft && draft.model && !isModelEmpty(draft.model)) {
+    try { state.model = Object.assign({}, EMPTY_MODEL, draft.model); restoredOnLoad = true; } catch (e) { /* corrupt draft: start empty */ }
+  }
+  updateRestoreAvailability();
+  const startFreshBtn = $("#startFreshBtn"), restoreBtn = $("#restoreBtn");
+  if (startFreshBtn) startFreshBtn.addEventListener("click", startFresh);
+  if (restoreBtn) restoreBtn.addEventListener("click", restoreDraft);
+
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
@@ -2202,6 +2276,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (embed) setupEmbed(embed);
   renderCanvas();
   refreshLab();
+  if (restoredOnLoad) preloadMissingSchemas();
   if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
   loadComponents().then(applyUrlParams)
     .catch((e) => { $("#countNum").textContent = "!"; toastError("Load error: " + e.message); });

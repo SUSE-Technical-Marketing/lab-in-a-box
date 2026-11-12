@@ -10,7 +10,14 @@
 destroy_lab.py — destroy every VM defined in a lab definition.
 
 Usage:
-    destroy_lab.py <lab-file>
+    destroy_lab.py [--cloud-account <name>] <lab.json>
+
+Options:
+    --cloud-account <name>   use cloud account <name> (a credentials file under
+                             /etc/lab_creation/credentials/) for every cloud node of this
+                             run, taking precedence over "cloud_account" in the lab
+                             definition. Required when several credentials files match a
+                             node's backend.
 """
 
 __version__ = "__LABVERSION__"
@@ -24,6 +31,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 
 import primary  # noqa: E402
 import lab_creation  # noqa: E402
+import backends  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
 
@@ -55,6 +63,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
+
+    # Applied and stripped before the positional arguments are read, so the option reads the same on every
+    # command that creates or destroys a cloud node.
+    sys.argv[1:] = backends.take_cloud_account_option(sys.argv[1:])
 
     if len(sys.argv) < 2:
         print("Usage:\n{} <configuration file>".format(sys.argv[0]))

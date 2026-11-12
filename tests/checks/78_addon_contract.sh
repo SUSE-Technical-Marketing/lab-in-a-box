@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/check_addon.py
 # The add-on contract: scripts/check_addon.py passes on every add-on in scripts/ and on the two example add-ons in
 # examples/addons/, and fails on a broken one; the examples install what they document (ssh mocked).
 # Independent container — see tests/run_tests.sh.

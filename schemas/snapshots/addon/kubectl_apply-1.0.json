@@ -1,0 +1,26 @@
+{
+ "fields": {
+  "kubectl_apply_manifests": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "kubectl_apply_namespace": {
+   "default": "",
+   "required": false,
+   "type": "namespace"
+  },
+  "kubectl_apply_prune": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "kubectl_apply_prune_label": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:kubectl_apply",
+ "version": "1.0"
+}

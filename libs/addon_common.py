@@ -17,16 +17,84 @@ _vbool/_vport function bodies in every single script.
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
 import sys
+import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import primary
 import versions
-from lab_creation import ssh_run
+from lab_creation import ssh_run, die, _RED, _RESET
+
+# Exit code for "this addon's dependency on another addon in the SAME lab isn't satisfied YET, but
+# might be once the rest of this cluster's/node's addon list finishes running" — sysexits.h's
+# EX_TEMPFAIL, a real, pre-existing Unix convention, not an invented number. Distinct from a plain
+# die()'s exit 1 (a genuine, non-retriable failure): the dispatch loops in scripts/setup_lab.py
+# (_install_cluster_addons/phase_vm_addons) treat THIS exit code, and only this one, as "defer and
+# retry once other addons have had a chance to run" rather than a hard stop. See die_not_ready()'s
+# own docstring for the one safety rule every addon using it must follow.
+DEPENDENCY_NOT_READY_EXIT_CODE = 75
+
+
+def die_not_ready(msg):
+    """
+    Like lab_creation.die(), but signals "retry me later" to the orchestrator instead of a hard
+    failure: prints `msg` and exits with DEPENDENCY_NOT_READY_EXIT_CODE. Use this — never a plain
+    die() — when the real reason this addon can't proceed is that another addon in the SAME lab
+    (e.g. "rancher" on this same kcluster) hasn't finished yet, but plausibly will, later in this
+    same deploy. A real configuration error (missing credential, invalid field, genuinely absent
+    dependency with nothing in this lab that could ever provide it) must still use die(): only use
+    this for "not yet", never for "not ever".
+
+    Mandatory safety rule for any caller: the check that decides whether to call this must be the
+    FIRST thing the addon does, before any mutating action (anything beyond a read-only probe like
+    `kubectl get` / `ssh_run(..., check=False)` to look at state). The orchestrator may call this
+    addon again from scratch on a later pass, so any mutating work already done before a
+    die_not_ready() call would otherwise silently repeat or half-apply on retry. See the
+    "Dependencies between addons" section of docs/src/addons.html for the full contract — and
+    tests/checks/119_dependency_check_first.sh, which best-effort lints new callers of this
+    function for a call ordered before it in the same function (a heuristic, not a proof).
+    """
+    print("{}ERROR:{} {}".format(_RED, _RESET, msg), file=sys.stderr)
+    sys.exit(DEPENDENCY_NOT_READY_EXIT_CODE)
+
+
+def fetch_nfs_content(hostname, nfs_url):
+    """
+    Return the text content of a file reached via NFS, as read from `hostname` itself. `nfs_url` is
+    "nfs://<server>/<path-to-file>", where everything up to the file's own directory is the NFS
+    export to mount (e.g. "nfs://nfs1.mydemo.lab/exports/playbooks/deploy.yml" mounts
+    "nfs1.mydemo.lab:/exports/playbooks" and reads "deploy.yml" from it) — a server exporting a finer-
+    grained subtree than that parent directory is out of scope here.
+
+    Mounts read-only at a throwaway temporary mountpoint and always unmounts afterward, even on
+    failure, so a failed or successful fetch never leaves a stray mount on the target. Dies clearly on
+    a malformed URL or if the mount/read itself fails.
+    """
+    m = re.match(r'^nfs://([^/]+)(/.+)$', nfs_url)
+    if not m:
+        die("'{}' is not a valid nfs:// URL (expected nfs://<server>/<path-to-file>)".format(nfs_url))
+    server, remote_path = m.group(1), m.group(2)
+    export_dir = posixpath.dirname(remote_path)
+    filename = posixpath.basename(remote_path)
+    mount_point = "/tmp/lab_nfs_{}".format(uuid.uuid4().hex[:8])
+    script = (
+        "set -e\n"
+        "mkdir -p {mp}\n"
+        "mount -t nfs -o ro {server}:{export} {mp}\n"
+        "cat {mp}/{filename}\n"
+    ).format(mp=shlex.quote(mount_point), server=shlex.quote(server), export=shlex.quote(export_dir),
+             filename=shlex.quote(filename))
+    cleanup = "umount {mp} 2>/dev/null; rmdir {mp} 2>/dev/null".format(mp=shlex.quote(mount_point))
+    r = ssh_run(hostname, "{}\nrc=$?; {}; exit $rc".format(script, cleanup), check=False, capture=True)
+    if r.returncode != 0:
+        die("could not read '{}' via NFS on '{}': {}".format(
+            nfs_url, hostname, (r.stderr or r.stdout or "").strip()))
+    return r.stdout
 
 
 def namespace_command(namespace):
@@ -82,12 +150,16 @@ class Validator:
             self.errors.append(
                 "[ERROR] {0}.{0}_version='{1}': not a valid version (expected X.Y…)".format(section, v))
 
-    def vurl(self, section):
-        """Mirrors _vurl: <section>.<section>_repo_url, if set, must start with http(s)://"""
-        v = self._get(section, "{}_repo_url".format(section))
+    def vurl_field(self, section, field):
+        """<section>.<field>, if set, must start with http(s)://"""
+        v = self._get(section, field)
         if v and not re.match(r'^https?://', str(v)):
             self.errors.append(
-                "[ERROR] {0}.{0}_repo_url='{1}': must start with https://".format(section, v))
+                "[ERROR] {}.{}='{}': must start with https://".format(section, field, v))
+
+    def vurl(self, section):
+        """Mirrors _vurl: <section>.<section>_repo_url, if set, must start with http(s)://"""
+        self.vurl_field(section, "{}_repo_url".format(section))
 
     def vbool(self, section, field):
         """Mirrors _vbool: <section>.<field>, if set, must be 'true' or 'false'."""

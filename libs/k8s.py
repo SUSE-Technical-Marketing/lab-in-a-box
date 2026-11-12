@@ -33,6 +33,7 @@ from lab_creation import (
 )
 from services import DNSService
 import apps
+from lab_schema_base import field_default
 
 
 # ── Cluster metadata ──────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ class K8sDistro(object):
 
     def install_cluster(self, definition, clu_name, clu_ctx):
         """Install the cluster on its nodes: install_server() or install_agent() on each, in the lab definition's
-        order, by KUBERNETES_NODE_TYPE (or the deprecated INSTALL_RKE2_TYPE), default server. Then wait until the
+        order, by node_role(). Then wait until the
         first server reports every node Ready; raises RuntimeError when that takes longer than ready_timeout seconds."""
         token = None
         rancher1_ip = None
@@ -131,8 +132,7 @@ class K8sDistro(object):
             if node_cfg.get("kcluster") != clu_name:
                 continue
             node_count += 1
-            node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "server")
-            if node_type == "agent":
+            if node_role(node_cfg) == "agent":
                 token, rancher1_ip = self.install_agent(vm_name, clu_name, clu_ctx, token, rancher1_ip)
             else:
                 token, rancher1_ip = self.install_server(vm_name, clu_name, clu_ctx, token=token,
@@ -299,10 +299,12 @@ class RKE2Distro(K8sDistro):
 
     def write_node_config(self, clu_name, clu_ctx):
         """
-        Write local RKE2 config files (server + agent) if they do not
-        already exist. Writes both regardless of role — the original
-        _write_rke2_config() took a node_type argument but its body ignored
-        it and always wrote both files; preserved here unchanged.
+        Write this kcluster's local RKE2 config files, config-server.yaml and config-agent.yaml, under a
+        directory named after `clu_name`. Both are written regardless of the node's role.
+
+        The contents are derived wholly from `clu_name` and `clu_ctx`, so they are rewritten on every run: the
+        directory is named after the kcluster alone, and two lab definitions may each have a kcluster of that
+        name with a different mydomain, whose config must not be inherited from whichever ran first.
         """
         mydomain = clu_ctx.get("mydomain", "")
         clu_dir = Path(clu_name)
@@ -318,9 +320,7 @@ class RKE2Distro(K8sDistro):
         if apps.CLUSTER_INGRESS in cluster_disabled(clu_ctx, self):
             content += "disable:\n  - rke2-ingress-nginx\n"
         for kind in ("server", "agent"):
-            cfg = clu_dir / "config-{}.yaml".format(kind)
-            if not cfg.exists():
-                cfg.write_text(content)
+            (clu_dir / "config-{}.yaml".format(kind)).write_text(content)
 
     def _install(self, hostname, clu_name, clu_ctx, node_type, token=None, rancher1_ip=None):
         """
@@ -813,34 +813,26 @@ def cluster_provides(definition, clu_name):
 
 # ── Node iterator helpers ─────────────────────────────────────────────────────
 
+def node_role(node_cfg: dict) -> str:
+    """A node's Kubernetes role, "server" or "agent": its KUBERNETES_NODE_TYPE, else the lab schema's default."""
+    return str((node_cfg or {}).get("KUBERNETES_NODE_TYPE") or field_default("nodes", "KUBERNETES_NODE_TYPE"))
+
+
 def first_server_node(definition):
     """
-    Return (vm_name, ssh_cmd) for the first server node in the definition, or None if there is none. This matches on_first_server.
-    A node is a server when INSTALL_RKE2_TYPE is "server" or absent.
+    Return (vm_name, ssh_cmd) for the node an add-on runs on, or None if there is none.
 
-    setup_lab.py's own cluster-addon dispatch (_install_cluster_addons) already resolves which node runs a given
-    addon for a given cluster, and passes both as the _vm_name and clu_name environment variables — the addon
-    scripts below (ollama, open_webui, gpu_operator, and most other cluster add-ons) call this function with no
-    cluster of their own to scope the search to, so without the hint it scans every node in the whole lab
-    definition and returns the first one that merely lacks INSTALL_RKE2_TYPE, server or not, a member of the
-    wanted cluster or not — the wrong node in any multi-cluster lab, or one with nodes outside any cluster. When
-    both variables are set, the already-resolved node is used directly instead of re-scanning. clu_name alone is
-    the signal for this: a per-node add-on with a "kubernetes" deployment mode (install_gitlab, install_nextcloud,
-    ...) also sets _vm_name, to its own node, which is a lab VM the add-on is attached to and not necessarily a
-    cluster member at all — clu_name is never set for those, so the scan below still runs for them, unchanged.
+    setup_lab.py names that node in the `_vm_name` environment variable: the first server of the kcluster for a
+    cluster add-on, the node itself for a node add-on. Without it, as when an add-on is run by hand, this is the first
+    node in the definition whose node_role() is "server".
     """
-    hinted = os.environ.get("_vm_name") if os.environ.get("clu_name") else None
-    if hinted and hinted in definition.get("nodes", {}):
-        ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(hinted)
-        log("# Using node: {}".format(hinted))
-        return hinted, ssh_cmd
-    for vm_name, node_cfg in definition.get("nodes", {}).items():
-        if node_cfg.get("INSTALL_RKE2_TYPE", "") in ("server", ""):
-            ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
-            log("# Using node: {}".format(vm_name))
-            return vm_name, ssh_cmd
-    warn("No server node found in definition")
-    return None
+    vm_name = os.environ.get("_vm_name", "") or next(
+        (name for name, node_cfg in (definition.get("nodes") or {}).items() if node_role(node_cfg) == "server"), "")
+    if not vm_name:
+        warn("No server node found in definition")
+        return None
+    log("# Using node: {}".format(vm_name))
+    return vm_name, "ssh -o StrictHostKeyChecking=accept-new -q root@{}".format(vm_name)
 
 
 def kcluster_node(definition, clu_name):
@@ -858,7 +850,7 @@ def kcluster_node(definition, clu_name):
     members = [(name, cfg or {}) for name, cfg in (definition.get("nodes") or {}).items()
                if (cfg or {}).get("kcluster") == clu_name]
     for name, cfg in members:
-        if (cfg.get("KUBERNETES_NODE_TYPE") or cfg.get("INSTALL_RKE2_TYPE") or "server") == "server":
+        if node_role(cfg) == "server":
             return name
     return members[0][0] if members else ""
 

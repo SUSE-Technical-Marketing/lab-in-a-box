@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "ansible_playbook_content": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_playbook_extra_vars": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_playbook_limit": {
+   "default": "unset, every host in the inventory",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_playbook_name": {
+   "default": "lab_playbook.yml",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_playbook_path": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ansible_playbook_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  }
+ },
+ "schema": "addon:ansible_playbook",
+ "version": "1.0"
+}

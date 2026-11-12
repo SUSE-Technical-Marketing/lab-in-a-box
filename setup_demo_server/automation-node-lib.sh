@@ -15,7 +15,7 @@ NODE_DIR=/etc/lab_creation/node
 
 # Shell variables the node needs, written to NODE_DIR/settings by write_node_settings.
 NODE_SETTINGS="AUTOMATION_HOSTNAME MYREG _myip _mymask_cidr _mygw _mydns _mydomain _mynetrev _timezone _virt_srv
-ROOT_SSH_PUB_KEY HOST_SSH_PUB_KEY ROOT_PWD_HASH _host_ip _host_name _host_fqdn myarch _node_kind _node_netstack
+ROOT_SSH_PUB_KEY HOST_SSH_PUB_KEY ROOT_PWD_HASH _host_ip _host_name _host_fqdn _node_kind _node_netstack
 _python_bin _kubectl_install"
 
 # sshfs mount options for the hypervisor's source images. accept-new: the node has never connected to the hypervisor
@@ -154,41 +154,64 @@ EOF
     chmod 0644 "${_root}/var/lib/named/${_mydomain}.lan" "${_root}/var/lib/named/${_mynetrev}.db"
 }
 
+# Helm builds the automation node serves, in helm's own architecture names; install_helm.sh maps a lab node's
+# `uname -m` onto one of them.
+_HELM_ARCHES="amd64 arm64"
+
 # Writes download_latest_helm.sh (run on the automation node) and install_helm.sh (served to lab nodes) under ROOT.
 function write_helm_scripts() {
     local _root="$1"
     mkdir -p "${_root}/usr/local/bin" "${_root}/srv/www/htdocs/helm"
-    cat > "${_root}/usr/local/bin/download_latest_helm.sh" << 'HELMSCRIPT'
+    cat > "${_root}/usr/local/bin/download_latest_helm.sh" << HELMSCRIPT
 #!/bin/bash
-curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail 'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-MYARCH.tar.gz" \
-    --output /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
-curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS --output /srv/www/htdocs/helm/KEYS
-chmod 0644 /srv/www/htdocs/helm/KEYS /srv/www/htdocs/helm/helm-latest-linux-MYARCH.tar.gz
+# Downloads helm's KEYS and the latest helm release for each architecture (${_HELM_ARCHES}) into directory \$1
+# (default /srv/www/htdocs/helm), as helm-latest-linux-<arch>.tar.gz. A download that fails, or a tarball that is not
+# a gzip archive, leaves the file already there in place, is reported, and makes the script exit 1.
+dir="\${1:-/srv/www/htdocs/helm}" rc=0
+is_gzip() { [[ "\$(head -c2 "\$1" 2>/dev/null | od -An -tx1 | tr -d ' \\n')" == 1f8b ]]; }
+fetch() {
+    curl -fsSL "\$1" -o "\$2.part" && { [[ "\$2" != *.tar.gz ]] || is_gzip "\$2.part"; } \\
+        && chmod 0644 "\$2.part" && mv -f "\$2.part" "\$2" && return 0
+    rm -f "\$2.part"
+    echo "ERROR: could not download \$1" >&2
+    return 1
+}
+version=\$(curl -fsSL https://get.helm.sh/helm-latest-version | grep '^v[0-9]') \\
+    || { echo "ERROR: could not read the latest helm version from get.helm.sh" >&2; exit 1; }
+mkdir -p "\${dir}"
+fetch https://raw.githubusercontent.com/helm/helm/main/KEYS "\${dir}/KEYS" || rc=1
+for arch in ${_HELM_ARCHES}; do
+    fetch "https://get.helm.sh/helm-\${version}-linux-\${arch}.tar.gz" "\${dir}/helm-latest-linux-\${arch}.tar.gz" || rc=1
+done
+exit \${rc}
 HELMSCRIPT
-    sed -i "s/MYARCH/${myarch:-amd64}/g" "${_root}/usr/local/bin/download_latest_helm.sh"
 
     # install_helm.sh: served by the automation node, run on client nodes
     cat > "${_root}/srv/www/htdocs/helm/install_helm.sh" << HELMSCRIPT
 #!/bin/bash
-[ -d /tmp/helm ] || mkdir /tmp/helm
-curl -SsL \${LAB_CURL_TLS-} "\${LAB_PROVISIONING_URL:-http://${AUTOMATION_HOSTNAME}}/helm/helm-latest-linux-${myarch:-amd64}.tar.gz" -o /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz
-tar xf /tmp/helm/helm-latest-linux-${myarch:-amd64}.tar.gz -C /tmp/helm
-cp /tmp/helm/linux-${myarch:-amd64}/helm /usr/local/bin
+case "\$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) echo "ERROR: the automation node serves no helm build for architecture \$(uname -m)" >&2; exit 1 ;;
+esac
+mkdir -p /tmp/helm
+curl -fsSL \${LAB_CURL_TLS-} "\${LAB_PROVISIONING_URL:-http://${AUTOMATION_HOSTNAME}}/helm/helm-latest-linux-\${arch}.tar.gz" -o /tmp/helm/helm.tar.gz || exit 1
+tar xzf /tmp/helm/helm.tar.gz -C /tmp/helm || exit 1
+install -m 0755 "/tmp/helm/linux-\${arch}/helm" /usr/local/bin/helm
 HELMSCRIPT
 
     chmod 0755 "${_root}/usr/local/bin/download_latest_helm.sh" "${_root}/srv/www/htdocs/helm/install_helm.sh"
 }
 
-# Downloads the latest helm tarball and the helm release KEYS into directory $1 (mode 0644), unless both are there.
+# Fills directory $1 with download_latest_helm.sh's files, unless every helm tarball there is a gzip archive and
+# KEYS is there. Checked by the gzip magic number, since a minimal image may have no gzip.
 function download_helm_files() {
-    local _dir="$1" _tgz="helm-latest-linux-${myarch:-amd64}.tar.gz"
-    [[ -s "${_dir}/KEYS" && -s "${_dir}/${_tgz}" ]] && return
-    mkdir -p "${_dir}"
-    curl -k https://raw.githubusercontent.com/helm/helm/main/KEYS --output "${_dir}/KEYS"
-    curl -k "https://get.helm.sh/helm-$(curl -L --silent --show-error --fail \
-        'https://get.helm.sh/helm-latest-version' 2>&1 | grep '^v[0-9]')-linux-${myarch:-amd64}.tar.gz" \
-        --output "${_dir}/${_tgz}"
-    chmod 0644 "${_dir}/KEYS" "${_dir}/${_tgz}"
+    local _dir="$1" _arch
+    for _arch in ${_HELM_ARCHES}; do
+        [[ "$(head -c2 "${_dir}/helm-latest-linux-${_arch}.tar.gz" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == 1f8b ]] \
+            || { /usr/local/bin/download_latest_helm.sh "${_dir}"; return; }
+    done
+    [[ -s "${_dir}/KEYS" ]] || /usr/local/bin/download_latest_helm.sh "${_dir}"
 }
 
 # Writes the sshfs automount of the hypervisor's source images on /srv/www/htdocs/sources under ROOT: an fstab line on

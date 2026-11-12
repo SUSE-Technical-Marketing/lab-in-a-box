@@ -51,6 +51,7 @@ from pathlib import Path
 import dns_zone
 from lab_creation import log, warn, die, ssh_run, clean_ssh_keys, ssh_reachable, detect_os
 from kvm_host_profiles import read_os_release
+from lab_schema_base import field_default
 
 # This host's own BIND layout, which depends on its distribution family exactly as a remote master's does: the
 # directory its named is allowed to read a zone from, and the file a zone is declared in.
@@ -60,6 +61,41 @@ NAMED_CONF = Path(dns_zone.local_named_conf(_LOCAL_OS.get("ID", ""), _LOCAL_OS.g
 
 # Shell-quoting for the zone lines and named.conf stanzas written over SSH, which carry quotes and braces.
 _quote = shlex.quote
+
+
+def _header_command(path: str, header: list) -> str:
+    """
+    The shell command putting `header` in front of zone file `path` on a remote server when the file has no SOA,
+    keeping its records and creating it when missing. It exits 0 when it added the header and 3 when the file already
+    had one, inside a subshell so its exit stops no command it is chained with. dns_zone.has_header() is the same
+    rule on this host: a line with SOA as one of its fields.
+    """
+    lines = " ".join(_quote(line) for line in header)
+    return ("(grep -qw SOA {p} 2>/dev/null && exit 3; "
+            "{{ printf '%s\\n' {lines}; cat {p} 2>/dev/null || true; }} > {p}.new && cat {p}.new > {p} && rm -f {p}.new)"
+            ).format(p=_quote(path), lines=lines)
+
+# Run on a server by DNSService.serve_site_view(), as one script: it writes `text` as named.conf, gives the site
+# view the external view's zones when it has none, and restores the previous named.conf when named refuses the new
+# one. Exits 0 when the server serves the site view, printing "changed" when it had to be configured for it.
+_SERVE_SITE_VIEW = """set -u
+conf={conf} ext={ext} site_conf={site_conf} marker={marker} site={site}
+new=$(mktemp)
+cat > "$new" <<'LAB_NAMED_CONF'
+{text}LAB_NAMED_CONF
+touch "$ext"
+[ -f "$site_conf" ] || cp "$ext" "$site_conf"
+if cmp -s "$new" "$conf" && [ "$(cat "$marker" 2>/dev/null)" = "$site" ]; then rm -f "$new"; exit 0; fi
+named-checkconf "$new" || {{ rm -f "$new"; exit 2; }}
+unit=named; systemctl cat named >/dev/null 2>&1 || unit=bind9
+cp -p "$conf" "$conf.lab-previous"
+cat "$new" > "$conf"; rm -f "$new"
+printf '%s\\n' "$site" > "$marker"
+if systemctl restart "$unit" && systemctl is-active --quiet "$unit"; then echo changed; exit 0; fi
+cat "$conf.lab-previous" > "$conf"; rm -f "$marker"; systemctl restart "$unit"; exit 3
+"""
+_SERVE_SITE_VIEW_ERRORS = {2: "named-checkconf refused the configuration",
+                           3: "named did not start with it, so the previous one was restored"}
 
 # Serializes every DNS zone-file mutation (add_to_dns, del_from_dns, add_service_dns and add_dns_to_named_rr). The helpers read the
 # whole zone file, change it and write it back, so two nodes writing the same zone file would lose an entry. One process-wide lock
@@ -217,25 +253,36 @@ class DNSService(AuxService):
                                      "2>/dev/null".format(_quote(pattern)), check=False)
         return found.returncode == 0
 
-    def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "") -> bool:
+    def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "", sites=()) -> bool:
         """
         Make `server` (None for this host) a master of `mydomain`, and of its reverse zone when `mynet_reverse` is
         given, creating the zone file with the header BIND needs and declaring it in named.conf.
+
+        `server` also holds the view file of each of `sites` (dns_zone.site_file()); one it lacks starts as a copy of
+        its forward zone file, where every node is at its public address. A view master (view_site()) holds its own
+        site's file too and serves it in its site view, together with the reverse zone.
 
         Returns True when a zone had to be created, which tells the caller this master holds none of the lab's
         records yet and needs sync_zone() rather than one appended line. Returns False when every zone was already
         there, which is the normal path and does nothing.
 
         A record appended to a zone that is not declared, or to a file with no SOA, is silently never answered:
-        this is what stops that happening.
+        this is what stops that happening. A zone already declared over a file with no SOA, which BIND rejects
+        whole, gets its header added in front of the records it holds and named is restarted; that alone does not
+        count as created, since the records are already there.
         """
         created = False
+        repaired = False
         wanted = [(mydomain, dns_zone.forward_file(mydomain), dns_zone.forward_header(mydomain))]
         if mynet_reverse:
             wanted.append((dns_zone.reverse_zone(mynet_reverse), dns_zone.reverse_file(mynet_reverse),
                            dns_zone.reverse_header(mydomain, mynet_reverse)))
         for zone, file_name, header in wanted:
             if self._zone_declared(server, zone):
+                if self._add_missing_header(server, file_name, header):
+                    log("- DNS server '{}' declares '{}' over a file with no SOA, which BIND rejects: added its "
+                        "header".format(server or "this host", zone))
+                    repaired = True
                 continue
             log("- DNS server '{}' is not a master of '{}' yet: creating the zone".format(server or "this host", zone))
             if server is None:
@@ -243,16 +290,78 @@ class DNSService(AuxService):
             else:
                 self._create_remote_zone(server, zone, file_name, header)
             created = True
-        if created:
+        own = self.view_site(server)
+        for site in sorted(set(sites) | ({own} if own else set())):
+            created = self._ensure_site_file(server, mydomain, site) or created
+        if own:
+            served = [(mydomain, dns_zone.site_file(mydomain, own))]
+            if mynet_reverse:
+                served.append((dns_zone.reverse_zone(mynet_reverse), dns_zone.reverse_file(mynet_reverse)))
+            for zone, file_name in served:
+                created = self._declare_site_zone(server, zone, file_name) or created
+        if created or repaired:
             self.restart_named(remote_servers=[server] if server else None)
         return created
+
+    def _ensure_site_file(self, server, mydomain: str, site: str) -> bool:
+        """
+        Create `server`'s (None for this host) view file of `mydomain` for `site` as a copy of its forward zone file,
+        when it has none. Returns True when it did.
+        """
+        forward, own = dns_zone.forward_file(mydomain), dns_zone.site_file(mydomain, site)
+        if server is None:
+            path = NAMED_ZONE_DIR / own
+            if path.exists():
+                return False
+            path.write_text(self._local_text(forward))
+            path.chmod(0o644)
+        else:
+            result = self._remote(server, "[ -f {s} ] && exit 3; cp {f} {s}".format(
+                f=_quote(self._zone_path(server, forward)), s=_quote(self._zone_path(server, own))),
+                check=False, capture=True)
+            if result.returncode != 0:
+                return False
+        log("- DNS server '{}' has no view of '{}' for site '{}' yet: created it from the external one".format(
+            server or "this host", mydomain, site))
+        return True
+
+    def _declare_site_zone(self, server: str, zone: str, file_name: str) -> bool:
+        """
+        Declare `zone` in view master `server`'s site view, served from `file_name`, replacing a declaration of it
+        from any other file. Returns True when it changed the declaration.
+        """
+        info = (self._os_info or {}).get(server) or detect_os(server)
+        conf = _quote(dns_zone.site_named_conf(info.get("id", ""), info.get("like", "")))
+        line = _quote(dns_zone.stanza(zone, self._zone_path(server, file_name)))
+        result = self._remote(server, (
+            "grep -qxF {l} {c} && exit 3; grep -vF {z} {c} > {c}.new; printf '%s\\n' {l} >> {c}.new; "
+            "cat {c}.new > {c}; rm -f {c}.new").format(l=line, c=conf, z=_quote('zone "{}" '.format(zone))),
+            check=False, capture=True)
+        return result.returncode == 0
+
+    def _add_missing_header(self, server, file_name: str, header: list) -> bool:
+        """
+        Put `header` in front of `server`'s zone file `file_name` (None for this host) when the file has no SOA,
+        keeping every record in it. Returns True when it added one.
+        """
+        if server is None:
+            path = NAMED_ZONE_DIR / file_name
+            text = path.read_text() if path.exists() else ""
+            if dns_zone.has_header(text):
+                return False
+            path.write_text(dns_zone.with_header(text, header))
+            return True
+        result = self._remote(server, _header_command(self._zone_path(server, file_name), header),
+                              check=False, capture=True)
+        return result.returncode == 0
 
     def _create_local_zone(self, zone: str, file_name: str, header: list) -> None:
         """Write the zone file under NAMED_ZONE_DIR and declare it in this host's named.conf."""
         path = NAMED_ZONE_DIR / file_name
-        if not path.exists() or not path.read_text().strip():
-            path.write_text("\n".join(header) + "\n")
+        if not path.exists():
+            path.write_text("")
             path.chmod(0o644)
+        self._add_missing_header(None, file_name, header)
         with NAMED_CONF.open("a") as conf:
             conf.write("\n" + dns_zone.stanza(zone, str(NAMED_ZONE_DIR / file_name)) + "\n")
 
@@ -270,10 +379,9 @@ class DNSService(AuxService):
         path = dns_zone.zone_path(file_name, os_id, os_like)
         conf = dns_zone.remote_named_conf(os_id, os_like)
         main = dns_zone.main_named_conf(os_id, os_like)
-        lines = " ".join(_quote(line) for line in header)
         commands = [
             "mkdir -p {}".format(_quote(dns_zone.zone_dir(os_id, os_like))),
-            "[ -s {p} ] || printf '%s\\n' {lines} > {p}".format(p=_quote(path), lines=lines),
+            _header_command(path, header),
             "printf '%s\\n' {stanza} >> {conf}".format(
                 stanza=_quote(dns_zone.stanza(zone, path)), conf=_quote(conf)),
         ]
@@ -284,6 +392,79 @@ class DNSService(AuxService):
             commands.append("grep -qF {c} {m} || echo 'include \"{f}\";' >> {m}".format(
                 c=_quote(conf), m=_quote(main), f=conf))
         self._remote(server, "; ".join(commands), check=False)
+
+    # ── sites: one forward zone file per view ───────────────────────────────
+
+    # The site each remote master serves a site view for (dns_zone.SITE_MARKER), read once per process; "" for a
+    # master that serves the external view alone.
+    _view_sites = {}
+
+    def view_site(self, server) -> str:
+        """The site `server` serves a site view for; "" for this host and for a master without views."""
+        if server is None:
+            return ""
+        if server not in self._view_sites:
+            result = self._remote(server, "cat {} 2>/dev/null".format(dns_zone.SITE_MARKER), check=False,
+                                  capture=True)
+            self._view_sites[server] = (result.stdout or "").strip() if result.returncode == 0 else ""
+        return self._view_sites[server]
+
+    def sites(self, mydomain: str, servers=(), extra=()) -> list:
+        """
+        Every site with a view file of `mydomain`: those this host holds, those the view masters among `servers`
+        serve, and `extra`. Every master holds the file of each, whether or not it serves it.
+        """
+        held = {dns_zone.site_of_file(mydomain, path.name)
+                for path in NAMED_ZONE_DIR.glob(dns_zone.site_file(mydomain, "*"))}
+        held |= {self.view_site(server) for server in servers}
+        held |= set(extra)
+        return sorted(site for site in held if site)
+
+    @staticmethod
+    def _forward_files(mydomain: str, sites) -> list:
+        """The forward zone files of `mydomain`: the external view's, then one per site of `sites`."""
+        return [dns_zone.forward_file(mydomain)] + [dns_zone.site_file(mydomain, site) for site in sites]
+
+    @staticmethod
+    def _local_text(file_name: str) -> str:
+        """This host's copy of zone file `file_name`; empty when it has none."""
+        path = NAMED_ZONE_DIR / file_name
+        return path.read_text() if path.exists() else ""
+
+    def serve_site_view(self, server: str, site: str, site_clients, options) -> bool:
+        """
+        Make `server` a view master for `site`: its named.conf becomes dns_zone.view_named_conf() with `options` and
+        `site_clients`, and dns_zone.SITE_MARKER names `site`. A site view it has no zones for yet starts with every
+        zone of its external view, from the same files, so no zone it serves goes unanswered; ensure_zone() then
+        moves a forward zone to its site's file once a record of it is written.
+
+        Nothing is written and named is not restarted when the server already has this configuration. One that
+        named-checkconf refuses, or that named does not start with, is not left in place: the previous named.conf is
+        restored. Returns whether `server` serves the site view.
+        """
+        if self._view_sites.get(server) == site:
+            return True
+        info = detect_os(server)
+        os_id, os_like = info.get("id", ""), info.get("like", "")
+        script = _SERVE_SITE_VIEW.format(
+            conf=_quote(dns_zone.main_named_conf(os_id, os_like)),
+            ext=_quote(dns_zone.remote_named_conf(os_id, os_like)),
+            site_conf=_quote(dns_zone.site_named_conf(os_id, os_like)),
+            marker=_quote(dns_zone.SITE_MARKER), site=_quote(site),
+            text=dns_zone.view_named_conf(list(options), list(site_clients), os_id, os_like))
+        result = ssh_run(server, "bash -s", input_text=script, check=False, capture=True)
+        if result.returncode != 0:
+            warn("- DNS server '{}' was NOT given the site view of '{}' ({}), so it keeps answering every client "
+                 "with public addresses: {}".format(server, site, _SERVE_SITE_VIEW_ERRORS.get(
+                     result.returncode, "exit {}".format(result.returncode)),
+                     " ".join((result.stdout or result.stderr or "").split())))
+            self._view_sites[server] = ""
+            return False
+        if "changed" in (result.stdout or ""):
+            log("- DNS server '{}' now answers clients of site '{}' with that site's private addresses".format(
+                server, site))
+        self._view_sites[server] = site
+        return True
 
     # ── sync: every master answers the same records ─────────────────────────
 
@@ -297,8 +478,11 @@ class DNSService(AuxService):
         return dns_zone.records(result.stdout if result.returncode == 0 else "")
 
     def _zone_files(self, mydomain: str, mynet_reverse: str = "") -> list:
-        """The zone files of `mydomain`: its forward zone, and its reverse zone when the lab states one."""
-        files = [dns_zone.forward_file(mydomain)]
+        """
+        The zone files of `mydomain`: its forward zone, the view file of every site this host holds one for, and its
+        reverse zone when the lab states one.
+        """
+        files = self._forward_files(mydomain, self.sites(mydomain))
         if mynet_reverse:
             files.append(dns_zone.reverse_file(mynet_reverse))
         return files
@@ -514,6 +698,43 @@ class DNSService(AuxService):
             lines = [l for l in zone_file.read_text().splitlines() if not l.endswith(suffix)]
             zone_file.write_text("\n".join(lines) + "\n")
 
+    @staticmethod
+    def _node_pattern(short: str) -> str:
+        """
+        Matches node `short`'s own A line (dns_zone.node_record()) as a Python and a sed -E pattern, and never a service
+        record, which is tab-separated. A host name holds no character either reads specially.
+        """
+        return "^{} +IN +A +".format(short)
+
+    def _dns_set_node(self, zone_file, short: str, record: str) -> None:
+        """Make `record` node `short`'s only own A line in zone_file."""
+        zone_file = Path(zone_file)
+        zone_file.touch()
+        matcher = re.compile(self._node_pattern(short))
+        lines = [line for line in zone_file.read_text().splitlines() if not matcher.match(line)]
+        zone_file.write_text("\n".join(lines + [record]) + "\n")
+
+    def _remote_set_node(self, server, zone_file: str, short: str, record: str) -> None:
+        """The remote counterpart of _dns_set_node()."""
+        self._remote(server, "sed -Ei {p} {f}; echo {r} >> {f}".format(
+            p=_quote("/{}/d".format(self._node_pattern(short))), f=_quote(zone_file), r=_quote(record)),
+            check=False)
+
+    def _dns_retarget_services(self, zone_file, old: str, new: str) -> None:
+        """Point every service record of zone_file at `old` (as add_service_dns writes them) at `new` instead."""
+        zone_file = Path(zone_file)
+        if old and old != new and zone_file.exists():
+            suffix = "\tIN A  {}".format(old)
+            lines = [line[:-len(old)] + new if line.endswith(suffix) else line
+                     for line in zone_file.read_text().splitlines()]
+            zone_file.write_text("\n".join(lines) + "\n")
+
+    def _remote_retarget_services(self, server, zone_file: str, old: str, new: str) -> None:
+        """The remote counterpart of _dns_retarget_services()."""
+        if old and old != new:
+            self._remote(server, "sed -i {} {}".format(_quote("s/\\tIN A  {}$/\\tIN A  {}/".format(
+                old.replace(".", "\\."), new)), _quote(zone_file)), check=False)
+
     def _dns_append_line(self, zone_file, record):
         zone_file = Path(zone_file)
         zone_file.touch()
@@ -546,33 +767,6 @@ class DNSService(AuxService):
         """Remove `record` from `server`'s zone file, matched as a whole line so node1 cannot delete node10."""
         self._remote(server, "sed -Ei {} {}".format(
             _quote("\\|{}|d".format(dns_zone.pattern(record))), zone_file), check=False)
-
-    @staticmethod
-    def _other_a_pattern(short, keep_ip):
-        """
-        (POSIX ERE for any A record of name `short`, POSIX ERE for one pointing at `keep_ip`): the lines
-        _dns_remove_other_a() and _remote_dns_remove_other_a() remove are those matching the first and not the second.
-        The name is matched whole, so removing node1's records leaves node10's alone.
-        """
-        name = dns_zone.pattern(short)[:-len("[[:space:]]*$")]
-        any_a = name + "[[:space:]]+IN[[:space:]]+A[[:space:]]+"
-        keep = "[[:space:]]" + keep_ip.replace(".", "\\.") + "[[:space:]]*$"
-        return any_a, keep
-
-    def _dns_remove_other_a(self, zone_file, short, keep_ip):
-        """Remove every A record of `short` from zone_file except the one pointing at `keep_ip`."""
-        path = Path(zone_file)
-        if not path.exists():
-            return
-        any_a, keep = (re.compile(p.replace("[[:space:]]", r"\s")) for p in self._other_a_pattern(short, keep_ip))
-        kept = [line for line in path.read_text().splitlines() if not (any_a.match(line) and not keep.search(line))]
-        path.write_text("\n".join(kept) + "\n")
-
-    def _remote_dns_remove_other_a(self, server, zone_file, short, keep_ip):
-        """The remote counterpart of _dns_remove_other_a(), on `server`'s own zone file."""
-        any_a, keep = self._other_a_pattern(short, keep_ip)
-        self._remote(server, "sed -Ei {} {}".format(
-            _quote("\\|{}|{{\\|{}|!d}}".format(any_a, keep)), zone_file), check=False)
 
     def _dns_remove_record(self, zone_file, record):
         """The local counterpart of _remote_dns_remove_record(), matching the same whitespace-tolerant line."""
@@ -617,23 +811,21 @@ class DNSService(AuxService):
             lines.append(self._hosts_line(vm_name, myip))
         path.write_text("\n".join(lines) + "\n")
 
-    def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, replace=False):
+    def add_to_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, site="", private_ip=""):
         """
         Add forward (A) and reverse (PTR) DNS records for a VM. Without `mynet_reverse` only the A record is added.
 
-        replace: first remove every other A record of the VM's own name, on every master, so the name resolves to
-        `myip` alone. For a cloud node, whose provider assigns a new address at each creation: when its previous
-        instance is gone, nothing can tell the earlier destroy what its address was, and that record would otherwise
-        stay beside the new one for good, the sync only ever adding records. Off by default, leaving every other
-        caller's records as they are.
+        The node's A record is at `myip` in the external view's file and in every site's (dns_zone.site_file()),
+        except in the file of its own `site`, where it is at `private_ip` when one is given. A node has one A record
+        per file, so an earlier one under its name is replaced, and the service records that pointed at the
+        address it replaces point at the new one.
         """
         log("Adding DNS entry for '{}' → {}".format(vm_name, myip))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
-        a_record   = "{}         IN  A       {}".format(short, myip)
         ptr_record = "{}      IN  PTR     {}.".format(last_octet, vm_name)
+        own_file   = dns_zone.site_file(mydomain, site) if site and private_ip else ""
 
-        lan_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
         with _dns_lock:
@@ -643,20 +835,28 @@ class DNSService(AuxService):
             # the records, because creating a zone writes the very file the appends below read and rewrite.
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
-            resync = self.ensure_zone(None, mydomain, mynet_reverse)
+            sites = self.sites(mydomain, servers, [site] if own_file else [])
+            resync = self.ensure_zone(None, mydomain, mynet_reverse, sites=sites)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain, mynet_reverse) or resync
+                resync = self.ensure_zone(server, mydomain, mynet_reverse, sites=sites) or resync
+
+            # file -> (the address the node had there, the address it has now), read from this host's copy, which
+            # every master's matches.
+            addresses = {
+                file_name: (dns_zone.node_address(self._local_text(file_name), short),
+                            private_ip if file_name == own_file else myip)
+                for file_name in self._forward_files(mydomain, sites)}
 
             for server in servers:
                 # A master's own zone directory, not this host's: the two differ between distribution families,
                 # and a record written to the wrong one is never answered.
-                remote_lan = self._zone_path(server, dns_zone.forward_file(mydomain))
-                remote_rev = self._zone_path(server, dns_zone.reverse_file(mynet_reverse)) if mynet_reverse else ""
                 if mynet_reverse:
+                    remote_rev = self._zone_path(server, dns_zone.reverse_file(mynet_reverse))
                     self._remote_dns_remove_ptr_for_octet(server, remote_rev, last_octet)
-                if replace:
-                    self._remote_dns_remove_other_a(server, remote_lan, short, myip)
-                self._remote_dns_add(server, remote_lan, a_record)
+                for file_name, (old, new) in addresses.items():
+                    path = self._zone_path(server, file_name)
+                    self._remote_set_node(server, path, short, dns_zone.node_record(short, new))
+                    self._remote_retarget_services(server, path, old, new)
                 if mynet_reverse:
                     self._remote_dns_add(server, remote_rev, ptr_record)
                 self._remote(server, "systemctl restart named", check=False)
@@ -664,9 +864,9 @@ class DNSService(AuxService):
             # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
             if mynet_reverse:
                 self._dns_remove_ptr_for_octet(rev_file, last_octet)
-            if replace:
-                self._dns_remove_other_a(lan_file, short, myip)
-            self._dns_add_line(lan_file, a_record)
+            for file_name, (old, new) in addresses.items():
+                self._dns_set_node(NAMED_ZONE_DIR / file_name, short, dns_zone.node_record(short, new))
+                self._dns_retarget_services(NAMED_ZONE_DIR / file_name, old, new)
             if mynet_reverse:
                 self._dns_add_line(rev_file, ptr_record)
             self._update_hosts_file(vm_name, myip)
@@ -676,15 +876,15 @@ class DNSService(AuxService):
             self.sync_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
 
     def del_from_dns(self, vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
-        """Remove a VM's forward and reverse DNS records and every service record pointing at its IP. Without `mynet_reverse`
-        the PTR record is left alone."""
+        """
+        Remove a VM's forward and reverse DNS records and every service record pointing at it, from the external
+        view's file and every site's. Without `mynet_reverse` the PTR record is left alone.
+        """
         log("Removing DNS entry for '{}'".format(vm_name))
         short      = vm_name.split(".")[0]
         last_octet = myip.split(".")[-1]
-        a_record   = "{}         IN  A       {}".format(short, myip)
         ptr_record = "{}      IN  PTR     {}.".format(last_octet, vm_name)
 
-        lan_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         rev_file = NAMED_ZONE_DIR / "{}.db".format(mynet_reverse)
 
         # A removal that does not reach a master cannot be repaired later: sync_zone() only ever adds records, since
@@ -699,34 +899,46 @@ class DNSService(AuxService):
                          "it with dns_sync.py --prune".format(vm_name, server))
 
             self._resolve_families(servers)
+            # The node's address in each file, read before anything is removed: in its own site's file it is an
+            # address the caller does not pass.
+            addresses = {file_name: dns_zone.node_address(self._local_text(file_name), short) or myip
+                         for file_name in self._forward_files(mydomain, self.sites(mydomain, servers))}
+            node_line = _quote("/{}/d".format(self._node_pattern(short)))
             for server in servers:
                 # check=False: same non-fatal-secondary-server rationale as
                 # _remote_dns_add above.
-                remote_lan = self._zone_path(server, dns_zone.forward_file(mydomain))
                 remote_rev = self._zone_path(server, dns_zone.reverse_file(mynet_reverse)) if mynet_reverse else ""
                 if mynet_reverse:
                     self._remote(server, "sed '/{}/d' -i {}".format(ptr_record, remote_rev), check=False)
-                self._remote(server, "sed '/{}/d' -i {}".format(a_record, remote_lan), check=False)
-                self._remote(server, "sed '/\\tIN A  {}$/d' -i {}".format(
-                    myip.replace(".", "\\."), remote_lan), check=False)
+                for file_name, address in addresses.items():
+                    path = self._zone_path(server, file_name)
+                    self._remote(server, "sed -Ei {} {}".format(node_line, path), check=False)
+                    self._remote(server, "sed '/\\tIN A  {}$/d' -i {}".format(
+                        address.replace(".", "\\."), path), check=False)
                 self._remote(server, "systemctl restart named", check=False)
 
             if mynet_reverse:
                 self._dns_remove_line(rev_file, ptr_record)
-            self._dns_remove_line(lan_file, a_record)
-            self._dns_remove_service_lines(lan_file, myip)
+            matcher = re.compile(self._node_pattern(short))
+            for file_name, address in addresses.items():
+                path = NAMED_ZONE_DIR / file_name
+                if path.exists():
+                    path.write_text("\n".join(line for line in path.read_text().splitlines()
+                                              if not matcher.match(line)) + "\n")
+                self._dns_remove_service_lines(path, address)
             self._update_hosts_file(vm_name)
             self.restart_named()
 
     def add_service_dns(self, definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=None):
         """Add round-robin A records for a cluster service DNS entry."""
-        nodes       = definition.get("nodes", {})
-        install_key = "INSTALL_{}_TYPE".format(clu_type.upper())
+        nodes = definition.get("nodes", {})
+        default_role = field_default("nodes", "KUBERNETES_NODE_TYPE")
 
         agent_nodes = [
             (name, cfg["myip"])
             for name, cfg in nodes.items()
-            if cfg.get(install_key) == "agent" and cfg.get("kcluster") == clu_name and "myip" in cfg
+            if (cfg.get("KUBERNETES_NODE_TYPE") or default_role) == "agent" and cfg.get("kcluster") == clu_name
+            and "myip" in cfg
         ]
 
         record_targets = agent_nodes or [
@@ -760,25 +972,32 @@ class DNSService(AuxService):
         log("DNS '{}' added pointing to {} nodes of cluster '{}' ({})".format(
             dns_entry, msg, clu_name, ", ".join(ip for _n, ip in record_targets)))
 
-        zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
         with _dns_lock:
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
-            resync = self.ensure_zone(None, mydomain)
+            sites = self.sites(mydomain, servers)
+            resync = self.ensure_zone(None, mydomain, sites=sites)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain) or resync
-            for _, ip in record_targets:
-                record = "{}\tIN A  {}".format(dns_entry, ip)
-                for server in servers:
-                    # check=False: same non-fatal-secondary-server rationale as
-                    # DNSService.add_to_dns above.
-                    remote_zone = self._zone_path(server, dns_zone.forward_file(mydomain))
-                    self._remote(server, "sed '/{}\tIN A  {}/d' -i {}".format(
-                        dns_entry, ip, remote_zone), check=False)
-                    self._remote(server, "echo -e '{}' >> {}".format(record, remote_zone), check=False)
-                    self._remote(server, "systemctl restart named", check=False)
-                self._dns_remove_line(zone_file, "{}\tIN A  {}".format(dns_entry, ip))
-                self._dns_append_line(zone_file, record)
+                resync = self.ensure_zone(server, mydomain, sites=sites) or resync
+            # Each file points the service at the address that file gives the node, so a site's view of it is the
+            # node's private address there.
+            for file_name in self._forward_files(mydomain, sites):
+                zone_file = NAMED_ZONE_DIR / file_name
+                text = self._local_text(file_name)
+                for name, myip in record_targets:
+                    ip = dns_zone.node_address(text, name.split(".")[0]) or myip
+                    record = "{}\tIN A  {}".format(dns_entry, ip)
+                    for server in servers:
+                        # check=False: same non-fatal-secondary-server rationale as
+                        # DNSService.add_to_dns above.
+                        remote_zone = self._zone_path(server, file_name)
+                        self._remote(server, "sed '/{}\tIN A  {}/d' -i {}".format(
+                            dns_entry, ip, remote_zone), check=False)
+                        self._remote(server, "echo -e '{}' >> {}".format(record, remote_zone), check=False)
+                    self._dns_remove_line(zone_file, record)
+                    self._dns_append_line(zone_file, record)
+            for server in servers:
+                self._remote(server, "systemctl restart named", check=False)
 
             self.restart_named()
 
@@ -788,28 +1007,34 @@ class DNSService(AuxService):
     def add_dns_to_named_rr(self, definition, dns_entry, node_name, mydomain, remote_dns_servers=None):
         """Add a single round-robin A record (dns_entry -> node_name's own myip)."""
         myip = (definition.get("nodes", {}).get(node_name, {}) or {}).get("myip", "")
-        record = "{}\tIN A  {}".format(dns_entry, myip)
-        zone_file = NAMED_ZONE_DIR / "{}.lan".format(mydomain)
+        short = node_name.split(".")[0]
 
         with _dns_lock:
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
-            resync = self.ensure_zone(None, mydomain)
+            sites = self.sites(mydomain, servers)
+            resync = self.ensure_zone(None, mydomain, sites=sites)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain) or resync
+                resync = self.ensure_zone(server, mydomain, sites=sites) or resync
 
-            existing = zone_file.read_text().splitlines() if zone_file.exists() else []
-            if record in existing and not resync:
+            # Each file's record points at the address that file gives the node, as add_service_dns() does.
+            records = {file_name: "{}\tIN A  {}".format(
+                dns_entry, dns_zone.node_address(self._local_text(file_name), short) or myip)
+                for file_name in self._forward_files(mydomain, sites)}
+            if not resync and all(record in self._local_text(file_name).splitlines()
+                                  for file_name, record in records.items()):
                 log("- DNS entry \"{} → {}\" already correct, skipping".format(dns_entry, myip))
                 return
 
             log("- add DNS entry \"{}.{}\"".format(dns_entry, mydomain))
 
             for server in servers:
-                self._remote_dns_add(server, self._zone_path(server, dns_zone.forward_file(mydomain)), record)
+                for file_name, record in records.items():
+                    self._remote_dns_add(server, self._zone_path(server, file_name), record)
                 self._remote(server, "systemctl restart named", check=False)
 
-            self._dns_add_line(zone_file, record)
+            for file_name, record in records.items():
+                self._dns_add_line(NAMED_ZONE_DIR / file_name, record)
 
         if resync:
             self.sync_zone(mydomain, remote_dns_servers=remote_dns_servers)

@@ -67,6 +67,9 @@ check("setup_ansible_control_node: pushes the REAL ensure_packages.yml content",
       any("ansible.builtin.package:" in c for c in cmds))
 check("setup_ansible_control_node: pushes the REAL patch_and_reboot.yml content",
       any("community.general.zypper:" in c for c in cmds))
+check("setup_ansible_control_node: pushes the REAL deploy_k3s.yml content too — playbooks are discovered "
+      "under templates/addons/ansible_control_node/playbooks, not a hardcoded list",
+      any("k3s_server" in c and "k3s_agents" in c for c in cmds))
 check("setup_ansible_control_node: pushes the REAL dynamic inventory script, not a stub",
       any("systemgroup.listSystemsMinimal" in c for c in cmds))
 check("setup_ansible_control_node: makes the inventory script executable",

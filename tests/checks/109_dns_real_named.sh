@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/dns_zone.py libs/services.py
 # libs/dns_zone.py's generated zones and libs/services.py's zone creation against a REAL BIND: named-checkconf and
 # named-checkzone accept what they produce, and a running named answers the records add_to_dns writes and stops
 # answering those del_from_dns removes. Every other DNS check fakes the zone files, so nothing else proves that

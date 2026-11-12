@@ -1,0 +1,11 @@
+{
+ "fields": {
+  "rodeo_cli_install_url": {
+   "default": "https://raw.githubusercontent.com/avaleror/rodeo-cli/main/install.sh",
+   "required": false,
+   "type": "url"
+  }
+ },
+ "schema": "addon:rodeo_cli",
+ "version": "1.0"
+}

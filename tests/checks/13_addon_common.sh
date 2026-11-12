@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/addon_common.py
 # Pure-logic unit tests for libs/addon_common.py — the
 # shared --version/--validate/--help/--schema/--capabilities CLI scaffolding
 # every install_<addon> script builds on. Independent container — see

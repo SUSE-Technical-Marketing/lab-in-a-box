@@ -20,11 +20,11 @@ _SLES_VERSION = re.compile(r"^suse-sles-(\d+)-(?:sp)?(\d+)-", re.IGNORECASE)
 _MICRO_VERSION = re.compile(r"^suse-sle-micro-(\d+)-(\d+)-", re.IGNORECASE)
 
 # Variants that are not a plain pay-as-you-go SLES: BYOS wants a registration code before zypper
-# works, chost is the container host, ecs is built for another cloud, and sapcal, hardened and
-# tomcat are their own products.
+# works and is picked only when asked for, chost is the container host, ecs is built for another
+# cloud, and sapcal, hardened and tomcat are their own products.
 _SLES_VARIANTS = ("byos", "chost", "sapcal", "hardened", "sap", "ecs", "tomcat")
 
-# SL Micro ships only a plain and a BYOS variant; the BYOS one is excluded for the same reason.
+# SL Micro ships only a plain and a BYOS variant; the BYOS one is picked only when asked for.
 _MICRO_VARIANTS = ("byos",)
 
 
@@ -49,20 +49,18 @@ def arch_matches(name: str, arch_suffix: str) -> bool:
 
 
 def _has_variant(name: str, variant: str) -> bool:
-    """Whether image `name` carries `variant` as one of its dash-separated segments."""
+    """Whether image `name` carries `variant` as one of its dash-separated parts."""
     return "-{}-".format(variant) in name or name.endswith("-" + variant)
 
 
 def _newest(images: list, arch_suffix: str, version_re, variants: tuple,
-            major: int = 0, minor: int = -1, variant: str = "") -> dict:
+            major: int = 0, minor: int = -1, require: str = "") -> dict:
     """
     The newest image of `images` whose name `version_re` matches with its major and minor version as the two groups,
-    for `arch_suffix`, excluding every name carrying one of `variants`: the highest version, then the latest publish
-    date, then the name, so a choice between two images differing only in a trailing suffix is stable. `major` and
-    `minor` limit the result to one version; 0 and -1 take the highest there is. {} when there is none.
-
-    `variant` ("byos") asks for that variant instead: only names carrying it are considered, and every other one of
-    `variants` is still excluded.
+    for `arch_suffix`, excluding every name carrying one of `variants` and, when `require` is given, every name not
+    carrying it: the highest version, then the latest publish date, then the name, so a choice between two images
+    differing only in a trailing suffix is stable. `major` and `minor` limit the result to one version; 0 and -1 take
+    the highest there is. {} when there is none.
     """
     found = []
     for image in images:
@@ -70,9 +68,9 @@ def _newest(images: list, arch_suffix: str, version_re, variants: tuple,
         match = version_re.match(name)
         if not match or not arch_matches(name, arch_suffix):
             continue
-        if variant and not _has_variant(name, variant):
+        if any(_has_variant(name, variant) for variant in variants):
             continue
-        if any(_has_variant(name, v) for v in variants if v != variant):
+        if require and not _has_variant(name, require):
             continue
         version = (int(match.group(1)), int(match.group(2)))
         if major and version[0] != major:
@@ -98,22 +96,23 @@ def newest_sles(images: list, arch_suffix: str, major: int = 0, minor: int = -1,
     is. A SLES 15 name spells its minor version "sp7" and a SLES 16 one "0", and both are read as the minor version
     here.
 
-    By default only the pay-as-you-go images are considered. A BYOS image needs a registration code before its zypper
-    can install anything, and chost, ecs, sapcal, hardened and tomcat are different products, so none of them is what
-    a lab that just wants "a SLES node" should be handed. `byos` asks for the BYOS image instead, for a lab that brings
-    its own subscription: it gets its packages once registered, with SUSEConnect or to an SMLM server.
+    The pay-as-you-go image by default; `byos` asks for the bring-your-own-subscription one instead, which needs no
+    provider marketplace subscription but has no package repositories until the node is registered with a
+    registration code. chost, ecs, sapcal, hardened and tomcat are different products and are never picked.
     """
-    return _newest(images, arch_suffix, _SLES_VERSION, _SLES_VARIANTS, major=major, minor=minor,
-                   variant="byos" if byos else "")
+    variants = tuple(v for v in _SLES_VARIANTS if v != "byos") if byos else _SLES_VARIANTS
+    return _newest(images, arch_suffix, _SLES_VERSION, variants, major=major, minor=minor,
+                   require="byos" if byos else "")
 
 
 def newest_micro(images: list, arch_suffix: str, major: int = 0, minor: int = -1, byos: bool = False) -> dict:
     """
-    The newest pay-as-you-go SUSE Linux Micro (SLE Micro) image of `images` for `arch_suffix`. `major` and `minor`
-    limit it to one version (6 and 1 for SL Micro 6.1); 0 and -1 take the highest there is.
+    The newest SUSE Linux Micro (SLE Micro) image of `images` for `arch_suffix`. `major` and `minor` limit it to one
+    version (6 and 1 for SL Micro 6.1); 0 and -1 take the highest there is.
 
-    The BYOS images are excluded by default: their zypper needs a registration code before it can install anything,
-    which is the same reason newest_sles() excludes them. `byos` asks for the BYOS image instead.
+    The pay-as-you-go image by default; `byos` asks for the bring-your-own-subscription one instead, on the same
+    terms as newest_sles().
     """
-    return _newest(images, arch_suffix, _MICRO_VERSION, _MICRO_VARIANTS, major=major, minor=minor,
-                   variant="byos" if byos else "")
+    variants = tuple(v for v in _MICRO_VARIANTS if v != "byos") if byos else _MICRO_VARIANTS
+    return _newest(images, arch_suffix, _MICRO_VERSION, variants, major=major, minor=minor,
+                   require="byos" if byos else "")

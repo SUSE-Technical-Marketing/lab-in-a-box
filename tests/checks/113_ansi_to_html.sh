@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: webui/htdocs/ansi.js
 # webui/htdocs/ansi.js: node --check syntax, plus a DOM-free functional smoke test of ansiToHtml()
 # against the real escape sequences lab_creation.py emits (_RED/_GREEN/_ORANGE/_WHITE/_RESET).
 # Independent container — see tests/run_tests.sh.

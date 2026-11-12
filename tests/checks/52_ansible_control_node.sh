@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_ansible_control_node
 # Unit tests for install_ansible_control_node. Independent container —
 # see tests/run_tests.sh.
 set -uo pipefail

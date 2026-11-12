@@ -9,9 +9,12 @@ DNS VM a cloud lab gets (libs/backends.py's ensure_cloud_dns_vm) and the bootstr
 that is never resolved.
 
     forward_file(mydomain) / reverse_file(mynet_reverse)  -> the zone file's name, without a directory
+    site_file(mydomain, site) / site_of_file(...)         -> a site view's forward zone file, and back
+    node_record(short, address) / node_address(text, ..)  -> a node's own A line, and its address in a zone file
     forward_header(mydomain) / reverse_header(...)        -> the lines a new zone file starts with
     zone_dir(os_id, os_like) / zone_path(file_name, ...)  -> where that family's named reads a zone
     stanza(zone, zone_file)                               -> the named.conf declaration for it
+    view_named_conf(...)                                  -> the whole named.conf of a server serving site views
     records(text)                                         -> the comparable records of a zone file, as a set
     pattern(record)                                       -> matches the file line any records() entry came from
 """
@@ -19,7 +22,7 @@ that is never resolved.
 # Author/s: Raul Mahiques
 # License: GPLv3
 
-from typing import List, Set
+from typing import List, Set, Tuple
 
 __version__ = "__LABVERSION__"
 
@@ -57,6 +60,36 @@ def zone_dir(os_id: str = "", os_like: str = "") -> str:
 def forward_file(mydomain: str) -> str:
     """The forward zone's file name for `mydomain`, as named.conf's "file" and as the name under /var/lib/named."""
     return "{}.lan".format(mydomain)
+
+
+def site_file(mydomain: str, site: str) -> str:
+    """
+    The forward zone file of `mydomain` as `site` sees it: that site's own nodes at their private address, every other
+    node at its public one. forward_file() is the view everyone else sees.
+    """
+    return "{}.site-{}.lan".format(mydomain, site)
+
+
+def site_of_file(mydomain: str, file_name: str) -> str:
+    """The site a site_file() of `mydomain` belongs to; "" for any other file name."""
+    prefix, suffix = "{}.site-".format(mydomain), ".lan"
+    if file_name.startswith(prefix) and file_name.endswith(suffix) and len(file_name) > len(prefix) + len(suffix):
+        return file_name[len(prefix):-len(suffix)]
+    return ""
+
+
+def node_record(short: str, address: str) -> str:
+    """A node's own A line, in the layout every zone file here uses for one, distinct from a service record's."""
+    return "{}         IN  A       {}".format(short, address)
+
+
+def node_address(text: str, short: str) -> str:
+    """The address zone file `text` gives node `short` in its own A line (node_record()); "" when it has none."""
+    for line in (text or "").splitlines():
+        fields = line.split()
+        if line.startswith(short + " ") and fields[1:3] == ["IN", "A"] and len(fields) == 4:
+            return fields[3]
+    return ""
 
 
 def reverse_file(mynet_reverse: str) -> str:
@@ -138,9 +171,78 @@ def zone_path(file_name: str, os_id: str = "", os_like: str = "") -> str:
     return "{}/{}".format(zone_dir(os_id, os_like), file_name)
 
 
+# The site a view master serves its site view for, one line naming it. Its presence is what makes a server a view
+# master (view_named_conf()); a server without it serves forward_file() alone, as every master did before sites.
+SITE_MARKER = "/etc/lab-dns-site"
+
+
+def site_named_conf(os_id: str = "", os_like: str = "") -> str:
+    """The file a view master declares its site view's zones in, beside remote_named_conf() for the external view."""
+    if zone_dir(os_id, os_like) == ZONE_DIR_DEBIAN:
+        return "/etc/bind/named.conf.lab-site"
+    return "/etc/named.lab-site.conf"
+
+
+# The distribution's own working and managed-keys directories for named, which it must be able to write, unlike the
+# zone directory. Fedora-family IDs are matched before ID_LIKE, as _DEBIAN_IDS is.
+_FEDORA_IDS = ("fedora", "rhel", "centos", "rocky", "almalinux", "amzn", "ol")
+
+
+def named_dirs(os_id: str = "", os_like: str = "") -> Tuple[str, str]:
+    """named's ("directory", "managed-keys-directory") on a host of this family, as its own package lays them out."""
+    os_id, os_like = (os_id or "").lower(), (os_like or "").lower()
+    if zone_dir(os_id, os_like) == ZONE_DIR_DEBIAN:
+        return "/var/cache/bind", "/var/cache/bind"
+    if os_id in _FEDORA_IDS or "fedora" in os_like or "rhel" in os_like:
+        return "/var/named", "/var/named/dynamic"
+    return "/var/lib/named", "/var/lib/named/dyn"
+
+
+def view_named_conf(options: List[str], site_clients: List[str], os_id: str = "", os_like: str = "") -> str:
+    """
+    The whole named.conf of a view master: `options` (one statement per line) in its options block, then a "site"
+    view for `site_clients` (address match list elements) with the zones of site_named_conf(), and an "external"
+    view for everyone else with the zones of remote_named_conf(), which answers authoritatively and never recurses.
+
+    BIND refuses a zone outside a view once any view exists, which is why the file is written whole rather than
+    patched into the distribution's own: the default zones it ships are left out and BIND's built-in ones serve.
+    """
+    directory, keys_directory = named_dirs(os_id, os_like)
+    lines = ["options {", '\tdirectory "{}";'.format(directory), '\tmanaged-keys-directory "{}";'.format(keys_directory)]
+    lines += ["\t" + option.strip() for option in options]
+    lines += [
+        "};",
+        'view "site" {',
+        "\tmatch-clients {{ {} }};".format(" ".join("{};".format(c) for c in site_clients)),
+        '\tinclude "{}";'.format(site_named_conf(os_id, os_like)),
+        "};",
+        'view "external" {',
+        "\tmatch-clients { any; };",
+        "\trecursion no;",
+        "\tallow-recursion { none; };",
+        "\tallow-query-cache { none; };",
+        '\tinclude "{}";'.format(remote_named_conf(os_id, os_like)),
+        "};",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def stanza(zone: str, zone_file: str) -> str:
     """The named.conf declaration making this server a master of `zone`, served from `zone_file`."""
     return 'zone "{z}" {{ type master; file "{f}"; allow-update {{ none; }}; }};'.format(z=zone, f=zone_file)
+
+
+def has_header(text: str) -> bool:
+    """
+    Whether zone file `text` has the SOA BIND needs to load it at all. Without one BIND rejects the whole zone, so
+    every record in the file goes unanswered.
+    """
+    return any("SOA" in line.split() for line in text.splitlines())
+
+
+def with_header(text: str, header: List[str]) -> str:
+    """Zone file `text` with `header` in front of it, keeping every record it already holds."""
+    return "\n".join(header) + "\n" + text.lstrip("\n")
 
 
 def records(text: str) -> Set[str]:

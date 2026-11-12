@@ -98,7 +98,7 @@ chmod 0600 /etc/lab_creation.cfg.example
 # selection, pluggable VM backends, spacecmd_common.py, etc.) — one
 # directory, one loop. Used to also carry the bash helpers install_ds389
 # needed before it was ported to Python (2026-09-21); those were removed
-# once nothing live sourced them any more (see legacy_bash/README.md).
+# once nothing live sourced them any more (see legacy_bash.md).
 for i in libs/*
 do
     [[ -d "${i}" ]] && continue
@@ -273,7 +273,11 @@ _apache_configtest() {
 }
 
 # Apply what the flags above call for to service ${1} (apache2 or httpd), and
-# say what was done. A service that is not running is started, whatever changed.
+# say what was done. A service that is not running is started, whatever changed. Before actually
+# restarting/reloading (never for a no-op "nothing changed, already running"), the configuration is
+# tested first: a deploy that writes an invalid Apache config must refuse to apply it, say so clearly
+# (with Apache's own error), and leave whatever was already running untouched and still serving —
+# never restart/reload into a config that would just fail to come back up.
 _apache_apply() {
     if [[ ${_apache_restart} -eq 1 || ${_apache_reload} -eq 1 ]] || ! systemctl is-active --quiet "${1}" 2>/dev/null
     then
@@ -293,6 +297,24 @@ _apache_apply() {
     _apache_reload=0
     _apache_restart=0
 }
+
+# A version predating lab_creation-ssl.conf (below) had lab-builder-ssl.conf open its own Listen
+# directive, which collides with that config's own and stops Apache starting at all. Clean up any such
+# stale copy BEFORE lab_creation-ssl.conf is ever installed/validated below — not inside the webui
+# block further down, which runs too late to help the very first _apache_apply call in this script.
+# The current lab-builder-ssl.conf opens no port of its own (it only redirects /lab-builder to HTTPS),
+# so this always leaves it present and current, webui on or off; the later webui block reinstalls it
+# (and lab-builder.conf, the actual /lab-builder routing) only when _webui_mode is not "off".
+if [[ -d /etc/apache2/vhosts.d ]]
+then
+    _apache_remove_conf /etc/apache2/conf.d/lab-builder.conf
+    _apache_remove_conf /etc/apache2/conf.d/lab-builder-ssl.conf
+    _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/apache2/vhosts.d/lab-builder-ssl.conf
+    _apache_enable_module rewrite  # lab-builder-ssl.conf's RewriteEngine needs it, webui on or off
+elif [[ -d /etc/httpd/conf.d ]]
+then
+    _apache_install_conf webui/apache/lab-builder-ssl.conf /etc/httpd/conf.d/lab-builder-ssl.conf
+fi
 
 
 # ── HTTPS for the provisioning web server ────────────────────────────────────
@@ -575,6 +597,11 @@ UNITEOF
 
         if [[ -d /etc/apache2/vhosts.d ]]          # SLES / openSUSE
         then
+            # conf.d is included from default-server.conf, before vhosts.d. A copy left there by an older install
+            # declares "Alias /lab-builder" first, and first match wins, so /lab-builder/admin and /lab-builder/api
+            # map into htdocs and answer 404 however current the vhosts.d config is.
+            _apache_remove_conf /etc/apache2/conf.d/lab-builder.conf
+            _apache_remove_conf /etc/apache2/conf.d/lab-builder-ssl.conf
             _apache_install_conf webui/apache/lab-builder.conf /etc/apache2/vhosts.d/lab-builder.conf
             # the modules this needs: cgid, Basic auth and expires always,
             # rewrite for the HTTPS redirect unless _webui_tls=0.
@@ -610,7 +637,7 @@ UNITEOF
         fi
     fi
 
-    # ── hypervisor status snapshot (feeds the status panel + live ISO_IMAGE
+    # ── hypervisor status snapshot (feeds the status panel + live SOURCE_IMAGE
     # dropdown) ──────────────────────────────────────────────────────────────
     # refresh_hypervisor_status.py runs as root on a schedule — unlike the
     # CGI (which never runs anything privileged, see lab-builder.conf's

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will push and run an Ansible playbook on an Ansible control node
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "ansible_playbook" — Runs a playbook via an already-provisioned Ansible control node
+#   ansible_playbook_path        : local file path (on the automation node), pushed to the
+#                                   control node and run — exactly one of _path/_url/_content required
+#   ansible_playbook_url         : the control node fetches the playbook from itself — an http(s)://
+#                                   URL (via curl), or an nfs://<server>/<path-to-file> URL (mounted
+#                                   read-only, read, then unmounted)
+#   ansible_playbook_content     : inline playbook YAML text
+#   ansible_playbook_name        : [OPTIONAL] filename saved on the control node (default: lab_playbook.yml)
+#   ansible_playbook_limit       : [OPTIONAL] --limit pattern (default: unset, every host in the inventory)
+#   ansible_playbook_extra_vars  : [OPTIONAL] dict passed as --extra-vars (JSON-encoded)
+#
+# Target node(s): any node listing "ansible_playbook" in its own addons[] list — same dispatch shape as
+# install_client_registration.py. That SAME node must already be an Ansible control node (list
+# "ansible_control_node" in its own addons[] too, run first) — this add-on pushes/fetches the playbook and
+# runs it there against the control node's own dynamic inventory; it does not provision the control node
+# itself. Dies with a clear message if ansible-playbook isn't on that node at all.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "ansible_playbook",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "aux_services": [],
+}
+
+import json
+import os
+import re
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, die  # noqa: E402
+
+_DEFAULT_PLAYBOOK_DIR = "/srv/ansible/playbooks"
+
+
+def _validate(v):
+    cfg = v.definition.get("ansible_playbook", {}) or {}
+    sources = [cfg.get("ansible_playbook_path"), cfg.get("ansible_playbook_url"), cfg.get("ansible_playbook_content")]
+    given = [s for s in sources if s]
+    if len(given) != 1:
+        v.errors.append("[ERROR] ansible_playbook: exactly one of ansible_playbook_path/_url/_content "
+                         "is required, got {}".format(len(given)))
+    url = cfg.get("ansible_playbook_url")
+    if url and not re.match(r'^(https?|nfs)://', str(url)):
+        v.errors.append("[ERROR] ansible_playbook.ansible_playbook_url='{}': must start with "
+                         "http://, https:// or nfs://".format(url))
+    extra_vars = cfg.get("ansible_playbook_extra_vars")
+    if extra_vars is not None and not isinstance(extra_vars, dict):
+        v.errors.append("[ERROR] ansible_playbook.ansible_playbook_extra_vars must be a dict")
+
+
+def _ensure_is_control_node(hostname):
+    r = ssh_run(hostname, "command -v ansible-playbook", check=False, capture=True)
+    if r.returncode != 0:
+        die("'{}' has no ansible-playbook — add \"ansible_control_node\" to its own addons[] list "
+            "(and run it) before \"ansible_playbook\"".format(hostname))
+
+
+def _stage_playbook(hostname, cfg, playbook_dir, name):
+    dest = "{}/{}".format(playbook_dir, name)
+    path = cfg.get("ansible_playbook_path")
+    url = cfg.get("ansible_playbook_url")
+    content = cfg.get("ansible_playbook_content")
+    if content:
+        ssh_run(hostname, "cat > {} <<'LAB_IN_A_BOX_EOF'\n{}LAB_IN_A_BOX_EOF".format(dest, content))
+    elif path:
+        ssh_run(hostname, "cat > {}".format(shlex.quote(dest)), input_text=Path(path).read_text())
+    elif url.startswith("nfs://"):
+        fetched = ac.fetch_nfs_content(hostname, url)
+        ssh_run(hostname, "cat > {} <<'LAB_IN_A_BOX_EOF'\n{}LAB_IN_A_BOX_EOF".format(dest, fetched))
+    else:
+        r = ssh_run(hostname, "curl -fsSL {} -o {}".format(shlex.quote(url), shlex.quote(dest)), check=False)
+        if r.returncode != 0:
+            die("could not fetch ansible_playbook_url '{}' on '{}'".format(url, hostname))
+    return dest
+
+
+def run_playbook(hostname, cfg, playbook_dir=None, inventory_dir=None):
+    playbook_dir = playbook_dir or _DEFAULT_PLAYBOOK_DIR
+    name = cfg.get("ansible_playbook_name") or "lab_playbook.yml"
+    _ensure_is_control_node(hostname)
+    ssh_run(hostname, "mkdir -p {}".format(shlex.quote(playbook_dir)))
+    dest = _stage_playbook(hostname, cfg, playbook_dir, name)
+
+    cmd = ["ansible-playbook", shlex.quote(dest)]
+    if inventory_dir:
+        cmd += ["-i", shlex.quote("{}/uyuni_dynamic_inventory.py".format(inventory_dir))]
+    limit = cfg.get("ansible_playbook_limit")
+    if limit:
+        cmd += ["--limit", shlex.quote(limit)]
+    extra_vars = cfg.get("ansible_playbook_extra_vars")
+    if extra_vars:
+        cmd += ["--extra-vars", shlex.quote(json.dumps(extra_vars))]
+
+    r = ssh_run(hostname, " ".join(cmd), check=False)
+    if r.returncode != 0:
+        die("ansible-playbook on '{}' exited {} — see the command output above".format(hostname, r.returncode))
+    print("  Ran playbook '{}' on '{}'".format(name, hostname))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "ansible_playbook", vm_name=env_vm_name):
+        cfg = k8s.addon_node_config(definition, "ansible_playbook", vm_name)
+        control_cfg = definition.get("ansible_control_node", {}) or {}
+        run_playbook(
+            vm_name, cfg,
+            playbook_dir=control_cfg.get("ansible_control_node_playbook_dir"),
+            inventory_dir=control_cfg.get("ansible_control_node_inventory_dir"),
+        )
+
+
+if __name__ == "__main__":
+    main()

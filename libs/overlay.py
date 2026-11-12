@@ -34,7 +34,8 @@ import ipaddress
 import shlex
 from pathlib import Path
 
-from lab_creation import ssh_run, ssh_output, log, warn, die, wait_for_ssh_command
+from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_command,
+                          CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB)
 import ipalloc
 
 
@@ -119,10 +120,11 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
     base.mkdir(parents=True, exist_ok=True)
     (base / "{}_user-data".format(vm_name)).write_text(_gateway_vm_user_data(root_ssh_key))
 
-    backend.copy_vm_image(iso_image, vm_name, 8, config_method="cloud-init")
+    backend.copy_vm_image(iso_image, vm_name, CLOUD_INFRA_VM_DSK_GIB, config_method="cloud-init")
     backend.push_provisioning_files(vm_name, config_method="cloud-init")
-    ip = backend.create_vm(vm_name, 1, 512, 8, None, config_method="cloud-init",
-                            iso_image=iso_image, mymac=None, open_ports=open_ports or [])
+    ip = backend.create_vm(vm_name, CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB,
+                           None, config_method="cloud-init", iso_image=iso_image, mymac=None,
+                           open_ports=open_ports or [])
     if not ip:
         die("gateway VM '{}' was created on backend '{}' but create_vm() reported "
             "no IP".format(vm_name, backend_name))
@@ -545,7 +547,7 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
     Idempotently ensures a cloud "overlay hub" VM exists on `backend` and
     is running as this lab's WireGuard hub. Mirrors
     backends.ensure_cloud_dns_vm()'s own reuse-or-create convention
-    exactly (fixed name — see hub_vm_name() — same ISO_IMAGE the calling
+    exactly (fixed name — see hub_vm_name() — same SOURCE_IMAGE the calling
     lab already configured, smallest instance size, and a real cloud-init
     user-data — see _create_gateway_vm()): this genuinely is "the
     automation VM's BIND role, transplanted into a cloud", the same move

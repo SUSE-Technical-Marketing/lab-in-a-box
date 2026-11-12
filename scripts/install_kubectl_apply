@@ -1,0 +1,124 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will apply Kubernetes manifests to a kcluster via kubectl
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "kubectl_apply" — Applies one or more Kubernetes manifests to a kcluster
+#   kubectl_apply_manifests : [REQUIRED] list of manifest sources, each one of:
+#                             - an http(s):// URL (fetched by kubectl itself, "kubectl apply -f <url>")
+#                             - an nfs://<server>/<path-to-file> URL (mounted read-only on the
+#                               target node, read, then unmounted — see addon_common.fetch_nfs_content)
+#                             - a local file path, read on the automation node and piped in
+#                             - inline YAML/JSON content (anything containing a newline)
+#   kubectl_apply_namespace : [OPTIONAL] namespace to apply into — omitted falls back to
+#                             whatever each manifest already names, or kubectl's own "default"
+#   kubectl_apply_prune     : [OPTIONAL] "true" or "false" (default: false) — kubectl apply
+#                             --prune against kubectl_apply_prune_label, removing anything
+#                             with that label this call no longer applies
+#   kubectl_apply_prune_label : [OPTIONAL] the label selector --prune needs (required when
+#                             kubectl_apply_prune is "true")
+#
+# Target: the same node any other Kubernetes add-on on this kcluster runs on (k8s.first_server_node()).
+# A generic escape hatch for one-off Kubernetes resources that don't warrant their own add-on.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "kubectl_apply",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    "aux_services": [],
+}
+
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, die  # noqa: E402
+
+
+def _validate(v):
+    cfg = v.definition.get("kubectl_apply", {}) or {}
+    manifests = cfg.get("kubectl_apply_manifests")
+    if not manifests:
+        v.errors.append("[ERROR] kubectl_apply.kubectl_apply_manifests is required (no default)")
+    elif not isinstance(manifests, list) or not all(isinstance(m, str) for m in manifests):
+        v.errors.append("[ERROR] kubectl_apply.kubectl_apply_manifests must be a list of strings")
+    v.vbool("kubectl_apply", "kubectl_apply_prune")
+    if (cfg.get("kubectl_apply_prune") or "false") == "true" and not cfg.get("kubectl_apply_prune_label"):
+        v.errors.append("[ERROR] kubectl_apply.kubectl_apply_prune_label is required when "
+                         "kubectl_apply_prune is 'true'")
+
+
+def _classify(manifest):
+    """One of "url", "nfs", "path" or "content" for a single kubectl_apply_manifests entry — see the
+    module's own JSON-section doc comment for the exact rule."""
+    if "\n" in manifest:
+        return "content"
+    if manifest.startswith("nfs://"):
+        return "nfs"
+    if manifest.startswith("http://") or manifest.startswith("https://"):
+        return "url"
+    return "path"
+
+
+def apply_manifest(hostname, manifest, namespace=None, prune=False, prune_label=None):
+    kind = _classify(manifest)
+    ns_args = "-n {} ".format(namespace) if namespace else ""
+    prune_args = "--prune -l {} ".format(prune_label) if prune else ""
+    if kind == "url":
+        r = ssh_run(hostname, "kubectl apply {}{}-f {}".format(ns_args, prune_args, manifest), check=False)
+    elif kind == "nfs":
+        content = ac.fetch_nfs_content(hostname, manifest)
+        r = ssh_run(hostname, "kubectl apply {}{}-f -".format(ns_args, prune_args),
+                    input_text=content, check=False)
+    elif kind == "path":
+        local_path = Path(manifest)
+        if not local_path.is_file():
+            die("kubectl_apply: '{}' is neither an http(s):// or nfs:// URL, inline content (no "
+                "newline found), nor an existing local file on this automation node".format(manifest))
+        r = ssh_run(hostname, "kubectl apply {}{}-f -".format(ns_args, prune_args),
+                    input_text=local_path.read_text(), check=False)
+    else:
+        r = ssh_run(hostname, "kubectl apply {}{}-f -".format(ns_args, prune_args),
+                    input_text=manifest, check=False)
+    if r.returncode != 0:
+        die("kubectl apply on '{}' exited {} — see the command output above".format(hostname, r.returncode))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    cfg = definition.get("kubectl_apply", {}) or {}
+    manifests = cfg.get("kubectl_apply_manifests") or []
+    namespace = cfg.get("kubectl_apply_namespace") or None
+    prune = (cfg.get("kubectl_apply_prune") or "false") == "true"
+    prune_label = cfg.get("kubectl_apply_prune_label") or None
+
+    for manifest in manifests:
+        apply_manifest(vm_name, manifest, namespace=namespace, prune=prune, prune_label=prune_label)
+    print("  Applied {} manifest(s) to '{}'".format(len(manifests), vm_name))
+
+
+if __name__ == "__main__":
+    main()

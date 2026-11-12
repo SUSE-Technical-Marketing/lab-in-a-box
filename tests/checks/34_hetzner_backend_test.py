@@ -82,7 +82,7 @@ with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg)
         backend.copy_vm_image("", "vm1", 40, config_method="cloud-init")
     except SystemExit:
         pass
-check("copy_vm_image() dies on an empty ISO_IMAGE", any("ISO_IMAGE" in m for m in died))
+check("copy_vm_image() dies on an empty SOURCE_IMAGE", any("SOURCE_IMAGE" in m for m in died))
 
 ok = [False]
 with mock.patch.object(backends, "die", side_effect=AssertionError("should not die")):

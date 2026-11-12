@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_fleet
 # The fleet add-on: the Fleet resources it applies in Rancher (cluster labels, cluster groups, GitRepos), that it
 # refuses a cluster without Fleet, and what its --check reports. Independent container — see tests/run_tests.sh.
 set -uo pipefail

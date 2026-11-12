@@ -16,7 +16,7 @@ setup_lab.py — provision all VMs defined in a lab definition file, set up
 Kubernetes clusters, and install cluster-level and VM-level addons in order.
 
 Usage:
-    setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>
+    setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
 """
 
 __version__ = "__LABVERSION__"
@@ -38,6 +38,7 @@ import migrations  # noqa: E402
 import lab_creation as lc  # noqa: E402
 import k8s  # noqa: E402
 import targets  # noqa: E402
+import addon_common as ac  # noqa: E402
 import apps  # noqa: E402
 import qr_util  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
@@ -45,10 +46,10 @@ import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
-from setup_vm import provision_vm  # noqa: E402
+from setup_vm import provision_vm, refresh_kept_node_dns  # noqa: E402
 
 _HELP_TEXT = """\
-Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>
+Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
 
 Provisions all VMs defined in the lab definition file, sets up Kubernetes
 clusters, and installs cluster-level and VM-level addons in order.
@@ -65,6 +66,14 @@ Options:
             on, regardless of this flag, when LAB_STATUS_JOB/LAB_STATUS_TOKEN
             are set in the environment (a run launched behind the webui's
             live status page) — see _debug_wanted().
+  --cloud-account <name>
+            Use cloud account <name> (a credentials file under
+            /etc/lab_creation/credentials/) for every cloud node of this run.
+            Takes precedence over "cloud_account" in the lab definition, which
+            lets one lab file be shared between operators with their own
+            accounts. Required when several credentials files match a node's
+            backend, since those are separate platforms with their own region,
+            network, images and addresses, and there is no right one to guess.
   --parallel[=N]
             Create up to N VMs at once instead of one at a time (default
             without this flag: strictly sequential). Bare --parallel uses a
@@ -77,7 +86,7 @@ Options:
 
 The lab definition JSON must contain:
   nodes      — map of VM hostname → node config (myip, mymac, kcluster, …)
-  common     — shared VM settings (ISO_IMAGE, VM_MEM, VM_DSK, VM_CPU, …)
+  common     — shared VM settings (SOURCE_IMAGE, VM_MEM, VM_DSK, VM_CPU, …)
   kclusters  — map of cluster name → cluster config (clu_type, addons, …)
   <addon>    — one section per addon listed in kclusters[x].addons or nodes[x].addons
 
@@ -347,6 +356,31 @@ def _run_addon(cmd, env):
     return r
 
 
+def _dispatch_addons_with_retry(addon_list, attempt):
+    """
+    Run every entry of `addon_list` via `attempt(entry) -> real exit code`, retrying any that
+    signalled addon_common.DEPENDENCY_NOT_READY_EXIT_CODE once every other entry in the SAME pass
+    has had its own turn — so an addon listed before the one it depends on (e.g. "appcollection"
+    before "rancher" on the same kcluster) still succeeds once the dependency catches up, instead
+    of requiring the lab author to get the array order exactly right.
+
+    Stops once either nothing is left pending, or a full pass makes no further progress (nothing
+    newly resolved — succeeded or hard-failed) at all; what's still pending at that point is
+    returned, in original order, for the caller to report as failed (its dependency never showed
+    up, even after everything else got a chance to run). `attempt()` is responsible for its own
+    success/hard-failure reporting as a side effect each time it's actually called; this function
+    never reports anything itself — a still-pending entry at the end was NOT reported by attempt()
+    (it only reports resolved outcomes), so the caller must report those itself.
+    """
+    pending = list(addon_list)
+    while pending:
+        deferred = [entry for entry in pending if attempt(entry) == ac.DEPENDENCY_NOT_READY_EXIT_CODE]
+        if not deferred or len(deferred) == len(pending):
+            return deferred
+        pending = deferred
+    return []
+
+
 def _merged_env(definition, config, defaults, vm_name):
     """
     Merge defaults + cfg + per-VM JSON vars, in bash's actual precedence
@@ -408,8 +442,8 @@ def validate_addon_configs(definition, lab_file, issues_out=None):
 
 def phase_fetch_images(definition, config, iso_loc):
     """
-    Download every base image a node declares as a URL (SOURCE_IMAGE, or
-    ISO_URL; see lc.image_download_requests()) into ISO_LOC on each KVM host that node can be created on,
+    Download every base image a node declares as a URL in SOURCE_IMAGE
+    (see lc.image_download_requests()) into ISO_LOC on each KVM host that node can be created on,
     before the preflight looks for it there. Already-verified copies are kept;
     see lc.fetch_source_image().
     """
@@ -500,6 +534,13 @@ def _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_c
         if keep_reusable:
             lc.log("  Skipping \"{}{}{}\" — existing VM matches definition".format(lc._RED, vm_name, lc._RESET))
             _report.add_node(vm_name, "reused")
+            # Its records are written again, so a kept node is in the DNS views that exist now, as a new one is.
+            try:
+                refresh_kept_node_dns(definition, config, defaults, vm_name)
+            except (SystemExit, RuntimeError) as e:
+                msg = "refreshing the DNS records of kept node '{}' failed (continuing): {}".format(vm_name, e)
+                lc.error(msg)
+                _report.add_error(msg)
             return
 
         if keep_backend_error is not None:
@@ -630,14 +671,14 @@ def phase_reboot_and_wait_kept_nodes(definition, config, keep):
         if not node_cfg.get("kcluster"):
             continue
         if targets.is_existing_node(node_cfg) or harvester.cluster_of(definition, vm_name):
-            # Not a VM this tool owns, or a Harvester appliance — nothing to reboot via libvirt.
+            # Not a VM this tool owns, or a Harvester appliance — nothing to reboot.
             continue
         lc.log("Restart node {}{}{} (cluster {}{}{})".format(
             lc._RED, vm_name, lc._RESET, lc._RED, node_cfg["kcluster"], lc._RESET))
-        # These are existing (kept) VMs — locate_kvm_host(), not resolve_kvm_host().
-        remote_host, virt_srv = lc.locate_kvm_host(definition, vm_name, config)
+        # A kept VM is rebooted by the backend that owns it, found the way the --keep check found it: libvirt
+        # on whichever KVM host runs it, a cloud through its own provider.
         boot_ids[vm_name] = lc.boot_id(vm_name)
-        lc.reboot_vm(virt_srv, vm_name, remote_host=remote_host)
+        backends.get_backend(definition, config, vm_name, for_existing=True).reboot_vm(vm_name)
     lc._level -= 1
 
     lc.log("Waiting for cluster nodes to come back online")
@@ -690,10 +731,8 @@ def _install_cluster_addons(definition, config, defaults, lab_file, clu_name, cl
     lc.log("Installing cluster \"{}{}{}\" addon/s ( {} ) from \"{}{}{}\"".format(
         lc._RED, clu_name, lc._RESET, " ".join(addons), lc._RED, vm_name, lc._RESET))
     lc._level += 1
-    installed = set()
-    for addon in addons:
-        if addon in installed:
-            continue
+
+    def _attempt(addon):
         installer = apps.addon_installer(addon)
         if not installer:
             lc.die("FAILED! Addon script \"install_{}\" not found".format(addon))
@@ -710,15 +749,34 @@ def _install_cluster_addons(definition, config, defaults, lab_file, clu_name, cl
         # code so the end-of-run summary can flag an addon that failed.
         started_at = time.time()
         r = _run_addon([installer, lab_file], env)
-        installed.add(addon)
         rc = getattr(r, "returncode", 0)
-        _report.add_addon("cluster:{}".format(clu_name), addon, _addon_status(rc, started_at))
-        if rc != 0:
-            msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
-            lc.error(msg)
-            _report.add_error(msg)
-        lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
-            lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+        if rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+            lc.log("Addon \"{}{}{}\" on cluster \"{}{}{}\" isn't ready yet — will retry once every "
+                    "other addon here has had its own turn".format(
+                        lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+        else:
+            status = _addon_status(rc, started_at)
+            _report.add_addon("cluster:{}".format(clu_name), addon, status)
+            if status == "ok":
+                lc.log("Installed addon \"{}{}{}\" on cluster \"{}{}{}\"".format(
+                    lc._RED, addon, lc._RESET, lc._RED, clu_name, lc._RESET))
+            if rc != 0:
+                msg = "cluster addon '{}' on '{}' exited {}".format(addon, clu_name, rc)
+                lc.error(msg)
+                _report.add_error(msg)
+        return rc
+
+    # De-duplicate exact repeats up front (same as the old "installed" set) before the retry
+    # dispatch, which otherwise has no reason to know about duplicates at all.
+    unique_addons = list(dict.fromkeys(addons))
+    never_ready = _dispatch_addons_with_retry(unique_addons, _attempt)
+    for addon in never_ready:
+        _report.add_addon("cluster:{}".format(clu_name), addon, "FAILED (dependency never became ready)")
+        msg = ("cluster addon '{}' on '{}' never became ready — its dependency was still not "
+               "satisfied even after every other addon on this cluster had run".format(addon, clu_name))
+        lc.error(msg)
+        _report.add_error(msg)
+
     lc._level -= 1
     # bash prints its "No more addons" message from inside the per-addon loop
     # (bash:209), so it fires after every addon rather than once at the end —
@@ -789,12 +847,12 @@ def phase_vm_addons(definition, lab_file):
         lc.log("Installing VM \"{}{}{}\" addons".format(lc._RED, vm_name, lc._RESET))
         lc._level += 1
         node_target = targets.node_kind(definition, vm_name)
-        for addon_entry in addons:
-            # addon_entry is a plain "<addon>" string, or a single-key
-            # {"<addon>": {...}} mapping carrying this node's own override of
-            # that addon's config (read by the addon script itself, via
-            # k8s.addon_node_config() — this loop only needs the name).
-            addon = apps.addon_entry_name(addon_entry)
+        # addon_entry is a plain "<addon>" string, or a single-key {"<addon>": {...}} mapping
+        # carrying this node's own override of that addon's config (read by the addon script
+        # itself, via k8s.addon_node_config() — only the name is needed here).
+        addon_names = [apps.addon_entry_name(entry) for entry in addons]
+
+        def _attempt(addon):
             installer = apps.addon_installer(addon)
             if not installer:
                 lc.die("Addon script \"install_{}\" not found".format(addon))
@@ -809,11 +867,25 @@ def phase_vm_addons(definition, lab_file):
             started_at = time.time()
             r = _run_addon([installer, lab_file], env)
             rc = getattr(r, "returncode", 0)
-            _report.add_addon("node:{}".format(vm_name), addon, _addon_status(rc, started_at))
-            if rc != 0:
-                msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
-                lc.error(msg)
-                _report.add_error(msg)
+            if rc == ac.DEPENDENCY_NOT_READY_EXIT_CODE:
+                lc.log("Addon \"{}{}{}\" on \"{}{}{}\" isn't ready yet — will retry once every "
+                        "other addon on this node has had its own turn".format(
+                            lc._RED, addon, lc._RESET, lc._RED, vm_name, lc._RESET))
+            else:
+                _report.add_addon("node:{}".format(vm_name), addon, _addon_status(rc, started_at))
+                if rc != 0:
+                    msg = "node addon '{}' on '{}' exited {}".format(addon, vm_name, rc)
+                    lc.error(msg)
+                    _report.add_error(msg)
+            return rc
+
+        never_ready = _dispatch_addons_with_retry(addon_names, _attempt)
+        for addon in never_ready:
+            _report.add_addon("node:{}".format(vm_name), addon, "FAILED (dependency never became ready)")
+            msg = ("node addon '{}' on '{}' never became ready — its dependency was still not "
+                   "satisfied even after every other addon on this node had run".format(addon, vm_name))
+            lc.error(msg)
+            _report.add_error(msg)
         lc._level -= 1
 
 
@@ -899,6 +971,10 @@ def main():
         fmt = args[1] if len(args) > 1 else "json"
         sys.exit(subprocess.run(["lab_schema", "--base", fmt]).returncode)
 
+    # Applied and stripped before anything else parses args, so the option reads the same on every command
+    # that creates or destroys a cloud node.
+    args = backends.take_cloud_account_option(args)
+
     keep = "--keep" in args
     debug = _debug_wanted(args)
     lc.set_debug(debug)
@@ -922,17 +998,18 @@ def main():
     unknown = [a for a in args if a.startswith("-") and a not in ("--keep", "--debug", "--parallel")
                and not a.startswith("--parallel=")]
     if unknown:
-        lc.die("unknown option(s): {}. Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>".format(
+        lc.die("unknown option(s): {}. Usage: "
+               "setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>".format(
             " ".join(unknown)))
     positional = [a for a in args if not a.startswith("-")]
     if not positional:
-        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] <lab-file>")
+        lc.die("Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>")
     lab_file = positional[0]
 
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(lab_file)
-    migrations.require_current(definition, lab_file)
+    lab_file = migrations.ensure_current(definition, lab_file)
 
     iso_loc        = defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")

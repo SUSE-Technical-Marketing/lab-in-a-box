@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/setup_harvester_cluster.py
 # Unit tests for scripts/setup_harvester_cluster.py — the new PXE-based
 # Harvester HCI cluster bootstrap script. Independent container — see
 # tests/run_tests.sh.

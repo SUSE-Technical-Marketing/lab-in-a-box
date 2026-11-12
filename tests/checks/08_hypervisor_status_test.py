@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Pure-logic unit tests for scripts/refresh_hypervisor_status.py (masking,
 # host/image selection; SSH is mocked)
-# and webui/lib/discovery.py's status()/dynamic ISO_IMAGE enum injection (a
+# and webui/lib/discovery.py's status()/dynamic SOURCE_IMAGE enum injection (a
 # plain temp file, no mocking needed). Run from 08_hypervisor_status.sh, in
 # its own container — see tests/run_tests.sh.
 import importlib.util
@@ -138,7 +138,7 @@ finally:
     primary.load_defaults = _orig_load_defaults
     lab_creation.ssh_output = _orig_ssh_output
 
-# -- discovery.py: status() file reading + dynamic ISO_IMAGE enum injection --
+# -- discovery.py: status() file reading + dynamic SOURCE_IMAGE enum injection --
 import discovery  # noqa: E402
 
 with tempfile.TemporaryDirectory() as td:
@@ -156,21 +156,17 @@ with tempfile.TemporaryDirectory() as td:
     check("discovery.status(): images list passed through", st["images"] == ["a.qcow2", "b.iso"])
 
     schema_tree = {"common": {"fields": [
-        {"name": "ISO_IMAGE", "type": "string", "required": True},
         {"name": "VM_MEM", "type": "integer", "required": False},
         {"name": "SOURCE_IMAGE", "type": "string", "required": True},
     ]}}
     discovery._inject_dynamic_enums(schema_tree, discovery.dynamic_enums())
-    iso_field = schema_tree["common"]["fields"][0]
-    mem_field = schema_tree["common"]["fields"][1]
-    src_field = schema_tree["common"]["fields"][2]
+    mem_field = schema_tree["common"]["fields"][0]
+    src_field = schema_tree["common"]["fields"][1]
     # The hypervisors' own images come first, then the product names a cloud backend resolves at create time
     # (discovery.product_choices(), from libs/cloud_images.py), which no hypervisor has to publish.
     products = discovery.product_choices()
     check("dynamic enum: SOURCE_IMAGE field gets the live image list",
           src_field.get("enum")[:2] == ["a.qcow2", "b.iso"])
-    check("dynamic enum: the deprecated ISO_IMAGE field still gets it too",
-          iso_field.get("enum")[:2] == ["a.qcow2", "b.iso"])
     check("dynamic enum: SOURCE_IMAGE also offers every product name",
           src_field.get("enum")[2:] == products and "slmicro6.1" in [p["value"] for p in products])
     check("dynamic enum: unrelated fields are untouched", "enum" not in mem_field)

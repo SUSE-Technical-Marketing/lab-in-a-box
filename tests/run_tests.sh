@@ -6,11 +6,19 @@
 # automatically before each commit — see .githooks/pre-commit (enable once
 # per clone: git config core.hooksPath .githooks).
 #
-# Run manually:
+# Run manually (always the full suite):
 #   tests/run_tests.sh
 #
+# Scoped to what changed (used by .githooks/pre-commit and CI's test-suite job): set
+# TESTS_CHANGED_FILES to a newline-separated list of repo-relative paths before calling this
+# script, and only the checks that declare a dependency on one of them (plus every check that
+# declares none — see tests/select_checks.py) run. Unset or empty: the full suite, same as a
+# manual run.
+#
 # Add a new check: drop a new executable script into tests/checks/ — it's
-# picked up automatically, no edits needed here.
+# picked up automatically, no edits needed here. Give it a "# Tests-paths: ..." comment line
+# (see tests/select_checks.py) if it only ever needs to run for changes to specific files;
+# leave it out if it's a cross-cutting/structural check that must run on any code change.
 # -uo pipefail (no -e): a failing check must not abort the loop — it's
 # recorded in _failed and the run continues, so one broken check doesn't
 # hide the results of every check after it.
@@ -41,14 +49,24 @@ fi
 _status=0
 _failed=()
 
+# Scoped selection: TESTS_CHANGED_FILES (newline-separated) picks which checks run; unset/empty
+# means every check, exactly like today. select_checks.py's own default (no files given) is
+# also "everything", so this is a no-op when the variable isn't set.
+if [[ -n "${TESTS_CHANGED_FILES:-}" ]]; then
+    mapfile -t _selected < <(printf '%s' "$TESTS_CHANGED_FILES" | python3 tests/select_checks.py -)
+    echo "Scoped run: ${#_selected[@]} of $(ls tests/checks/*.sh | wc -l) checks selected for the changed files"
+else
+    mapfile -t _selected < <(cd tests/checks && ls *.sh)
+fi
+
 # Each tests/checks/*.sh gets its OWN fresh container (--rm), so state from
 # one check (files it wrote, env it changed) never leaks into the next.
 # The repo is bind-mounted read-only (:ro) — a check that needs to write
 # does so inside the container's own filesystem, never back onto the host
 # checkout. Discovery is filesystem globbing, not a hardcoded list: drop a
 # new script into tests/checks/ and it runs on the next invocation.
-for script in tests/checks/*.sh; do
-    name=$(basename "$script")
+for name in "${_selected[@]}"; do
+    script="tests/checks/$name"
     echo
     echo "############################################"
     echo "# $name (independent container)"

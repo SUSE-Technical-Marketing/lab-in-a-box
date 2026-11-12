@@ -21,7 +21,7 @@ users:
 # The netplan block below configures one static address, so it is only written for a node that has
 # one. A cloud backend assigns the address itself and leaves myip empty, and its instance gets its
 # address, gateway and resolver from the provider network over DHCP.
-$( if [[ "${ISO_IMAGE,,}" == *ubuntu* && -n "${myip}" ]]; then
+$( if [[ "${SOURCE_IMAGE,,}" == *ubuntu* && -n "${myip}" ]]; then
 cat <<CI_UBUNTU
 write_files:
   - path:  /etc/netplan/50-cloud-init.yaml
@@ -68,15 +68,5 @@ cat <<CI_ROUTE
   - grep -qF "default ${mygw}" /etc/sysconfig/network/routes 2>/dev/null || printf 'default %s - -\n' "${mygw}" >> /etc/sysconfig/network/routes
   - ip route show default | grep -q . || ip route add default via ${mygw} || true
 CI_ROUTE
-  fi
-  # A bring-your-own-subscription SUSE image has no repositories until it is registered, so a node whose
-  # packages are needed before anything else could register it (an RKE2 node, say) names its code here.
-  # Written as an argument list, so no shell ever parses the code. Without scc_regcode nothing is added.
-  if [[ -n "${scc_regcode}" ]]; then
-    if [[ -n "${scc_email}" ]]; then
-      printf '  - [SUSEConnect, -r, "%s", -e, "%s"]\n' "${scc_regcode}" "${scc_email}"
-    else
-      printf '  - [SUSEConnect, -r, "%s"]\n' "${scc_regcode}"
-    fi
   fi
 fi )

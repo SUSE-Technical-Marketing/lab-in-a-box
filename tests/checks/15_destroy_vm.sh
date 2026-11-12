@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/destroy_vm.py
 # Mocked unit tests for scripts/destroy_vm.py — single-VM
 # teardown orchestration. Every lab_creation
 # call is monkeypatched. Independent container — see tests/run_tests.sh.

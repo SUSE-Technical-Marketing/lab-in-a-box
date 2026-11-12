@@ -271,7 +271,7 @@ def dynamic_enums(snapshot=None):
     """
     snap = status() if snapshot is None else snapshot
     images = image_choices(snap) + product_choices()
-    return {"SOURCE_IMAGE": images, "ISO_IMAGE": images, "kvm_host": host_choices(snap)}
+    return {"SOURCE_IMAGE": images, "kvm_host": host_choices(snap)}
 
 
 def _inject_dynamic_enums(node, choices):

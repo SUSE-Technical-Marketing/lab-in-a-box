@@ -19,7 +19,7 @@ def check(desc, cond):
 
 
 template = _REPO / "templates" / "cloud-init.template_user-data"
-base = {"_vm_name": "ubuntu.lab", "ISO_IMAGE": "sles.qcow2", "mygw": "10.0.0.1"}
+base = {"_vm_name": "ubuntu.lab", "SOURCE_IMAGE": "sles.qcow2", "mygw": "10.0.0.1"}
 
 on = lab_creation.process_template(template, dict(base, ssh_pwauth="true"))
 check("ssh_pwauth=true enables password login", "\nssh_pwauth: true\n" in on)

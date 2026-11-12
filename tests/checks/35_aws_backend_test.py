@@ -109,7 +109,7 @@ check("resolve(): AWS_PROFILE set -> session_token is ignored entirely",
 backend = backends.AWSBackend("eu-central-1", profile="lab")
 
 
-# ── config_method / ISO_IMAGE enforcement (same shape as the other backends) ─
+# ── config_method / SOURCE_IMAGE enforcement (same shape as the other backends) ─
 died = []
 with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
     try:
@@ -124,7 +124,7 @@ with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg)
         backend.copy_vm_image("", "vm1", 40, config_method="cloud-init")
     except SystemExit:
         pass
-check("copy_vm_image() dies on an empty ISO_IMAGE", any("AMI" in m for m in died))
+check("copy_vm_image() dies on an empty SOURCE_IMAGE", any("AMI" in m for m in died))
 
 ok = [False]
 with mock.patch.object(backends, "die", side_effect=AssertionError("should not die")):

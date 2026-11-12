@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.1
+# Schema version: 3.0
 #
 # JSON section: "appcollection" — SUSE Application Collection
 #   appcollection_user      : [MANDATORY] SUSE Application Collection user (https://apps.rancher.io, profile), or a service
@@ -17,10 +17,23 @@
 #   appcollection_chart     : [OPTIONAL] chart to install, e.g. "redis" (oci://<registry>/charts/<chart>); when unset, none is installed
 #   appcollection_release   : [OPTIONAL] Helm release name; when unset, the chart name
 #   appcollection_version   : [OPTIONAL] chart version (empty = latest)
+#   appcollection_standalone : [OPTIONAL] "true"/"false" (default: false). By DEFAULT this addon requires
+#                             Rancher to already be on this same kcluster (add the "rancher" addon too) and
+#                             automatically registers the Collection as a Rancher ClusterRepo (catalog.cattle.io/v1),
+#                             so it appears in Rancher's own Apps & Marketplace UI, not just via the Helm CLI.
+#                             Set this to "true" to use the Collection purely via the Helm CLI instead, with no
+#                             Rancher dependency and no ClusterRepo registration at all — the pre-3.0 behavior.
 #
 # helm on the cluster's first server node is logged in to <registry>/charts, and the namespace gets the docker-registry
 # secret "application-collection" that the chart's images are pulled with (global.imagePullSecrets). The catalog is at
 # https://apps.rancher.io/applications.
+#
+# Dependencies between addons: this addon's default (non-standalone) mode needs Rancher to already be running
+# on this SAME kcluster. If Rancher hasn't started yet when this addon's own turn comes up (e.g. "rancher" is
+# listed after "appcollection" in the kcluster's addons[]), it exits with addon_common.DEPENDENCY_NOT_READY_EXIT_CODE
+# instead of a hard failure — scripts/setup_lab.py's dispatch loop retries it once every other addon on this
+# kcluster has had its own turn, rather than requiring the lab author to get the array order exactly right. See
+# "Dependencies between addons" in docs/src/addons.html for the full contract any addon can opt into this way.
 
 __version__ = "__LABVERSION__"
 
@@ -51,12 +64,30 @@ def _validate(v):
     v.vreq_or_credential("appcollection", "appcollection_user", "appcollection")
     v.vreq_or_credential("appcollection", "appcollection_password", "appcollection")
     v.vver("appcollection")
+    v.vbool("appcollection", "appcollection_standalone")
 
 
 def setup_appcollection(hostname: str, cfg: dict, user: str, password: str) -> None:
-    """Log helm in to the registry; with appcollection_chart, create the pull secret and install the chart."""
+    """
+    Log helm in to the registry; with appcollection_chart, create the pull secret and install the chart.
+
+    Unless appcollection_standalone is "true", this ALSO requires Rancher to already be reachable on this same
+    cluster (appco_common.rancher_is_present() — a read-only check, done first, before any mutating action: the
+    mandatory rule for anything that can call addon_common.die_not_ready()) and registers the Application
+    Collection as a real Rancher ClusterRepo once confirmed present, so Rancher's own Apps & Marketplace UI can
+    see it too.
+    """
+    standalone = (cfg.get("appcollection_standalone") or "false").lower() == "true"
+    if not standalone and not appco_common.rancher_is_present(hostname):
+        ac.die_not_ready(
+            "appcollection needs Rancher on this same kcluster (none found yet on '{}') — either add the "
+            "\"rancher\" addon to this kcluster too, or set appcollection_standalone to \"true\" to use the "
+            "Application Collection via the Helm CLI only, with no Rancher dependency".format(hostname))
+
     registry = cfg.get("appcollection_registry") or appco_common.DEFAULT_REGISTRY
     appco_common.helm_login(hostname, "{}/charts".format(registry), user, password)
+    if not standalone:
+        appco_common.register_rancher_cluster_repo(hostname, user, password, registry)
     chart = cfg.get("appcollection_chart")
     if not chart:
         print("helm is logged in to {0}/charts. Install a chart with: helm upgrade --install <release> "

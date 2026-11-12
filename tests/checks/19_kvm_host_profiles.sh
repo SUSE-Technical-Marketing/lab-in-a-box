@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/kvm_host_profiles.py
 # Pure-logic unit tests for libs/kvm_host_profiles.py — the
 # per-(OS,version) hypervisor-host package/repo/bridge profiles. Independent
 # container — see tests/run_tests.sh.

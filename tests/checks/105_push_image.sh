@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/pushDockerImage.sh
 # pushDockerImage.sh: it runs at all (it used to exit "Library not found" every time), pushes to MYREG with the
 # container engine the host has, and refuses clearly when something is missing.
 # Independent container — see tests/run_tests.sh.
