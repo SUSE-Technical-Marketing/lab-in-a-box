@@ -1431,10 +1431,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Servidor Grafana independiente (contenedor podman, sin Kubernetes): aprovisiona automáticamente una fuente de datos Prometheus y, opcionalmente, el panel oficial de la comunidad de Grafana Labs para los exportadores de un servidor <code>smlm</code>/<code>uyuni</code></td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>Un sitio web servido desde una imagen SUSE BCI (contenedor podman, sin Kubernetes) — nginx y la página se integran en la imagen en el propio nodo; la página se genera o se descarga de <code>bci_website_content_url</code></td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1546,6 +1542,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>Instala rodeo-cli, una CLI al estilo Terraform que despliega labs KVM anidados (Harvester HCI, Rancher Prime, o ambos), lista para usarse en el nodo destino — los propios archivos de plan/secretos de rodeo-cli no son responsabilidad de este addon</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>Instala lab-in-a-box en el propio nodo destino — no destructivo por defecto (instala git+python, clona el repositorio), con la opción de construir además un hipervisor KVM/nodo de automatización anidado de forma desatendida</td>
 </tr>
 </tbody>
 </table>
