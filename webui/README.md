@@ -231,8 +231,8 @@ config values (`REMOTE_HOST`/`KVM_HOSTS`/`VIRT_SRV`/`ISO_LOC`). Any value
 shaped like a secret by name (`*PASS*`/`*PWD*`/`*KEY*`/`*TOKEN*`/`*SECRET*`)
 is masked to a fixed `********` before the file is ever written — never
 partially revealed. `discovery.py`'s `schema()`/`base_schema()` read this
-same file to give each source-image field (`SOURCE_IMAGE`, and the deprecated
-`ISO_IMAGE`) a live `enum` of the discovered images: one entry per host and
+same file to give the source-image field (`SOURCE_IMAGE`) a live `enum` of
+the discovered images: one entry per host and
 image, whose value is the file name a lab stores and whose label reads
 `<host> - <file name>`, since with several hosts the same image is not
 necessarily present on all of them. `Refresh images` rebuilds that list from a

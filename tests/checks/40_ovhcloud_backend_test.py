@@ -114,7 +114,7 @@ with mock.patch.object(backend, "_server_timestamp", return_value=1700000000):
         check("requests carry a real X-Ovh-Signature", sent_req.headers.get("X-ovh-signature", "").startswith("$1$"))
 
 
-# ── config_method / ISO_IMAGE enforcement (same shape as the other backends) ─
+# ── config_method / SOURCE_IMAGE enforcement (same shape as the other backends) ─
 died = []
 with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
     try:
@@ -129,7 +129,7 @@ with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg)
         backend.copy_vm_image("", "vm1", 40, config_method="cloud-init")
     except SystemExit:
         pass
-check("copy_vm_image() dies on an empty ISO_IMAGE", any("ISO_IMAGE" in m for m in died))
+check("copy_vm_image() dies on an empty SOURCE_IMAGE", any("SOURCE_IMAGE" in m for m in died))
 
 ok = [False]
 with mock.patch.object(backends, "die", side_effect=AssertionError("should not die")):

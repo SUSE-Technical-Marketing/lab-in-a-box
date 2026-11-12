@@ -168,7 +168,7 @@ def resolve_install_type(install_type, iso_image):
     return itype
 
 
-# Known provisioning-method support per image family, matched against ISO_IMAGE by filename. It is used only to warn, never
+# Known provisioning-method support per image family, matched against SOURCE_IMAGE by filename. It is used only to warn, never
 # to block. An image that matches nothing is left alone, because this is a heuristic, as resolve_install_type() is.
 #
 # Families:
@@ -221,7 +221,7 @@ def _is_image_file_name(iso_image) -> bool:
 
 def _supported_config_methods(iso_image):
     """
-    Best-effort (ISO_IMAGE filename) -> (label, supported config_methods)
+    Best-effort (SOURCE_IMAGE filename) -> (label, supported config_methods)
     lookup — see _IMAGE_CONFIG_METHOD_SUPPORT's sources above. Patterns are
     checked in order (most specific first: the versioned RHEL/CentOS 6/7
     patterns and the SLE Micro/Debian-nocloud patterns before their broader
@@ -340,10 +340,9 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         report("{}: {}".format(finding.where, finding.message))
 
     # ── 2. common: required fields ────────────────────────────────────────────
-    # common.ISO_IMAGE is only required when some node doesn't supply its own
-    # override (nodes.<name>.ISO_IMAGE) — a lab where every node pins its own
+    # common.SOURCE_IMAGE is only required when some node doesn't supply its own
+    # override (nodes.<name>.SOURCE_IMAGE) — a lab where every node pins its own
     # image is valid and never needs a common default at all.
-    # SOURCE_IMAGE, or its older name ISO_IMAGE.
     def _image(cfg):
         return image_name(cfg)
 
@@ -499,12 +498,12 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         node_iso = _image(node_cfg)
         eff_iso = node_iso if not _empty(node_iso) else iso
 
-        # An ISO_IMAGE that ends in .iso is an installer medium, not a bootable disk. Every config_method except install_iso copies
-        # ISO_IMAGE and resizes it with qemu-img, which fails on ISO9660 content. This is an error. It replaces the softer
+        # A SOURCE_IMAGE that ends in .iso is an installer medium, not a bootable disk. Every config_method except install_iso copies
+        # SOURCE_IMAGE and resizes it with qemu-img, which fails on ISO9660 content. This is an error. It replaces the softer
         # image-compatibility warning below, which would only repeat it.
         iso_is_installer_medium = not _empty(eff_iso) and str(eff_iso).lower().endswith(".iso")
         if iso_is_installer_medium and (eff_config_method or "") != "install_iso":
-            err("nodes.{}: ISO_IMAGE '{}' is an installer ISO but config_method is '{}' — "
+            err("nodes.{}: SOURCE_IMAGE '{}' is an installer ISO but config_method is '{}' — "
                 "only config_method=\"install_iso\" boots an ISO directly (--cdrom + a fresh "
                 "disk); every other config_method copies/resizes it as if it were an existing "
                 "disk image and will fail.".format(
@@ -523,7 +522,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             label, supported = match
             cm_norm = eff_config_method if not _empty(eff_config_method) else ""
             if cm_norm not in supported:
-                warn("nodes.{}: config_method '{}' is likely unsupported on ISO_IMAGE '{}' "
+                warn("nodes.{}: config_method '{}' is likely unsupported on SOURCE_IMAGE '{}' "
                      "(detected as {}) — the vendor-documented/confirmed method(s) for this "
                      "image family are: {}. This is a best-effort filename heuristic, not a "
                      "guarantee — some images may genuinely differ from their family's norm.".format(
@@ -661,7 +660,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 if not line.startswith("[WARNING]"):
                     err("addon '{}': {}".format(addon, re.sub(r"^\[ERROR\]\s*", "", line)))
 
-    # ── 5b. Base image downloads (a URL in SOURCE_IMAGE, or ISO_URL) ──────────
+    # ── 5b. Base image downloads (a URL in SOURCE_IMAGE) ──────────────────────
     for label, cfg in [("common", common)] + [("nodes.{}".format(n), nodes.get(n) or {}) for n in nodes_to_check]:
         source = image_source(cfg)
         if source:
@@ -723,7 +722,7 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
         from targets import is_existing_node as _is_existing_node
 
         def _uses_libvirt(node):
-            # The ISO_IMAGE existence check applies only to libvirt backends, which use the hypervisor's ISO_LOC. Other backends
+            # The SOURCE_IMAGE existence check applies only to libvirt backends, which use the hypervisor's ISO_LOC. Other backends
             # resolve images by name in their own environment, so the check is skipped for them.
             if _account_cloudtype_for(node):
                 return False  # a cloud_account always means a cloud backend
@@ -737,12 +736,12 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             hosts_used = {resolved_host_for(node)[0] for node in libvirt_nodes_to_check} - {None}
             if hosts_used:
                 for host in hosts_used:
-                    check_image_on_hv(iso, "common.ISO_IMAGE", host)
+                    check_image_on_hv(iso, "common.SOURCE_IMAGE", host)
             for node in libvirt_nodes_to_check:
                 node_host, _ = resolved_host_for(node)
                 node_iso = _image(nodes.get(node) or {})
                 if not _empty(node_iso):
-                    check_image_on_hv(node_iso, "nodes.{}.ISO_IMAGE".format(node), node_host)
+                    check_image_on_hv(node_iso, "nodes.{}.SOURCE_IMAGE".format(node), node_host)
 
         # ── 6b. Hypervisor: VM_DSK must not be smaller than the source image ──────
         # `qemu-img resize` (run at copy time by every non-install_iso config_method)
@@ -1264,18 +1263,36 @@ def check_ssh_conn(vm_name, tcp_port=22, retry_interval=2, retry_limit=100):
 
 
 
+# The longest a single wait_for_ssh_command() attempt may take. ServerAliveInterval should end a dead session well
+# inside it; this bounds the attempt even when ssh does not return at all.
+_SSH_WAIT_ATTEMPT_TIMEOUT = 60
+
+
 def wait_for_ssh_command(host: str, command: str, timeout: int = 300, interval: int = 5) -> bool:
     """
     Run `command` as root on `host` over SSH every `interval` seconds until it exits 0. Returns True once it does, or
     False when `timeout` seconds pass first. A refused or failed SSH connection counts as a failed attempt, so this also
     waits for a freshly created VM to accept root logins.
+
+    Each attempt is bounded twice over, because `timeout` cannot be honoured otherwise: ConnectTimeout covers only
+    the connection, so a session that is established and then loses its host — which is what waiting for a reboot
+    does — leaves ssh waiting for data that never arrives. ServerAliveInterval makes ssh itself give up on a peer
+    that has gone, and the subprocess timeout bounds the attempt whatever ssh does. An attempt that runs out of time
+    is a failed attempt, like a refused connection.
     """
     deadline = time.monotonic() + timeout
     while True:
-        attempt = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-             "root@{}".format(host), command],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        attempt_timeout = max(interval, min(_SSH_WAIT_ATTEMPT_TIMEOUT, max(1, deadline - time.monotonic())))
+        try:
+            attempt = subprocess.run(
+                ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                 "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+                 "root@{}".format(host), command],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=attempt_timeout)
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                return False
+            continue
         if attempt.returncode == 0:
             return True
         if time.monotonic() + interval > deadline:
@@ -1342,6 +1359,118 @@ def reboot_into_pending_snapshot(host: str, timeout: int = 600) -> bool:
     ssh_run(host, "systemctl reboot", check=False, capture=True)
     if not wait_for_reboot(host, old, timeout=timeout):
         die("'{}' did not come back within {}s after rebooting into its pending snapshot".format(host, timeout))
+    return True
+
+
+# os-release IDs of the SUSE products whose package repositories come from a registration. openSUSE needs none.
+_SUSE_REGISTERED_IDS = ("sles", "sles_sap", "sl-micro", "sle-micro")
+
+
+def register_suse(host: str, regcode: str, email: str = "", url: str = "") -> bool:
+    """
+    Register `host` with SUSE Customer Center, or with the registration server `url`, when it is a SUSE Linux
+    Enterprise or SUSE Linux Micro system whose base product SUSEConnect reports as "Not Registered", such as a BYOS
+    cloud image, which has no package repositories until it is. A pay-as-you-go cloud image is registered by its
+    provider, openSUSE needs no registration, and a system already registered is registered; all three are left alone.
+
+    On a transactional-update system the registration goes into a new snapshot and `host` is rebooted into it. The
+    code reaches `host` on stdin, never on a command line, so it shows in no process list and no error message.
+
+    Returns True when it registered `host`. Without `regcode` it warns and returns False: the lab still builds, and
+    what needs the repositories fails later on its own. Dies when the registration itself fails.
+    """
+    if detect_os(host).get("id") not in _SUSE_REGISTERED_IDS:
+        return False
+    status = ssh_run(host, "SUSEConnect --status", check=False, capture=True)
+    try:
+        base = (json.loads(status.stdout or "[]") or [{}])[0]
+    except ValueError:
+        base = {}
+    if base.get("status") != "Not Registered":
+        return False
+    if not regcode:
+        warn("- '{}' is an unregistered {} {} with no package repositories, and SUSE_regcode is not set in "
+             "lab_creation.cfg to register it".format(host, base.get("identifier", "SUSE"), base.get("version", "")))
+        return False
+
+    options = "".join(" --{} {}".format(name, shlex.quote(value))
+                      for name, value in (("email", email), ("url", url)) if value)
+    transactional = is_transactional(host)
+    command = "transactional-update -n register" if transactional else "SUSEConnect"
+    log("- Registering {}{}{} ({} {})".format(_RED, host, _RESET, base.get("identifier", ""), base.get("version", "")))
+    result = ssh_run(host, 'read -r code; {} --regcode "$code"{}'.format(command, options),
+                     check=False, input_text=regcode + "\n", capture=True)
+    if result.returncode != 0:
+        output = "{}\n{}".format(result.stdout or "", result.stderr or "")
+        detail = [line for line in output.splitlines() if "error" in line.lower()]
+        die("registering '{}' failed (rc={}): {}".format(
+            host, result.returncode, "; ".join(detail[-3:]) or "see SUSEConnect's own output on the node"))
+    if transactional:
+        reboot_into_pending_snapshot(host)
+    return True
+
+
+# The guest's own resolver configuration, per network stack, run by use_lab_dns() with the DNS server and the lab
+# domain as $1 and $2. Each stack is told to ignore the DNS servers and domains the provider's DHCP hands out, which
+# it would otherwise keep consulting for the lab's names. Every recipe survives a DHCP renewal, a reboot and
+# `cloud-init clean`.
+_LAB_DNS_SCRIPT = r'''
+ip=$1 dom=$2
+if systemctl is-active -q NetworkManager; then
+    mkdir -p /etc/NetworkManager/conf.d
+    printf '[global-dns]\nsearches=%s\n\n[global-dns-domain-*]\nservers=%s\n' "$dom" "$ip" \
+        > /etc/NetworkManager/conf.d/90-lab-dns.conf
+    nmcli general reload conf,dns-full || exit 1
+elif systemctl is-active -q wicked; then
+    f=/etc/sysconfig/network/config
+    for kv in "NETCONFIG_DNS_POLICY=STATIC" "NETCONFIG_DNS_STATIC_SERVERS=$ip" "NETCONFIG_DNS_STATIC_SEARCHLIST=$dom"; do
+        k=${kv%%=*}
+        if grep -q "^$k=" "$f"; then sed -i "s|^$k=.*|$k=\"${kv#*=}\"|" "$f"; else echo "$k=\"${kv#*=}\"" >> "$f"; fi
+    done
+    netconfig update -f || exit 1
+elif systemctl is-active -q systemd-resolved; then
+    mkdir -p /etc/systemd/resolved.conf.d
+    printf '[Resolve]\nDNS=%s\nDomains=%s\n' "$ip" "$dom" > /etc/systemd/resolved.conf.d/90-lab-dns.conf
+    for link in $(networkctl list --no-legend | awk '$3 == "ether" {print $2}'); do
+        file=$(networkctl status "$link" | awk -F': ' '/Network File/ {print $2}')
+        [ -n "$file" ] && [ "$file" != "n/a" ] || continue
+        mkdir -p "/etc/systemd/network/${file##*/}.d"
+        printf '[DHCPv4]\nUseDNS=no\nUseDomains=no\n\n[DHCPv6]\nUseDNS=no\nUseDomains=no\n\n[IPv6AcceptRA]\nUseDNS=no\nUseDomains=no\n' \
+            > "/etc/systemd/network/${file##*/}.d/90-lab-dns.conf"
+    done
+    networkctl reload || exit 1
+    for link in $(networkctl list --no-legend | awk '$3 == "ether" {print $2}'); do networkctl reconfigure "$link"; done
+    systemctl restart systemd-resolved || exit 1
+else
+    printf 'search %s\nnameserver %s\n' "$dom" "$ip" > /etc/resolv.conf
+fi
+if command -v nscd >/dev/null; then nscd -i hosts; fi
+exit 0
+'''
+
+
+def use_lab_dns(host: str, dns_ip: str, mydomain: str, check_name: str = "") -> bool:
+    """
+    Point `host` at the lab's DNS server `dns_ip`, with `mydomain` as its search domain, from inside the guest, so it
+    stops asking the resolver its provider's DHCP hands out, which does not know the lab's names. The recipe follows
+    whichever of NetworkManager, wicked or systemd-resolved runs there, else /etc/resolv.conf is written directly.
+
+    `check_name`, when given, is looked up afterwards; a name that does not resolve is reported. Returns True when the
+    configuration was applied, False (with a warning) when it was not: the node stays up and reachable, and what
+    needs the lab's names fails later on its own.
+    """
+    if not dns_ip:
+        return False
+    log("- Pointing {}{}{} at the lab DNS server {}".format(_RED, host, _RESET, dns_ip))
+    result = ssh_run(host, "bash -s -- {} {}".format(shlex.quote(dns_ip), shlex.quote(mydomain or ".")),
+                     input_text=_LAB_DNS_SCRIPT, check=False, capture=True)
+    if result.returncode != 0:
+        warn("- could not point '{}' at the lab DNS server {} (rc={}): {}".format(
+            host, dns_ip, result.returncode, (result.stderr or result.stdout or "").strip()[-300:]))
+        return False
+    if check_name and ssh_run(host, "getent hosts {}".format(shlex.quote(check_name)), check=False,
+                              capture=True).returncode != 0:
+        warn("- '{}' uses the lab DNS server {} but does not resolve '{}' through it".format(host, dns_ip, check_name))
     return True
 
 # ── Variable loading ──────────────────────────────────────────────────────────
@@ -1514,16 +1643,16 @@ def image_file_name(url):
 
 def image_name(cfg):
     """
-    The base image file of one common/node section: SOURCE_IMAGE, or its older name ISO_IMAGE; for a URL, the file
-    name it is downloaded under (image_file_name()).
+    The base image file of one common/node section: SOURCE_IMAGE; for a URL, the file name it is downloaded under
+    (image_file_name()).
     """
-    image = _jq_or(cfg.get("SOURCE_IMAGE")) or _jq_or(cfg.get("ISO_IMAGE"))
+    image = _jq_or(cfg.get("SOURCE_IMAGE"))
     return image_file_name(image) if is_url(image) else image
 
 
 def source_checksum(value):
     """
-    (sha256, sha256_url) from a SOURCE_SHA256 or ISO_SHA256 value: a URL publishing the digest, a local file holding
+    (sha256, sha256_url) from a SOURCE_SHA256 value: a URL publishing the digest, a local file holding
     it (read here, its first word), or the hex digest itself.
     """
     value = (value or "").strip()
@@ -1541,15 +1670,13 @@ def source_checksum(value):
 def image_source(cfg):
     """
     (image, url, sha256, sha256_url) of the base image one common/node section downloads, or None when it downloads
-    nothing. A URL in SOURCE_IMAGE downloads to image_file_name(); the older ISO_URL downloads SOURCE_IMAGE/ISO_IMAGE
-    ("" when the section names none). The checksum is SOURCE_SHA256 (or ISO_SHA256), else ISO_SHA256_URL.
+    nothing. A URL in SOURCE_IMAGE downloads to image_file_name(), checked against SOURCE_SHA256.
     """
-    source = _jq_or(cfg.get("SOURCE_IMAGE"))
-    url = source if is_url(source) else _jq_or(cfg.get("ISO_URL"))
-    if not url:
+    url = _jq_or(cfg.get("SOURCE_IMAGE"))
+    if not is_url(url):
         return None
-    sha256, sha256_url = source_checksum(_jq_or(cfg.get("SOURCE_SHA256")) or _jq_or(cfg.get("ISO_SHA256")))
-    return image_name(cfg), url, sha256, sha256_url or _jq_or(cfg.get("ISO_SHA256_URL"))
+    sha256, sha256_url = source_checksum(_jq_or(cfg.get("SOURCE_SHA256")))
+    return image_name(cfg), url, sha256, sha256_url
 
 
 def image_source_issues(label, image, url, sha256, sha256_url):
@@ -1559,17 +1686,17 @@ def image_source_issues(label, image, url, sha256, sha256_url):
     """
     issues = []
     if _empty(image) or not _IMAGE_FILE_RE.match(image):
-        issues.append("{}: a downloaded image (SOURCE_IMAGE URL or ISO_URL) needs a plain file name (got '{}')".format(
+        issues.append("{}: a downloaded image (SOURCE_IMAGE URL) needs a plain file name (got '{}')".format(
             label, image))
     urls = url.split()
     if not urls or not all(re.match(r"^(https?|ftp|file)://", u) for u in urls):
-        issues.append("{}: each download URL (SOURCE_IMAGE or ISO_URL) must start with http://, https://, ftp:// or "
+        issues.append("{}: each download URL in SOURCE_IMAGE must start with http://, https://, ftp:// or "
                       "file://".format(label))
     if sha256 and not _SHA256_RE.match(sha256.lower()):
-        issues.append("{}: SOURCE_SHA256 (or ISO_SHA256) must be a 64-character hex sha256".format(label))
+        issues.append("{}: SOURCE_SHA256 must be a 64-character hex sha256".format(label))
     if not sha256 and not sha256_url.startswith("https://"):
-        issues.append("{}: a downloaded image needs SOURCE_SHA256: its sha256, or an https:// URL publishing it "
-                      "(ISO_SHA256 / ISO_SHA256_URL for ISO_URL)".format(label))
+        issues.append("{}: a downloaded image needs SOURCE_SHA256: its sha256, or an https:// URL publishing "
+                      "it".format(label))
     return issues
 
 
@@ -1579,7 +1706,7 @@ def image_download_requests(definition):
     is downloaded (image_source()), on the libvirt backend (cloud and Harvester nodes are skipped:
     they boot a provider image by name). A node's own download belongs to that node's image; the
     common one only to the common image (a node that sets its own
-    SOURCE_IMAGE/ISO_IMAGE without its own download downloads nothing).
+    SOURCE_IMAGE without its own download downloads nothing).
     """
     common = definition.get("common") or {}
     requests = []
@@ -1752,6 +1879,18 @@ def locate_kvm_host(definition, vm_name, config):
 # returned. Only this one is worth retrying: a command that ran and failed would simply run again.
 SSH_NO_CONNECTION = 255
 
+# The size of the small VMs this project creates for its own infrastructure rather than for a lab: the cloud DNS
+# VM (backends.ensure_cloud_dns_vm) and the overlay hub and site gateways (overlay._create_gateway_vm). None of
+# them is a node in a lab definition, so these are the only sizes they have.
+#
+# The memory floor is not what BIND or WireGuard needs to run. It is what a current cloud image needs to boot:
+# below 1 GiB a UEFI image fails in the EFI stub with "Failed to decompress kernel" and never reaches sshd, which
+# the callers can only observe as their SSH wait timing out. Raise CLOUD_INFRA_VM_MEM_MIB when a newer default
+# image needs more; never lower it to what the service alone would use.
+CLOUD_INFRA_VM_CPUS = 1
+CLOUD_INFRA_VM_MEM_MIB = 1024
+CLOUD_INFRA_VM_DSK_GIB = 8
+
 
 def ssh_reachable(hostname, attempts=3, delay=2, user="root", probe=None):
     """
@@ -1870,11 +2009,11 @@ def copy_to_hypervisor(remote_host, lab_setup_path, vm_name, config_method="", v
 # a fresh DNSService() per call (it holds no state). Kept because 9 addon
 # scripts + setup_vm.py/destroy_vm.py/k8s.py import these names directly.
 
-def add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, replace=False):
-    """Add forward (A) and reverse (PTR) DNS records for a VM. replace: see DNSService.add_to_dns()."""
+def add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None, site="", private_ip=""):
+    """Add forward (A) and reverse (PTR) DNS records for a VM, at `private_ip` in its own `site`'s view."""
     from services import DNSService
     DNSService().add_to_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers,
-                            replace=replace)
+                            site=site, private_ip=private_ip)
 
 
 def del_from_dns(vm_name, myip, mydomain, mynet_reverse, remote_dns_servers=None):
@@ -1958,9 +2097,6 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
     An empty or omitted `myip` selects template_network-config-dhcp, instead of the static template. That is used for the
     USB-delivery lab-host VM, whose IP is not known when it is built.
 
-    ISO_IMAGE is set from SOURCE_IMAGE when only the newer name is given, because the templates branch on it to pick
-    a guest's network configuration.
-
     `_vm_name` is always set from the vm_name argument. It overrides any value the caller passed, so the templates' ${_vm_name}
     references resolve. Without it, the instance-id, local-hostname, fqdn and hostname render empty.
     """
@@ -1970,9 +2106,6 @@ def prepare_cloud_init(vm_name, lab_setup_path, variables):
     render_vars["_vm_name"] = vm_name
     render_vars["ROOT_SSH_KEY"] = Path("/root/.ssh/id_rsa.pub").read_text().strip()
     render_vars["network_renderer"] = render_vars.get("network_renderer") or "NetworkManager"
-    # The templates still branch on ISO_IMAGE, SOURCE_IMAGE's older name, so a lab that names only
-    # SOURCE_IMAGE gets the same branch a lab written the old way does.
-    render_vars["ISO_IMAGE"] = render_vars.get("ISO_IMAGE") or render_vars.get("SOURCE_IMAGE") or ""
     dhcp = not (render_vars.get("myip") or "").strip()
     # A cloud backend leaves both myip and mymac empty. template_network-config-dhcp matches its NIC by mac address, which an empty
     # value would not match. In that case a name-glob template is used instead. A node that has a mymac keeps the mac-matched template.
@@ -2554,16 +2687,19 @@ def setup_helm(hostname, clu_name, online=False, automation_host="automation"):
     PROVISIONING_BASE_URL and PROVISIONING_TLS_VERIFY (see libs/provisioning.py).
     """
     log("Setting up Helm on cluster '{}'".format(clu_name))
+    # pipefail and curl -f: a script that cannot be fetched fails the command, instead of an empty one that bash
+    # runs successfully.
     if online:
-        ssh_run(hostname,
-                "curl -#L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
+        ssh_run(hostname, "set -o pipefail; "
+                          "curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
     else:
         from primary import load_config
         config = load_config()
         base = provisioning.base_url(automation_host, config.get("PROVISIONING_BASE_URL", ""))
         tls = provisioning.curl_tls_option(base, provisioning.tls_verify(config.get("PROVISIONING_TLS_VERIFY", "")))
-        fetch = " ".join(filter(None, ["curl", tls, "{}/helm/install_helm.sh".format(shlex.quote(base))]))
-        ssh_run(hostname, "{} | LAB_PROVISIONING_URL={} LAB_CURL_TLS={} bash -".format(fetch, shlex.quote(base), tls))
+        fetch = " ".join(filter(None, ["curl", "-fsS", tls, "{}/helm/install_helm.sh".format(shlex.quote(base))]))
+        ssh_run(hostname, "set -o pipefail; {} | LAB_PROVISIONING_URL={} LAB_CURL_TLS={} bash -".format(
+            fetch, shlex.quote(base), tls))
 
 
 def helm_repo_add(hostname, repo_name, repo_url):

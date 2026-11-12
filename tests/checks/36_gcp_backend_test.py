@@ -75,7 +75,7 @@ check("_normalize_custom_shape() leaves a single vCPU alone (1 is valid, doesn't
       backend._normalize_custom_shape(1, 4096) == (1, 4096))
 
 
-# ── config_method / ISO_IMAGE enforcement (same shape as the other backends) ─
+# ── config_method / SOURCE_IMAGE enforcement (same shape as the other backends) ─
 died = []
 with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
     try:
@@ -90,7 +90,7 @@ with mock.patch.object(backends, "die", side_effect=lambda msg: died.append(msg)
         backend.copy_vm_image("", "vm1", 40, config_method="cloud-init")
     except SystemExit:
         pass
-check("copy_vm_image() dies on an empty ISO_IMAGE", any("image" in m.lower() for m in died))
+check("copy_vm_image() dies on an empty SOURCE_IMAGE", any("image" in m.lower() for m in died))
 
 ok = [False]
 with mock.patch.object(backends, "die", side_effect=AssertionError("should not die")):

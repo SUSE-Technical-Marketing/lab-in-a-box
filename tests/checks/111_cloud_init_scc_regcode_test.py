@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-# cloud-init user-data template: the scc_regcode/scc_email registration of a bring-your-own-subscription SUSE image.
-# A node without scc_regcode must render exactly what the template rendered before the option existed, so every
-# existing lab is unchanged; that is checked against the template as committed at the revision before this option
-# (git), when the checkout carries one. See 111_cloud_init_scc_regcode.sh.
+# cloud-init user-data template: scc_regcode/scc_email (a node's own SCC registration code/email) must NEVER be
+# read by this template — SCC registration is deliberately handled post-boot, over SSH
+# (lab_creation.register_suse(), called from setup_vm.py's provision_vm() for every backend/provisioning method,
+# which already prefers a node's own scc_regcode/scc_email over the lab-wide SUSE_regcode/SUSE_email when set —
+# see tests/checks/14_setup_vm_test.py). A registration code is a reusable credential, not a one-time secret:
+# cloud-init persists its own user-data verbatim on the instance (and often in its own log) for as long as the
+# instance exists, and on some backends/configurations that data is reachable from inside the instance via the
+# metadata service — a real, unnecessary exposure window an SSH round-trip (register_suse() pipes the code over
+# stdin, never on a command line or into any persisted file) does not have. So this file is a guard, not a
+# feature test: a node without scc_regcode must render exactly what the template rendered before scc_regcode
+# existed anywhere in this project, checked against the template as committed at the revision before that (git),
+# when the checkout carries one; and scc_regcode/scc_email, even when SET, must add nothing to the rendered
+# cloud-init document at all. See 111_cloud_init_scc_regcode.sh.
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-import yaml
 
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
@@ -26,13 +33,17 @@ def check(desc, cond):
 
 template = _REPO / "templates" / "cloud-init.template_user-data"
 CASES = {
-    "a cloud node (no address, no gateway)": {"_vm_name": "pluto.lab", "ISO_IMAGE": "sles16-byos"},
-    "a node with a gateway": {"_vm_name": "sol.lab", "ISO_IMAGE": "sles.qcow2", "mygw": "10.0.0.1"},
-    "an Ubuntu node with an address": {"_vm_name": "u.lab", "ISO_IMAGE": "ubuntu-24.04.img", "myip": "10.0.0.5",
+    "a cloud node (no address, no gateway)": {"_vm_name": "pluto.lab", "SOURCE_IMAGE": "sles16-byos"},
+    "a node with a gateway": {"_vm_name": "sol.lab", "SOURCE_IMAGE": "sles.qcow2", "mygw": "10.0.0.1"},
+    # Both the current SOURCE_IMAGE and the pre-lab_3_0 ISO_IMAGE are set to the same value here, and
+    # only here: this is the one case that exercises the Ubuntu-detection branch at all, and the old
+    # template (fetched below, from before scc_regcode existed) reads the OLD field name, so the
+    # byte-identical comparison needs both to actually compare the same rendered branch on both sides.
+    "an Ubuntu node with an address": {"_vm_name": "u.lab", "SOURCE_IMAGE": "ubuntu-24.04.img",
+                                       "ISO_IMAGE": "ubuntu-24.04.img", "myip": "10.0.0.5",
                                        "mymac": "52:54:00:00:00:01", "mymask": "24", "mygw": "10.0.0.1"},
 }
 
-# ── without scc_regcode: nothing changes ─────────────────────────────────────
 previous = None
 try:
     previous = subprocess.run(
@@ -54,26 +65,12 @@ for label, values in CASES.items():
               current == before)
     check("{}: scc_email alone adds nothing".format(label),
           lab_creation.process_template(template, dict(values, scc_email="a@b.lab")) == current)
-
-# ── with scc_regcode: one runcmd entry, an argument list no shell parses ─────
-node = CASES["a cloud node (no address, no gateway)"]
-code = "ABCD-1234-$(touch /tmp/x)"
-doc = yaml.safe_load(lab_creation.process_template(template, dict(node, scc_regcode=code)))
-runcmd = doc.get("runcmd") or []
-check("scc_regcode adds a SUSEConnect registration to runcmd",
-      ["SUSEConnect", "-r", code] in runcmd)
-check("...after the node's own setup commands, as the last entry", runcmd[-1] == ["SUSEConnect", "-r", code])
-check("...passing the code verbatim as an argument, never through a shell",
-      isinstance(runcmd[-1], list) and runcmd[-1][2] == code)
-
-doc = yaml.safe_load(lab_creation.process_template(template, dict(node, scc_regcode="ABCD", scc_email="ops@x.lab")))
-check("scc_email is registered together with the code",
-      (doc.get("runcmd") or [])[-1] == ["SUSEConnect", "-r", "ABCD", "-e", "ops@x.lab"])
-
-doc = yaml.safe_load(lab_creation.process_template(template, dict(CASES["a node with a gateway"], scc_regcode="ABCD")))
-runcmd = doc.get("runcmd") or []
-check("with a gateway route as well, both are kept and the registration still comes last",
-      any("default 10.0.0.1" in str(c) for c in runcmd) and runcmd[-1] == ["SUSEConnect", "-r", "ABCD"])
+    check("{}: scc_regcode adds nothing either — registration never happens via cloud-init, by design "
+          "(see this file's own header comment for why)".format(label),
+          lab_creation.process_template(template, dict(values, scc_regcode="ABCD-1234")) == current)
+    check("{}: scc_regcode and scc_email together still add nothing".format(label),
+          lab_creation.process_template(template, dict(values, scc_regcode="ABCD-1234", scc_email="a@b.lab"))
+          == current)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

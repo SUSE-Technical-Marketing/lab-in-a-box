@@ -207,6 +207,10 @@
 <td>SUSE Linux Micro 6.1</td>
 </tr>
 <tr>
+<td><code>slmicro6.1-byos</code></td>
+<td>SUSE Linux Micro 6.1 com assinatura própria (BYOS). <code>-byos</code> funciona com qualquer nome <code>sles</code> ou <code>slmicro</code>: não exige assinatura no AWS Marketplace, e o nó é registrado após a primeira inicialização com <code>SUSE_regcode</code> do <code>lab_creation.cfg</code>, sem o qual não tem repositórios de pacotes</td>
+</tr>
+<tr>
 <td><code>leap</code></td>
 <td>O openSUSE Leap mais recente</td>
 </tr>
@@ -498,7 +502,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
 <p><code>disabled_nodes</code> aceita entradas exatamente na forma de <code>nodes</code>, para nós que fazem parte do projeto de um laboratório mas não são implantados. Nada as lê: nenhuma VM é criada, nenhum registro DNS é adicionado e nenhum complemento é executado. Um nó fica estacionado ali em vez de ser excluído, para que aquilo que ele aguarda, uma imagem para a qual o backend não tem equivalente, uma versão em fim de vida, hardware ainda indisponível, possa ser resolvido devolvendo sua entrada para <code>nodes</code> sem alteração.</p>
 <pre class="mermaid">graph TD
     Lab[&quot;lab.json&quot;] --&gt; Nodes[&quot;nodes&lt;br/&gt;per-VM: myip, mymac, kcluster, addons...&quot;]
-    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: ISO_IMAGE, VM_MEM, VM_DSK...&quot;]
+    Lab --&gt; Common[&quot;common&lt;br/&gt;shared defaults: SOURCE_IMAGE, VM_MEM, VM_DSK...&quot;]
     Lab --&gt; KClusters[&quot;kclusters&lt;br/&gt;clu_type, clu_rel, mydomain, addons&quot;]
     Lab --&gt; AddonSections[&quot;one section per add-on&lt;br/&gt;e.g. rancher, longhorn&quot;]
     Nodes -. &quot;kcluster&quot; .-&gt; KClusters
@@ -512,18 +516,18 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
     &quot;node101.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.101&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c1&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;server&quot;,   // &quot;server&quot; or &quot;agent&quot;
       &quot;kcluster&quot;: &quot;cluster1&quot;           // which kclusters entry this node belongs to
     },
     &quot;node102.mydemo.lab&quot;: {
       &quot;myip&quot;:  &quot;192.168.88.102&quot;,
       &quot;mymac&quot;: &quot;34:8a:b1:4b:1a:c2&quot;,
-      &quot;INSTALL_RKE2_TYPE&quot;: &quot;agent&quot;,
+      &quot;KUBERNETES_NODE_TYPE&quot;: &quot;agent&quot;,
       &quot;kcluster&quot;: &quot;cluster1&quot;
     }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;:  &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;:     &quot;24576&quot;,
     &quot;VM_DSK&quot;:     &quot;80&quot;,
     &quot;VM_CPU&quot;:     &quot;6&quot;,
@@ -560,16 +564,16 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   node101.mydemo.lab:
     myip: &quot;192.168.88.101&quot;
     mymac: &quot;34:8a:b1:4b:1a:c1&quot;
-    INSTALL_RKE2_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
+    KUBERNETES_NODE_TYPE: server   # &quot;server&quot; or &quot;agent&quot;
     kcluster: cluster1          # which kclusters entry this node belongs to
   node102.mydemo.lab:
     myip: &quot;192.168.88.102&quot;
     mymac: &quot;34:8a:b1:4b:1a:c2&quot;
-    INSTALL_RKE2_TYPE: agent
+    KUBERNETES_NODE_TYPE: agent
     kcluster: cluster1
 
 common:
-  ISO_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
+  SOURCE_IMAGE: SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2
   VM_MEM: &quot;24576&quot;
   VM_DSK: &quot;80&quot;
   VM_CPU: &quot;6&quot;
@@ -694,7 +698,7 @@ setup_lab.py --input-definition yaml   # base topology schema (common/nodes/kclu
 <p>Uma definição de laboratório registra as versões para as quais foi escrita no seu objeto <code>schema_versions</code> de nível superior; a interface web o escreve. Uma definição que não registra nenhuma conta como versão 1.0 de cada esquema.</p>
 <pre><code class="language-json">"schema_versions": {"lab": "1.0", "addon:rancher": "2.0", "addon:longhorn": "1.0"}
 </code></pre>
-<p><code>setup_lab.py</code> e <code>setup_vm.py</code> param quando uma definição de laboratório ainda precisa de uma migração, e listam as mudanças. <code>migrate_config.py</code> as aplica:</p>
+<p><code>setup_lab.py</code>, <code>setup_vm.py</code> e <code>setup_automation_node.py</code> migram uma definição de laboratório que ainda precisa disso: avisam uma vez por mudança, salvam o resultado em <code>&lt;file&gt;.system_modified.json</code> e continuam com esse arquivo, que todos os complementos da execução também leem. Substitua o original por ele para que os avisos parem. <code>migrate_config.py</code> faz as mesmas mudanças sem executar nada:</p>
 <pre><code class="language-shell">migrate_config.py --check lab.json   # list the changes lab.json needs; exit 1 when there are any
 migrate_config.py lab.json           # write the migrated copy to lab.json.system_modified.json
 </code></pre>
@@ -710,7 +714,7 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
     &quot;standalone.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.50&quot; }
   },
   &quot;common&quot;: {
-    &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
+    &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;,
     &quot;VM_MEM&quot;: &quot;4096&quot;, &quot;VM_DSK&quot;: &quot;40&quot;, &quot;VM_CPU&quot;: &quot;2&quot;,
     &quot;mymask&quot;: &quot;24&quot;, &quot;mygw&quot;: &quot;192.168.88.1&quot;, &quot;mydns&quot;: &quot;192.168.88.73&quot;
   }
@@ -732,7 +736,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;agent1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.11&quot;, &quot;kcluster&quot;: &quot;prod&quot; },
     &quot;agent2.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.12&quot;, &quot;kcluster&quot;: &quot;prod&quot; }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;kclusters&quot;: { &quot;prod&quot;: { &quot;clu_type&quot;: &quot;rke2&quot;, &quot;clu_rel&quot;: &quot;stable&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot; } }
 }
 </code></pre>
@@ -743,7 +747,7 @@ setup_lab.py --keep rancher-cluster.json
     &quot;uyuni.mydemo.lab&quot;:  { &quot;myip&quot;: &quot;192.168.88.30&quot;, &quot;addons&quot;: [&quot;uyuni&quot;] },
     &quot;client1.mydemo.lab&quot;: { &quot;myip&quot;: &quot;192.168.88.31&quot;, &quot;addons&quot;: [&quot;client_registration&quot;] }
   },
-  &quot;common&quot;: { &quot;ISO_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
+  &quot;common&quot;: { &quot;SOURCE_IMAGE&quot;: &quot;SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2&quot;, &quot;VM_MEM&quot;: &quot;8192&quot;, &quot;VM_DSK&quot;: &quot;60&quot;, &quot;VM_CPU&quot;: &quot;4&quot; },
   &quot;uyuni&quot;: {
     &quot;uyuni_admin&quot;: &quot;admin&quot;, &quot;uyuni_password&quot;: &quot;Uyuni12345&quot;,
     &quot;uyuni_activation_key&quot;: &quot;1-lab-clients&quot;, &quot;uyuni_activation_key_base_channel&quot;: &quot;sle-micro-6.1-pool&quot;
@@ -774,7 +778,7 @@ de um agente dentro do convidado. Para uma imagem tão antiga, mais duas substit
     &quot;legacy1.mydemo.lab&quot;: {
       &quot;myip&quot;: &quot;192.168.88.120&quot;,
       &quot;config_method&quot;: &quot;virt_customize&quot;,
-      &quot;ISO_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
+      &quot;SOURCE_IMAGE&quot;: &quot;CentOS-7-x86_64-GenericCloud-20150628_01.qcow2&quot;,
       &quot;VM_BOOT&quot;: &quot;bios&quot;,
       &quot;VM_MACHINE&quot;: &quot;pc&quot;
     }
@@ -804,15 +808,15 @@ para que esta seção não cresça sem limite.</p>
   "nodes": {
     "node101.mydemo.lab": {
       "myip": "192.168.88.101", "mymac": "34:8a:b1:4b:1a:c1",
-      "INSTALL_RKE2_TYPE": "server", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "server", "kcluster": "cluster1"
     },
     "node102.mydemo.lab": {
       "myip": "192.168.88.102", "mymac": "34:8a:b1:4b:1a:c2",
-      "INSTALL_RKE2_TYPE": "agent", "kcluster": "cluster1"
+      "KUBERNETES_NODE_TYPE": "agent", "kcluster": "cluster1"
     }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "24576", "VM_DSK": "80", "VM_CPU": "6",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73"
   },
@@ -835,7 +839,7 @@ para que esta seção não cresça sem limite.</p>
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p>O <code>setup_lab.py</code> verifica o arquivo automaticamente antes de fazer qualquer outra coisa: IPs errados, uma referência a um <code>kcluster</code> inexistente, um <code>ISO_IMAGE</code> ausente e erros semelhantes são detectados e mostrados (<code>✗ Preflight FAILED — N error(s)</code>) sem criar nada, em vez de falhar no meio do caminho. Um arquivo correto mostra <code>✓ Preflight passed</code> e segue direto para a criação. Cada valor também é verificado contra o esquema que o declara: um <code>myip</code> que não é um endereço IP, um <code>VM_MEM</code> que não é um número ou está abaixo do mínimo, um <code>clu_type</code> que não é um dos tipos de cluster Kubernetes declarados. O <code>--validate</code> de cada add-on faz o mesmo para os próprios campos e para uma substituição por nó.</p>
+<p>O <code>setup_lab.py</code> verifica o arquivo automaticamente antes de fazer qualquer outra coisa: IPs errados, uma referência a um <code>kcluster</code> inexistente, um <code>SOURCE_IMAGE</code> ausente e erros semelhantes são detectados e mostrados (<code>✗ Preflight FAILED — N error(s)</code>) sem criar nada, em vez de falhar no meio do caminho. Um arquivo correto mostra <code>✓ Preflight passed</code> e segue direto para a criação. Cada valor também é verificado contra o esquema que o declara: um <code>myip</code> que não é um endereço IP, um <code>VM_MEM</code> que não é um número ou está abaixo do mínimo, um <code>clu_type</code> que não é um dos tipos de cluster Kubernetes declarados. O <code>--validate</code> de cada add-on faz o mesmo para os próprios campos e para uma substituição por nó.</p>
 <p>Na ordem: registra os dois nós no DNS → cria as duas VMs (copia a imagem QCOW2, gera os arquivos do Combustion, inicia as VMs e espera o SSH) → instala o RKE2 em <code>node101</code> como servidor e depois em <code>node102</code> como agente → instala <code>rancher</code> e <code>longhorn</code> no nó de gerenciamento do cluster (<code>mgm_node</code>, por padrão o primeiro nó servidor, aqui <code>node101</code>). Um cluster de 2 nós com Rancher costuma levar de 15 a 25 minutos; a maior parte é a inicialização do RKE2 e a instalação do Rancher via Helm.</p>
 <ol start="3">
 <li><strong>Verifique se o DNS resolve</strong> (do seu computador, depois de <a href="#step-5--point-your-client-dns-at-the-automation-vm">apontá-lo para o DNS da VM de automação</a>):</li>
@@ -869,7 +873,7 @@ para que esta seção não cresça sem limite.</p>
     "client1.mydemo.lab": { "myip": "192.168.88.31", "addons": ["client_registration"] }
   },
   "common": {
-    "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4",
     "mymask": "24", "mygw": "192.168.88.1", "mydns": "192.168.88.73", "mydomain": "mydemo.lab"
   },
@@ -1248,6 +1252,10 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Servidor Grafana independente (contêiner podman, sem Kubernetes): provisiona automaticamente uma fonte de dados Prometheus e, opcionalmente, o painel oficial da comunidade Grafana Labs para os exportadores de um servidor <code>smlm</code>/<code>uyuni</code></td>
 </tr>
+<tr>
+<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
+<td>Um site servido a partir de uma imagem SUSE BCI (contêiner podman, sem Kubernetes) — nginx e a página são incluídos na imagem no próprio nó; a página é gerada ou baixada de <code>bci_website_content_url</code></td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1355,6 +1363,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://harvesterhci.io/"><code>harvester</code></a></td>
 <td>Provisionamento de nós do SUSE Virtualization (Harvester/KubeVirt)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
+<td>Instala o rodeo-cli, uma CLI no estilo Terraform que implanta labs KVM aninhados (Harvester HCI, Rancher Prime, ou ambos), pronta para uso no nó de destino — os próprios arquivos de plan/secrets do rodeo-cli não são responsabilidade deste addon</td>
 </tr>
 </tbody>
 </table>
@@ -1513,6 +1525,7 @@ install_longhorn --schema yaml      # ...or YAML
 <pre><code class="language-shell">setup_credentials.py                              # interactive: pick a provider, fill in its fields
 setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-written plaintext file's sensitive fields
 </code></pre>
+<p><strong>Qual conta uma execução usa</strong> também pode ser decidido no ponto de execução: <code>--cloud-account &lt;nome&gt;</code> em <code>setup_lab.py</code>, <code>setup_vm.py</code>, <code>destroy_lab.py</code> e <code>destroy_vm.py</code> vale para todos os nós em nuvem daquela execução e tem precedência sobre <code>cloud_account</code> na definição do laboratório, de modo que um mesmo arquivo continua compartilhável entre operadores com contas próprias. É obrigatória quando vários arquivos de credenciais correspondem ao backend de um nó: são plataformas separadas, cada uma com sua região, sua rede, seu grupo de segurança, suas imagens e seus endereços, portanto não há uma escolha certa a adivinhar e a execução recusa em vez de escolher. Sempre que uma única execução seleciona mais de uma conta, ela avisa que nós de contas diferentes não estão na mesma rede e só se alcançam pela <a href="#overlay">rede de sobreposição</a>.</p>
 <p>Criptografia (veja <code>libs/crypto_store.py</code>): a senha passa pelo <strong>Argon2id</strong> (uma KDF propositalmente lenta e pesada em memória; é ela, e não a cifra, a verdadeira barreira de segurança de um arquivo criptografado por senha) para derivar um segredo mestre de 512 bits; o <strong>HKDF-SHA512</strong> então deriva duas subchaves independentes de 256 bits (separadas por rótulo, e não simplesmente divididas ao meio); os dados são criptografados com <strong>AES-256-GCM e depois ChaCha20-Poly1305 em cascata</strong>, duas cifras AEAD estruturalmente diferentes e com chaves independentes, de modo que quebrar totalmente um único algoritmo não basta. Toda ferramenta que precisa de uma credencial (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) pede a senha uma vez por execução (guardada só na memória do processo, nunca gravada em lugar nenhum) por meio de <code>try_load_cloud_account()</code> de <code>libs/primary.py</code>, a única função pela qual tudo passa. Uma execução que não pode ser perguntada — <strong>Create lab</strong> na interface web, uma execução agendada, um pipeline — pega a senha em <code>LAB_CREDENTIALS_PASSPHRASE</code>, tentada uma única vez e nunca escrita em lugar algum; definir uma senha nova sempre pergunta, então a variável nunca pode cifrar um arquivo silenciosamente.</p>
 <p>Um arquivo pode dispensar a criptografia com <code>unencrypted: true</code> no nível superior (não é o padrão: o <code>setup_credentials.py</code> pergunta antes de gravar um assim). <code>--encrypt-existing</code> criptografa no lugar apenas os campos que parecem sensíveis (nomes com cara de segredo, senha ou token), deixa legíveis por exemplo <code>AWS_REGION</code>/<code>AWS_PROFILE</code> e nunca sobrescreve a entrada: grava <code>&lt;name&gt;.encrypted.yaml</code> ao lado para você revisar e colocar no lugar. Exige o pacote Python <code>cryptography</code> (<code>python311-cryptography</code>, ou <code>pip install cryptography</code>, ≥41 para o Argon2id) na VM de automação; ele só é importado quando um arquivo realmente criptografado é usado, então um laboratório que nunca define <code>cloud_account</code> não precisa de nenhuma dependência nova.</p>
 <p><strong>Credenciais de serviços externos (SCC, SUSE Application Collection, Hermes, …).</strong> O mesmo armazenamento <code>/etc/lab_creation/credentials/</code>, a mesma criptografia e a mesma ferramenta <code>setup_credentials.py</code> também cobrem credenciais de serviços externos que não são de nuvem. Um arquivo é marcado com <code>credential_kind</code> (por exemplo <code>scc</code>, <code>appcollection</code>, <code>hermes</code>) em vez de <code>cloudtype</code>, de modo que os dois conceitos compartilham diretório e formato sem nunca colidir. Cada complemento que precisa de uma credencial de serviço externo documenta seu próprio campo opcional <code>&lt;field&gt;_account</code> (por exemplo <code>smlm_scc_account</code>, <code>suse_ai_registry_account</code>, <code>hermes_account</code>) para indicá-la explicitamente; se não for definido, um único arquivo com o <code>credential_kind</code> correspondente é detectado automaticamente, como acontece com <code>cloud_account</code>. <strong>Credenciais em texto puro no JSON do laboratório continuam totalmente válidas</strong>: este armazenamento é uma alternativa opcional, nunca uma exigência; os campos em texto puro de cada complemento (<code>smlm_scc_user</code>, <code>suse_ai_registry_user</code>, <code>hermes_llm_api_key</code>, …) continuam funcionando sem mudanças se você nunca usar o armazenamento de credenciais.</p>
@@ -1520,7 +1533,7 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>Um arquivo de credenciais por tipo serve para todos os complementos que precisam desse tipo (por exemplo, um único arquivo <code>scc</code> cobre as credenciais SCC de qualquer complemento), independentemente do prefixo dos campos JSON de cada um; veja <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> em <code>libs/addon_common.py</code> e as funções <code>*_service_credential*</code> de <code>libs/primary.py</code> para o mecanismo por trás.</p>
 <p><strong>Backends de nuvem (Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale) e <code>myip</code>:</strong> deixe vazio o <code>myip</code> de um nó de nuvem no JSON do laboratório: o IP real só é conhecido quando o provedor o atribui na criação, não é algo que se decide de antemão como um IP estático de libvirt/Harvester. O <code>setup_vm.py</code> pega o IP real do valor retornado por <code>create_vm()</code> e o registra no DNS <em>depois</em> que o nó existe de fato, não antes (um bug real encontrado nos testes ao vivo do AWSBackend, 2026-09-06; veja TODO). <code>mymac</code> também não faz sentido em um backend de nuvem: deixe-o sem definir; ele é ignorado em vez de gerado ou verificado.</p>
-<p><strong>VM de DNS na nuvem:</strong> na primeira vez que um nó do laboratório usa determinado backend de nuvem, o <code>setup_vm.py</code> também provisiona (ou reutiliza, se já existir) uma VM pequena e barata que serve DNS dentro dessa mesma rede de nuvem, <code>lab-dns-&lt;backend&gt;</code>, por exemplo <code>lab-dns-aws</code>, rodando BIND. Ela inicia a partir da imagem openSUSE Leap mais recente publicada pelo provedor (na AWS, obtida da lista pública de imagens de nuvem da SUSE), ou da imagem do próprio laboratório em um provedor que não a tenha; são compatíveis imagens Debian/Ubuntu, SUSE e da família Fedora (RHEL, Amazon Linux). Defina <code>CLOUD_DNS_IMAGE</code> na conta de nuvem (ou em <code>lab_creation.cfg</code>) para iniciá-la a partir de uma imagem específica. Ela existe porque os nós de nuvem em geral não conseguem alcançar o servidor BIND do <code>automation.mydemo.lab</code> (ele fica atrás do NAT/roteador do laboratório doméstico, inacessível pela Internet); um cluster real de vários nós na nuvem precisa do próprio servidor DNS dentro dessa rede para que seus nós se resolvam entre si. A entrada DNS de cada nó de nuvem é registrada <em>tanto</em> nessa VM de DNS quanto na zona central do <code>automation.mydemo.lab</code>. Os nós são apontados para esse servidor pelo próprio <code>use_dns_server()</code> do backend, chamado logo depois de a VM de DNS ser garantida: ele configura a própria rede da nuvem para entregar esse servidor, então um nó resolve os demais nós do seu laboratório pelo nome de host sem nada configurado dentro do convidado. Na AWS isso é um conjunto de opções DHCP da VPC que nomeia a VM de DNS como único servidor DNS da VPC e o domínio do laboratório como seu domínio de busca; ele se aplica a toda a VPC, uma instância iniciada depois o tem imediatamente, e uma já em execução o adota ao renovar sua concessão DHCP. <code>AmazonProvidedDNS</code> não pode constar ao lado de um servidor próprio, por isso a VM de DNS resolve recursivamente tudo fora do domínio do laboratório. <strong>Uma limitação conhecida:</strong> os nós consultam essa VM de DNS pelo IP privado; consultas DNS ao IP público dela a partir de fora da nuvem podem ser interceptadas pelas redes no caminho, pois alguns provedores de Internet e roteadores respondem eles mesmos a todo o tráfego DNS. Veja a docstring de <code>ensure_cloud_dns_vm()</code> em <code>libs/backends.py</code>.</p>
+<p><strong>VM de DNS na nuvem:</strong> na primeira vez que um nó do laboratório usa determinado backend de nuvem, o <code>setup_vm.py</code> também provisiona (ou reutiliza, se já existir) uma VM pequena e barata que serve DNS dentro dessa mesma rede de nuvem, <code>lab-dns-&lt;backend&gt;</code>, por exemplo <code>lab-dns-aws</code>, rodando BIND. Ela inicia a partir da imagem openSUSE Leap mais recente publicada pelo provedor (na AWS, obtida da lista pública de imagens de nuvem da SUSE), ou da imagem do próprio laboratório em um provedor que não a tenha; são compatíveis imagens Debian/Ubuntu, SUSE e da família Fedora (RHEL, Amazon Linux). Defina <code>CLOUD_DNS_IMAGE</code> na conta de nuvem (ou em <code>lab_creation.cfg</code>) para iniciá-la a partir de uma imagem específica. Ela existe porque os nós de nuvem em geral não conseguem alcançar o servidor BIND do <code>automation.mydemo.lab</code> (ele fica atrás do NAT/roteador do laboratório doméstico, inacessível pela Internet); um cluster real de vários nós na nuvem precisa do próprio servidor DNS dentro dessa rede para que seus nós se resolvam entre si. A entrada DNS de cada nó de nuvem é registrada <em>tanto</em> nessa VM de DNS quanto na zona central do <code>automation.mydemo.lab</code>. Cada nó de nuvem é apontado para o endereço privado desse servidor de dentro do convidado assim que fica acessível, antes da primeira reinicialização: o NetworkManager recebe uma configuração de DNS global, o wicked uma política netconfig estática e o systemd-resolved o servidor do laboratório mais uma configuração por link que ignora os servidores DNS entregues pelo DHCP do provedor. A rede do provedor não é alterada, então isso funciona da mesma forma em todas as nuvens. A VM de DNS responde em duas visões. Um cliente que a alcança a partir de um endereço privado, ou seja, um nó dessa rede de nuvem ou um roteado até ela pelo overlay, recebe os nós do laboratório dessa rede com seus endereços privados, de modo que o tráfego entre eles fica dentro da rede em vez de sair pelo gateway de internet e voltar de um endereço público que as próprias regras de firewall da rede não admitem. Qualquer outro cliente recebe os endereços públicos com que responde qualquer outro servidor DNS do laboratório. Um nó que <code>setup_lab.py --keep</code> reutiliza tem seus registros e sua configuração de DNS reescritos, então um laboratório existente passa a isso na próxima execução. A VM de DNS resolve recursivamente tudo fora do domínio do laboratório. Veja a docstring de <code>ensure_cloud_dns_vm()</code> em <code>libs/backends.py</code>.</p>
 <p><strong>Dimensionamento de instâncias na nuvem:</strong> cada backend de nuvem converte <code>VM_CPU</code>/<code>VM_MEM</code> no menor tipo de instância, tipo de servidor, plano ou flavor suficiente do provedor, a partir de uma pequena tabela embutida (a coluna "Notas" de cada um indica qual); essa tabela nunca foi pensada como limite. A AWS é a exceção: ela lê os tipos de instância que a própria região realmente oferece junto com seus preços on-demand e escolhe o tipo x86_64 mais barato que atenda tanto a <code>VM_CPU</code> quanto a <code>VM_MEM</code>, usando a tabela apenas quando essa consulta não está disponível. Há duas formas de substituí-la, em ordem de prioridade:
 1. <strong><code>cloud_instance_type</code></strong> (em common ou por nó; o do nó prevalece): o nome exato de um tipo de instância, tipo de servidor, plano ou flavor, usado como está, sem escolha automática. Funciona igual em todos os backends de nuvem, inclusive no OVHcloud (que pula sua chamada ao vivo à API de flavors) e no GCP (que não cria um tipo personalizado <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>; informe um tipo predefinido real como <code>n2-standard-4</code>).
 2. <strong>Uma chave de configuração <code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code></strong> (veja a linha de cada provedor abaixo): substitui por completo a tabela embutida, de modo que a escolha automática por <code>VM_CPU</code>/<code>VM_MEM</code> continua funcionando, mas com a sua lista. Formato: <code>name:cores:mem_gb,name:cores:mem_gb,...</code>, por exemplo <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>. Isso substitui a tabela inteira, sem mesclar: repita as entradas embutidas que ainda quiser. GCP e OVHcloud não têm essa chave: o GCP cria um tipo de máquina personalizado real diretamente a partir de <code>VM_CPU</code>/<code>VM_MEM</code> (não há catálogo a substituir) e o OVHcloud já consulta ao vivo sua lista real de flavors na criação (veja a linha dele).</p>
@@ -1536,47 +1549,47 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 <tr>
 <td><code>harvester</code></td>
 <td><code>HARVESTER_KUBECONFIG</code> (obrigatória), <code>HARVESTER_NAMESPACE</code> (opcional, padrão <code>default</code>), <code>HARVESTER_NETWORK</code> (opcional, um NetworkAttachmentDefinition do Multus já existente)</td>
-<td>Somente <code>config_method: cloud-init</code>; ISO_IMAGE já precisa ser uma VirtualMachineImage importada no Harvester</td>
+<td>Somente <code>config_method: cloud-init</code>; SOURCE_IMAGE já precisa ser uma VirtualMachineImage importada no Harvester</td>
 </tr>
 <tr>
 <td><code>hetzner</code></td>
 <td><code>HETZNER_TOKEN</code> (obrigatória, um token da API do Hetzner Cloud restrito a um projeto), <code>HETZNER_LOCATION</code> (opcional, por exemplo <code>nbg1</code>/<code>fsn1</code>/<code>hel1</code>/<code>ash</code>/<code>hil</code>), <code>HETZNER_SERVER_TYPES</code> (opcional, substitui a tabela embutida de server_type; veja acima)</td>
-<td>Somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um nome real de imagem da Hetzner (por exemplo <code>ubuntu-24.04</code>) ou o ID de um snapshot seu, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor server_type da Hetzner que atenda a ambos, e vm_dsk_gb não pode passar do disco incluído nesse server_type. Tipos de servidor atuais: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (a Hetzner não tem uma página de listagem única independente da API; o console ou a página de preços é a fonte prática). Veja a docstring da classe <code>HetznerBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+<td>Somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um nome real de imagem da Hetzner (por exemplo <code>ubuntu-24.04</code>) ou o ID de um snapshot seu, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor server_type da Hetzner que atenda a ambos, e vm_dsk_gb não pode passar do disco incluído nesse server_type. Tipos de servidor atuais: <a href="https://www.hetzner.com/cloud/">hetzner.com/cloud</a> (a Hetzner não tem uma página de listagem única independente da API; o console ou a página de preços é a fonte prática). Veja a docstring da classe <code>HetznerBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
 </tr>
 <tr>
 <td><code>aws</code></td>
 <td><code>AWS_REGION</code> (obrigatória), mais <code>AWS_PROFILE</code> ou <code>AWS_ACCESS_KEY_ID</code>+<code>AWS_SECRET_ACCESS_KEY</code> (obrigatórias); <code>AWS_SESSION_TOKEN</code> (obrigatória na prática para uma chave temporária emitida pelo STS, que começa com <code>ASIA</code> em vez de <code>AKIA</code>, por exemplo de SSO/IAM Identity Center ou de uma função assumida; <code>resolve()</code> encerra com uma mensagem clara se ela faltar para esse tipo de chave); <code>AWS_SUBNET_ID</code>/<code>AWS_SECURITY_GROUP_ID</code>/<code>AWS_KEY_NAME</code> (todas opcionais; sem elas usam-se a VPC e o grupo de segurança padrão da conta, que muitas contas reais não têm; veja os resultados dos testes ao vivo no TODO); <code>AWS_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
-<td>Exige a CLI <code>aws</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ID de AMI real, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao tipo de instância EC2 x86_64 suficiente mais barato entre os que a região realmente oferece, lido ao vivo de <code>describe-instance-types</code> e da Price List API e armazenado em cache por região, com a tabela embutida como alternativa quando alguma das duas consultas não está disponível (arm64 nunca é escolhido automaticamente, embora seja mais barato: indique um em <code>cloud_instance_type</code> para usá-lo), mas vm_dsk_gb É aplicado diretamente (ao contrário da Hetzner) pelo volume EBS raiz real da AMI. Tipos de instância atuais: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>; <code>aws_nested_virtualization: "true"</code> por nó ou em common (opcional, desativado por padrão) inicia a instância com a virtualização KVM aninhada real da AWS (<code>--cpu-options "NestedVirtualization=enabled"</code>, documentação: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>), o que permite que o fluxo kickstart/combustion deste projeto, inclusive uma instalação real a partir da ISO do Harvester HCI, rode em um nó "hipervisor" provisionado na nuvem do mesmo jeito que em hardware físico; exige um <code>cloud_instance_type</code> explícito de uma família compatível real (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i e suas variantes <code>-flex</code>; encerra com uma mensagem clara citando a lista exata se o tipo de instância resolvido não estiver entre eles, já que nenhum tipo burstable o suporta, e é justamente um tipo burstable que tanto a consulta de preços ao vivo quanto a tabela embutida escolhem para um nó do tamanho de laboratório). Veja a docstring da classe <code>AWSBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+<td>Exige a CLI <code>aws</code> real na VM de automação; somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um ID de AMI real, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao tipo de instância EC2 x86_64 suficiente mais barato entre os que a região realmente oferece, lido ao vivo de <code>describe-instance-types</code> e da Price List API e armazenado em cache por região, com a tabela embutida como alternativa quando alguma das duas consultas não está disponível (arm64 nunca é escolhido automaticamente, embora seja mais barato: indique um em <code>cloud_instance_type</code> para usá-lo), mas vm_dsk_gb É aplicado diretamente (ao contrário da Hetzner) pelo volume EBS raiz real da AMI. Tipos de instância atuais: <a href="https://aws.amazon.com/ec2/instance-types/">aws.amazon.com/ec2/instance-types</a>; <code>aws_nested_virtualization: "true"</code> por nó ou em common (opcional, desativado por padrão) inicia a instância com a virtualização KVM aninhada real da AWS (<code>--cpu-options "NestedVirtualization=enabled"</code>, documentação: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html">amazon-ec2-nested-virtualization</a>), o que permite que o fluxo kickstart/combustion deste projeto, inclusive uma instalação real a partir da ISO do Harvester HCI, rode em um nó "hipervisor" provisionado na nuvem do mesmo jeito que em hardware físico; exige um <code>cloud_instance_type</code> explícito de uma família compatível real (M7i/M8i/M8id/C7i/C8i/C8id/R7i/R8i/R8id/X8i/I7i e suas variantes <code>-flex</code>; encerra com uma mensagem clara citando a lista exata se o tipo de instância resolvido não estiver entre eles, já que nenhum tipo burstable o suporta, e é justamente um tipo burstable que tanto a consulta de preços ao vivo quanto a tabela embutida escolhem para um nó do tamanho de laboratório). Veja a docstring da classe <code>AWSBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
 </tr>
 <tr>
 <td><code>gcp</code></td>
 <td><code>GCP_PROJECT</code>/<code>GCP_ZONE</code> (ambas obrigatórias), <code>GCP_SERVICE_ACCOUNT_KEY</code> (caminho para um arquivo de chave JSON de conta de serviço); <code>GCP_IMAGE_PROJECT</code>/<code>GCP_NETWORK</code>/<code>GCP_SUBNET</code> (todas opcionais)</td>
-<td>Exige a CLI <code>gcloud</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um nome real de imagem GCE, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM criam um tipo de máquina personalizado real (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>, o único backend aqui que não escolhe de uma tabela fixa de SKUs, por isso não há chave de substituição no estilo <code>*_INSTANCE_TYPES</code>; use <code>cloud_instance_type</code> para forçar um tipo predefinido real). Tipos de máquina predefinidos: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>. Veja a docstring da classe <code>GCPBackend</code> em <code>libs/backends.py</code> para as regras de arredondamento de formatos personalizados e a lista completa de limitações</td>
+<td>Exige a CLI <code>gcloud</code> real na VM de automação; somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um nome real de imagem GCE, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM criam um tipo de máquina personalizado real (<code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>, o único backend aqui que não escolhe de uma tabela fixa de SKUs, por isso não há chave de substituição no estilo <code>*_INSTANCE_TYPES</code>; use <code>cloud_instance_type</code> para forçar um tipo predefinido real). Tipos de máquina predefinidos: <a href="https://cloud.google.com/compute/docs/general-purpose-machines">cloud.google.com/compute/docs/general-purpose-machines</a>. Veja a docstring da classe <code>GCPBackend</code> em <code>libs/backends.py</code> para as regras de arredondamento de formatos personalizados e a lista completa de limitações</td>
 </tr>
 <tr>
 <td><code>alibaba</code></td>
 <td><code>ALIBABA_ACCESS_KEY_ID</code>/<code>ALIBABA_ACCESS_KEY_SECRET</code>/<code>ALIBABA_REGION</code> (todas obrigatórias), <code>ALIBABA_SECURITY_GROUP_ID</code>/<code>ALIBABA_VSWITCH_ID</code> (ambas obrigatórias: ao contrário de AWS/GCP, não há VPC padrão de reserva), <code>ALIBABA_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
-<td>Exige a CLI <code>aliyun</code> real na VM de automação; somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ImageId real da Alibaba Cloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor InstanceType do ECS suficiente, e vm_dsk_gb é aplicado diretamente via <code>--SystemDisk.Size</code>. Famílias de instâncias atuais: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>. Veja a docstring da classe <code>AlibabaBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
+<td>Exige a CLI <code>aliyun</code> real na VM de automação; somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um ImageId real da Alibaba Cloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor InstanceType do ECS suficiente, e vm_dsk_gb é aplicado diretamente via <code>--SystemDisk.Size</code>. Famílias de instâncias atuais: <a href="https://www.alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families">alibabacloud.com/help/en/ecs/user-guide/overview-of-instance-families</a>. Veja a docstring da classe <code>AlibabaBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações</td>
 </tr>
 <tr>
 <td><code>scaleway</code></td>
 <td><code>SCALEWAY_SECRET_KEY</code>/<code>SCALEWAY_PROJECT_ID</code>/<code>SCALEWAY_ZONE</code> (todas obrigatórias), <code>SCALEWAY_SERVER_TYPES</code> (opcional, substitui a tabela embutida de commercial_type; veja acima)</td>
-<td>REST direto contra <code>api.scaleway.com</code> (sem CLI); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um ID real de imagem da Scaleway, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>commercial_type</code> suficiente (DEV1-S/M/L, GP1-S). Tipos comerciais atuais: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>; o cloud-init é entregue por uma chamada separada <code>PATCH .../user_data/cloud-init</code> depois da criação do servidor. <strong>Esse mecanismo específico NÃO foi verificado de novo ao vivo de forma independente nesta sessão</strong>, e a docstring da classe <code>ScalewayBackend</code> em <code>libs/backends.py</code> o marca como a parte menos verificada deste backend</td>
+<td>REST direto contra <code>api.scaleway.com</code> (sem CLI); somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um ID real de imagem da Scaleway, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>commercial_type</code> suficiente (DEV1-S/M/L, GP1-S). Tipos comerciais atuais: <a href="https://www.scaleway.com/en/docs/instances/reference-content/choosing-instance-type/">scaleway.com/en/docs/instances/reference-content/choosing-instance-type</a>; o cloud-init é entregue por uma chamada separada <code>PATCH .../user_data/cloud-init</code> depois da criação do servidor. <strong>Esse mecanismo específico NÃO foi verificado de novo ao vivo de forma independente nesta sessão</strong>, e a docstring da classe <code>ScalewayBackend</code> em <code>libs/backends.py</code> o marca como a parte menos verificada deste backend</td>
 </tr>
 <tr>
 <td><code>upcloud</code></td>
 <td><code>UPCLOUD_USERNAME</code>/<code>UPCLOUD_PASSWORD</code>/<code>UPCLOUD_ZONE</code> (todas obrigatórias: uma subconta da UpCloud com acesso à API ativado no painel de controle), <code>UPCLOUD_PLANS</code> (opcional, substitui a tabela embutida de planos; veja acima)</td>
-<td>REST direto contra <code>api.upcloud.com</code> com autenticação HTTP Basic (sem CLI e sem autenticação por token); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um UUID real de armazenamento/modelo da UpCloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>plan</code> suficiente (com a nomenclatura "NxCPU-MGB" da UpCloud). Planos atuais: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>; vm_dsk_gb é aplicado diretamente pelo campo <code>size</code> do dispositivo de armazenamento; a busca de servidor por nome é um filtro no cliente sobre a lista completa de servidores (não há filtro por nome no servidor confirmado). Veja a docstring da classe <code>UpCloudBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações, inclusive o campo <code>user_data</code> não confirmado</td>
+<td>REST direto contra <code>api.upcloud.com</code> com autenticação HTTP Basic (sem CLI e sem autenticação por token); somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um UUID real de armazenamento/modelo da UpCloud, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>plan</code> suficiente (com a nomenclatura "NxCPU-MGB" da UpCloud). Planos atuais: <a href="https://upcloud.com/docs/products/cloud-servers/plans/">upcloud.com/docs/products/cloud-servers/plans</a>; vm_dsk_gb é aplicado diretamente pelo campo <code>size</code> do dispositivo de armazenamento; a busca de servidor por nome é um filtro no cliente sobre a lista completa de servidores (não há filtro por nome no servidor confirmado). Veja a docstring da classe <code>UpCloudBackend</code> em <code>libs/backends.py</code> para a tabela embutida e a lista completa de limitações, inclusive o campo <code>user_data</code> não confirmado</td>
 </tr>
 <tr>
 <td><code>ovhcloud</code></td>
 <td><code>OVH_APPLICATION_KEY</code>/<code>OVH_APPLICATION_SECRET</code>/<code>OVH_CONSUMER_KEY</code>/<code>OVH_SERVICE_NAME</code>/<code>OVH_REGION</code> (todas obrigatórias), <code>OVH_ENDPOINT</code> (opcional, padrão <code>https://eu.api.ovh.com/1.0</code>; mude para uma conta OVH registrada em <code>ca</code>/<code>us</code>)</td>
-<td>REST direto contra a API do OVHcloud com o esquema de assinatura de requisições da própria OVH (nem token bearer simples nem Basic Auth; é o backend menos verificado deste arquivo, nada dele foi testado com uma conta real do OVHcloud); somente <code>config_method: cloud-init</code>; ISO_IMAGE precisa ser um imageId real do OVHcloud Public Cloud da região (UUID); o dimensionamento do flavor NÃO é uma tabela estática como nos outros backends (por isso também não há chave no estilo <code>*_INSTANCE_TYPES</code> aqui): os IDs de flavor da OVH são UUIDs por região, então <code>_pick_flavor()</code> faz uma chamada real à API na criação; use <code>cloud_instance_type</code> para pular essa chamada e informar diretamente um flavorId real. Flavors e preços atuais: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (os UUIDs reais de flavor por região só aparecem pela API ou pelo console, não nessa página de preços). Veja a docstring da classe <code>OVHcloudBackend</code> em <code>libs/backends.py</code> para a lista completa, explicitamente sinalizada, do que ainda não foi confirmado</td>
+<td>REST direto contra a API do OVHcloud com o esquema de assinatura de requisições da própria OVH (nem token bearer simples nem Basic Auth; é o backend menos verificado deste arquivo, nada dele foi testado com uma conta real do OVHcloud); somente <code>config_method: cloud-init</code>; SOURCE_IMAGE precisa ser um imageId real do OVHcloud Public Cloud da região (UUID); o dimensionamento do flavor NÃO é uma tabela estática como nos outros backends (por isso também não há chave no estilo <code>*_INSTANCE_TYPES</code> aqui): os IDs de flavor da OVH são UUIDs por região, então <code>_pick_flavor()</code> faz uma chamada real à API na criação; use <code>cloud_instance_type</code> para pular essa chamada e informar diretamente um flavorId real. Flavors e preços atuais: <a href="https://www.ovhcloud.com/en/public-cloud/prices/">ovhcloud.com/en/public-cloud/prices</a> (os UUIDs reais de flavor por região só aparecem pela API ou pelo console, não nessa página de preços). Veja a docstring da classe <code>OVHcloudBackend</code> em <code>libs/backends.py</code> para a lista completa, explicitamente sinalizada, do que ainda não foi confirmado</td>
 </tr>
 <tr>
 <td><code>exoscale</code></td>
 <td><code>EXOSCALE_API_KEY</code>/<code>EXOSCALE_API_SECRET</code>/<code>EXOSCALE_ZONE</code> (todas obrigatórias), <code>EXOSCALE_INSTANCE_TYPES</code> (opcional, substitui a tabela embutida de tipos de instância; veja acima)</td>
-<td>Exige a CLI <code>exo</code> real na VM de automação; somente <code>config_method: cloud-init</code> (passado direto para a opção <code>--cloud-init &lt;file&gt;</code> do <code>exo</code>, a entrega de cloud-init mais simples entre os backends de nuvem); ISO_IMAGE precisa ser um ID ou nome real de modelo da Exoscale, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>instance-type</code> suficiente (a família "standard.<size>" da Exoscale). Tipos de instância atuais: execute <code>exo compute instance-type list</code> (a fonte oficial segundo <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>; os números exatos de vCPU/RAM da tabela embutida NÃO foram reconfirmados com esse comando nesta sessão); vm_dsk_gb é aplicado diretamente via <code>--disk-size</code>. Veja a docstring da classe <code>ExoscaleBackend</code> em <code>libs/backends.py</code></td>
+<td>Exige a CLI <code>exo</code> real na VM de automação; somente <code>config_method: cloud-init</code> (passado direto para a opção <code>--cloud-init &lt;file&gt;</code> do <code>exo</code>, a entrega de cloud-init mais simples entre os backends de nuvem); SOURCE_IMAGE precisa ser um ID ou nome real de modelo da Exoscale, não um nome de arquivo qcow2/ISO; VM_CPU/VM_MEM são associados ao menor <code>instance-type</code> suficiente (a família "standard.<size>" da Exoscale). Tipos de instância atuais: execute <code>exo compute instance-type list</code> (a fonte oficial segundo <a href="https://community.exoscale.com/product/compute/instances/overview/">community.exoscale.com/product/compute/instances/overview</a>; os números exatos de vCPU/RAM da tabela embutida NÃO foram reconfirmados com esse comando nesta sessão); vm_dsk_gb é aplicado diretamente via <code>--disk-size</code>. Veja a docstring da classe <code>ExoscaleBackend</code> em <code>libs/backends.py</code></td>
 </tr>
 </tbody>
 </table>

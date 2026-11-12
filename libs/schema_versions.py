@@ -159,6 +159,11 @@ def read_snapshot(name: str, version: str) -> dict:
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
+def _enum_values(props: dict) -> list:
+    """The values field `props` accepts: an enum entry is a value, or a {"value", "label"} mapping of one."""
+    return [str(v.get("value")) if isinstance(v, dict) else str(v) for v in props.get("enum") or []]
+
+
 def breaking_changes(old: dict, new: dict) -> list:
     """Changes from snapshot `old` to snapshot `new` that a definition written for `old` may not survive."""
     out = []
@@ -172,7 +177,7 @@ def breaking_changes(old: dict, new: dict) -> list:
             out.append("{} type {} -> {}".format(field, props.get("type"), now.get("type")))
         if now.get("required") and not props.get("required"):
             out.append("{} became required".format(field))
-        dropped = [v for v in props.get("enum") or [] if now.get("enum") and v not in now["enum"]]
+        dropped = [v for v in _enum_values(props) if now.get("enum") and v not in _enum_values(now)]
         if dropped:
             out.append("{} no longer accepts {}".format(field, ", ".join(dropped)))
     out += ["{} added as required".format(f) for f, p in sorted(after.items()) if f not in before and p.get("required")]
@@ -191,7 +196,7 @@ def other_changes(old: dict, new: dict) -> list:
         for key in ("default", "pattern", "min", "max"):
             if props.get(key) != now.get(key):
                 out.append("{} {} {!r} -> {!r}".format(field, key, props.get(key), now.get(key)))
-        added = [v for v in now.get("enum") or [] if v not in (props.get("enum") or [])]
+        added = [v for v in _enum_values(now) if v not in _enum_values(props)]
         if added and props.get("enum"):
             out.append("{} also accepts {}".format(field, ", ".join(added)))
         if props.get("required") and not now.get("required"):

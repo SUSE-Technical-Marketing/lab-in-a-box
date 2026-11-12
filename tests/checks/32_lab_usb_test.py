@@ -27,7 +27,7 @@ def check(desc, cond):
 
 # ── remap_lab_definition_to_nat: core remapping ──────────────────────────────
 original = {
-    "common": {"ISO_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_CPU": "2", "VM_DSK": "40",
+    "common": {"SOURCE_IMAGE": "img.qcow2", "VM_MEM": "4096", "VM_CPU": "2", "VM_DSK": "40",
                "mygw": "192.168.88.1", "mymask": "24", "mydns": "192.168.88.73",
                "mydomain": "mydemo.lab"},
     "nodes": {
@@ -62,8 +62,8 @@ check("remap: common.mymask reflects the NAT network's own prefix length",
 check("remap: common.mydns points at the nested automation VM's own static IP",
       remapped["common"]["mydns"] == "192.168.150.2")
 
-check("remap: other common fields (ISO_IMAGE, VM_MEM, …) pass through unchanged",
-      remapped["common"]["ISO_IMAGE"] == "img.qcow2" and remapped["common"]["VM_MEM"] == "4096")
+check("remap: other common fields (SOURCE_IMAGE, VM_MEM, …) pass through unchanged",
+      remapped["common"]["SOURCE_IMAGE"] == "img.qcow2" and remapped["common"]["VM_MEM"] == "4096")
 
 # A node with a falsy config ({} or None — e.g. a minimal node relying
 # entirely on inherited common defaults) must still get a myip. `(node_cfg or {})["myip"] = ip`

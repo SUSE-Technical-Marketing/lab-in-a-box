@@ -20,6 +20,7 @@ import ipaddress
 import socket
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 # Installed location (mirrors bash's _lib_path=/usr/local/lib/lab_creation);
 # fall back to the repo copy for local development.
@@ -34,14 +35,92 @@ from lab_creation import (  # noqa: E402
     validate_lab_definition, load_vm_vars,
     prepare_ignition_combustion, prepare_cloud_init,
     prepare_virt_customize_for_vm, prepare_install_iso,
-    add_to_dns, clean_ssh_keys, check_ssh_conn,
-    run_node_commands,
+    add_to_dns, clean_ssh_keys, check_ssh_conn, boot_id, wait_for_reboot,
+    run_node_commands, register_suse, use_lab_dns,
 )
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
 import overlay  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
+
+
+class LabDns(NamedTuple):
+    """Where a node's DNS records went, as register_dns() returns it."""
+    site_server: str        # the server answering for the node's site, for the overlay's DNS registry
+    lab_dns_ip: str         # the address the node itself resolves through (use_lab_dns()); "" to leave it alone
+    site: str               # the node's DNS site (DNSService.add_to_dns()); "" for a node outside any cloud
+    private_ip: str         # the node's address inside its site; "" when its backend reports none
+
+
+def register_dns(definition, config, backend, vm_name: str, env: dict, lab_setup_path: str,
+                 ensure_cloud_dns: bool = True) -> LabDns:
+    """
+    Register `vm_name` at env["myip"] in the lab's DNS masters: REMOTE_DNS_SERVERS, and for a cloud node the
+    cloud DNS VM of its site (backends.ensure_cloud_dns_vm()), which `ensure_cloud_dns` False leaves out. A cloud
+    node is its site's own view at its private address, and at its public one everywhere else.
+    """
+    # Honours a per-node/common "cloud_account" (its cloudtype), same as get_backend() above —
+    # so a multi-account cloud lab still routes through the cloud-DNS-VM path below.
+    backend_name = backends.effective_backend_name(definition, config, vm_name)
+
+    remote_dns_servers = env.get("REMOTE_DNS_SERVERS", "").split()
+    # Which server serves this site, for the overlay's own DNS registry. A site on libvirt or Harvester is served by
+    # this automation node's own BIND, which every lab node already resolves through (mydns).
+    site_dns_server = env.get("mydns", "")
+    lab_dns_ip = site = private_ip = ""
+    # ensure_cloud_dns=False: the caller is building the server that will serve this network's DNS
+    # itself, so there is nothing to delegate to. setup_automation_node.py passes it: a cloud
+    # automation node runs the lab's own BIND, and a second DNS VM beside it would be one more
+    # instance to pay for and the one the network would actually be pointed at.
+    if ensure_cloud_dns and backend_name in backends.CLOUD_BACKEND_NAMES:
+        site = overlay.site_name_for(backend_name, getattr(backend, "account", ""))
+        private_ip = backend.get_private_ip(vm_name) or ""
+        # A cloud node generally can't reach automation.mydemo.lab's own BIND (behind the home
+        # lab's NAT) — a real multi-node cloud cluster needs a DNS server living inside that same
+        # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring.
+        dns_vm_ip = backends.ensure_cloud_dns_vm(
+            backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
+            env.get("mydomain", ""), env.get("SOURCE_IMAGE", ""), lab_setup_path,
+            preferred_image=backends.cloud_dns_image(definition, config, vm_name), site=site,
+        )
+        remote_dns_servers.append(dns_vm_ip)
+        site_dns_server = dns_vm_ip
+        # The node asks the DNS VM at its private address: a query to the public one leaves through the internet
+        # gateway, arrives from the node's own public address, and is refused recursion (see
+        # backends.dns_recursion_networks()). dns_vm_ip stays the address this host reaches it by.
+        lab_dns_ip = backend.get_private_ip(backends.cloud_dns_vm_name(backend, backend_name)) or dns_vm_ip
+
+    if env.get("myip"):
+        add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
+                   remote_dns_servers=remote_dns_servers or None, site=site, private_ip=private_ip)
+    else:
+        warn("- No myip known for \"{}\" — backend never reported one — skipping DNS registration".format(vm_name))
+    return LabDns(site_dns_server, lab_dns_ip, site, private_ip)
+
+
+def refresh_kept_node_dns(definition, config, defaults, vm_name: str) -> None:
+    """
+    Register a node setup_lab.py --keep reuses in the lab's DNS masters, as provision_vm() does a node it creates,
+    and point it at the lab's DNS server from inside the guest. Its address is read from its backend, since a cloud
+    node's is not in the definition, and stored on the definition for the steps after this one.
+    """
+    lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
+    backend = backends.get_backend(definition, config, vm_name, for_existing=True,
+                                    vm_img_loc=defaults.get("VM_IMG_LOC", "/var/lib/libvirt/images/").rstrip("/"),
+                                    iso_loc=defaults.get("ISO_LOC", "/var/lib/libvirt/images/sources"),
+                                    lab_setup_path=lab_setup_path)
+    env = {}
+    env.update(defaults)
+    env.update(config)
+    env.update(load_vm_vars(definition, vm_name))
+    myip = backend.get_ip(vm_name) or env.get("myip", "")
+    if myip:
+        env["myip"] = myip
+        definition.setdefault("nodes", {}).setdefault(vm_name, {})["myip"] = myip
+    dns = register_dns(definition, config, backend, vm_name, env, lab_setup_path,
+                       ensure_cloud_dns=not harvester.cluster_of(definition, vm_name))
+    use_lab_dns(myip or vm_name, dns.lab_dns_ip, env.get("mydomain", ""), check_name=vm_name)
 
 
 def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
@@ -120,9 +199,9 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 
     config_method = env.get("config_method", "") or ""
 
-    backend.copy_vm_image(env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), vm_name,
+    backend.copy_vm_image(env.get("SOURCE_IMAGE", ""), vm_name,
                            env.get("VM_DSK", ""), config_method=config_method,
-                           source_sha256=env.get("SOURCE_SHA256") or env.get("ISO_SHA256", ""))
+                           source_sha256=env.get("SOURCE_SHA256", ""))
 
     if config_method == "":
         prepare_ignition_combustion(
@@ -154,7 +233,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         )
     elif config_method == "install_iso":
         prepare_install_iso(
-            vm_name, lab_setup_path, env.get("install_type", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""),
+            vm_name, lab_setup_path, env.get("install_type", ""), env.get("SOURCE_IMAGE", ""),
             mymac, env.get("myip", ""), env.get("mymask", ""), env.get("mygw", ""),
             env.get("mydns", ""), env.get("mydomain", ""),
             env.get("ROOT_PWD_HASH", ""), root_ssh_key=env.get("ROOT_SSH_KEY"),
@@ -183,7 +262,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         vm_dsk_bus=env.get("VM_DSK_BUS", "virtio"),
         ign_file=ign_file, com_file=com_file,
         salt_states=env.get("salt_states", ""),
-        install_type=env.get("install_type", ""), iso_image=env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""),
+        install_type=env.get("install_type", ""), iso_image=env.get("SOURCE_IMAGE", ""),
         iso_loc=iso_loc, mydns=env.get("mydns", ""),
         vcluster=env.get("vcluster", ""),
         mymac=mymac,
@@ -215,49 +294,9 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         if vm_name == harvester.create_node(definition, harv_clu):
             backend.assign_secondary_ip(vm_name, harv_vip)
 
-    # Honours a per-node/common "cloud_account" (its cloudtype), same as get_backend() above —
-    # so a multi-account cloud lab still routes through the cloud-DNS-VM path below.
-    backend_name = backends.effective_backend_name(definition, config, vm_name)
-
-    remote_dns_servers = env.get("REMOTE_DNS_SERVERS", "").split()
-    # Which server serves this site, for the overlay's own DNS registry further down. A site on libvirt or Harvester
-    # is served by this automation node's own BIND, which every lab node already resolves through (mydns).
-    site_dns_server = env.get("mydns", "")
-    # ensure_cloud_dns=False: the caller is building the server that will serve this network's DNS
-    # itself, so there is nothing to delegate to. setup_automation_node.py passes it: a cloud
-    # automation node runs the lab's own BIND, and a second DNS VM beside it would be one more
-    # instance to pay for and the one the network would actually be pointed at.
-    if ensure_cloud_dns and backend_name in backends.CLOUD_BACKEND_NAMES and not harv_clu:
-        # A cloud node generally can't reach automation.mydemo.lab's own BIND (behind the home
-        # lab's NAT) — a real multi-node cloud cluster needs a DNS server living inside that same
-        # cloud network to resolve its own nodes. See ensure_cloud_dns_vm()'s own docstring.
-        dns_vm_ip = backends.ensure_cloud_dns_vm(
-            backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
-            env.get("mydomain", ""), env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path,
-            preferred_image=backends.cloud_dns_image(definition, config, vm_name),
-        )
-        remote_dns_servers.append(dns_vm_ip)
-        site_dns_server = dns_vm_ip
-        # Hand that server to the cloud network itself, so each node resolves the others without
-        # anything being configured inside the guest. A node created after this point has it from
-        # first boot, which is what a kcluster's second server needs to join the first by FQDN.
-        # The network hands out the server's private address. A query to its public one leaves
-        # through the internet gateway and arrives from the node's public address, which the
-        # server does not recurse for (dns_recursion_networks()), so a node could resolve the lab
-        # but nothing on the internet. dns_vm_ip, the public address, stays this host's way to
-        # write the zone. A backend that has no private address falls back to it.
-        dns_private_ip = backend.get_private_ip(backends.cloud_dns_vm_name(backend, backend_name)) or dns_vm_ip
-        backend.use_dns_server(dns_private_ip, env.get("mydomain", ""))
-
-    # A cloud node's address is new at each creation, and a record of an earlier instance of the same name
-    # can outlive it (see DNSService.add_to_dns()'s replace), so its name is pointed at this address alone.
-    # Every other node keeps the records it has.
-    replace_dns = backend_name in backends.CLOUD_BACKEND_NAMES
-    if env.get("myip"):
-        add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
-                   remote_dns_servers=remote_dns_servers or None, replace=replace_dns)
-    else:
-        warn("- No myip known for \"{}\" — backend never reported one — skipping DNS registration".format(vm_name))
+    dns = register_dns(definition, config, backend, vm_name, env, lab_setup_path,
+                       ensure_cloud_dns=ensure_cloud_dns and not harv_clu)
+    site_dns_server, lab_dns_ip = dns.site_server, dns.lab_dns_ip
 
     clean_ssh_keys(vm_name, env.get("myip", ""))
 
@@ -273,13 +312,29 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
     # "VM failed to come online" messages there are effectively unreachable;
     # any real timeout aborts from inside check_ssh_conn itself.
     check_ssh_conn(ssh_target)
+    # Before the reboot below, so the node comes back from it already resolving through the lab's DNS server, and
+    # the reboot shows the configuration lasts.
+    use_lab_dns(ssh_target, lab_dns_ip, env.get("mydomain", ""), check_name=vm_name)
     if harv_clu:
         # The Harvester appliance installs itself at first boot; it is not rebooted, and the cluster is waited for in
         # setup_lab.py's Kubernetes phase (k8s.HarvesterDistro).
         log("\t\tVM \"{}\" created (Harvester cluster \"{}\", VIP {})".format(vm_name, harv_clu, harv_vip))
         return []
+    # A provider's reboot call returns before the node goes down, and its SSH port keeps answering until it does, so
+    # the node's own boot id is what shows the reboot happened; anything sent before that reaches a node shutting down.
+    previous_boot = boot_id(ssh_target)
     backend.reboot_vm(vm_name)
+    if previous_boot:
+        wait_for_reboot(ssh_target, previous_boot)
     check_ssh_conn(ssh_target)
+
+    # A BYOS SUSE image has no package repositories until it is registered, and everything from here on may install
+    # packages. Done over SSH once the node is up, so it is the same for every provisioning method and backend.
+    # This node's own scc_regcode/scc_email (e.g. a different subscription per node) win over the single
+    # lab-wide SUSE_regcode/SUSE_email in lab_creation.cfg when set; register_suse() already pipes the code
+    # over stdin, never as a command-line argument or into any persisted provisioning file.
+    register_suse(ssh_target, env.get("scc_regcode") or env.get("SUSE_regcode", ""),
+                  env.get("scc_email") or env.get("SUSE_email", ""), env.get("SUSE_url", ""))
 
     # The VM is up and reachable: run its pre_commands before anything else is done to it (setup_lab.py's Kubernetes
     # and add-on phases come after this returns). A failure is reported and does not stop the rest of the lab.
@@ -301,7 +356,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
             hub_account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
         root_ssh_key = Path("/root/.ssh/id_rsa.pub").read_text().strip()
         hub_host, _hub_overlay_ip, hub_pubkey = overlay.ensure_overlay_hub(
-            hub_backend, hub_backend_name, env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key,
+            hub_backend, hub_backend_name, env.get("SOURCE_IMAGE", ""), lab_setup_path, root_ssh_key,
             wg_port=wg_port, overlay_cidr=overlay_cidr)
 
         this_backend_name = backends.effective_backend_name(definition, config, vm_name)
@@ -346,7 +401,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
             if site_cidr:
                 gw_vm_name = overlay.hub_vm_name(this_backend_name, getattr(backend, "account", ""))
                 gw_public_ip = overlay.ensure_site_gateway_vm(
-                    backend, this_backend_name, env.get("SOURCE_IMAGE") or env.get("ISO_IMAGE", ""), lab_setup_path, root_ssh_key)
+                    backend, this_backend_name, env.get("SOURCE_IMAGE", ""), lab_setup_path, root_ssh_key)
                 overlay.ensure_overlay_site_gateway(this_site, gw_public_ip, hub_host, hub_pubkey,
                                                      wg_port, site_cidr, overlay_cidr=overlay_cidr)
                 backend.disable_source_dest_check(gw_vm_name)
@@ -376,7 +431,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
                 hub_host, exclude_site=this_site, mydomain=env.get("mydomain", ""))]
             if other_dns and env.get("myip"):
                 add_to_dns(vm_name, env["myip"], env.get("mydomain", ""), env.get("mynet_reverse", ""),
-                           remote_dns_servers=other_dns, replace=replace_dns)
+                           remote_dns_servers=other_dns, site=dns.site, private_ip=dns.private_ip)
 
     log("\t\tVM \"{}\" created".format(vm_name))
     return pre_failures
@@ -385,7 +440,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 def main():
     if primary.wants_help(sys.argv[1:]):
         print(
-            "Usage: setup_vm.py <lab-file> <vm_hostname>\n\n"
+            "Usage: setup_vm.py [--cloud-account <name>] <lab.json> <vm_hostname>\n\n""  --cloud-account <name>  use cloud account <name> for this VM, taking precedence\n""                          over \"cloud_account\" in the lab definition.\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"
             "(Ignition+Combustion or cloud-init), registers DNS, and calls virt-install.\n\n"
             "Run 'setup_lab.py --input-definition [json|yaml]' for the full lab definition schema."
@@ -401,6 +456,10 @@ def main():
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
 
+    # Applied and stripped before the positional arguments are read, so the option reads the same on every
+    # command that creates or destroys a cloud node.
+    sys.argv[1:] = backends.take_cloud_account_option(sys.argv[1:])
+
     if len(sys.argv) < 3:
         die("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))
 
@@ -410,7 +469,7 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
     definition = primary.load_definition(lab_file)
-    migrations.require_current(definition, lab_file)
+    lab_file = migrations.ensure_current(definition, lab_file)
 
     # Destroy-before-recreate: setup_lab.py's own orchestration already does this
     # (destroy_vm() unconditionally before provision_vm(), for every node, unless

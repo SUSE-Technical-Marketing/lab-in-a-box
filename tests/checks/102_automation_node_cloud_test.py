@@ -179,16 +179,12 @@ check("an empty root password hash is never written as a passwordless account",
       '[[ -z "${ROOT_PWD_HASH}" ]] || echo "root:${ROOT_PWD_HASH}" | chpasswd -e' in lib_text)
 
 # ── it must not build a second DNS server beside the one it is building ───
-# provision_vm()'s cloud path creates a lab-dns VM and points the provider's network at it. For an
-# automation node that is both an instance nobody needs and the wrong server for the network to use,
-# since the node being built serves the zone itself.
+# provision_vm()'s cloud path creates a lab-dns VM and points the node at it. An automation node serves the zone
+# itself, so it needs neither.
 src = (_REPO / "scripts" / "setup_automation_node.py").read_text()
 check("the automation node is provisioned with the cloud-DNS-VM step turned off",
       "provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=False)" in src)
-check("and the network is pointed at the node itself instead",
-      "backend.use_dns_server(private_ip, mydomain)" in src)
-check("that happens after the node is configured, not before its BIND exists",
-      src.index("configure_node(public_ip, stage)") < src.index("backend.use_dns_server("))
+check("and the provider's network is not rewritten to hand the node out", "use_dns_server" not in src)
 
 setup_vm_src = (_REPO / "scripts" / "setup_vm.py").read_text()
 check("provision_vm takes the switch and defaults it on, so every other caller is unchanged",

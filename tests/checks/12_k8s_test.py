@@ -14,6 +14,8 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import k8s  # noqa: E402
+import lab_schema_base  # noqa: E402
+from unittest import mock  # noqa: E402
 
 failures = []
 
@@ -166,10 +168,19 @@ try:
     check("write_node_config: embeds both the domain and cluster.domain in tls-san",
           "mydemo.lab" in server_cfg.read_text() and "cluster1.mydemo.lab" in server_cfg.read_text())
 
-    server_cfg.write_text("MODIFIED-BY-TEST\n")
+    # A stale file is replaced, not kept: the directory is named after the kcluster alone, so a second lab
+    # definition with a kcluster of the same name but another mydomain must not inherit the first one's config.
+    server_cfg.write_text("STALE-FROM-ANOTHER-LAB\n")
     distro.write_node_config("cluster1", {"mydomain": "mydemo.lab"})
-    check("write_node_config: does not overwrite an existing config file",
-          server_cfg.read_text() == "MODIFIED-BY-TEST\n")
+    check("write_node_config: rewrites a stale config file",
+          "STALE-FROM-ANOTHER-LAB" not in server_cfg.read_text())
+
+    distro.write_node_config("cluster1", {"mydomain": "mydemoaws.lab"})
+    check("write_node_config: a second lab's domain replaces the first lab's",
+          "cluster1.mydemoaws.lab" in server_cfg.read_text()
+          and "mydemo.lab\"" not in server_cfg.read_text())
+    check("write_node_config: the agent config is rewritten too",
+          "cluster1.mydemoaws.lab" in agent_cfg.read_text())
 finally:
     os.chdir(_orig_cwd)
 
@@ -314,8 +325,8 @@ check("load_kclu_vars: dies for an undefined kcluster", died)
 # ── first_server_node / addon_nodes ──────────────────────────────────────────
 definition2 = {
     "nodes": {
-        "srv1": {"INSTALL_RKE2_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
-        "agt1": {"INSTALL_RKE2_TYPE": "agent", "kcluster": "c1"},
+        "srv1": {"KUBERNETES_NODE_TYPE": "server", "kcluster": "c1", "addons": ["rancher"]},
+        "agt1": {"KUBERNETES_NODE_TYPE": "agent", "kcluster": "c1"},
         "other": {"kcluster": "c2"},
     }
 }
@@ -324,46 +335,18 @@ check("first_server_node: finds the first server-typed node", name == "srv1")
 check("first_server_node: builds a root@ ssh command", "root@srv1" in ssh_cmd)
 
 check("first_server_node: returns None when no server node exists",
-      k8s.first_server_node({"nodes": {"a": {"INSTALL_RKE2_TYPE": "agent"}}}) is None)
+      k8s.first_server_node({"nodes": {"a": {"KUBERNETES_NODE_TYPE": "agent"}}}) is None)
 
-# ── first_server_node: the _vm_name/clu_name env hint from _install_cluster_addons ──
-# A second cluster whose only node ("other") would never be found by the plain scan above (it has no
-# INSTALL_RKE2_TYPE at all, which the scan treats as "server", but "srv1" is still first in iteration order).
-# This is exactly the real bug: without the hint, a cluster addon dispatched for "c2" would run on "srv1",
-# a node of an unrelated cluster, instead of "other".
-_saved_env = {k: os.environ.get(k) for k in ("_vm_name", "clu_name")}
-
-
-def _set_env(vm_name=None, clu_name=None):
-    for key, value in (("_vm_name", vm_name), ("clu_name", clu_name)):
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-
-try:
-    _set_env(vm_name="other", clu_name="c2")
-    name, ssh_cmd = k8s.first_server_node(definition2)
-    check("first_server_node: with both _vm_name and clu_name set, the hinted node is used directly",
-          name == "other" and "root@other" in ssh_cmd)
-
-    # _vm_name alone (no clu_name) is what a per-node dual-mode add-on (install_gitlab's "kubernetes"
-    # deployment, say) sets for its OWN node, which need not be a cluster member at all — must NOT be
-    # trusted here, or such an add-on would stop finding a real Kubernetes node to deploy its chart onto.
-    _set_env(vm_name="other", clu_name=None)
-    name, ssh_cmd = k8s.first_server_node(definition2)
-    check("first_server_node: _vm_name without clu_name is ignored, and the plain scan still runs",
-          name == "srv1")
-
-    # A hinted node that doesn't exist in this definition (stale env from an unrelated run) falls back to
-    # the scan rather than returning a bogus target.
-    _set_env(vm_name="ghost", clu_name="c2")
-    name, ssh_cmd = k8s.first_server_node(definition2)
-    check("first_server_node: an unknown hinted node is ignored, falling back to the plain scan",
-          name == "srv1")
-finally:
-    _set_env(vm_name=_saved_env["_vm_name"], clu_name=_saved_env["clu_name"])
+with mock.patch.dict(os.environ, {"_vm_name": "agt1"}):
+    check("first_server_node: the node setup_lab.py names in _vm_name wins over the scan",
+          k8s.first_server_node(definition2)[0] == "agt1")
+with mock.patch.dict(os.environ, {"_vm_name": ""}):
+    check("first_server_node: without _vm_name, a node in no kcluster that comes first is still the scan's pick",
+          k8s.first_server_node({"nodes": {"smlm": {}, "srv1": {"kcluster": "c1"}}})[0] == "smlm")
+check("node_role: KUBERNETES_NODE_TYPE when set", k8s.node_role({"KUBERNETES_NODE_TYPE": "agent"}) == "agent")
+check("node_role: unset gives the lab schema's own default",
+      k8s.node_role({}) == lab_schema_base.field_default("nodes", "KUBERNETES_NODE_TYPE") == "server")
+check("node_role: the retired INSTALL_RKE2_TYPE is not read", k8s.node_role({"INSTALL_RKE2_TYPE": "agent"}) == "server")
 
 nodes_with_addon = k8s.addon_nodes(definition2, "rancher")
 check("addon_nodes: finds the one node with the addon", [n for n, _ in nodes_with_addon] == ["srv1"])
@@ -479,9 +462,9 @@ class RecordingDistro(k8s.K8sDistro):
 cluster_lab = {"nodes": {
     "s1": {"kcluster": "c1"},
     "a1": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
-    "s2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "server"},
+    "s2": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "server"},
     "other": {"kcluster": "c2"},
-    "a2": {"kcluster": "c1", "INSTALL_RKE2_TYPE": "agent"},
+    "a2": {"kcluster": "c1", "KUBERNETES_NODE_TYPE": "agent"},
 }}
 distro = RecordingDistro()
 ready_waits = []
@@ -490,7 +473,7 @@ with mock.patch.object(k8s, "wait_for_ssh_command",
     distro.install_cluster(cluster_lab, "c1", {})
 check("install_cluster: installs only the kcluster's nodes, in the lab definition's order",
       [c[1] for c in distro.calls] == ["s1", "a1", "s2", "a2"])
-check("install_cluster: KUBERNETES_NODE_TYPE and INSTALL_RKE2_TYPE pick agent or server (default server)",
+check("install_cluster: KUBERNETES_NODE_TYPE picks agent or server (default server)",
       [c[0] for c in distro.calls] == ["server", "agent", "server", "agent"])
 check("install_cluster: the first server's token and address go to every later node",
       distro.calls[0][2:] == (None, None) and all(c[2:] == ("tok-1", "10.0.0.1") for c in distro.calls[1:]))

@@ -1,0 +1,170 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will run arbitrary shell commands on a lab node
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "run_command" — Runs one or more shell commands on the target node
+#   run_command_commands      : list of shell command strings, run in order — exactly one of
+#                                run_command_commands/run_command_script is required
+#   run_command_script        : a whole script, fetched and run as-is, as an alternative to
+#                                run_command_commands — one of:
+#                                - an http(s):// URL (fetched with curl, on the target node itself)
+#                                - an nfs://<server>/<path-to-file> URL (mounted read-only on the
+#                                  target node, read, then unmounted)
+#                                - a local file path, read on the automation node and pushed over
+#                                - inline script content (anything containing a newline)
+#   run_command_shell         : [OPTIONAL] "sh" (default) or "bash"
+#   run_command_env           : [OPTIONAL] dict of environment variables exported before
+#                                the commands/script run
+#   run_command_stop_on_error : [OPTIONAL] "true" (default) or "false" — stop at the first
+#                                command that fails, or run every command regardless
+#
+# Target node(s): any node listing "run_command" in its own addons[] list — same dispatch
+# shape as install_client_registration.py. A one-off provisioning escape hatch for a shell
+# step that doesn't warrant its own addon; shared logic used by more than this one addon
+# still belongs in libs/, not duplicated here.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "run_command",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "aux_services": [],
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, die  # noqa: E402
+
+_VALID_SHELLS = ("sh", "bash")
+
+
+def _validate(v):
+    cfg = v.definition.get("run_command", {}) or {}
+    commands = cfg.get("run_command_commands")
+    script = cfg.get("run_command_script")
+    given = [x for x in (commands, script) if x]
+    if len(given) != 1:
+        v.errors.append("[ERROR] run_command: exactly one of run_command_commands/run_command_script "
+                         "is required, got {}".format(len(given)))
+    elif commands and (not isinstance(commands, list) or not all(isinstance(c, str) for c in commands)):
+        v.errors.append("[ERROR] run_command.run_command_commands must be a list of strings")
+    shell = cfg.get("run_command_shell")
+    if shell and shell not in _VALID_SHELLS:
+        v.errors.append("[ERROR] run_command.run_command_shell='{}' is invalid — use one of: {}".format(
+            shell, ", ".join(_VALID_SHELLS)))
+    env = cfg.get("run_command_env")
+    if env is not None and not isinstance(env, dict):
+        v.errors.append("[ERROR] run_command.run_command_env must be a dict of environment variables")
+    v.vbool("run_command", "run_command_stop_on_error")
+
+
+def _script_header(shell, env, stop_on_error):
+    lines = ["#!/usr/bin/env {}".format(shell), "set -e" if stop_on_error else "set +e"]
+    for key, value in (env or {}).items():
+        lines.append("export {}={}".format(key, shlex.quote(str(value))))
+    return "\n".join(lines) + "\n"
+
+
+def _run_script_text(hostname, script):
+    """Push `script` (a complete shell script, shebang included) to `hostname` and run it over a single SSH
+    call, cleaning up the temporary copy afterward regardless of outcome. Dies clearly on a non-zero exit."""
+    r = ssh_run(hostname, "cat > /tmp/lab_run_command.sh && chmod +x /tmp/lab_run_command.sh && "
+                           "/tmp/lab_run_command.sh; rc=$?; rm -f /tmp/lab_run_command.sh; exit $rc",
+                input_text=script, check=False)
+    if r.returncode != 0:
+        die("run_command on '{}' exited {} — see the command output above".format(hostname, r.returncode))
+
+
+def run_commands(hostname, commands, shell="sh", env=None, stop_on_error=True):
+    """
+    Run `commands` on `hostname`, in order, as one shell script over a single SSH call. Each command runs with
+    `set -e` (stop_on_error=True, the default) so a failing command stops the rest, matching what a human reading
+    the list would expect; stop_on_error=False runs `set +e` instead, so every command runs regardless of earlier
+    failures. `env` (a dict) is exported as shell variables before the first command, shlex-quoted so a value with
+    spaces or special characters is passed through literally rather than reinterpreted.
+    """
+    script = _script_header(shell, env, stop_on_error) + "\n".join(commands) + "\n"
+    _run_script_text(hostname, script)
+    print("  Ran {} command(s) on '{}'".format(len(commands), hostname))
+
+
+def _classify_source(source):
+    """One of "url", "nfs", "path" or "content" for run_command_script — same rule as kubectl_apply's
+    manifest sources and ansible_playbook's playbook sources."""
+    if "\n" in source:
+        return "content"
+    if source.startswith("nfs://"):
+        return "nfs"
+    if source.startswith("http://") or source.startswith("https://"):
+        return "url"
+    return "path"
+
+
+def _fetch_script_body(hostname, source):
+    kind = _classify_source(source)
+    if kind == "content":
+        return source
+    if kind == "nfs":
+        return ac.fetch_nfs_content(hostname, source)
+    if kind == "url":
+        r = ssh_run(hostname, "curl -fsSL {}".format(shlex.quote(source)), check=False, capture=True)
+        if r.returncode != 0:
+            die("could not fetch run_command_script '{}' on '{}': {}".format(
+                source, hostname, (r.stderr or r.stdout or "").strip()))
+        return r.stdout
+    local_path = Path(source)
+    if not local_path.is_file():
+        die("run_command_script: '{}' is neither an http(s):// or nfs:// URL, inline content (no "
+            "newline found), nor an existing local file on this automation node".format(source))
+    return local_path.read_text()
+
+
+def run_script(hostname, source, shell="sh", env=None, stop_on_error=True):
+    """Fetch run_command_script's `source` (see _classify_source) and run it as a whole script on `hostname`,
+    with the same shebang/set -e/env-export header run_commands() uses."""
+    body = _fetch_script_body(hostname, source)
+    script = _script_header(shell, env, stop_on_error) + body
+    _run_script_text(hostname, script)
+    print("  Ran script on '{}'".format(hostname))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "run_command", vm_name=env_vm_name):
+        cfg = k8s.addon_node_config(definition, "run_command", vm_name)
+        shell = cfg.get("run_command_shell") or "sh"
+        env = cfg.get("run_command_env") or {}
+        stop_on_error = (cfg.get("run_command_stop_on_error") or "true").lower() != "false"
+        script = cfg.get("run_command_script")
+        if script:
+            run_script(vm_name, script, shell=shell, env=env, stop_on_error=stop_on_error)
+        else:
+            run_commands(vm_name, cfg.get("run_command_commands") or [], shell=shell, env=env,
+                         stop_on_error=stop_on_error)
+
+
+if __name__ == "__main__":
+    main()

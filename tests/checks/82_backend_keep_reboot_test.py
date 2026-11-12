@@ -43,6 +43,20 @@ with mock.patch.object(backends.socket, "gethostbyname", return_value="10.0.0.7"
         mock.patch.object(backends.subprocess, "run", return_value=done(rc=255)):
     check("_reachable_for_keep: recreates a VM that does not answer on SSH", backends._reachable_for_keep("vm1", "10.0.0.7") is False)
 
+# ── _cloud_reachable_for_keep: the provider's own address must answer SSH; no DNS, no myip ─────────────────────────
+with mock.patch.object(backends.socket, "gethostbyname") as resolve, \
+        mock.patch.object(backends.subprocess, "run", return_value=done()) as run:
+    check("_cloud_reachable_for_keep: keeps a VM whose own address answers on SSH",
+          backends._cloud_reachable_for_keep("vm1", "203.0.113.7") is True
+          and run.call_args[0][0][-2:] == ["root@203.0.113.7", "exit 0"])
+    check("_cloud_reachable_for_keep: never resolves the name on the automation node", not resolve.called)
+with mock.patch.object(backends.subprocess, "run") as run:
+    check("_cloud_reachable_for_keep: recreates a VM its provider reports no address for",
+          backends._cloud_reachable_for_keep("vm1", None) is False and not run.called)
+with mock.patch.object(backends.subprocess, "run", return_value=done(rc=255)):
+    check("_cloud_reachable_for_keep: recreates a VM that does not answer on SSH",
+          backends._cloud_reachable_for_keep("vm1", "203.0.113.7") is False)
+
 # ── vm_is_reusable: each backend's own state check, then the shared one ──────────────────────────────────────────
 # backend -> (lookup method, object when running, object in another state)
 CLOUDS = {
@@ -60,16 +74,20 @@ CLOUDS = {
 for cls, (lookup, running, other) in CLOUDS.items():
     b = bare(cls)
     name = cls.__name__
-    with mock.patch.object(backends, "_reachable_for_keep", return_value=True) as reach:
+    # A cloud node's lab definition has no myip: the provider assigns it.
+    with mock.patch.object(backends, "_cloud_reachable_for_keep", return_value=True) as reach, \
+            mock.patch.object(backends, "_reachable_for_keep") as by_dns, \
+            mock.patch.object(cls, "get_ip", return_value="203.0.113.7"):
         with mock.patch.object(cls, lookup, return_value=running):
-            check(name + ".vm_is_reusable: a running VM goes on to the DNS/SSH check",
-                  b.vm_is_reusable("vm1", "", "10.0.0.7") is True and reach.call_args[0] == ("vm1", "10.0.0.7"))
+            check(name + ".vm_is_reusable: a running VM with no myip goes on to SSH at the provider's own address",
+                  b.vm_is_reusable("vm1", "", "") is True and reach.call_args[0] == ("vm1", "203.0.113.7"))
+            check(name + ".vm_is_reusable: never compares the automation node's DNS with myip", not by_dns.called)
         reach.reset_mock()
         with mock.patch.object(cls, lookup, return_value=other):
             check(name + ".vm_is_reusable: a VM in another state is recreated",
-                  b.vm_is_reusable("vm1", "", "10.0.0.7") is False and not reach.called)
+                  b.vm_is_reusable("vm1", "", "") is False and not reach.called)
         with mock.patch.object(cls, lookup, return_value=None):
-            check(name + ".vm_is_reusable: a missing VM is recreated", b.vm_is_reusable("vm1", "", "10.0.0.7") is False)
+            check(name + ".vm_is_reusable: a missing VM is recreated", b.vm_is_reusable("vm1", "", "") is False)
 
 hv = bare(backends.HarvesterBackend)
 with mock.patch.object(backends, "_reachable_for_keep", return_value=True), \

@@ -1,0 +1,86 @@
+---
+# Deploy a K3s cluster: one server, then any number of agents joined to it.
+#
+# The inventory must define two groups. k3s_server holds exactly one host, the
+# control plane; k3s_agents holds the workers and may be empty, which gives a
+# single-node cluster.
+#
+# ansible.builtin.package is not used here: K3s is not distributed as a distro
+# package, so both plays run the vendor's own installer and pass it the role
+# through its documented environment variables.
+#
+# Usage:
+#   ansible-playbook -i <inventory> deploy_k3s.yml -e "k3s_token=<shared-secret>"
+#   ansible-playbook -i <inventory> deploy_k3s.yml -e "k3s_channel=v1.31"
+#
+# Afterwards, on the server: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes
+- name: Install the K3s server
+  hosts: k3s_server
+  become: true
+  vars:
+    # Release channel the installer resolves, e.g. "stable", "latest", "v1.31".
+    k3s_channel: "stable"
+    # Shared cluster secret. Override it with -e; agents must be given the same value.
+    k3s_token: "lab-in-a-box-k3s"
+    # Extra arguments appended to the server command line, e.g. "--disable traefik".
+    k3s_server_args: ""
+  tasks:
+    - name: Fail early when more than one host is in k3s_server
+      ansible.builtin.assert:
+        that: groups['k3s_server'] | length == 1
+        fail_msg: >-
+          k3s_server must hold exactly one host; found
+          {{ groups['k3s_server'] | length }}. Additional control-plane nodes
+          need an embedded-etcd cluster, which this playbook does not set up.
+      run_once: true
+
+    - name: Run the K3s installer in server mode
+      ansible.builtin.shell:
+        cmd: curl -sfL https://get.k3s.io | sh -s - server {{ k3s_server_args }}
+      environment:
+        INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
+        K3S_TOKEN: "{{ k3s_token }}"
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for the API server to answer
+      ansible.builtin.command:
+        cmd: k3s kubectl get --raw /readyz
+      register: k3s_readyz
+      until: k3s_readyz.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+- name: Join the K3s agents
+  hosts: k3s_agents
+  become: true
+  vars:
+    k3s_channel: "stable"
+    k3s_token: "lab-in-a-box-k3s"
+    # Port 6443 is the K3s API server's own default.
+    k3s_url: "https://{{ hostvars[groups['k3s_server'][0]]['inventory_hostname'] }}:6443"
+  tasks:
+    - name: Run the K3s installer in agent mode
+      ansible.builtin.shell:
+        cmd: curl -sfL https://get.k3s.io | sh -s - agent
+      environment:
+        INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
+        K3S_TOKEN: "{{ k3s_token }}"
+        K3S_URL: "{{ k3s_url }}"
+      args:
+        creates: /usr/local/bin/k3s
+
+- name: Report the cluster
+  hosts: k3s_server
+  become: true
+  tasks:
+    - name: Collect the node list
+      ansible.builtin.command:
+        cmd: k3s kubectl get nodes -o wide
+      register: k3s_nodes
+      changed_when: false
+
+    - name: Show the node list
+      ansible.builtin.debug:
+        var: k3s_nodes.stdout_lines

@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.2
+# Schema version: 2.3
 #
 # JSON section: "rancher" — SUSE Rancher Prime Kubernetes management platform
 #
@@ -30,6 +30,14 @@
 #   rancher_cert_repo_name : [OPTIONAL] cert-manager Helm repo alias          (default: jetstack)
 #   rancher_cert_repo_url  : [OPTIONAL] cert-manager Helm repo URL            (default: https://charts.jetstack.io)
 #   cert_manager_ver       : [OPTIONAL] cert-manager Helm chart version       (empty = latest, e.g. v1.20.2)
+#   rancher_install_appcollection : [OPTIONAL] "true"/"false" (default: false) — once this Rancher is up,
+#                            also register the SUSE Application Collection as a Rancher ClusterRepo
+#                            (catalog.cattle.io/v1), so it appears in Rancher's own Apps & Marketplace UI,
+#                            with no separate "appcollection" addon entry needed anywhere in this lab.
+#                            Credentials come from this SAME lab's top-level "appcollection" section
+#                            (appcollection_user/appcollection_password/appcollection_account) even if
+#                            no "appcollection" addon is listed anywhere — that section only needs to
+#                            exist, holding real credentials, for this flag to have something to use.
 
 __version__ = "__LABVERSION__"
 
@@ -74,6 +82,7 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import versions  # noqa: E402
+import appco_common  # noqa: E402
 from lab_creation import (  # noqa: E402
     setup_helm, helm_repo_add, ssh_run, ssh_output, add_service_dns, add_dns_to_named_rr,
     restart_named, die, warn,
@@ -84,7 +93,11 @@ def _validate(v):
     v.vns("rancher")
     v.vver("rancher")
     v.vurl("rancher")
+    v.vbool("rancher", "rancher_install_appcollection")
     cfg = v.definition.get("rancher", {}) or {}
+    if (cfg.get("rancher_install_appcollection") or "false").lower() == "true":
+        v.vreq_or_credential("appcollection", "appcollection_user", "appcollection")
+        v.vreq_or_credential("appcollection", "appcollection_password", "appcollection")
     kclusters = v.definition.get("kclusters", {}) or {}
     asked = cfg.get("rancher_import_clusters") or []
     if isinstance(asked, str):
@@ -211,10 +224,9 @@ def setup_rancher(hostname, definition, clu_name, mydomain, clu_type, cfg, remot
     dns_entry = "{}.{}".format(shorthn, clu_name)
     add_service_dns(definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=remote_dns_servers)
 
-    install_key = "INSTALL_{}_TYPE".format(clu_type.upper())
     matching_nodes = [
         name for name, node_cfg in definition.get("nodes", {}).items()
-        if node_cfg.get(install_key) == "server" and node_cfg.get("kcluster") == clu_name
+        if k8s.node_role(node_cfg) == "server" and node_cfg.get("kcluster") == clu_name
     ]
     for node_name in matching_nodes:
         add_dns_to_named_rr(definition, dns_entry, node_name, mydomain, remote_dns_servers=remote_dns_servers)
@@ -553,9 +565,7 @@ def main():
     clu_name = os.environ.get("clu_name", "")
     node_cfg = definition.get("nodes", {}).get(vm_name, {})
 
-    # Support both KUBERNETES_NODE_TYPE (new) and INSTALL_RKE2_TYPE (deprecated)
-    node_type = node_cfg.get("KUBERNETES_NODE_TYPE") or node_cfg.get("INSTALL_RKE2_TYPE", "")
-    if node_type in ("server", ""):
+    if k8s.node_role(node_cfg) == "server":
         print("Using node: \"{}\"".format(vm_name))
         clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
         cfg = definition.get("rancher", {}) or {}
@@ -568,6 +578,20 @@ def main():
         setup_cert_manager(vm_name, cfg, ingress_classname=definition.get("common", {}).get("ingressClassname"))
         setup_rancher(vm_name, definition, clu_name, clu_cfg.get("mydomain", ""), clu_cfg.get("clu_type", ""),
                       cfg, remote_dns_servers=remote_dns_servers)
+
+        if (cfg.get("rancher_install_appcollection") or "false").lower() == "true":
+            appco_cfg = definition.get("appcollection", {}) or {}
+            creds = ac.resolve_credential(appco_cfg, "appcollection", {
+                "appcollection_user": "appcollection_user",
+                "appcollection_password": "appcollection_password",
+            })
+            if not creds["appcollection_user"] or not creds["appcollection_password"]:
+                die("rancher_install_appcollection is \"true\" but no appcollection_user/"
+                    "appcollection_password (or appcollection_account) are set in this lab's "
+                    "\"appcollection\" section")
+            appco_common.register_rancher_cluster_repo(
+                vm_name, creds["appcollection_user"], creds["appcollection_password"],
+                appco_cfg.get("appcollection_registry") or appco_common.DEFAULT_REGISTRY)
 
 
 if __name__ == "__main__":

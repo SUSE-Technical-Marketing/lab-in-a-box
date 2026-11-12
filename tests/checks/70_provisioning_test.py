@@ -62,17 +62,20 @@ lab_creation.log = lambda *a, **k: None
 primary.load_config = lambda paths=None: {}
 lab_creation.setup_helm("node1", "c1", automation_host="automation")
 check("setup_helm fetches install_helm.sh over HTTPS with -k by default",
-      commands[-1][1].startswith("curl -k https://automation/helm/install_helm.sh | "))
+      commands[-1][1].startswith("set -o pipefail; curl -fsS -k https://automation/helm/install_helm.sh | "))
 check("setup_helm passes the base URL and curl option to install_helm.sh",
       "LAB_PROVISIONING_URL=https://automation LAB_CURL_TLS=-k bash -" in commands[-1][1])
 primary.load_config = lambda paths=None: {"PROVISIONING_BASE_URL": "http://10.0.0.5"}
 lab_creation.setup_helm("node1", "c1", automation_host="automation")
 check("setup_helm honours PROVISIONING_BASE_URL and drops -k over HTTP",
-      commands[-1][1].startswith("curl http://10.0.0.5/helm/install_helm.sh | ")
+      commands[-1][1].startswith("set -o pipefail; curl -fsS http://10.0.0.5/helm/install_helm.sh | ")
       and "LAB_CURL_TLS= bash -" in commands[-1][1])
 primary.load_config = lambda paths=None: {"PROVISIONING_TLS_VERIFY": "1"}
 lab_creation.setup_helm("node1", "c1", automation_host="automation")
 check("setup_helm drops -k when PROVISIONING_TLS_VERIFY=1", " -k " not in commands[-1][1])
+lab_creation.setup_helm("node1", "c1", online=True)
+check("setup_helm fails when the script cannot be fetched, online or not",
+      all(c.startswith("set -o pipefail; curl -fsS") for _h, c in commands))
 
 # ── install_helm.sh written by automation-node-lib.sh ────────────────────────
 script = (_REPO / "setup_demo_server" / "automation-node-lib.sh").read_text()

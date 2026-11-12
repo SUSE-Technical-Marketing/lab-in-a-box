@@ -3,18 +3,18 @@
     "node101.mydemo.lab": {
       "myip":  "192.168.88.101",
       "mymac": "34:8a:b1:4b:1a:c1",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "kcluster": "cluster1"
     },
     "node102.mydemo.lab": {
       "myip":  "192.168.88.102",
       "mymac": "34:8a:b1:4b:1a:c2",
-      "INSTALL_RKE2_TYPE": "agent",
+      "KUBERNETES_NODE_TYPE": "agent",
       "kcluster": "cluster1"
     }
   },
   "common": {
-    "ISO_IMAGE":  "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
+    "SOURCE_IMAGE":  "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2",
     "VM_MEM":     "24576",
     "VM_DSK":     "80",
     "VM_CPU":     "6",

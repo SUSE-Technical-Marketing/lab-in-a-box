@@ -336,7 +336,7 @@ const HIDDEN_CLUSTER_FIELDS = new Set(["addons"]);
 /* The fields of `fields` that apply to an instance configured as `cfg`: a
    field's "show_if" names another field it depends on, and it applies only
    while that field has a value. The Kubernetes node fields
-   (KUBERNETES_NODE_TYPE, harvester_role, INSTALL_RKE2_TYPE) depend on
+   (KUBERNETES_NODE_TYPE, harvester_role) depend on
    "kcluster", so a VM in no Kubernetes cluster does not offer them. */
 function shownFields(fields, cfg) {
   const set = (k) => { const v = (cfg || {})[k]; return v !== undefined && v !== null && v !== ""; };
@@ -623,8 +623,7 @@ function lintLab(model) {
 
   const secs = state.base && state.base.sections;
   if (secs) {
-    const aliases = { SOURCE_IMAGE: ["ISO_IMAGE"] };
-    const set = (o, k) => has(o, k) || (aliases[k] || []).some((a) => has(o, a));
+    const set = (o, k) => has(o, k);
     secs.common.fields.filter((f) => f.required && (f.default === undefined || f.default === "")).forEach((f) => {
       if (set(model.common, f.name)) return;
       const without = nodes.filter((n) => !n.cfg.existing && !set(n.cfg, f.name)).map((n) => n.name);
@@ -833,7 +832,7 @@ function blockEl(item, mini) {
     if (c.VM_MEM) bits.push(c.VM_MEM + " MiB");
     if (c.VM_CPU) bits.push(c.VM_CPU + " vCPU");
     if (c.VM_DSK) bits.push(c.VM_DSK + " GiB");
-    if (c.ISO_IMAGE) bits.push(c.ISO_IMAGE);
+    if (c.SOURCE_IMAGE) bits.push(c.SOURCE_IMAGE);
     sub = bits.length ? bits.join(" · ") : "defaults for every VM — double-click to set";
     letter = "C";
   } else if (type === "node") {
@@ -964,7 +963,7 @@ async function openEditor(id) {
   const form = $("#schemaForm");
   let kind, title, desc = "", layers = [];
   try {
-    const base = await loadBase();   // fresh each time: ISO_IMAGE choices follow the hypervisor
+    const base = await loadBase();   // fresh each time: SOURCE_IMAGE choices follow the hypervisor
     const secs = base.sections;
     form.innerHTML = "";
     state.commonDefaults = {};
@@ -1256,10 +1255,8 @@ function fieldRow(field, outPath, repeatMode) {
  * even before the user touches it — only the option relabeling runs. A
  * flat/common select auto-filling its default is harmless (it's the exact
  * value setup_lab.py would have used anyway), but for a per-node override
- * field it silently wrote an explicit value into the saved lab.json for
- * every instance the user never actually configured (reported live
- * 2026-09-01: INSTALL_RKE2_TYPE always present, "server", regardless of
- * whether that node's role was ever actually selected) — leaving it unset
+ * field it would write an explicit value into the saved lab.json for
+ * every instance the user never configured — leaving it unset
  * lets the node genuinely inherit common/the addon's own default instead,
  * matching how a plain text field's placeholder-only default already works. */
 function applyFieldDefault(input, liveVal) {
@@ -1639,16 +1636,15 @@ function openLabFile(file) {
 }
 
 // ---- refresh available images without losing the form ---------------------
-// Reported live 2026-09-01: the only way to get a fresh ISO_IMAGE list was
-// to re-select the component/base topology, which wipes every value already
+// Re-selecting the component/base topology would wipe every value already
 // typed in. This re-fetches just the "status" snapshot (already used for the
-// status panel) and rebuilds ONLY the ISO_IMAGE field(s) currently on the
+// status panel) and rebuilds ONLY the SOURCE_IMAGE field(s) currently on the
 // form — via fieldRow(), so the rebuilt widget gets the exact same wiring
 // (cascade/validation/userTouched) a freshly-rendered one would — leaving
 // every other field's value untouched. The field's current value is kept
 // even if it no longer matches any listed image (added as a synthetic extra
 // option) rather than silently dropped.
-const IMAGE_FIELDS = new Set(["SOURCE_IMAGE", "ISO_IMAGE"]);
+const IMAGE_FIELDS = new Set(["SOURCE_IMAGE"]);
 
 // The images on each host, as the renderer's enum entries: value is the file name a lab stores, label is
 // "<host> - <file name>". Mirrors discovery.image_choices() for the live refresh below.

@@ -4,6 +4,6 @@
     "agent1.mydemo.lab": { "myip": "192.168.88.11", "kcluster": "prod" },
     "agent2.mydemo.lab": { "myip": "192.168.88.12", "kcluster": "prod" }
   },
-  "common": { "ISO_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4" },
+  "common": { "SOURCE_IMAGE": "SL-Micro.x86_64-6.1-Default-qcow-GM.qcow2", "VM_MEM": "8192", "VM_DSK": "60", "VM_CPU": "4" },
   "kclusters": { "prod": { "clu_type": "rke2", "clu_rel": "stable", "mydomain": "mydemo.lab" } }
 }

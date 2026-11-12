@@ -140,8 +140,12 @@ yours to classify by rule 2.
 A lab definition records the versions it was written for in its top-level
 `schema_versions` object (the web UI writes it); a configuration file in
 its `# Schema version:` line or `schema_version` key. A file that records
-none counts as version 1.0. `setup_lab.py` and `setup_vm.py` stop when a
-lab definition still needs a migration, and say how to run it.
+none counts as version 1.0. `setup_lab.py`, `setup_vm.py` and
+`setup_automation_node.py` migrate a lab definition that still needs it:
+they warn once per change, save the result to
+`<file>.system_modified.<fmt>` (the original is never written) and carry
+on with that file, which is also what every add-on of the run reads.
+Replacing the original with it stops the warnings.
 
 ## Testing
 

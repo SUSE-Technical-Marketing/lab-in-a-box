@@ -45,7 +45,8 @@ done
 [[ $EUID -eq 0 ]] || die "run this as root (e.g. curl ... | sudo bash -s -- [options])"
 [[ -f /etc/os-release ]] || die "/etc/os-release not found: cannot tell which distribution this is"
 . /etc/os-release
-_major=${VERSION_ID%%.*}
+_major=${VERSION_ID:-0}
+_major=${_major%%.*}
 
 case " ${ID} ${ID_LIKE:-} " in
     *" opensuse-leap "*|*" sles "*|*" suse "*)

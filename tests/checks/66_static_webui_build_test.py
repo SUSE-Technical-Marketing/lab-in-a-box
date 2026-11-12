@@ -88,9 +88,9 @@ if m:
     # A public static page has no hypervisor behind it, so no image file name of any build machine may be baked
     # into it. The product names a cloud backend resolves for itself are not machine-specific and are expected.
     products = set(cloud_images.product_names())
-    for field in fields_named(data, "ISO_IMAGE"):
+    for field in fields_named(data, "SOURCE_IMAGE"):
         entries = field.get("enum") or []
-        check("no hypervisor image list embedded: every ISO_IMAGE choice is a product name",
+        check("no hypervisor image list embedded: every SOURCE_IMAGE choice is a product name",
               all(isinstance(e, dict) and e.get("value") in products for e in entries))
 
 hide = re.search(r"<style>([^<]*display:\s*none !important;[^<]*)</style>", page)

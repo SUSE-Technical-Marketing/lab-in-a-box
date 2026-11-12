@@ -10,7 +10,7 @@ registry logins and the --set flags that hand pull secrets to a chart. Used by t
 import shlex
 import sys
 
-from lab_creation import ssh_run
+from lab_creation import ssh_run, die
 
 DEFAULT_REGISTRY = "dp.apps.rancher.io"
 SECRET_NAME = "application-collection"
@@ -119,3 +119,60 @@ def pull_secret_pairs(secrets: list, named: bool = False) -> list:
     """global.imagePullSecrets entries: plain names, or {name: ...} objects when `named` (the cert-manager chart's form)."""
     key = "global.imagePullSecrets[{}]" + (".name" if named else "")
     return [(key.format(i), name) for i, name in enumerate(secrets)]
+
+
+def rancher_is_present(hostname: str) -> bool:
+    """
+    Whether `hostname`'s own kubectl reaches a real Rancher install right now: both the
+    cattle-system and fleet-default namespaces Rancher itself creates actually exist. Read-only,
+    used as the dependency gate before register_rancher_cluster_repo() (which repeats this same
+    check itself before actually registering anything — a deliberate, independent repeat, since
+    each call site is a cheap, read-only probe and not worth threading a cached result between).
+    """
+    for ns in ("cattle-system", "fleet-default"):
+        r = ssh_run(hostname, "kubectl get namespace {}".format(shlex.quote(ns)), check=False, capture=True)
+        if r.returncode != 0:
+            return False
+    return True
+
+
+def register_rancher_cluster_repo(hostname: str, user: str, password: str, registry: str = "", name: str = "") -> None:
+    """
+    Register the SUSE Application Collection as a Rancher ClusterRepo (catalog.cattle.io/v1), so its charts appear
+    in Rancher's own Apps & Marketplace UI — complementary to helm_login()/prepare_appcollection_repo(), which only
+    give the Helm CLI access, never Rancher's own catalog view.
+
+    `hostname` must be a node whose kubectl reaches the Rancher server itself: the ClusterRepo and its basic-auth
+    Secret live in Rancher's own management-cluster namespaces (cattle-system, fleet-default), which only exist on
+    the cluster actually running Rancher. Dies with a clear message if either namespace is missing, rather than
+    applying a ClusterRepo that Rancher will never pick up.
+    """
+    registry = (registry or DEFAULT_REGISTRY).rstrip("/")
+    name = name or "application-collection"
+    secret_name = "suse-application-collection-http"
+    for ns in ("cattle-system", "fleet-default"):
+        check = ssh_run(hostname, "kubectl get namespace {}".format(shlex.quote(ns)), check=False, capture=True)
+        if check.returncode != 0:
+            die("Rancher's own '{}' namespace does not exist on '{}' — is Rancher actually installed on this "
+                "cluster? The Application Collection ClusterRepo only makes sense on the cluster running Rancher "
+                "itself".format(ns, hostname))
+        cmd = ("kubectl create secret generic {} --type=kubernetes.io/basic-auth "
+               "--from-literal=username={} --from-literal=password=\"$REGISTRY_PASSWORD\" "
+               "--namespace {} --dry-run=client -o yaml | kubectl apply -f -").format(
+            shlex.quote(secret_name), shlex.quote(user), shlex.quote(ns))
+        ssh_run(hostname, "REGISTRY_PASSWORD={} bash -c {}".format(shlex.quote(password), shlex.quote(cmd)))
+    cluster_repo = (
+        "apiVersion: catalog.cattle.io/v1\n"
+        "kind: ClusterRepo\n"
+        "metadata:\n"
+        "  name: {name}\n"
+        "spec:\n"
+        "  clientSecret:\n"
+        "    name: {secret_name}\n"
+        "    namespace: cattle-system\n"
+        "  insecurePlainHttp: false\n"
+        "  url: oci://{registry}/charts\n"
+    ).format(name=name, secret_name=secret_name, registry=registry)
+    ssh_run(hostname, "kubectl apply -f -", input_text=cluster_repo)
+    print("  Registered the SUSE Application Collection as Rancher ClusterRepo '{}' — browse it under Apps & "
+          "Marketplace in the Rancher UI".format(name))

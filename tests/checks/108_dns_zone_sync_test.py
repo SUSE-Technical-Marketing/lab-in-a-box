@@ -427,6 +427,34 @@ with mock.patch.object(svc, "_run_on", side_effect=_fallback):
 check("with nothing listening, named-checkzone is the fallback", loads is False and "SOA" in detail)
 check("...and it was asked only after dig could not be", len(calls) == 2 and "dig" in calls[0])
 
+# ── a declared remote zone with no SOA is repaired in place, and named restarted ──────────────────────────
+import subprocess as _sp  # noqa: E402
+
+for rc, repaired in ((0, True), (3, False)):
+    svc = services.DNSService()
+    sent = []
+    with mock.patch.object(svc, "_zone_declared", return_value=True), \
+            mock.patch.object(svc, "view_site", return_value=""), \
+            mock.patch.object(svc, "_zone_path", return_value="/etc/bind/lab.zone"), \
+            mock.patch.object(svc, "_remote", side_effect=lambda h, c, **kw: sent.append(c) or _sp.CompletedProcess([], rc)), \
+            mock.patch.object(svc, "restart_named") as restart:
+        created = svc.ensure_zone("10.0.0.5", "lab.example")
+    check("a declared remote zone is checked for its SOA through the one header command",
+          len(sent) == 1 and sent[0] == services._header_command(
+              "/etc/bind/lab.zone", dns_zone.forward_header("lab.example")))
+    check("a repaired remote zone is not reported as created, its records being there already"
+          if repaired else "a remote zone that has its SOA is left alone", created is False)
+    check("named is restarted on that master only when its zone was repaired" if repaired
+          else "...and named is not restarted",
+          (restart.call_args == mock.call(remote_servers=["10.0.0.5"])) if repaired else not restart.called)
+
+check("dns_zone.has_header: a header's SOA counts, a record named after it does not",
+      dns_zone.has_header("@ IN SOA ns.a. admin.a. ( 1 2 3 4 5 )\n")
+      and not dns_zone.has_header("soa IN A 192.0.2.1\nhost IN A 192.0.2.2\n"))
+check("dns_zone.with_header keeps every record behind the header",
+      dns_zone.with_header("\nsol IN A 192.0.2.1\n", ["$TTL 60", "@ IN SOA x. y. ( 1 2 3 4 5 )"])
+      == "$TTL 60\n@ IN SOA x. y. ( 1 2 3 4 5 )\nsol IN A 192.0.2.1\n")
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

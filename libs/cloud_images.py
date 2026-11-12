@@ -142,6 +142,8 @@ SUSE_PRODUCTS = {
     "sles15.7": "SUSE Linux Enterprise Server 15 SP7",
     "slmicro": "the newest SUSE Linux Micro, any version",
     "slmicro6.1": "SUSE Linux Micro 6.1",
+    "slmicro6.1-byos": "SUSE Linux Micro 6.1, bring your own subscription (unregistered: no repositories)",
+    "sles16-byos": "SUSE Linux Enterprise Server 16.x, bring your own subscription (unregistered: no repositories)",
     "leap": "the newest openSUSE Leap",
     # "-byos" after any SLES or SL Micro name picks the same product's Bring-Your-Own-Subscription image, which has no
     # repositories until it is registered (scc_regcode, or an SMLM server through client_registration).

@@ -7,7 +7,11 @@
   ],
   "addon:ansible_control_node": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "1.2", "breaking": false, "changes": "Playbooks are discovered under templates/addons/ansible_control_node/playbooks/ (every *.yml) instead of a hardcoded list of three; added deploy_k3s.yml as a new bundled example."}
+  ],
+  "addon:ansible_playbook": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:anthropic": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -23,7 +27,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: appcollection_chart, appcollection_release."},
    {"version": "2.0", "breaking": true, "changes": "Logs helm in to the OCI registry appcollection_registry (default dp.apps.rancher.io) with the new mandatory appcollection_user and appcollection_password, or the credential file appcollection_account; installs appcollection_chart from oci://<registry>/charts with the pull secret application-collection. appcollection_rel and appcollection_repo_url removed.", "migration": "appcollection_2_0"},
-   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+   {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
+   {"version": "3.0", "breaking": true, "changes": "By default now requires Rancher on the same kcluster and automatically registers the Collection as a Rancher ClusterRepo; appcollection_standalone opts out (pre-3.0 behavior, Helm CLI only). Dependency check retries via addon_common.die_not_ready() if Rancher hasn't started yet.", "migration": "appcollection_3_0"}
   ],
   "addon:argocd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -139,6 +144,9 @@
    {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart kimi_chart (default oci://ghcr.io/berriai/litellm-helm); kimi_rel and kimi_repo_url removed. No database; clients use the master key in the kimi-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "kimi_2_0"},
    {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:kubectl_apply": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
   "addon:kubewarden": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -244,7 +252,14 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "An unset rancher_repo_url selects Rancher Prime (https://charts.rancher.com/server-charts/prime) instead of the stable repo, an unset rancher_rel is rancher-prime, an unset rancher_helm_chart is rancher-prime/rancher instead of none, and an unset rancher_initial_pwd lets Rancher generate the bootstrap password.", "migration": "rancher_2_0"},
    {"version": "2.1", "breaking": false, "changes": "rancher_admin_pwd: the install completes Rancher's first login and sets its server URL, without which no cluster can be imported"},
-   {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"}
+   {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"},
+   {"version": "2.3", "breaking": false, "changes": "rancher_install_appcollection: once Rancher is up, also register the SUSE Application Collection as a Rancher ClusterRepo, with no separate appcollection addon entry needed."}
+  ],
+  "addon:rodeo_cli": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:run_command": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:seafile": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -353,7 +368,7 @@
    {"version": "2.5", "breaking": false, "changes": "nodes.myip is optional: an address is allocated from the network the lab already describes when the definition gives none"},
    {"version": "2.6", "breaking": false, "changes": "ISO_URL and ISO_SHA256_URL declared again, hidden and deprecated: setup_lab.py still downloads them. A URL in SOURCE_IMAGE is downloaded the same way, once into ISO_LOC on each KVM host and checked against SOURCE_SHA256, which it requires."},
    {"version": "2.7", "breaking": false, "changes": "A disabled_nodes section, in the same form as nodes, for nodes that are part of a lab's design but are not deployed: nothing reads it, so a node waiting on an image or a release stays in the file instead of being deleted. SOURCE_IMAGE also accepts a cloud provider's own image ID or a product name (\"slmicro6.1\", \"sles16\", \"ubuntu24.04\", see libs/cloud_images.py), resolved to the provider's current image for the node's architecture at create time."},
-   {"version": "2.8", "breaking": false, "changes": "scc_regcode and scc_email, in common or per node: cloud-init registers the node with SUSEConnect at first boot, so a bring-your-own-subscription image has repositories before anything else runs on it. SOURCE_IMAGE also accepts \"-byos\" after a SLES or SL Micro product name (\"sles16-byos\", \"sles15.7-byos\", \"slmicro6.1-byos\") for that product's BYOS image."}
+   {"version": "3.0", "breaking": true, "changes": "INSTALL_RKE2_TYPE, ISO_IMAGE, ISO_URL, ISO_SHA256 and ISO_SHA256_URL removed from common and nodes: their values move to KUBERNETES_NODE_TYPE, SOURCE_IMAGE (a URL itself, downloaded under the URL's own file name) and SOURCE_SHA256. setup_lab.py, setup_vm.py and setup_automation_node.py now apply a pending migration themselves, warn per change and continue with the migrated sibling file.", "migration": "lab_3_0"}
   ]
  }
 }

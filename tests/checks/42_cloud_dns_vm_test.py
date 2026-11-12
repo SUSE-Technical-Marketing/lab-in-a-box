@@ -14,7 +14,9 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import backends  # noqa: E402
+import lab_creation  # noqa: E402
 import dns_zone  # noqa: E402
+import services  # noqa: E402
 
 failures = []
 
@@ -82,9 +84,8 @@ try:
     check("the include of this project's own zone file is not written here either, since the file it would "
           "include is written by ensure_zone() over SSH",
           not any("include \"/etc/named.lab.conf\";" in c for c in runcmd))
-    check("the server answers on every address, and recursion stays with the lab's own networks",
-          any("listen-on port 53 { any; };" in c and "allow-recursion {" in c and "localnets;" in c
-              for c in runcmd))
+    check("runcmd writes no serving policy, which ensure_cloud_dns_vm() writes over SSH as the whole named.conf",
+          not any("allow-recursion" in c or "options" in c for c in runcmd))
 
     # Every runcmd entry must actually be a runnable shell command — real, not just
     # syntactically-plausible-looking text.
@@ -119,15 +120,51 @@ class _FakeBackendReuse:
     def opensuse_image(self):
         raise AssertionError("opensuse_image() must not be called when the DNS VM already exists")
 
+    def provider_resolver(self):
+        return ""
+
+
+# A reused DNS VM is only reused when it answers: every reuse check below says it does, and the refusal when it
+# does not is checked on its own further down.
+_serving = mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True)
 
 reuse_backend = _FakeBackendReuse()
-with tempfile.TemporaryDirectory() as tempfile_dir:
+with _serving, tempfile.TemporaryDirectory() as tempfile_dir:
     ip = backends.ensure_cloud_dns_vm(
         reuse_backend, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz", tempfile_dir)
 check("ensure_cloud_dns_vm() returns the existing DNS VM's real IP on reuse", ip == "203.0.113.100")
 check("ensure_cloud_dns_vm() checks vm_exists() with the fixed 'lab-dns-<backend>' name",
       ("vm_exists", "lab-dns-aws") in reuse_backend.calls)
 check("ensure_cloud_dns_vm() calls get_ip() on reuse", ("get_ip", "lab-dns-aws") in reuse_backend.calls)
+
+# The views are configured on every call that names a site, on a reused VM as on a new one.
+with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
+                                 "ami-xyz", tempfile_dir, site="aws-acct1")
+check("a reused DNS VM is given its site's view, at the address this host reaches it by",
+      served.call_count == 1 and served.call_args[0][:2] == ("203.0.113.100", "aws-acct1"))
+check("...for the private ranges and the server's own networks",
+      "localnets" in served.call_args[0][2] and "10.0.0.0/8" in served.call_args[0][2])
+with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
+                                 "ami-xyz", tempfile_dir)
+check("without a site, what the server serves is left alone", not served.called)
+
+# An instance that never booted still has an address, so having one is not being alive. Reusing it would point
+# every node of the lab at a server that answers nothing.
+_refusals = []
+with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=False), \
+        mock.patch.object(backends, "die", side_effect=lambda m, *a, **kw: _refusals.append(m)), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
+                                 "ami-xyz", tempfile_dir)
+check("a DNS VM that has an address but does not serve is refused, not reused",
+      _refusals and "not serving DNS" in _refusals[0])
+check("the refusal says how to recover", _refusals and "Destroy it" in _refusals[0])
 
 
 # ── ensure_cloud_dns_vm(): create path — vm_exists() False, full create flow, real IP returned ──
@@ -143,6 +180,9 @@ class _FakeBackendCreate:
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return False
+
+    def provider_resolver(self):
+        return "169.254.169.253"
 
     def copy_vm_image(self, iso_image, vm_name, vm_dsk_gb, config_method=""):
         self.calls.append(("copy_vm_image", iso_image, vm_name, vm_dsk_gb, config_method))
@@ -171,6 +211,13 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
           userdata_file.is_file())
 
 check("ensure_cloud_dns_vm() returns the newly created DNS VM's real IP", ip == "203.0.113.101")
+with tempfile.TemporaryDirectory() as tempfile_dir, \
+        mock.patch.object(backends.subprocess, "run", return_value=_cp(0)), \
+        mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served:
+    backends.ensure_cloud_dns_vm(_FakeBackendCreate(), "hetzner", "ssh-ed25519 AAAAtest test@example",
+                                 "mydemo.lab", "ubuntu-24.04", tempfile_dir, site="hetzner-default")
+check("a new DNS VM is given its site's view once it is up",
+      served.call_count == 1 and served.call_args[0][:2] == ("203.0.113.101", "hetzner-default"))
 # vm_name sits at a different tuple index per call shape: index 1 for vm_exists/
 # push_provisioning_files/create_vm, index 2 for copy_vm_image(iso_image, vm_name, ...).
 _vm_name_by_call = {
@@ -183,8 +230,14 @@ check("ensure_cloud_dns_vm() uses the fixed 'lab-dns-<backend>' name throughout"
       and ("vm_exists", "lab-dns-hetzner") in create_backend.calls)
 check("ensure_cloud_dns_vm() falls back to the lab's own image when the backend has no openSUSE image",
       any(c[0] == "create_vm" and c[6] == "ubuntu-24.04" for c in create_backend.calls))
-check("ensure_cloud_dns_vm() sizes the DNS VM tiny (1 vCPU / 512 MiB) — cheap by design",
-      any(c[0] == "create_vm" and c[2] == 1 and c[3] == 512 for c in create_backend.calls))
+check("ensure_cloud_dns_vm() sizes the DNS VM from the CLOUD_INFRA_VM_* constants, not its own literals",
+      any(c[0] == "create_vm"
+          and c[2] == lab_creation.CLOUD_INFRA_VM_CPUS
+          and c[3] == lab_creation.CLOUD_INFRA_VM_MEM_MIB
+          and c[4] == lab_creation.CLOUD_INFRA_VM_DSK_GIB
+          for c in create_backend.calls))
+check("a shared infra VM gets at least 1 GiB, the floor its image needs to decompress a kernel at boot",
+      lab_creation.CLOUD_INFRA_VM_MEM_MIB >= 1024)
 call_order = [c[0] for c in create_backend.calls]
 check("ensure_cloud_dns_vm() follows the real call order: vm_exists -> copy_vm_image -> "
       "push_provisioning_files -> create_vm",
@@ -334,11 +387,11 @@ check("the cloud DNS VM is ready only once cloud-init has finished and named is 
       "/var/lib/cloud/instance/boot-finished && systemctl is-active named" in source)
 
 # ── the cloud DNS VM answers on a public address, so its policy is written, not inherited ─────────────────────────
-# Rebuilt live on 2026-10-17 after the one in the aws-tmm account turned out to have no BIND at all and no port 53
-# open in its security group: it could never have served anything.
-# The policy is asserted against the generated user-data as text: the suite's interpreter may have no PyYAML, and
-# these properties are the ones that keep a public port 53 safe.
-_ud_text = backends._cloud_dns_vm_user_data("ssh-rsa AAAA key", "mydemo.lab", lab_networks=["172.31.80.0/20"])
+# The policy is the named.conf ensure_cloud_dns_vm() writes over SSH (DNSService.serve_site_view()), asserted as
+# text: these properties are the ones that keep a public port 53 safe.
+_ud_text = dns_zone.view_named_conf(backends.cloud_dns_options(["172.31.80.0/20"]),
+                                    ["localhost", "localnets", "172.31.80.0/20"])
+_boot = backends._cloud_dns_vm_user_data("ssh-rsa AAAA key", "mydemo.lab")
 check("it writes a serving policy of its own", "rate-limit" in _ud_text and "options" in _ud_text)
 check("the lab's zone is answered to anyone, since a lab node can be on any network",
       "allow-query { any; }" in _ud_text)
@@ -355,14 +408,17 @@ check("it answers on every address but listens on no IPv6",
 # 2026-10-17, when the lab zone answered while nothing external resolved at all.
 check("it forwards rather than walking the root zone",
       "forwarders { 169.254.169.253; 9.9.9.9; 1.1.1.1; }" in _ud_text and "forward first" in _ud_text)
-check("the distribution's own conflicting directives are removed first, so there is one policy",
-      all(d in _ud_text for d in ("recursion", "allow-query", "allow-transfer", "version", "listen-on",
-                                  "rate-limit", "forwarders"))
-      and "sed -i -e" in _ud_text)
-check("a configuration named refuses is a failure, not a VM that quietly serves nothing",
-      "named-checkconf" in _ud_text and "refused the generated configuration" in _ud_text)
+check("the whole file is written, so no directive the distribution ships contradicts it",
+      _ud_text.startswith("options {") and "include" not in _ud_text.split("};")[0])
+check("clients of the site get the site view, which may recurse",
+      'view "site"' in _ud_text and "match-clients { localhost; localnets; 172.31.80.0/20; };" in _ud_text)
+check("everyone else gets the external view, which never recurses",
+      'view "external"' in _ud_text and "match-clients { any; };" in _ud_text
+      and _ud_text.index('view "external"') < _ud_text.index("recursion no;"))
+check("a configuration named refuses, or does not start with, is not left in place",
+      "named-checkconf" in services._SERVE_SITE_VIEW and "lab-previous" in services._SERVE_SITE_VIEW)
 check("the service is started by either of its names, and a failure to start is an error",
-      "enable --now named" in _ud_text and "enable --now bind9" in _ud_text and "BIND did not start" in _ud_text)
+      "enable --now named" in _boot and "enable --now bind9" in _boot and "BIND did not start" in _boot)
 check("port 53 is opened for it, which is what it exists for",
       'open_ports=["53/udp", "53/tcp"]' in (_REPO / "libs" / "backends.py").read_text())
 

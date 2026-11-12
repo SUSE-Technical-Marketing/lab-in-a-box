@@ -39,13 +39,13 @@ unchanged, but Debian and Alibaba Cloud Linux each hit a genuinely different pro
   "nodes": {
     "alma.mydemo.lab": {
       "myip": "192.168.88.120",
-      "ISO_IMAGE": "AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
+      "SOURCE_IMAGE": "AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
       "VM_DSK": 10                      // source image is a 10 GiB GenericCloud qcow2 —
                                          // every common default works unchanged
     },
     "debian.mydemo.lab": {
       "myip": "192.168.88.121",
-      "ISO_IMAGE": "debian-13-genericcloud-amd64.qcow2",
+      "SOURCE_IMAGE": "debian-13-genericcloud-amd64.qcow2",
       "VM_DSK": 3,                      // source image is a 3 GiB genericcloud qcow2 —
                                          // NOT the "nocloud" variant (see the note below)
       "network_renderer": "networkd"    // REQUIRED: this image has no NetworkManager at all
@@ -55,13 +55,13 @@ unchanged, but Debian and Alibaba Cloud Linux each hit a genuinely different pro
     },
     "rockylinux.mydemo.lab": {
       "myip": "192.168.88.122",
-      "ISO_IMAGE": "Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+      "SOURCE_IMAGE": "Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
       "VM_DSK": 10                      // source image is a 10 GiB GenericCloud qcow2 —
                                          // every common default works unchanged
     },
     "alibaba.mydemo.lab": {
       "myip": "192.168.88.123",
-      "ISO_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
+      "SOURCE_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
       "VM_DSK": 20,                     // source image is a 20 GiB qcow2 — despite the
                                          // "nocloud" in its own filename, this image genuinely
                                          // ships cloud-init (Alibaba's own naming quirk;

@@ -179,13 +179,49 @@ check("trento_2_0 keeps a user-name trento_admin", migrations.migrate("lab", d, 
 lines = ["# Schema version: 0.9", "A=1"]
 migrations.stamp("config:lab.cfg", lines, record)
 check("stamp rewrites a shell file's version line", lines[0] == "# Schema version: " + record["config:lab.cfg"][-1]["version"])
-with mock.patch.object(migrations, "die", side_effect=SystemExit("needs migration")) as died:
-    try:
-        migrations.require_current(lab({"rancher_rel": "rancher-stable"}), "lab.json")
-    except SystemExit:
-        pass
-    check("require_current stops on a definition that needs a migration",
-          died.called and "migrate_config.py lab.json" in died.call_args[0][0])
+d = {"common": {"ISO_IMAGE": "a.qcow2", "ISO_URL": "https://x/b.qcow2", "ISO_SHA256_URL": "https://x/SUMS"},
+     "nodes": {"n1": {"INSTALL_RKE2_TYPE": "agent"},
+               "n2": {"KUBERNETES_NODE_TYPE": "server", "INSTALL_RKE2_TYPE": "agent", "SOURCE_IMAGE": "c.qcow2",
+                      "ISO_IMAGE": "d.qcow2", "ISO_SHA256": "e" * 64}},
+     "disabled_nodes": {"n3": {"ISO_IMAGE": "f.qcow2"}}}
+changes = migrations.lab_3_0(d)
+check("lab_3_0: ISO_URL becomes SOURCE_IMAGE, replacing the file name ISO_IMAGE gave it",
+      d["common"] == {"SOURCE_IMAGE": "https://x/b.qcow2", "SOURCE_SHA256": "https://x/SUMS"}
+      and any("replacing 'a.qcow2'" in c for c in changes))
+check("lab_3_0: INSTALL_RKE2_TYPE becomes KUBERNETES_NODE_TYPE", d["nodes"]["n1"] == {"KUBERNETES_NODE_TYPE": "agent"})
+check("lab_3_0: a successor already set keeps its value and the retired key is dropped",
+      d["nodes"]["n2"] == {"KUBERNETES_NODE_TYPE": "server", "SOURCE_IMAGE": "c.qcow2", "SOURCE_SHA256": "e" * 64}
+      and "nodes.n2: ISO_IMAGE dropped, SOURCE_IMAGE already set" in changes)
+check("lab_3_0: disabled_nodes are migrated too", d["disabled_nodes"]["n3"] == {"SOURCE_IMAGE": "f.qcow2"})
+check("lab_3_0: a second run changes nothing", migrations.lab_3_0(d) == [])
+
+
+class _Definition(dict):
+    def __init__(self, data, source_path):
+        super().__init__(data)
+        self.source_path, self.fmt = source_path, "json"
+
+
+work = Path(tempfile.mkdtemp())
+src = work / "old.json"
+old = _Definition({"common": {"ISO_IMAGE": "img.qcow2"}, "nodes": {"n1": {}}}, str(src))
+warned = []
+with mock.patch.object(migrations, "warn", side_effect=warned.append):
+    path = migrations.ensure_current(old, str(src))
+check("ensure_current: a definition that needs a migration continues from its migrated sibling file",
+      path == str(src) + ".system_modified.json" and Path(path).is_file())
+saved = json.loads(Path(path).read_text())
+check("ensure_current: the sibling holds the migrated definition and the current versions",
+      saved["common"] == {"SOURCE_IMAGE": "img.qcow2"}
+      and saved["schema_versions"]["lab"] == record["lab"][-1]["version"])
+check("ensure_current: one warning per change, then one naming the file to replace",
+      any("ISO_IMAGE renamed to SOURCE_IMAGE" in w for w in warned) and str(src) in warned[-1] and path in warned[-1])
+check("ensure_current: the original file is never written", not src.exists())
+current = _Definition(saved, path)
+with mock.patch.object(migrations, "warn", side_effect=warned.append):
+    count = len(warned)
+    check("ensure_current: a current definition keeps its path and warns nothing",
+          migrations.ensure_current(current, path) == path and len(warned) == count)
 
 # ── migrate_config.py ──────────────────────────────────────────────────────────────────────────────────────────────
 work = Path(tempfile.mkdtemp())

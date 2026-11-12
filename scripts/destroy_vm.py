@@ -108,6 +108,10 @@ def main():
         print("{} {}".format(Path(sys.argv[0]).name, __version__))
         sys.exit(0)
 
+    # Applied and stripped before the positional arguments are read, so the option reads the same on every
+    # command that creates or destroys a cloud node.
+    sys.argv[1:] = backends.take_cloud_account_option(sys.argv[1:])
+
     if len(sys.argv) < 3:
         print("Usage:\n{} <configuration file> <vm_name>".format(sys.argv[0]))
         sys.exit(1)
