@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_appcollection libs/appco_common.py
 # Unit tests for install_appcollection and appco_common.register_rancher_cluster_repo.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_smlm
 # Unit tests for install_smlm's pre-built server image support
 # (smlm_preinstalled, smlm_image_admin_pass) and the server-side lab
 # conveniences (smlm_salt_auto_accept, smlm_bootstrap_scripts, smlm_ssl_*).

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/versions.py
 # Add-on version matrix: libs/versions.py, its use by the preflight, add-on
 # --schema/--validate, and the helm --version flags of rancher and longhorn.
 # Independent container — see tests/run_tests.sh.

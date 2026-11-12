@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/schema_validate.py
 # Schema-driven value validation: libs/schema_validate.py's checks, the preflight reporting them, every add-on's
 # --validate running them, and every lab definition the repository ships staying valid.
 # Independent container — see tests/run_tests.sh.

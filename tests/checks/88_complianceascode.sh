@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_complianceascode
 # install_complianceascode: Kubernetes version ranges and the chart choice between rancher-compliance and
 # rancher-cis-benchmark. Independent container — see tests/run_tests.sh.
 set -uo pipefail

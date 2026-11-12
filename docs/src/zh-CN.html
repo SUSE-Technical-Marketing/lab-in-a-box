@@ -1247,10 +1247,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>独立的 Grafana 服务器（podman 容器，无 Kubernetes）：自动配置 Prometheus 数据源，并可选择为 <code>smlm</code>/<code>uyuni</code> 服务器的导出器配置 Grafana Labs 官方社区仪表板</td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>由 SUSE BCI 映像提供的网站（podman 容器，无 Kubernetes）— nginx 和页面在节点上直接构建进映像；页面可生成或从 <code>bci_website_content_url</code> 下载</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1362,6 +1358,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>安装 rodeo-cli——一个 Terraform 风格的 CLI，用于部署嵌套的 KVM 实验环境（Harvester HCI、Rancher Prime 或两者），在目标节点上即装即用——rodeo-cli 自身的计划/密钥文件不在本插件的职责范围内</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>在目标节点上安装 lab-in-a-box 本身——默认非破坏性操作（仅安装 git+python 并克隆仓库），并可选择无人值守地构建一个嵌套的 KVM 虚拟化主机/自动化节点</td>
 </tr>
 </tbody>
 </table>

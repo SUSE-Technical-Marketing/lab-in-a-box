@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/k8s.py
 # Mocked-SSH unit tests for libs/k8s.py: Kubernetes
 # cluster setup and addon-execution helpers. Independent container — see tests/run_tests.sh.
 set -uo pipefail

@@ -160,12 +160,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Install podman
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y podman
       - name: Run the project's own test suite
-        run: tests/run_tests.sh
+        # Scoped to the PR's changed files on a pull_request event (tests/select_checks.py —
+        # a check with no declared dependency still always runs); every check on a push, same
+        # as every other job here.
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "pull_request" ]]; then
+            export TESTS_CHANGED_FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          fi
+          tests/run_tests.sh
 
   shellcheck:
     needs: changes

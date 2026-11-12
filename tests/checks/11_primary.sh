@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/primary.py
 # Pure-logic unit tests for libs/primary.py — lab
 # definition loading and simple-shell-variable config parsing. No mocking
 # needed (pure file/string parsing, no subprocess/SSH). Independent

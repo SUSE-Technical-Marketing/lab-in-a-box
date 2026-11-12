@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/setup_lab.py
 # Mocked unit tests for scripts/setup_lab.py — the full
 # lab orchestrator (VM creation, Kubernetes install, cluster/VM addon
 # dispatch). Every

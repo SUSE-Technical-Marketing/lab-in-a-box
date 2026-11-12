@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/aws_catalog.py
 # The live EC2 instance-type catalog: the specifications and on-demand prices libs/aws_catalog.py reads,
 # the cheapest-sufficient x86_64 type AWSBackend sizes a VM with, and the sizing-table fallback for an
 # account or host that cannot reach either API. Independent container — see tests/run_tests.sh.

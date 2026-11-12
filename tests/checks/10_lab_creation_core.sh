@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/lab_creation.py
 # Mocked-subprocess unit tests for libs/lab_creation.py —
 # the shared VM-provisioning/DNS/preflight helpers used by setup_vm.py,
 # destroy_vm.py, setup_lab.py, and k8s.py. These verify command shape and control flow

@@ -1338,10 +1338,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Eigenständiger Grafana-Server (Podman-Container, ohne Kubernetes). Richtet automatisch eine Prometheus-Datenquelle ein und optional das echte Community-Dashboard von Grafana Labs für die eigenen Exporter eines Servers <code>smlm</code>/<code>uyuni</code></td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>Eine Website aus einem SUSE-BCI-Image (Podman-Container, kein Kubernetes) — nginx und die Seite werden auf dem Knoten selbst in das Image gebaut; die Seite wird erzeugt oder von <code>bci_website_content_url</code> geladen</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1453,6 +1449,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>Installiert rodeo-cli, eine Terraform-artige CLI, die verschachtelte KVM-Labs bereitstellt (Harvester HCI, Rancher Prime oder beides), einsatzbereit auf dem Zielknoten — die eigenen Plan-/Secrets-Dateien von rodeo-cli sind nicht Aufgabe dieses Add-ons</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>Installiert lab-in-a-box selbst auf dem Zielknoten — standardmäßig unschädlich (installiert git+python, klont das Repository), mit der Option, zusätzlich unbeaufsichtigt einen verschachtelten KVM-Hypervisor/Automatisierungsknoten aufzubauen</td>
 </tr>
 </tbody>
 </table>

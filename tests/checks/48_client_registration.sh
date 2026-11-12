@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/install_client_registration
 # Unit tests for install_client_registration's per-node
 # client_registration_* override. Independent container — see
 # tests/run_tests.sh.

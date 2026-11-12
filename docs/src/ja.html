@@ -1250,10 +1250,6 @@ install_longhorn --schema yaml      # ...or YAML
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>単独の Grafana サーバー（podman コンテナ、Kubernetes なし）：Prometheus データソースを自動で設定し、必要に応じて <code>smlm</code>/<code>uyuni</code> サーバーのエクスポーター用に Grafana Labs の公式コミュニティダッシュボードも設定します</td>
 </tr>
-<tr>
-<td><a href="https://registry.suse.com/bci"><code>bci_website</code></a></td>
-<td>SUSE BCI イメージから配信する Web サイト（podman コンテナー、Kubernetes なし）— nginx とプージはノート上でイメージに組み込まれ、プージは生成されるか <code>bci_website_content_url</code> から取得されます</td>
-</tr>
 </tbody>
 </table>
 </details>
@@ -1365,6 +1361,10 @@ install_longhorn --schema yaml      # ...or YAML
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
 <td>rodeo-cli（ネストされた KVM ラボ、Harvester HCI や Rancher Prime、またはその両方をデプロイする Terraform 風 CLI）をターゲットノードにインストールし、すぐ使える状態にする — rodeo-cli 自身の plan/secrets ファイルはこのアドオンの関心事ではない</td>
+</tr>
+<tr>
+<td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
+<td>lab-in-a-box 自体をターゲットノードにインストールする — デフォルトでは破壊的な操作を行わない（git と python をインストールし、リポジトリをクローンするのみ）。オプションで、ネストされた KVM ハイパーバイザー/オートメーションノードを無人で構築することも可能</td>
 </tr>
 </tbody>
 </table>

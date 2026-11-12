@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: libs/spacecmd_common.py
 # Mocked-SSH unit tests for libs/spacecmd_common.py (the
 # shared SMLM/Uyuni activation-key + channel-sync helpers). Independent container — see
 # tests/run_tests.sh.

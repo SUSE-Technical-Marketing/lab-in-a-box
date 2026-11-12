@@ -20,6 +20,18 @@ function makeElement(tag) {
   };
 }
 
+// In-memory localStorage: a real browser's is same-origin and synchronous, which this is close
+// enough to for persistDraft()/readDraft() — the only two functions under test that touch it.
+function makeLocalStorage() {
+  const store = {};
+  return {
+    _store: store,
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  };
+}
+
 const sandbox = {
   document: {
     querySelectorAll: () => [], addEventListener: () => {}, createElement: makeElement,
@@ -27,6 +39,7 @@ const sandbox = {
     createDocumentFragment: () => makeElement("fragment"),
   },
   window: { addEventListener: () => {} },
+  localStorage: makeLocalStorage(),
   console, URL, URLSearchParams, TextDecoder, atob,
 };
 vm.createContext(sandbox);
@@ -578,6 +591,53 @@ async function urlParamChecks() {
   check("a failed start is shown in the dialog too, where the reader is looking",
         /createMsg/.test(src) && /The lab was not started/.test(src));
   check("the dialog has somewhere to show it", /id="createMsg"/.test(html));
+}
+
+// ── draft persistence: a page refresh must not lose in-progress work ───────
+{
+  const store = sandbox.localStorage._store;
+  check("isModelEmpty: a brand-new model is empty",
+        sandbox.isModelEmpty({ common: {}, items: [], extra: {} }));
+  check("isModelEmpty: a model with one item is not",
+        !sandbox.isModelEmpty({ common: {}, items: [{ id: "n1" }], extra: {} }));
+  check("isModelEmpty: a model with only a common field is not",
+        !sandbox.isModelEmpty({ common: { mydomain: "x" }, items: [], extra: {} }));
+
+  sandbox.persistDraft({ common: {}, items: [{ id: "n1", type: "node", name: "x" }], addonCfg: {}, extra: {}, seq: 1 });
+  check("persistDraft: a non-empty model is saved",
+        JSON.parse(store["labbuilder.draft"]).model.items.length === 1);
+
+  sandbox.persistDraft({ common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 });
+  check("persistDraft: an emptied model clears the saved draft rather than saving an empty one",
+        !("labbuilder.draft" in store));
+
+  check("readDraft: a missing key reads back as null",
+        sandbox.readDraft("labbuilder.draft") === null);
+  store["labbuilder.draft"] = "{not json";
+  check("readDraft: corrupt JSON reads back as null instead of throwing",
+        sandbox.readDraft("labbuilder.draft") === null);
+  delete store["labbuilder.draft"];
+
+  check("startFresh backs up the live draft before clearing it, so Restore can undo it",
+        /function startFresh\(\)[\s\S]*?localStorage\.setItem\(LAST_DRAFT_KEY, current\)/.test(src));
+  check("startFresh confirms before discarding a non-empty lab",
+        /function startFresh\(\)[\s\S]{0,400}window\.confirm\("Start a fresh lab/.test(src));
+  check("restoreDraft confirms before replacing a non-empty lab",
+        /function restoreDraft\(\)[\s\S]{0,400}window\.confirm\("Restore the previous lab/.test(src));
+  check("renderCanvas persists the draft after every canvas mutation",
+        /function renderCanvas\(\)[\s\S]*?persistDraft\(\);\n\}/.test(src));
+  check("the model restored on load is loaded before the catalogue/base fetches, not after",
+        /const draft = readDraft\(DRAFT_KEY\);[\s\S]*?loadComponents\(\)/.test(src));
+
+  // index-static.html/lab-builder-static.html are build artifacts (gitignored, scripts/build-cube-static.py's
+  // output) that don't exist on a clean checkout — only index.html, the real source, is checked here.
+  const htmlFiles = ["index.html"];
+  htmlFiles.forEach((f) => {
+    const h = fs.readFileSync("webui/htdocs/" + f, "utf8");
+    check(f + ": has a Start fresh button", /id="startFreshBtn"/.test(h));
+    check(f + ": has a Restore button, disabled until there is a backup to restore",
+          /id="restoreBtn"[^>]*disabled/.test(h));
+  });
 }
 
 urlParamChecks().then(() => {

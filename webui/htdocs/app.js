@@ -44,6 +44,65 @@ const state = {
   previewAddr: {},   // {vm: ip} the run would allocate for a VM with no address (api "addresses")
 };
 
+// ---- draft persistence (a page refresh must not lose in-progress work) -----
+// labbuilder.draft: the live model, re-saved after every renderCanvas() (so after every
+// drag/drop, editor apply, remove, or lab.json text edit — see the "persistDraft()" call at
+// the end of renderCanvas()). Restored automatically on load. labbuilder.lastDraft: a single
+// backup slot, written by "Start fresh" right before it clears the canvas, so "Restore" can
+// undo that one step. Browser-local only: never read back by the server, never shared between
+// browsers/devices — same per-viewer-convenience role as labbuilder.requiredOnly below.
+const DRAFT_KEY = "labbuilder.draft";
+const LAST_DRAFT_KEY = "labbuilder.lastDraft";
+const EMPTY_MODEL = { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 };
+
+function isModelEmpty(m) {
+  return !m.items.length && !Object.keys(m.common).length && !Object.keys(m.extra).length;
+}
+function readDraft(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function persistDraft(model = state.model) {
+  try {
+    if (isModelEmpty(model)) { localStorage.removeItem(DRAFT_KEY); return; }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ model }));
+  } catch (e) { /* storage unavailable/full: the draft just won't survive a refresh */ }
+}
+function updateRestoreAvailability() {
+  const btn = $("#restoreBtn");
+  if (btn) btn.disabled = !readDraft(LAST_DRAFT_KEY);
+}
+// Clears the canvas, keeping the just-cleared draft in the one-slot backup so Restore can
+// bring it back. loadLab({}) is the same reset path "Open a file"/an example takes.
+function startFresh() {
+  if (!isModelEmpty(state.model) &&
+      !window.confirm("Start a fresh lab? The current one will be cleared — Restore brings it back.")) return;
+  try {
+    const current = localStorage.getItem(DRAFT_KEY);
+    if (current) localStorage.setItem(LAST_DRAFT_KEY, current);
+  } catch (e) { /* ignore */ }
+  loadLab({});
+  $("#labName").value = "lab";
+  updateRestoreAvailability();
+  toast("Started a fresh lab");
+}
+// Undoes the last "Start fresh" (or brings back whatever was last cleared).
+function restoreDraft() {
+  const saved = readDraft(LAST_DRAFT_KEY);
+  if (!saved || !saved.model) { toastError("Nothing to restore"); return; }
+  if (!isModelEmpty(state.model) &&
+      !window.confirm("Restore the previous lab? The current one will be replaced.")) return;
+  state.model = Object.assign({}, EMPTY_MODEL, saved.model);
+  state.sel = "common";
+  state.textError = "";
+  renderCanvas();
+  refreshLab();
+  preloadMissingSchemas();
+  toast("Restored");
+}
+
 // ---- tiny DOM helpers ------------------------------------------------------
 const $ = (s, r = document) => r.querySelector(s);
 function el(tag, cls, txt) {
@@ -928,6 +987,7 @@ function renderCanvas() {
     wrap.appendChild(row);
     zone.appendChild(wrap);
   }
+  persistDraft();
 }
 
 // ---- editor (double-click) ------------------------------------------------------
@@ -1605,15 +1665,22 @@ function renderIssues() {
 
 // Replaces the canvas with lab definition `lab` and loads its add-ons' schemas,
 // so their required fields are checked.
+// Schemas for addon components the model now references but hasn't fetched yet — needed so the
+// lab.json preview/issues are accurate right after loading a model from somewhere else (a file,
+// an example, a restored draft), not only once the user happens to open that addon's editor.
+function preloadMissingSchemas() {
+  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp && !state.schemaCache[i.comp]).map((i) => i.comp));
+  return Promise.all([...comps].map((c) => loadAddonSchema(c).catch(() => null)))
+    .then(() => { if (comps.size) { renderCanvas(); renderIssues(); } });
+}
+
 function loadLab(lab, fromText) {
   state.model = decompileLab(lab);
   state.sel = "common";
   state.textError = "";
   renderCanvas();
   refreshLab(fromText);
-  const comps = new Set(state.model.items.filter((i) => i.type === "addon" && i.comp && !state.schemaCache[i.comp]).map((i) => i.comp));
-  Promise.all([...comps].map((c) => loadAddonSchema(c).catch(() => null)))
-    .then(() => { if (comps.size) { renderCanvas(); renderIssues(); } });
+  preloadMissingSchemas();
 }
 
 // The lab.json text was edited: rebuild the canvas once it parses.
@@ -2147,6 +2214,17 @@ async function watchJob(id) {
 
 // ---- wire up ---------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
+  // Restore whatever was being edited before the last refresh (see persistDraft()/renderCanvas()).
+  const draft = readDraft(DRAFT_KEY);
+  let restoredOnLoad = false;
+  if (draft && draft.model && !isModelEmpty(draft.model)) {
+    try { state.model = Object.assign({}, EMPTY_MODEL, draft.model); restoredOnLoad = true; } catch (e) { /* corrupt draft: start empty */ }
+  }
+  updateRestoreAvailability();
+  const startFreshBtn = $("#startFreshBtn"), restoreBtn = $("#restoreBtn");
+  if (startFreshBtn) startFreshBtn.addEventListener("click", startFresh);
+  if (restoreBtn) restoreBtn.addEventListener("click", restoreDraft);
+
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
@@ -2198,6 +2276,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (embed) setupEmbed(embed);
   renderCanvas();
   refreshLab();
+  if (restoredOnLoad) preloadMissingSchemas();
   if (!window.LAB_STATIC) apiGet("auth").then((a) => { state.auth = a; renderIssues(); }).catch(() => { /* older server */ });
   loadComponents().then(applyUrlParams)
     .catch((e) => { $("#countNum").textContent = "!"; toastError("Load error: " + e.message); });

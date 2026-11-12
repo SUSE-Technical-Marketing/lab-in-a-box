@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests-paths: scripts/lab_schema
 # lab_schema --base json/yaml both produce valid, parseable output.
 # Independent container — see tests/run_tests.sh.
 set -uo pipefail
