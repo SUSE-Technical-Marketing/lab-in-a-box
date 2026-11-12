@@ -1,0 +1,65 @@
+# Schema version: 1.0
+#
+# The automation node's own identity: what it's called, how it's reached, and what shape it
+# takes (vm/container/kubernetes). Meaningful regardless of whether a KVM host is involved at
+# all — a container or kubernetes automation node never touches kvm_host.cfg.
+#################################
+#### What you should change: ####
+#################################
+
+# Network settings
+_mydns=192.168.8.1
+_mygw=192.168.8.1
+_myip=192.168.8.71
+_mynet=192.168.8.0/24          # CIDR notation — prefix is derived from this
+_mydomain=mydemo.lab
+_mynetrev=8.168.192
+
+# Default SSH public key — a new one is also generated on the automation VM
+# and will be shown at the end of setup
+ROOT_SSH_PUB_KEY='REPLACE ME with: cat ~/.ssh/<your_key>.pub'
+
+
+################################
+#### What you could change: ####
+################################
+
+# Root password hash (used to set the root password inside the automation VM)
+# Generate with: openssl passwd -6 'yourpassword' (the template's value is the hash of 1234)
+ROOT_PWD_HASH='$6$AK9pZLzQ6G5zD5Vn$U7t.tGI9xDLqMez/kQLjziwVwxIYxpWbx./UYAVqZGvYclQHoiZ3ph1pFLvsNnz/p6H..51sLXS79Wn9IXc/r0'
+
+# Initial plaintext root password (used with chpasswd -c SHA512)
+root_pwd=1234
+
+# Automation node hostname
+AUTOMATION_HOSTNAME='automation.mydemo.lab'
+
+# Internal registry server
+MYREG='registry.mydemo.lab'
+
+# Timezone for the automation node
+_timezone=Europe/Zurich
+
+# How the automation node runs: "vm" (default), a libvirt VM — see kvm_host.cfg for how it's
+# built; "container", a privileged openSUSE Leap podman container on the target host
+# (setup_demo_server/automation-node.Containerfile) attached to the same network with the same
+# _myip, its data on podman volumes lab-automation-*; or "kubernetes" (see below).
+_automation_node="vm"
+
+# Only used when _automation_node="kubernetes". The automation node runs as a StatefulSet with its configuration and
+# user data on a persistent volume; the lab reaches it at _myip.
+#   _k8s_kubeconfig     kubeconfig of the cluster (empty: $KUBECONFIG, else ~/.kube/config, else kubectl's default)
+#   _k8s_namespace      namespace (default lab-automation)
+#   _k8s_network        "loadbalancer" (default): a LoadBalancer Service at _myip (MetalLB or the cloud's load
+#                       balancer must be able to give it that address); "macvlan": a Multus macvlan interface with
+#                       _myip on the cluster nodes' lab network interface _k8s_macvlan_master
+#   _k8s_storage_class  storage class of the persistent volume (empty: the cluster's default)
+#   _k8s_volume_size    size of the persistent volume (default 20Gi)
+#   _automation_image   image to run (empty: ghcr.io/rmahique/lab-automation-node:latest)
+_k8s_kubeconfig=""
+_k8s_namespace="lab-automation"
+_k8s_network="loadbalancer"
+_k8s_macvlan_master=""
+_k8s_storage_class=""
+_k8s_volume_size="20Gi"
+_automation_image=""

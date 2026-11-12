@@ -13,14 +13,24 @@ setup_kvm_node.py — prepare a hypervisor host to run lab-in-a-box.
 Usage:
     setup_kvm_node.py [options] [TARGET]       (see --help for every option)
 
-Without setup_demo_server/lab.cfg, it is written first from the options and this host's own network
-settings; with --interactive each value is asked for, with those as defaults.
-An existing lab.cfg is used as is; options that map to its keys update them in place.
+Without setup_demo_server/automation.cfg, it (and kvm_host.cfg) are written first from the options
+and this host's own network settings; with --interactive each value is asked for, with those as
+defaults. Existing files are used as is; options that map to their keys update them in place.
+automation.cfg is the automation node's own identity (network, hostname, vm/container/kubernetes
+shape) — needed regardless of whether a KVM host is even involved. kvm_host.cfg is specific to
+this host becoming a KVM hypervisor (bridge/NAT networking, storage, VM-build specifics) — read
+only when this script actually prepares a KVM host, which is every run of this script.
 
-Then it installs the hypervisor packages, turns the default-route NIC into a bridge that keeps the
-host's address (rolled back automatically if the gateway stops answering), configures libvirt and
-creates the automation VM. If an automation host (lab.cfg's _myip) is already up and reachable,
-this host's DNS is pointed at it.
+This script always configures the host as a KVM node: packages, a bridge on the default-route NIC
+that keeps the host's address (rolled back automatically if the gateway stops answering), libvirt,
+and the storage pool. Building an automation node on it is the one optional add-on step — asked
+about with a sensible default (skip it if one is already reachable at automation.cfg's _myip, e.g.
+a 2nd/3rd KVM host joining an existing lab). If an automation host is already up and reachable,
+this host's DNS is pointed at it either way.
+
+Interactive mode can also, after this host is set up: add another KVM node over SSH (sharing this
+host's storage), and/or add cloud-provider credentials (scripts/setup_credentials.py) — both
+optional, both independently re-runnable later.
 
 TARGET sets up that remote host over SSH instead: setup_demo_server/ and libs/ are copied there and
 install_demo_server_scripts.sh runs with the same options.
@@ -44,7 +54,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-for _candidate in ("/usr/local/lib/lab_creation", str(_SCRIPT_DIR.parent / "libs")):
+for _candidate in ("/usr/local/lib/lab_creation", str(_SCRIPT_DIR.parent / "libs"),
+                   str(_SCRIPT_DIR.parent / "scripts")):
     if Path(_candidate).is_dir() and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 
@@ -57,6 +68,7 @@ def _find(filename):
 import primary  # noqa: E402
 import kvm_host_profiles  # noqa: E402
 import host_network  # noqa: E402
+import setup_credentials  # noqa: E402
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
@@ -205,8 +217,8 @@ def download_automation_image(qcow_image):
     build variant instead of "kvm-and-xen"), confirmed via the openSUSE
     download mirror. Deliberately NOT auto-transformed here: guessing at a
     16.x filename from a 15.x one risks silently downloading nothing or the
-    wrong image. lab.cfg's _QCOW_IMAGE must be set to the correct, real
-    filename for whichever Leap version is targeted — see lab.cfg.template's
+    wrong image. kvm_host.cfg's _QCOW_IMAGE must be set to the correct, real
+    filename for whichever Leap version is targeted — see kvm_host.cfg.template's
     comment next to _QCOW_IMAGE.
     """
     Path("/var/lib/libvirt/images/sources/").mkdir(parents=True, exist_ok=True)
@@ -348,16 +360,17 @@ def configure_nat_network(name, cidr):
         os.unlink(xml_path)
 
 
-def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
+def prepare_kvm_host(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
     """
-    Mirrors do_it_all (bash). share_storage_from/copy_storage_from are new,
-    additive, and both default to None (today's unchanged single-host
-    behavior: this host manages its own local storage, no DNS reconfigured
-    — identical to the original first-KVM-node bootstrap flow)."""
-    lab_automation_script = _find("setup_lab_automation.sh")
-    if not lab_automation_script.is_file():
-        die("Missing script, please download setup_lab_automation.sh script from the GIT repository")
-
+    Makes this host a real KVM hypervisor: packages, bridge, shared storage, libvirt, the
+    storage pool, firewalld disabled, and (nat mode) the libvirt NAT network. Independently
+    callable (both setup_kvm_node.py's own run and the automation-centric
+    setup_automation.py's optional add-on step use this one function) — no automation-node
+    awareness at all, deliberately: whether anything gets built on top of this KVM host is the
+    caller's decision, made by calling deploy_automation_node() afterwards or not.
+    share_storage_from/copy_storage_from both default to None (today's unchanged single-host
+    behavior: this host manages its own local storage, no DNS reconfigured).
+    """
     profile = kvm_host_profiles.detect_profile()
     if profile is None:
         die("OS type not detected or unsupported. Supported: openSUSE Leap 15/16, SLES 15/16, "
@@ -375,16 +388,18 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
 
     extra_pkgs = (cfg.get("_extra_host_pkgs", "") or "").split()
     if extra_pkgs:
-        log("Adding extra packages from lab.cfg's _extra_host_pkgs")
+        log("Adding extra packages from kvm_host.cfg's _extra_host_pkgs")
         profile.packages = profile.packages + extra_pkgs
 
     if isinstance(profile, kvm_host_profiles._SuseRegisteredProfile):
         # SLES only — see _SuseRegisteredProfile.register_repos()'s own
         # docstring: SUSEConnect --product fails outright on a genuinely
-        # unregistered host without this.
-        profile.regcode = cfg.get("SUSE_regcode", "")
-        profile.suse_email = cfg.get("SUSE_email", "")
-        profile.suse_url = cfg.get("SUSE_url", "")
+        # unregistered host without this. The regcode is a real credential,
+        # never written into a plaintext config file — see scc_credential().
+        scc = scc_credential()
+        profile.regcode = scc.get("scc_regcode", "")
+        profile.suse_email = scc.get("scc_email", "")
+        profile.suse_url = scc.get("scc_url", "")
 
     log("Configure package repositories")
     profile.register_repos()
@@ -411,7 +426,7 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
             die(str(e))
         if before.ip != after.ip:
             warn("the DHCP server gave {} the new address {} (was {}): reserve an address for MAC {} "
-                 "and update _virt_srv in lab.cfg if it named the old one".format(
+                 "and update _virt_srv in kvm_host.cfg if it named the old one".format(
                      bridge_name, after.ip, before.ip, after.mac))
 
     if share_storage_from or copy_storage_from:
@@ -419,16 +434,6 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
 
     if _automation_host_reachable(cfg.get("_myip", "")):
         configure_automation_dns(cfg)
-
-    node_mode = cfg.get("_automation_node", "") or "vm"
-    fallback = False
-    if node_mode == "vm":
-        try:
-            download_automation_image(cfg.get("_QCOW_IMAGE", ""))
-        except OSError as e:
-            warn("could not download the automation VM image ({}); creating the automation node as a container "
-                 "instead".format(e))
-            node_mode, fallback = "container", True
 
     enable_libvirt()
     define_storage_pool()
@@ -440,6 +445,29 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
         log("Configure NAT'd libvirt network {} ({})".format(nat_name, nat_cidr))
         configure_nat_network(nat_name, nat_cidr)
 
+
+def deploy_automation_node(cfg, script_dir):
+    """
+    Builds the automation node itself (vm/container/kubernetes, cfg's _automation_node) via
+    setup_lab_automation.sh. For vm mode, assumes prepare_kvm_host() has already run on this
+    same host (libvirt/storage pool must already exist — this function has no KVM-host
+    awareness of its own). Independently callable — setup_kvm_node.py's own run and
+    setup_automation.py's mandatory core step both use this one function.
+    """
+    lab_automation_script = _find("setup_lab_automation.sh")
+    if not lab_automation_script.is_file():
+        die("Missing script, please download setup_lab_automation.sh script from the GIT repository")
+
+    node_mode = cfg.get("_automation_node", "") or "vm"
+    fallback = False
+    if node_mode == "vm":
+        try:
+            download_automation_image(cfg.get("_QCOW_IMAGE", ""))
+        except OSError as e:
+            warn("could not download the automation VM image ({}); creating the automation node as a container "
+                 "instead".format(e))
+            node_mode, fallback = "container", True
+
     log("Start setup_lab_automation.sh script to create the automation node ({})".format(node_mode))
     rc = run_lab_automation(lab_automation_script, node_mode)
     if rc != 0 and node_mode == "vm" and rc != 130:
@@ -448,10 +476,24 @@ def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None):
         node_mode, fallback = "container", True
         rc = run_lab_automation(lab_automation_script, node_mode)
     if rc == 0 and fallback:
-        cfg_path = _find("lab.cfg")
+        cfg_path = _find("automation.cfg")
         cfg_path.write_text(render_lab_cfg(cfg_path.read_text(), {"_automation_node": "container"}))
     if rc != 0:
         die("{} failed (exit {}); see its output above".format(lab_automation_script.name, rc))
+
+
+def do_it_all(cfg, script_dir, share_storage_from=None, copy_storage_from=None, build_automation_node=True):
+    """
+    setup_kvm_node.py's own combined run: always prepare_kvm_host(), then
+    deploy_automation_node() too unless build_automation_node=False — e.g. adding a 2nd/3rd KVM
+    host to a lab whose automation node already lives elsewhere, where this host still becomes
+    a real KVM node but doesn't also get an automation node built on it.
+    """
+    prepare_kvm_host(cfg, script_dir, share_storage_from, copy_storage_from)
+    if not build_automation_node:
+        log("KVM host ready — no automation node built on it (not requested for this run)")
+        return
+    deploy_automation_node(cfg, script_dir)
 
 
 def run_lab_automation(script: Path, node_mode: str) -> int:
@@ -555,81 +597,192 @@ class Asker:
             print("  the passwords are empty or differ, try again")
 
 
-def build_values(args: argparse.Namespace, ask: Asker, profile_name: str) -> Tuple[Dict[str, str], str]:
-    """lab.cfg values from options, detected host settings and answers; plus the password if one was generated."""
+# ── detection helpers for the questions below (generic facts about whichever host/cluster this
+# runs against — never an assumption baked in from one particular machine) ──────────────────────
+
+def _is_wireless(nic: str) -> bool:
+    """True if `nic` is a wireless interface — it cannot be bridged the way a VM's network needs
+    (no normal AP supports the 4-address/WDS mode a bridged wireless client would need), so nat
+    is the real default there, not bridge."""
+    return Path("/sys/class/net/{}/wireless".format(nic)).is_dir()
+
+
+def _existing_ssh_keys() -> List[Path]:
+    """Every ~/.ssh/id_*.pub already on this host."""
+    return sorted(Path("~/.ssh").expanduser().glob("id_*.pub"))
+
+
+def _scc_registered() -> bool:
+    """True if this host already has SUSEConnect credentials on file (registered by some other
+    means, e.g. at image build time) — asking for a regcode would be redundant."""
+    return Path("/etc/zypp/credentials.d/SCCcredentials").is_file()
+
+
+def scc_credential() -> Dict[str, str]:
+    """This host's SCC registration credential (scc_regcode/scc_email/scc_url), from the
+    encrypted credential store (libs/primary.py's try_load_service_credential) — never plaintext
+    in a config file. {} when none is on file (an already-registered host needs none)."""
+    data, _error = primary.try_load_service_credential("scc")
+    return data or {}
+
+
+def _write_scc_credential(regcode: str, email: str, url: str) -> None:
+    """Writes this host's SCC registration fields to the encrypted-credential-store location
+    (unencrypted here: this is a one-shot value used immediately by this same install run, not a
+    long-lived secret an operator manages later — see libs/primary.py's "unencrypted:true" opt-out,
+    which write_credential_file(encrypt=False) already produces)."""
+    out_dir = Path(primary.credentials_dirs()[0])
+    fields = {k: v for k, v in (("scc_regcode", regcode), ("scc_email", email), ("scc_url", url)) if v}
+    setup_credentials.write_credential_file(out_dir / "scc.yaml", "scc", fields, encrypt=False)
+
+
+def _default_kubeconfig() -> str:
+    """$KUBECONFIG if set, else ~/.kube/config if it exists, else "" (kubectl's own default)."""
+    env = os.environ.get("KUBECONFIG", "")
+    if env:
+        return env
+    default = Path("~/.kube/config").expanduser()
+    return str(default) if default.is_file() else ""
+
+
+def _k8s_has_loadbalancer(kubeconfig: str) -> bool:
+    """True if the cluster at `kubeconfig` can already satisfy a LoadBalancer Service — either one
+    already has an external address, or a LB controller (MetalLB, a cloud provider's) is running.
+    False (the macvlan-leaning default) on any error: kubectl missing, cluster unreachable, no
+    kubeconfig at all — never assume a working LoadBalancer without real evidence."""
+    cmd = ["kubectl"] + (["--kubeconfig", kubeconfig] if kubeconfig else [])
+    svcs = subprocess.run(cmd + ["get", "svc", "-A", "-o",
+                                "jsonpath={range .items[?(@.spec.type==\"LoadBalancer\")]}"
+                                "{.status.loadBalancer.ingress}{end}"],
+                         capture_output=True, text=True, check=False)
+    if svcs.returncode == 0 and svcs.stdout.strip():
+        return True
+    pods = subprocess.run(cmd + ["get", "pods", "-A", "-o", "name"], capture_output=True, text=True, check=False)
+    if pods.returncode != 0:
+        return False
+    return any("metallb" in line.lower() or "cloud-controller" in line.lower()
+               for line in pods.stdout.splitlines())
+
+
+def build_values(args: argparse.Namespace, ask: Asker,
+                  profile_name: str) -> Tuple[Dict[str, str], Dict[str, str], str]:
+    """automation.cfg / kvm_host.cfg values from options, detected host settings and answers;
+    plus the password if one was generated. Returns (automation_values, kvm_values, password)."""
     net = host_network.current_settings()
+
+    mode_default = args.network_mode
+    if not mode_default:
+        if _is_wireless(net.nic):
+            print("- {} is a wireless interface, which can't be bridged for a VM's network the "
+                  "usual way — defaulting the lab network to nat instead of bridge.".format(net.nic))
+            mode_default = "nat"
+        else:
+            mode_default = "bridge"
     mode = ask("Lab network: bridge (VMs on this host's LAN) or nat (private libvirt network)",
-               args.network_mode or "bridge", ("bridge", "nat"))
+               mode_default, ("bridge", "nat"))
+
     domain = ask("Lab DNS domain", args.domain or "mydemo.lab")
-    values = {"_network_mode": mode, "_mydomain": domain,
-              "_automation_node": ask("Automation node: vm, container (a podman container on this host) or "
-                                      "kubernetes", args.automation_node or "vm", ("vm", "container", "kubernetes"))}
-    if values["_automation_node"] == "kubernetes":
-        values["_k8s_kubeconfig"] = ask("kubeconfig of the cluster (empty: kubectl's default)",
-                                        args.k8s_kubeconfig or "")
-        values["_k8s_network"] = ask("How the lab reaches the automation node: loadbalancer or macvlan",
-                                     args.k8s_network or "loadbalancer", ("loadbalancer", "macvlan"))
-        if values["_k8s_network"] == "macvlan":
-            values["_k8s_macvlan_master"] = ask("Cluster nodes' interface on the lab network",
-                                                args.k8s_macvlan_master or "")
-        values.update({k: v for k, v in (("_k8s_namespace", args.k8s_namespace),
-                                         ("_k8s_storage_class", args.k8s_storage_class),
-                                         ("_k8s_volume_size", args.k8s_volume_size),
-                                         ("_automation_image", args.automation_image)) if v})
+
+    node_default = args.automation_node
+    if not node_default:
+        resources = kvm_host_profiles.host_resources()
+        low_resource = resources["vcpus"] < 2 or (0 < resources["mem_mib"] < 4096)
+        is_vm = kvm_host_profiles.is_virtualized_guest()
+        if low_resource or is_vm:
+            why = ("only {} vCPU/{} MiB RAM".format(resources["vcpus"], resources["mem_mib"]) if low_resource
+                   else "this host is itself a VM (building a nested VM here is unusual)")
+            print("- Defaulting the automation node to container: {}.".format(why))
+            node_default = "container"
+        else:
+            node_default = "vm"
+    automation = {"_mydomain": domain,
+                  "_automation_node": ask("Automation node: vm, container (a podman container on this host) or "
+                                          "kubernetes", node_default, ("vm", "container", "kubernetes"))}
+    kvm: Dict[str, str] = {"_network_mode": mode}
+
+    if automation["_automation_node"] == "kubernetes":
+        automation["_k8s_kubeconfig"] = ask("kubeconfig of the cluster", args.k8s_kubeconfig
+                                            or _default_kubeconfig())
+        net_default = args.k8s_network or (
+            "loadbalancer" if _k8s_has_loadbalancer(automation["_k8s_kubeconfig"]) else "macvlan")
+        automation["_k8s_network"] = ask("How the lab reaches the automation node: loadbalancer or macvlan",
+                                         net_default, ("loadbalancer", "macvlan"))
+        if automation["_k8s_network"] == "macvlan":
+            automation["_k8s_macvlan_master"] = ask("Cluster nodes' interface on the lab network",
+                                                     args.k8s_macvlan_master or net.nic)
+        automation.update({k: v for k, v in (("_k8s_namespace", args.k8s_namespace),
+                                             ("_k8s_storage_class", args.k8s_storage_class),
+                                             ("_k8s_volume_size", args.k8s_volume_size),
+                                             ("_automation_image", args.automation_image)) if v})
+
     if mode == "bridge":
         on_bridge = host_network.is_bridge(net.nic)
-        values["_bridge_name"] = net.nic if on_bridge else (args.bridge_name or "br0")
-        values["_bridge_nic"] = "" if on_bridge else ask(
-            "NIC to turn into bridge {}".format(values["_bridge_name"]), args.bridge_nic or net.nic)
+        kvm["_bridge_name"] = net.nic if on_bridge else (args.bridge_name or "br0")
+        kvm["_bridge_nic"] = "" if on_bridge else ask(
+            "NIC to turn into bridge {}".format(kvm["_bridge_name"]), args.bridge_nic or net.nic)
         network = net.network
         gateway = args.gateway or net.gateway
         dns = args.dns or (net.dns[0] if net.dns else net.gateway)
         default_ip = args.automation_ip or suggest_free_ip(network, {net.ip, gateway, dns})
-        values["_virt_srv"] = "root@{}".format(net.ip)
+        kvm["_virt_srv"] = "root@{}".format(net.ip)
     else:
-        network = ipaddress.ip_network(args.nat_cidr or "192.168.150.0/24")
+        nat_cidr = ask("NAT network for the automation node", args.nat_cidr or "192.168.150.0/24")
+        network = ipaddress.ip_network(nat_cidr)
         gateway = dns = str(network.network_address + 1)
         default_ip = args.automation_ip or str(network.network_address + 10)
-        values.update({"_bridge_name": "", "_bridge_nic": "", "_nat_network_cidr": str(network),
-                       "_virt_srv": "root@{}".format(gateway)})
-    values.update({
-        "_myip": ask("IP address for the automation VM on {}".format(network), default_ip),
+        kvm.update({"_bridge_name": "", "_bridge_nic": "", "_nat_network_cidr": str(network),
+                   "_virt_srv": "root@{}".format(gateway)})
+
+    ssh_keys = _existing_ssh_keys()
+    ssh_default = args.ssh_pub_key or "~/.ssh/id_ed25519.pub"
+    if len(ssh_keys) > 1:
+        ssh_default = ask("Which SSH public key may log in as root on the automation node?",
+                          str(ssh_keys[-1]), tuple(str(k) for k in ssh_keys))
+    automation.update({
+        "_myip": ask("IP address for the automation node on {}".format(network), default_ip),
         "_mynet": str(network), "_mygw": gateway, "_mydns": dns, "_mynetrev": reverse_zone(network),
         "AUTOMATION_HOSTNAME": "automation.{}".format(domain), "MYREG": "registry.{}".format(domain),
         "_timezone": args.timezone or detect_timezone(),
-        "ROOT_SSH_PUB_KEY": ensure_ssh_key(args.ssh_pub_key or "~/.ssh/id_ed25519.pub"),
+        "ROOT_SSH_PUB_KEY": ensure_ssh_key(ssh_default),
     })
     password, generated = ask.password(args.root_password or os.environ.get("LAB_ROOT_PASSWORD", ""))
-    values.update({"root_pwd": password, "ROOT_PWD_HASH": password_hash(password)})
-    if profile_name.startswith("sles"):
-        values["SUSE_regcode"] = ask("SUSE registration code (empty if this host is already registered)",
-                                     args.suse_regcode or "")
-        values["SUSE_email"] = args.suse_email or ""
-        values["SUSE_url"] = args.suse_url or ""
-    return values, password if generated else ""
+    automation.update({"root_pwd": password, "ROOT_PWD_HASH": password_hash(password)})
+
+    if profile_name.startswith("sles") and not _scc_registered():
+        regcode = ask("SUSE registration code (needed: this host's own SLES repos require it)",
+                      args.suse_regcode or "")
+        if regcode:
+            email = ask("SUSE registration e-mail (optional)", args.suse_email or "")
+            url = ask("Registration server URL (optional — RMT/SMT instead of SCC)", args.suse_url or "")
+            _write_scc_credential(regcode, email, url)
+
+    return automation, kvm, (password if generated else "")
 
 
-def _flag_values(args: argparse.Namespace) -> Dict[str, str]:
-    """lab.cfg keys set directly by options, applied on top of an existing lab.cfg."""
-    pairs = {"_network_mode": args.network_mode, "_mydomain": args.domain, "_bridge_name": args.bridge_name,
-             "_bridge_nic": args.bridge_nic, "_myip": args.automation_ip, "_mygw": args.gateway,
-             "_mydns": args.dns, "_nat_network_cidr": args.nat_cidr, "_timezone": args.timezone,
-             "_automation_node": args.automation_node, "_k8s_kubeconfig": args.k8s_kubeconfig,
-             "_k8s_namespace": args.k8s_namespace, "_k8s_network": args.k8s_network,
-             "_k8s_macvlan_master": args.k8s_macvlan_master, "_k8s_storage_class": args.k8s_storage_class,
-             "_k8s_volume_size": args.k8s_volume_size, "_automation_image": args.automation_image,
-             "SUSE_regcode": args.suse_regcode, "SUSE_email": args.suse_email, "SUSE_url": args.suse_url}
+def _automation_flag_values(args: argparse.Namespace) -> Dict[str, str]:
+    """automation.cfg keys set directly by options, applied on top of an existing automation.cfg."""
+    pairs = {"_mydomain": args.domain, "_myip": args.automation_ip, "_mygw": args.gateway,
+             "_mydns": args.dns, "_timezone": args.timezone, "_automation_node": args.automation_node,
+             "_k8s_kubeconfig": args.k8s_kubeconfig, "_k8s_namespace": args.k8s_namespace,
+             "_k8s_network": args.k8s_network, "_k8s_macvlan_master": args.k8s_macvlan_master,
+             "_k8s_storage_class": args.k8s_storage_class, "_k8s_volume_size": args.k8s_volume_size,
+             "_automation_image": args.automation_image}
+    return {k: v for k, v in pairs.items() if v is not None}
+
+
+def _kvm_flag_values(args: argparse.Namespace) -> Dict[str, str]:
+    """kvm_host.cfg keys set directly by options, applied on top of an existing kvm_host.cfg."""
+    pairs = {"_network_mode": args.network_mode, "_bridge_name": args.bridge_name,
+             "_bridge_nic": args.bridge_nic, "_nat_network_cidr": args.nat_cidr}
     return {k: v for k, v in pairs.items() if v is not None}
 
 
 # ── command line ──────────────────────────────────────────────────────────────
 
-def parse_args(argv: List[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="setup_kvm_node.py",
-        description="Prepare this host (or TARGET over SSH) as a lab-in-a-box KVM hypervisor: install its "
-                    "packages, bridge its NIC, write lab.cfg and create the automation VM. Without lab.cfg, it is "
-                    "written from the options and the host's own settings; --interactive asks for each value.")
+def build_arg_parser(prog: str, description: str) -> argparse.ArgumentParser:
+    """The options setup_kvm_node.py and setup_automation.py both take — shared so each gets an
+    accurate --help (its own prog/description), not one script's text leaking into the other's."""
+    p = argparse.ArgumentParser(prog=prog, description=description)
     p.add_argument("target", nargs="?", help="set up this remote host over SSH instead of the local one")
     p.add_argument("--interactive", action="store_true",
                    help="ask for each lab.cfg value (the host's own settings are the defaults) and for confirmation "
@@ -675,9 +828,25 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--suse-email", help="SLES registration e-mail")
     p.add_argument("--suse-url", help="registration server URL (RMT/SMT) instead of SCC")
     p.add_argument("--share-storage-from", nargs="?", const="", metavar="HOST",
-                   help="sshfs-mount /var/lib/libvirt/images from HOST (default: lab.cfg's _virt_srv)")
+                   help="sshfs-mount /var/lib/libvirt/images from HOST (default: kvm_host.cfg's _virt_srv)")
     p.add_argument("--copy-storage-from", nargs="?", const="", metavar="HOST",
                    help="one-time rsync copy of /var/lib/libvirt/images from HOST instead")
+    return p
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    p = build_arg_parser(
+        "setup_kvm_node.py",
+        "Prepare this host (or TARGET over SSH) as a lab-in-a-box KVM hypervisor: install its "
+        "packages, bridge its NIC, write automation.cfg/kvm_host.cfg and optionally create an "
+        "automation node. Without those files, they are written from the options and the host's own "
+        "settings; --interactive asks for each value.")
+    return _finish_parse(p, argv)
+
+
+def _finish_parse(p: argparse.ArgumentParser, argv: List[str]) -> argparse.Namespace:
+    """The validation/defaulting both scripts' parse_args() share, once each has added its own
+    extra options to the parser build_arg_parser() returned."""
     args = p.parse_args(argv)
     if args.share_storage_from is not None and args.copy_storage_from is not None:
         p.error("--share-storage-from and --copy-storage-from are mutually exclusive")
@@ -706,6 +875,66 @@ def run_remote(target: str, argv: List[str]) -> None:
                     "bash {0}/install_demo_server_scripts.sh --source {0} {1}".format(remote_dir, remote_args)])
 
 
+def review_cfg(paths: List[Path]) -> None:
+    """Prints each of `paths`' full contents and where it lives, so an operator in --interactive
+    mode can see exactly what's about to be applied — and, since this runs before the
+    confirmation prompt, still has a real chance to edit the file in another terminal before
+    answering yes (main() reloads after confirming, so an edit here actually takes effect)."""
+    for path in paths:
+        if not path.is_file():
+            continue
+        print("\n--- {} (edit now if you want to change anything, then confirm below) ---".format(path))
+        print(path.read_text().rstrip("\n"))
+    print()
+
+
+def _write_cfg(path: Path, template_name: str, reconfigure: bool, values: Dict[str, str],
+               flag_values: Dict[str, str]) -> None:
+    """Writes `path` from its template+values (fresh/--reconfigure) or updates an existing file
+    in place with flag_values only — the same pattern main() always used for the one lab.cfg,
+    now shared by automation.cfg and kvm_host.cfg."""
+    if reconfigure or not path.is_file():
+        path.write_text(render_lab_cfg(_find(template_name).read_text(), values))
+    else:
+        path.write_text(render_lab_cfg(path.read_text(), flag_values))
+    path.chmod(0o600)
+
+
+def _auto_split_legacy_lab_cfg(automation_path: Path, kvm_path: Path) -> bool:
+    """
+    The one-time automation.cfg/kvm_host.cfg split, applied automatically on startup rather than
+    left as a manual `migrate_config.py` + promote-the-output chore: when neither new file exists
+    yet but a pre-split lab.cfg does, split it straight into both real, live files (never
+    touching lab.cfg itself) and report what moved. Mirrors libs/migrations.py's
+    ensure_current() for lab definitions — detect, migrate, report, continue with the result —
+    adapted for a 1-input/2-output structural split instead of an in-place field rewrite.
+    Returns True if a split happened (so the caller's own "fresh" check re-evaluates to False).
+    """
+    legacy_path = _find("lab.cfg")
+    if not legacy_path.is_file():
+        return False
+    import migrate_config  # noqa: E402 (scripts/ sibling — see sys.path setup above)
+    log("{} is from before the automation.cfg/kvm_host.cfg split — splitting it now".format(legacy_path))
+    for change in migrate_config.split_legacy_lab_cfg(legacy_path, automation_out=automation_path, kvm_out=kvm_path):
+        print("- {}".format(change))
+    print("{} itself is untouched; it will be regenerated as the derived file once this run finishes.".format(
+        legacy_path))
+    return True
+
+
+def write_lab_cfg(cfg: Dict[str, str]) -> Path:
+    """Writes the derived setup_demo_server/lab.cfg that setup_lab_automation.sh (bash) still
+    sources (`. lab.cfg`) — regenerated from automation.cfg + kvm_host.cfg every run, never
+    hand-edited. Must run before deploy_automation_node(), which assumes it is already there.
+    Shared by this script's own main() and setup_automation.py's."""
+    lab_cfg_path = _find("lab.cfg")
+    lab_cfg_path.write_text(
+        "# Generated from automation.cfg + kvm_host.cfg — edit those, not this file.\n" +
+        "\n".join("{}={}".format(k, shlex.quote(str(v))) for k, v in cfg.items()) + "\n")
+    lab_cfg_path.chmod(0o600)
+    return lab_cfg_path
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     args = parse_args(argv)
@@ -714,42 +943,78 @@ def main(argv: Optional[List[str]] = None) -> None:
         return
 
     profile = kvm_host_profiles.detect_profile()
-    cfg_path = _find("lab.cfg")
+    automation_path, kvm_path = _find("automation.cfg"), _find("kvm_host.cfg")
+    if not args.reconfigure and not automation_path.is_file():
+        _auto_split_legacy_lab_cfg(automation_path, kvm_path)
     generated_password = ""
-    if args.reconfigure or not cfg_path.is_file():
-        log("Writing lab.cfg")
-        ask = Asker(interactive=args.interactive)
-        values, generated_password = build_values(args, ask, profile.name if profile else "")
-        cfg_path.write_text(render_lab_cfg(_find("lab.cfg.template").read_text(), values))
+    ask = Asker(interactive=args.interactive)
+    fresh = args.reconfigure or not automation_path.is_file()
+    if fresh:
+        log("Writing automation.cfg and kvm_host.cfg")
+        automation_values, kvm_values, generated_password = build_values(args, ask, profile.name if profile else "")
     else:
-        cfg_path.write_text(render_lab_cfg(cfg_path.read_text(), _flag_values(args)))
-    cfg_path.chmod(0o600)
-    log("Loading configuration file {}".format(cfg_path))
-    cfg = primary.load_shell_vars(cfg_path)
+        automation_values = kvm_values = {}
+    _write_cfg(automation_path, "automation.cfg.template", fresh, automation_values,
+              _automation_flag_values(args))
+    _write_cfg(kvm_path, "kvm_host.cfg.template", fresh, kvm_values, _kvm_flag_values(args))
+    log("Loading configuration files {} and {}".format(automation_path, kvm_path))
+    cfg = dict(primary.load_shell_vars(kvm_path), **primary.load_shell_vars(automation_path))
 
     share_from, copy_from = args.share_storage_from, args.copy_storage_from
     if share_from == "" or copy_from == "":
         host = _primary_storage_host(cfg)
         if not host:
-            die("--share-storage-from/--copy-storage-from need a HOST (lab.cfg's _virt_srv is not set)")
+            die("--share-storage-from/--copy-storage-from need a HOST (kvm_host.cfg's _virt_srv is not set)")
         share_from = host if share_from == "" else share_from
         copy_from = host if copy_from == "" else copy_from
 
-    print("\nlab network {} ({} mode), automation node {} ({}) at {}, gateway {}, DNS {}".format(
-        cfg.get("_mynet", ""), cfg.get("_network_mode", "bridge"), cfg.get("AUTOMATION_HOSTNAME", ""),
-        cfg.get("_automation_node", "") or "vm",
-        cfg.get("_myip", ""), cfg.get("_mygw", ""), cfg.get("_mydns", "")))
+    # Whether this run also builds an automation node here, or just prepares this host as a KVM
+    # node (e.g. a 2nd/3rd host joining a lab whose automation node already lives elsewhere).
+    # Reachability is only meaningful when automation.cfg already names a real _myip from a
+    # previous run; on a genuine first-time install there is nothing to probe, so default yes.
+    build_default = "yes"
+    if not fresh and _automation_host_reachable(cfg.get("_myip", "")):
+        build_default = "no"
+        print("- An automation node is already answering at {} — defaulting to not building another "
+              "one.".format(cfg.get("_myip", "")))
+    build_automation_node = ask("Also build an automation node on this KVM host?", build_default,
+                                ("yes", "no")) == "yes"
+
+    print("\nlab network {} ({} mode), KVM host ready{}".format(
+        cfg.get("_mynet", ""), cfg.get("_network_mode", "bridge"),
+        ", automation node {} ({}) at {}, gateway {}, DNS {}".format(
+            cfg.get("AUTOMATION_HOSTNAME", ""), cfg.get("_automation_node", "") or "vm",
+            cfg.get("_myip", ""), cfg.get("_mygw", ""), cfg.get("_mydns", "")) if build_automation_node else ""))
     if cfg.get("_bridge_nic"):
         print("{} becomes a port of bridge {} (the host keeps its address)".format(
             cfg["_bridge_nic"], cfg.get("_bridge_name") or "br0"))
+    if args.interactive:
+        review_cfg([automation_path, kvm_path])
     if not args.yes and input("Set up this host with these settings? (yes/no): ").strip() != "yes":
-        print("Nothing changed. Edit {} or run again with different options.".format(cfg_path))
+        print("Nothing changed. Edit {}/{} or run again with different options.".format(
+            automation_path, kvm_path))
         return
+    # Reload in case the operator edited either file during the pause above — the confirmation
+    # is a real chance to review and change something, not just a rubber stamp of what was
+    # already decided.
+    cfg = dict(primary.load_shell_vars(kvm_path), **primary.load_shell_vars(automation_path))
+    write_lab_cfg(cfg)
 
-    do_it_all(cfg, _SCRIPT_DIR, share_storage_from=share_from, copy_storage_from=copy_from)
+    do_it_all(cfg, _SCRIPT_DIR, share_storage_from=share_from, copy_storage_from=copy_from,
+             build_automation_node=build_automation_node)
     if generated_password:
-        print("\nGenerated root password for the automation VM: {}  (also in {})".format(
-            generated_password, cfg_path))
+        print("\nGenerated root password for the automation node: {}  (also in {})".format(
+            generated_password, automation_path))
+
+    if args.interactive:
+        if ask("Add another KVM node now? (needs its SSH access)", "no", ("yes", "no")) == "yes":
+            target = ask("Hostname or IP of the new KVM node", "")
+            if target:
+                extra_argv = ["--share-storage-from", host_network.current_settings().ip] if ask(
+                    "Share this host's storage with it over sshfs?", "yes", ("yes", "no")) == "yes" else []
+                run_remote(target, extra_argv)
+        if ask("Add cloud credentials now?", "no", ("yes", "no")) == "yes":
+            setup_credentials.interactive_build(primary.credentials_dirs()[0])
 
 
 if __name__ == "__main__":

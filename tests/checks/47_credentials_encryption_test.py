@@ -205,7 +205,8 @@ check("interactive_build: writes <provider>-<account>.yaml with the fields fille
                                                    "unencrypted": True, "HETZNER_TOKEN": "tok-123"}
       and oct(path.stat().st_mode & 0o777) == "0o600")
 kinds = sorted(sc.SERVICE_CREDENTIAL_FIELDS)
-answers = [str(kinds.index("scc") + 1), "main", "", "user1", ""]  # kind, account, scc_user empty then given, encrypt
+answers = [str(kinds.index("scc") + 1), "main", "", "user1", "", "", ""]  # kind, account, scc_user empty then
+                                                                          # given, scc_email (skip), scc_url (skip), encrypt
 path, data = interactive(sc.interactive_build_service, answers, ["sccpw", "", "pass-phrase-1", "pass-phrase-1"])
 check("interactive_build_service: asks again for an empty required field and encrypts by default",
       path.name == "scc-main.yaml" and data["credential_kind"] == "scc" and data.get("encrypted") is True

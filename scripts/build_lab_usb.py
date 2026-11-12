@@ -85,6 +85,25 @@ def _lab_host_name(definition):
     return "labhost.{}".format(domain)
 
 
+def render_cfg_lines(template_text: str, overrides: dict, template_name: str) -> list:
+    """`template_text` (automation.cfg.template or kvm_host.cfg.template) with each KEY in
+    `overrides` replaced on its own line; every other line kept as-is. Dies if an override names
+    a key the template has no line for (shouldn't happen today, but fail loudly rather than
+    silently drop it if a template ever changes shape)."""
+    lines, seen = [], set()
+    for line in template_text.splitlines():
+        key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
+        if key in overrides:
+            lines.append("{}={}".format(key, overrides[key]))
+            seen.add(key)
+        else:
+            lines.append(line)
+    missing = set(overrides) - seen
+    if missing:
+        die("{} is missing expected key(s): {}".format(template_name, ", ".join(sorted(missing))))
+    return lines
+
+
 def create_lab_host_vm(definition, config, defaults, host_name):
     """
     Creates the lab-host VM itself via this project's existing create_vm —
@@ -237,10 +256,13 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
         if r.returncode != 0:
             die("failed to rsync {}/ to the lab-host VM".format(src))
 
-    # setup_lab_automation.sh and setup_kvm_node.py load lab.cfg only, with no defaults. A minimal lab.cfg misses required variables,
-    # such as _qemu_addr and ROOT_SSH_PUB_KEY. The complete lab.cfg.template from setup_demo_server/ is therefore used, and only the
-    # keys this flow changes are overridden.
-    template_path = repo_root / "setup_demo_server" / "lab.cfg.template"
+    # setup_kvm_node.py reads automation.cfg + kvm_host.cfg, not lab.cfg directly (lab.cfg is a
+    # derived file it regenerates itself every run — see its own main()). Both source templates
+    # are used in full, with only the keys this flow changes overridden, same reasoning as
+    # before: setup_lab_automation.sh has no built-in defaults, so a minimal file misses
+    # required variables like _qemu_addr and ROOT_SSH_PUB_KEY.
+    automation_template_path = repo_root / "setup_demo_server" / "automation.cfg.template"
+    kvm_template_path = repo_root / "setup_demo_server" / "kvm_host.cfg.template"
     local_pubkey = Path("/root/.ssh/id_rsa.pub")
     if not local_pubkey.is_file():
         die("no local {} found — needed to seed the lab-host VM's "
@@ -250,42 +272,34 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
     # same CIDR as the network itself.
     _nat_net = ipaddress.ip_network(_NAT_NETWORK_CIDR, strict=False)
     _nat_gateway = str(list(_nat_net.hosts())[0])
-    overrides = {
-        "_network_mode": "\"nat\"",
-        "_nat_network_name": "\"{}\"".format(_NAT_NETWORK_NAME),
-        "_nat_network_cidr": "\"{}\"".format(_NAT_NETWORK_CIDR),
+    automation_overrides = {
         "_myip": "\"{}\"".format(_NESTED_AUTOMATION_IP),
         "_mygw": _nat_gateway,
         "_mydns": _nat_gateway,
         "_mynet": _NAT_NETWORK_CIDR,
         "_mynetrev": ".".join(reversed(str(_nat_net.network_address).split(".")[:3])),
         "AUTOMATION_HOSTNAME": "'automation.lab'",
+        "ROOT_SSH_PUB_KEY": "'{}'".format(local_pubkey.read_text().strip()),
+    }
+    kvm_overrides = {
+        "_network_mode": "\"nat\"",
+        "_nat_network_name": "\"{}\"".format(_NAT_NETWORK_NAME),
+        "_nat_network_cidr": "\"{}\"".format(_NAT_NETWORK_CIDR),
         "_QCOW_IMAGE": defaults.get(
             "_QCOW_IMAGE",
             "/var/lib/libvirt/images/sources/openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2",
         ),
-        "ROOT_SSH_PUB_KEY": "'{}'".format(local_pubkey.read_text().strip()),
         # The template's default graphics type, spice, needs QEMU built with spice support, which a minimal host does not have. none
         # does not work either: with --graphics=none the openSUSE appliance image busy-loops during boot and never brings up its
         # network. A real graphics device lets it boot. vnc needs no extra packages.
         "_automation_graphics": "\"vnc\"",
     }
-    lab_cfg_lines = []
-    seen = set()
-    for line in template_path.read_text().splitlines():
-        key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
-        if key in overrides:
-            lab_cfg_lines.append("{}={}".format(key, overrides[key]))
-            seen.add(key)
-        else:
-            lab_cfg_lines.append(line)
-    # Any override key lab.cfg.template didn't already have a line for
-    # (shouldn't happen today, but fail loudly rather than silently drop it
-    # if the template ever changes shape).
-    missing = set(overrides) - seen
-    if missing:
-        die("lab.cfg.template is missing expected key(s): {}".format(", ".join(sorted(missing))))
-    ssh_run(lab_host_ip, "cat > /root/setup_demo_server/lab.cfg", input_text="\n".join(lab_cfg_lines) + "\n")
+
+    for template_path, overrides, remote_name in ((automation_template_path, automation_overrides, "automation.cfg"),
+                                                   (kvm_template_path, kvm_overrides, "kvm_host.cfg")):
+        lines = render_cfg_lines(template_path.read_text(), overrides, template_path.name)
+        ssh_run(lab_host_ip, "cat > /root/setup_demo_server/{}".format(remote_name),
+               input_text="\n".join(lines) + "\n")
 
     log("Running setup_kvm_node.py on the lab-host VM "
         "(creates the NAT'd libvirt network + the nested automation VM — unchanged, already-tested code)")

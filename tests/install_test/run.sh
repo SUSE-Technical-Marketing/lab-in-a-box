@@ -1,6 +1,6 @@
 #!/bin/bash
 # Real multi-OS verification of install_demo_server_scripts.sh: the curl-piped bootstrap that
-# installs git+python and hands off to setup_demo_server/setup_kvm_node.py. Unlike tests/checks/
+# installs git+python and hands off to setup_demo_server/setup_automation.py. Unlike tests/checks/
 # (every check runs stubbed, inside one shared container), this pulls one real base image per
 # distribution the script's own case statement claims to support and lets it run its actual
 # package manager — that is the only way to confirm "zypper install python311" or "dnf install

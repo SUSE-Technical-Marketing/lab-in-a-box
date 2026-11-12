@@ -1,8 +1,9 @@
 #!/usr/bin/env python3.11
 # Mocked unit tests for setup_demo_server/setup_kvm_node.py
-# — image-URL construction (Leap 15 vs. 16 filenames) and the new bridge-nic/
-# extra-packages wiring in do_it_all(). No real network/subprocess calls.
-# Run from 20_setup_kvm_node.sh, in its own container — see tests/run_tests.sh.
+# — image-URL construction (Leap 15 vs. 16 filenames), the bridge-nic/extra-packages wiring in
+# do_it_all(), the automation.cfg/kvm_host.cfg split and every interactive-question default.
+# No real network/subprocess calls. Run from 20_setup_kvm_node.sh, in its own container — see
+# tests/run_tests.sh.
 import os
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from unittest import mock
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "setup_demo_server"))
+sys.path.insert(0, str(_REPO / "scripts"))
 
 import setup_kvm_node as skn  # noqa: E402
 
@@ -156,7 +158,7 @@ class _FakeProfile:
 
 
 def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=None, downloads=None,
-                   download_error=None):
+                   download_error=None, build_automation_node=True):
     with mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=fake_profile), \
          mock.patch.object(skn, "install_yq"), \
          mock.patch.object(skn, "ensure_fusermount_compat",
@@ -167,6 +169,7 @@ def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=No
          mock.patch.object(Path, "write_text"), \
          mock.patch.object(Path, "symlink_to"), \
          mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+         mock.patch.object(skn, "scc_credential", return_value={}), \
          mock.patch.object(skn, "download_automation_image",
                            side_effect=download_error or ((lambda image: downloads.append(image))
                                                           if downloads is not None else None)), \
@@ -176,7 +179,7 @@ def _run_do_it_all(cfg, fake_profile, nat_calls=None, fusermount_compat_calls=No
          mock.patch.object(skn.host_network, "make_bridge",
                             side_effect=lambda bridge, nic: fake_profile.bridge_calls.append((nic, bridge)) or (NET, NET)), \
          mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="")):
-        skn.do_it_all(cfg, Path("/tmp"))
+        skn.do_it_all(cfg, Path("/tmp"), build_automation_node=build_automation_node)
 
 
 fake = _FakeProfile()
@@ -203,7 +206,18 @@ check("make_bridge defaults the bridge name to br0 when _bridge_name is unset",
       fake.bridge_calls == [("eth0", "br0")])
 
 
-# ── do_it_all(): SUSE_regcode/SUSE_email/SUSE_url wiring, SLES only ─────────
+# ── do_it_all(): build_automation_node=False — KVM host only, no automation node ─────────────
+fake = _FakeProfile()
+with mock.patch.object(skn, "run_lab_automation") as run_la, \
+     mock.patch.object(skn, "download_automation_image") as dl:
+    _run_do_it_all({"_bridge_nic": "eth0"}, fake, build_automation_node=False)
+check("build_automation_node=False still configures the KVM host (packages installed)",
+      fake.installed_packages == ["libvirt", "podman"])
+check("build_automation_node=False never downloads the VM image or runs setup_lab_automation.sh",
+      not dl.called and not run_la.called)
+
+
+# ── do_it_all(): SCC credential wiring, SLES only, via scc_credential() ─────
 # A real _SuseRegisteredProfile subclass (not _FakeProfile, which isn't one
 # and so must never trigger this wiring at all — checked below too), so
 # isinstance() in do_it_all() sees it correctly.
@@ -231,14 +245,31 @@ class _FakeSuseProfile(skn.kvm_host_profiles._SuseRegisteredProfile):
         return []
 
 
+def _run_do_it_all_scc(cfg, fake_profile, scc):
+    with mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=fake_profile), \
+         mock.patch.object(skn, "install_yq"), mock.patch.object(skn, "ensure_fusermount_compat"), \
+         mock.patch.object(skn, "_find", return_value=Path("/tmp/setup_lab_automation.sh")), \
+         mock.patch.object(Path, "is_file", return_value=True), mock.patch.object(Path, "write_text"), \
+         mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+         mock.patch.object(skn, "scc_credential", return_value=scc), \
+         mock.patch.object(skn, "download_automation_image"), \
+         mock.patch.object(skn.host_network, "make_bridge",
+                           side_effect=lambda bridge, nic: fake_profile.bridge_calls.append((nic, bridge)) or (NET, NET)), \
+         mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="")):
+        skn.do_it_all(cfg, Path("/tmp"))
+
+
 fake_sles = _FakeSuseProfile()
-_run_do_it_all({"SUSE_regcode": "MY-REGCODE", "SUSE_email": "me@example.com",
-                "SUSE_url": "https://scc.suse.com"}, fake_sles)
-check("do_it_all wires SUSE_regcode/SUSE_email/SUSE_url onto a _SuseRegisteredProfile before register_repos()",
+_run_do_it_all_scc({}, fake_sles, {"scc_regcode": "MY-REGCODE", "scc_email": "me@example.com",
+                                   "scc_url": "https://scc.suse.com"})
+check("do_it_all reads SCC credentials from scc_credential() onto a _SuseRegisteredProfile before "
+      "register_repos()",
       fake_sles.registered_calls == [("MY-REGCODE", "me@example.com", "https://scc.suse.com")])
 
 fake = _FakeProfile()
-_run_do_it_all({"SUSE_regcode": "MY-REGCODE"}, fake)
+with mock.patch.object(skn, "scc_credential") as scc_mock:
+    _run_do_it_all({}, fake)
+    check("do_it_all never calls scc_credential() on a non-SLES profile", not scc_mock.called)
 check("do_it_all never sets regcode-related attributes on a non-SLES profile",
       not hasattr(fake, "regcode"))
 
@@ -313,7 +344,7 @@ _run_do_it_all({"_network_mode": "nat", "_bridge_nic": "eth0"}, fake, nat_calls=
 check("make_bridge is NOT called in nat mode even when _bridge_nic is set", fake.bridge_calls == [])
 
 
-# ── lab.cfg generation ────────────────────────────────────────────────────────
+# ── config file generation ──────────────────────────────────────────────────
 import ipaddress  # noqa: E402
 import tempfile  # noqa: E402
 
@@ -322,62 +353,213 @@ check("reverse_zone of a /24 is its three octets reversed",
 check("reverse_zone of a /16 is its two octets reversed",
       skn.reverse_zone(ipaddress.ip_network("10.20.0.0/16")) == "20.10")
 
-template = (_REPO / "setup_demo_server" / "lab.cfg.template").read_text()
-out = skn.render_lab_cfg(template, {"_mynet": "10.0.0.0/24", "ROOT_PWD_HASH": "$6$ab$cd",
-                                    "ROOT_SSH_PUB_KEY": "ssh-ed25519 AAAA root@host", "_bridge_nic": "eth0"})
+automation_template = (_REPO / "setup_demo_server" / "automation.cfg.template").read_text()
+kvm_template = (_REPO / "setup_demo_server" / "kvm_host.cfg.template").read_text()
+
+out = skn.render_lab_cfg(automation_template, {"_mynet": "10.0.0.0/24", "ROOT_PWD_HASH": "$6$ab$cd",
+                                               "ROOT_SSH_PUB_KEY": "ssh-ed25519 AAAA root@host"})
 check("render_lab_cfg replaces a value and keeps the line's trailing comment",
       "_mynet=10.0.0.0/24          # CIDR notation" in out)
 check("render_lab_cfg single-quotes values that need it, so bash sources them literally",
       "ROOT_PWD_HASH='$6$ab$cd'" in out and "ROOT_SSH_PUB_KEY='ssh-ed25519 AAAA root@host'" in out)
-check("render_lab_cfg replaces a quoted empty value", "\n_bridge_nic=eth0\n" in out)
-check("render_lab_cfg keeps every other line and comment", out.count("\n") == template.count("\n")
+check("render_lab_cfg keeps every other line and comment", out.count("\n") == automation_template.count("\n")
       and "_mydomain=mydemo.lab" in out)
-check("the template's keys all match render_lab_cfg's KEY=value pattern",
-      skn.render_lab_cfg(template, {k: "X" for k in ("_mydns", "_mygw", "_myip", "_mynet", "_mydomain",
-                                                    "_mynetrev", "ROOT_SSH_PUB_KEY", "ROOT_PWD_HASH",
-                                                    "root_pwd", "AUTOMATION_HOSTNAME", "MYREG", "_timezone",
-                                                    "_bridge_name", "_bridge_nic", "_network_mode",
-                                                    "_nat_network_cidr", "_virt_srv", "SUSE_regcode",
-                                                    "SUSE_email", "SUSE_url")}).count("=X") == 20)
+
+kvm_out = skn.render_lab_cfg(kvm_template, {"_bridge_nic": "eth0"})
+check("render_lab_cfg replaces a quoted empty value in kvm_host.cfg.template", "\n_bridge_nic=eth0\n" in kvm_out)
+
+check("automation.cfg.template's keys all match render_lab_cfg's KEY=value pattern",
+      skn.render_lab_cfg(automation_template, {k: "X" for k in (
+          "_mydns", "_mygw", "_myip", "_mynet", "_mydomain", "_mynetrev", "ROOT_SSH_PUB_KEY",
+          "ROOT_PWD_HASH", "root_pwd", "AUTOMATION_HOSTNAME", "MYREG", "_timezone",
+          "_automation_node")}).count("=X") == 13)
+check("kvm_host.cfg.template's keys all match render_lab_cfg's KEY=value pattern",
+      skn.render_lab_cfg(kvm_template, {k: "X" for k in (
+          "_bridge_name", "_bridge_nic", "_network_mode", "_nat_network_cidr", "_virt_srv",
+          "_QCOW_IMAGE")}).count("=X") == 6)
+check("neither template carries a plaintext SUSE registration field anymore",
+      "SUSE_regcode" not in automation_template and "SUSE_regcode" not in kvm_template)
 
 
+# ── new detection helpers ──────────────────────────────────────────────────────
+def _fake_path_is_dir(path_str_true):
+    def fake(self):
+        return str(self) == path_str_true
+    return fake
 
-def _values(argv, profile="opensuse-leap-15", bridged=False):
+
+with mock.patch.object(Path, "is_dir", _fake_path_is_dir("/sys/class/net/wlan0/wireless")):
+    check("_is_wireless: true for an interface with a wireless sysfs subdir", skn._is_wireless("wlan0"))
+    check("_is_wireless: false for a plain wired NIC", not skn._is_wireless("eth0"))
+
+with mock.patch.object(Path, "is_file", return_value=True):
+    check("_scc_registered: true when SCCcredentials exists", skn._scc_registered())
+with mock.patch.object(Path, "is_file", return_value=False):
+    check("_scc_registered: false otherwise", not skn._scc_registered())
+
+with mock.patch.object(skn.primary, "try_load_service_credential", return_value=({"scc_regcode": "R"}, None)):
+    check("scc_credential: returns the stored fields", skn.scc_credential() == {"scc_regcode": "R"})
+with mock.patch.object(skn.primary, "try_load_service_credential", return_value=(None, "not found")):
+    check("scc_credential: {} when none is on file", skn.scc_credential() == {})
+
+write_calls = []
+with mock.patch.object(skn.primary, "credentials_dirs", return_value=["/etc/lab_creation/credentials"]), \
+     mock.patch.object(skn.setup_credentials, "write_credential_file",
+                       side_effect=lambda path, kind, fields, encrypt: write_calls.append((path, kind, fields, encrypt))):
+    skn._write_scc_credential("R1", "me@example.com", "")
+check("_write_scc_credential: writes to the real credentials dir as kind 'scc', unencrypted, "
+      "omitting the blank URL",
+      write_calls == [(Path("/etc/lab_creation/credentials/scc.yaml"), "scc",
+                       {"scc_regcode": "R1", "scc_email": "me@example.com"}, False)])
+
+with mock.patch.object(os, "environ", {"KUBECONFIG": "/k.conf"}):
+    check("_default_kubeconfig: $KUBECONFIG wins", skn._default_kubeconfig() == "/k.conf")
+with mock.patch.object(os, "environ", {}), mock.patch.object(Path, "is_file", return_value=True):
+    check("_default_kubeconfig: ~/.kube/config when it exists and $KUBECONFIG is unset",
+          skn._default_kubeconfig() == str(Path("~/.kube/config").expanduser()))
+with mock.patch.object(os, "environ", {}), mock.patch.object(Path, "is_file", return_value=False):
+    check("_default_kubeconfig: '' when neither exists (kubectl's own default)",
+          skn._default_kubeconfig() == "")
+
+
+def _fake_kubectl(svc_ingress="", pod_names=()):
+    def fake_run(cmd, **kw):
+        if cmd[-3:-1] == ["get", "svc"] or "get" in cmd and "svc" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=svc_ingress)
+        if "pods" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(pod_names))
+        return subprocess.CompletedProcess(cmd, 1, stdout="")
+    return fake_run
+
+
+with mock.patch.object(subprocess, "run", side_effect=_fake_kubectl(svc_ingress="[{\"ip\":\"1.2.3.4\"}]")):
+    check("_k8s_has_loadbalancer: true when a LoadBalancer Service already has an address",
+          skn._k8s_has_loadbalancer(""))
+with mock.patch.object(subprocess, "run", side_effect=_fake_kubectl(pod_names=["pod/metallb-controller-abc"])):
+    check("_k8s_has_loadbalancer: true when a MetalLB controller pod is running, even with no "
+          "LoadBalancer Service yet",
+          skn._k8s_has_loadbalancer(""))
+with mock.patch.object(subprocess, "run", side_effect=_fake_kubectl()):
+    check("_k8s_has_loadbalancer: false with neither signal", not skn._k8s_has_loadbalancer(""))
+with mock.patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, "kubectl")):
+    try:
+        result = skn._k8s_has_loadbalancer("")
+    except Exception:
+        result = None
+check("_k8s_has_loadbalancer: never raises — a broken/missing kubectl just means false",
+      result is False or result is None)
+
+
+# ── build_values(): bridge/nat default, automation-node default, SSH key, SCC ──────────────────
+def _values(argv, profile="opensuse-leap-15", bridged=False, wireless=False, low_resource=False,
+           is_vm=False, ssh_keys=None, scc_registered=False, written_scc=None, ssh_key_calls=None):
     args = skn.parse_args(argv)
+    resources = {"vcpus": 1, "mem_mib": 1024} if low_resource else {"vcpus": 4, "mem_mib": 8192}
+    ensure_ssh_key_mock = (mock.patch.object(skn, "ensure_ssh_key",
+                           side_effect=lambda p: ssh_key_calls.append(p) or "ssh-ed25519 AAAA root@host")
+                           if ssh_key_calls is not None else
+                           mock.patch.object(skn, "ensure_ssh_key", return_value="ssh-ed25519 AAAA root@host"))
     with mock.patch.object(skn.host_network, "current_settings", return_value=NET), \
          mock.patch.object(skn.host_network, "is_bridge", return_value=bridged), \
+         mock.patch.object(skn, "_is_wireless", return_value=wireless), \
+         mock.patch.object(skn.kvm_host_profiles, "host_resources", return_value=resources), \
+         mock.patch.object(skn.kvm_host_profiles, "is_virtualized_guest", return_value=is_vm), \
+         mock.patch.object(skn, "_existing_ssh_keys", return_value=ssh_keys or []), \
          mock.patch.object(skn, "suggest_free_ip", return_value="192.168.8.240"), \
-         mock.patch.object(skn, "ensure_ssh_key", return_value="ssh-ed25519 AAAA root@host"), \
+         ensure_ssh_key_mock, \
          mock.patch.object(skn, "password_hash", side_effect=lambda pw: "HASH(" + pw + ")"), \
-         mock.patch.object(skn, "detect_timezone", return_value="Europe/Zurich"):
+         mock.patch.object(skn, "detect_timezone", return_value="Europe/Zurich"), \
+         mock.patch.object(skn, "_scc_registered", return_value=scc_registered), \
+         mock.patch.object(skn, "_write_scc_credential",
+                           side_effect=(lambda r, e, u: written_scc.append((r, e, u)))
+                           if written_scc is not None else None):
         return skn.build_values(args, skn.Asker(interactive=False), profile)
 
 
-v, generated = _values([])
+automation, kvm, generated = _values([])
 check("bridge mode: the lab network, gateway and DNS come from the host",
-      v["_mynet"] == "192.168.8.0/24" and v["_mygw"] == "192.168.8.1" and v["_mydns"] == "192.168.8.53"
-      and v["_mynetrev"] == "8.168.192")
-check("bridge mode: the default-route NIC becomes the port of br0",
-      v["_bridge_name"] == "br0" and v["_bridge_nic"] == "eth0" and v["_network_mode"] == "bridge")
-check("bridge mode: the automation VM gets a free address and the domain-derived hostnames",
-      v["_myip"] == "192.168.8.240" and v["AUTOMATION_HOSTNAME"] == "automation.mydemo.lab"
-      and v["MYREG"] == "registry.mydemo.lab" and v["_virt_srv"] == "root@192.168.8.20")
+      automation["_mynet"] == "192.168.8.0/24" and automation["_mygw"] == "192.168.8.1"
+      and automation["_mydns"] == "192.168.8.53" and automation["_mynetrev"] == "8.168.192")
+check("bridge mode: the default-route NIC becomes the port of br0, in kvm_host values",
+      kvm["_bridge_name"] == "br0" and kvm["_bridge_nic"] == "eth0" and kvm["_network_mode"] == "bridge")
+check("bridge mode: the automation node gets a free address and the domain-derived hostnames, "
+      "in automation values",
+      automation["_myip"] == "192.168.8.240" and automation["AUTOMATION_HOSTNAME"] == "automation.mydemo.lab"
+      and automation["MYREG"] == "registry.mydemo.lab")
+check("the KVM hypervisor SSH pointer lives in kvm values", kvm["_virt_srv"] == "root@192.168.8.20")
 check("non-interactive with no password: one is generated, hashed and returned for printing",
-      generated and v["root_pwd"] == generated and v["ROOT_PWD_HASH"] == "HASH({})".format(generated))
-check("non-SLES hosts get no SUSE registration keys", "SUSE_regcode" not in v)
+      generated and automation["root_pwd"] == generated
+      and automation["ROOT_PWD_HASH"] == "HASH({})".format(generated))
+check("non-SLES hosts get no SCC credential questions at all (no scc fields in either dict)",
+      "SUSE_regcode" not in automation and "SUSE_regcode" not in kvm)
+check("not low-resource, not a VM: automation node defaults to vm",
+      automation["_automation_node"] == "vm")
 
-v, _ = _values([], bridged=True)
-check("a host already on a bridge keeps it and creates none", v["_bridge_name"] == "eth0" and v["_bridge_nic"] == "")
+automation, kvm, _ = _values([], bridged=True)
+check("a host already on a bridge keeps it and creates no new bridge NIC",
+      kvm["_bridge_name"] == "eth0" and kvm["_bridge_nic"] == "")
 
-v, generated = _values(["--network-mode", "nat", "--domain", "lab.example",
-                        "--root-password", "s3cret"], profile="sles-16")
-check("nat mode: the lab network is the NAT range, with .1 as gateway/DNS and .10 for the automation VM",
-      v["_mynet"] == "192.168.150.0/24" and v["_mygw"] == "192.168.150.1" and v["_mydns"] == "192.168.150.1"
-      and v["_myip"] == "192.168.150.10" and v["_bridge_nic"] == "" and v["_virt_srv"] == "root@192.168.150.1")
+automation, kvm, _ = _values([], low_resource=True)
+check("a low-resource host defaults the automation node to container",
+      automation["_automation_node"] == "container")
+
+automation, kvm, _ = _values([], is_vm=True)
+check("a host that is itself a VM defaults the automation node to container too",
+      automation["_automation_node"] == "container")
+
+automation, kvm, generated = _values(["--network-mode", "nat", "--domain", "lab.example",
+                                      "--root-password", "s3cret"], profile="sles-16")
+check("nat mode: the lab network is the NAT range, with .1 as gateway/DNS and .10 for the automation node",
+      automation["_mynet"] == "192.168.150.0/24" and automation["_mygw"] == "192.168.150.1"
+      and automation["_mydns"] == "192.168.150.1" and automation["_myip"] == "192.168.150.10"
+      and kvm["_bridge_nic"] == "" and kvm["_virt_srv"] == "root@192.168.150.1")
 check("a given password is used and not reported as generated",
-      v["root_pwd"] == "s3cret" and generated == "" and v["AUTOMATION_HOSTNAME"] == "automation.lab.example")
-check("SLES hosts get the SUSE registration keys", v["SUSE_regcode"] == "")
+      automation["root_pwd"] == "s3cret" and generated == ""
+      and automation["AUTOMATION_HOSTNAME"] == "automation.lab.example")
 
+automation, kvm, _ = _values([], wireless=True)
+check("a wireless default-route NIC defaults the network mode to nat, not bridge",
+      kvm["_network_mode"] == "nat")
+
+automation, kvm, _ = _values(["--nat-cidr", "10.10.0.0/24"])
+check("an explicit --network-mode/--nat-cidr combination is honoured even on a wired NIC",
+      kvm["_network_mode"] == "bridge")  # --network-mode not given: bridge still wins on a wired NIC
+
+automation, kvm, _ = _values(["--network-mode", "nat", "--nat-cidr", "10.10.0.0/24"])
+check("--nat-cidr is only consulted once nat mode is actually chosen",
+      kvm["_nat_network_cidr"] == "10.10.0.0/24")
+
+ssh_calls = []
+_values([], ssh_keys=[Path("/root/.ssh/id_ed25519.pub")], ssh_key_calls=ssh_calls)
+check("with exactly one SSH key on the host, it's used silently — no ambiguity question needed",
+      ssh_calls == ["~/.ssh/id_ed25519.pub"])
+
+ssh_calls = []
+three_keys = [Path("/root/.ssh/id_rsa.pub"), Path("/root/.ssh/id_ed25519.pub"), Path("/root/.ssh/id_ecdsa.pub")]
+_values([], ssh_keys=three_keys, ssh_key_calls=ssh_calls)
+check("with more than one SSH key, ensure_ssh_key is called exactly once, with the ambiguity "
+      "question's answer (non-interactive default: the last candidate) — not every candidate",
+      ssh_calls == [str(three_keys[-1])])
+
+written = []
+automation, kvm, _ = _values(["--suse-regcode", "R1", "--suse-email", "me@example.com"],
+                             profile="sles-15", written_scc=written)
+check("SLES + unregistered + a regcode given: the SCC credential is written, not left in config",
+      written == [("R1", "me@example.com", "")])
+check("no SCC fields land in either config dict", "SUSE_regcode" not in automation
+      and "SUSE_regcode" not in kvm and "scc_regcode" not in automation and "scc_regcode" not in kvm)
+
+written = []
+automation, kvm, _ = _values([], profile="sles-15", scc_registered=True, written_scc=written)
+check("SLES but already registered: no SCC credential write at all (nothing asked)", written == [])
+
+written = []
+automation, kvm, _ = _values([], profile="opensuse-leap-15", written_scc=written)
+check("openSUSE (not SLES): no SCC credential write, regardless of registration state",
+      written == [])
+
+
+# ── parse_args(): unchanged flags, plus --nat-cidr only fires when nat is chosen ─────────────
 check("without --interactive nothing is asked, confirmation included", skn.parse_args([]).yes and not skn.parse_args([]).interactive)
 check("--interactive asks for confirmation unless -y is given", not skn.parse_args(["--interactive"]).yes and skn.parse_args(["--interactive", "-y"]).yes)
 check("the old --non-interactive option is still accepted", skn.parse_args(["--non-interactive"]).yes)
@@ -390,37 +572,172 @@ with mock.patch.object(sys, "stderr"):
         raised = True
 check("--share-storage-from and --copy-storage-from together are rejected", raised)
 
+
+# ── main(): keeps existing automation.cfg/kvm_host.cfg, writes the derived lab.cfg ────────────
 tmp = Path(tempfile.mkdtemp())
-(tmp / "lab.cfg").write_text(template)
+(tmp / "automation.cfg").write_text(automation_template)
+(tmp / "kvm_host.cfg").write_text(kvm_template)
 with mock.patch.object(skn, "_find", side_effect=lambda name: tmp / name), \
      mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
      mock.patch.object(skn, "do_it_all") as dia, \
-     mock.patch.object(skn, "build_values") as bv:
+     mock.patch.object(skn, "build_values") as bv, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET):
     skn.main(["-y", "--network-mode", "nat", "--domain", "lab.example"])
-updated = (tmp / "lab.cfg").read_text()
-check("main() keeps an existing lab.cfg and only updates the keys given as options",
-      bv.call_count == 0 and '_network_mode=nat' in updated and "_mydomain=lab.example" in updated
-      and "_myip=192.168.8.71" in updated)
-check("main() runs the setup with the updated lab.cfg", dia.call_args[0][0]["_network_mode"] == "nat")
-check("main() leaves lab.cfg readable by root only", (tmp / "lab.cfg").stat().st_mode & 0o777 == 0o600)
+updated_kvm = (tmp / "kvm_host.cfg").read_text()
+updated_automation = (tmp / "automation.cfg").read_text()
+check("main() keeps existing automation.cfg/kvm_host.cfg and only updates the keys given as options",
+      bv.call_count == 0 and '_network_mode=nat' in updated_kvm and "_mydomain=lab.example" in updated_automation
+      and "_myip=192.168.8.71" in updated_automation)
+check("main() runs the setup with the merged cfg dict (both files' keys present)",
+      dia.call_args[0][0]["_network_mode"] == "nat" and dia.call_args[0][0]["_mydomain"] == "lab.example")
+check("main() defaults build_automation_node to True on a fresh/first run (nothing reachable yet)",
+      dia.call_args[1]["build_automation_node"] is True)
+check("main() leaves both config files readable by root only",
+      (tmp / "automation.cfg").stat().st_mode & 0o777 == 0o600
+      and (tmp / "kvm_host.cfg").stat().st_mode & 0o777 == 0o600)
+check("main() writes a derived lab.cfg for setup_lab_automation.sh, which it says not to hand-edit",
+      "edit those, not this file" in (tmp / "lab.cfg").read_text())
+
+
+# ── main(): auto-splits a legacy lab.cfg on startup instead of synthesizing fresh defaults ───
+tmp_legacy = Path(tempfile.mkdtemp())
+(tmp_legacy / "lab.cfg").write_text(
+    "_myip=192.168.8.99\n_mydomain=legacy.example\n_automation_node=\"vm\"\n"
+    "_bridge_nic=\"\"\n_network_mode=\"bridge\"\n_QCOW_IMAGE=/x/leap.qcow2\n"
+    "SUSE_regcode=\"OLD-REGCODE\"\nSUSE_email=\"\"\nSUSE_url=\"\"\n")
+with mock.patch.object(skn, "_find", side_effect=lambda name: tmp_legacy / name), \
+     mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
+     mock.patch.object(skn, "do_it_all") as dia_legacy, \
+     mock.patch.object(skn, "build_values") as bv_legacy, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET), \
+     mock.patch.object(skn.primary, "credentials_dirs", return_value=[str(tmp_legacy / "creds")]):
+    skn.main(["-y"])
+check("main() auto-splits a legacy lab.cfg into real automation.cfg/kvm_host.cfg instead of "
+      "synthesizing brand-new defaults (build_values is never called)",
+      bv_legacy.call_count == 0 and (tmp_legacy / "automation.cfg").is_file()
+      and (tmp_legacy / "kvm_host.cfg").is_file())
+check("the migrated values survive into the merged cfg main() actually runs with",
+      dia_legacy.call_args[0][0]["_myip"] == "192.168.8.99"
+      and dia_legacy.call_args[0][0]["_mydomain"] == "legacy.example"
+      and dia_legacy.call_args[0][0]["_network_mode"] == "bridge")
+check("lab.cfg ends the run as the regenerated derived file (from the migrated cfg), not the "
+      "stale pre-split content — the split only promised not to touch it mid-split, not forever",
+      "edit those, not this file" in (tmp_legacy / "lab.cfg").read_text()
+      and "SUSE_regcode" not in (tmp_legacy / "lab.cfg").read_text())
+check("SUSE_regcode is moved into the encrypted credential store, not either split file",
+      "SUSE_regcode" not in (tmp_legacy / "automation.cfg").read_text()
+      and "SUSE_regcode" not in (tmp_legacy / "kvm_host.cfg").read_text()
+      and (tmp_legacy / "creds" / "scc.yaml").is_file())
+
+# ── main(): --reconfigure skips the auto-split and writes brand-new defaults instead ──────────
+tmp_reconf = Path(tempfile.mkdtemp())
+(tmp_reconf / "lab.cfg").write_text("_myip=192.168.8.99\n_automation_node=\"vm\"\n")
+_real_find_reconf = skn._find
+
+
+def _find_reconf(name):
+    return tmp_reconf / name if name in ("automation.cfg", "kvm_host.cfg", "lab.cfg") else _real_find_reconf(name)
+
+
+with mock.patch.object(skn, "_find", side_effect=_find_reconf), \
+     mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
+     mock.patch.object(skn, "do_it_all"), \
+     mock.patch.object(skn, "build_values", return_value=({}, {}, "")) as bv_reconf, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET):
+    skn.main(["-y", "--reconfigure"])
+check("--reconfigure bypasses the auto-split and takes the fresh/build_values path instead, "
+      "same as when no legacy lab.cfg is present at all",
+      bv_reconf.call_count == 1)
+
+
+# ── review_cfg(): shows each file's path and full contents, skips a missing one ──────────────
+review_dir = Path(tempfile.mkdtemp())
+(review_dir / "a.cfg").write_text("_myip=1.2.3.4\n")
+printed = []
+with mock.patch("builtins.print", side_effect=lambda *a, **k: printed.append(" ".join(str(x) for x in a))):
+    skn.review_cfg([review_dir / "a.cfg", review_dir / "missing.cfg"])
+check("review_cfg prints the existing file's path and full content",
+      any(str(review_dir / "a.cfg") in line for line in printed) and any("_myip=1.2.3.4" in line for line in printed))
+check("review_cfg silently skips a file that doesn't exist (e.g. kvm_host.cfg when it wasn't written)",
+      not any("missing.cfg" in line for line in printed))
+
+
+# ── main(): --interactive reloads the config after confirming, so an edit during the pause ──
+# ── (simulated here by editing the file from inside the mocked confirmation input()) is honoured
+tmp3b = Path(tempfile.mkdtemp())
+(tmp3b / "automation.cfg").write_text(automation_template)
+(tmp3b / "kvm_host.cfg").write_text(kvm_template)
+
+
+_input_calls = []
+
+
+def _fake_input_edit_before_confirm(prompt):
+    _input_calls.append(prompt)
+    if prompt.strip().startswith("Set up this host"):
+        # Simulate the operator editing the file, in another terminal, during the pause that
+        # review_cfg() + this very prompt create — right before actually answering it.
+        (tmp3b / "automation.cfg").write_text(
+            skn.render_lab_cfg((tmp3b / "automation.cfg").read_text(), {"_mydomain": "edited-during-pause.lab"}))
+        return "yes"
+    if prompt.strip().startswith("Also build an automation node"):
+        return "yes"
+    return "no"  # the end-of-run "add another KVM node"/"add cloud credentials" follow-ups
+
+
+with mock.patch.object(skn, "_find", side_effect=lambda name: tmp3b / name), \
+     mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
+     mock.patch.object(skn, "do_it_all") as dia3b, \
+     mock.patch.object(skn, "build_values") as bv3b, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET), \
+     mock.patch("builtins.input", side_effect=_fake_input_edit_before_confirm):
+    skn.main(["--interactive"])
+check("the simulated edit happened strictly after the \"also build automation node\" question "
+      "and before the final confirmation reply (sanity check on the test's own timing)",
+      len(_input_calls) >= 2 and "automation node" in _input_calls[0] and "Set up this host" in _input_calls[1])
+check("main() reloads the config after the confirmation prompt, so an edit made during the "
+      "interactive pause is actually applied, not the stale pre-edit value",
+      dia3b.call_args[0][0]["_mydomain"] == "edited-during-pause.lab")
+
+
+# ── main(): build_automation_node defaults to False when one is already reachable ────────────
+tmp2 = Path(tempfile.mkdtemp())
+(tmp2 / "automation.cfg").write_text(automation_template)
+(tmp2 / "kvm_host.cfg").write_text(kvm_template)
+with mock.patch.object(skn, "_find", side_effect=lambda name: tmp2 / name), \
+     mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
+     mock.patch.object(skn, "do_it_all") as dia2, \
+     mock.patch.object(skn, "build_values") as bv2, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=True), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET):
+    skn.main(["-y"])
+check("main() defaults build_automation_node to False when one already answers at _myip",
+      dia2.call_args[1]["build_automation_node"] is False)
 
 
 # ── automation node: --automation-node, fallback to the container, environment ──
 check("--automation-node takes vm or container", skn.parse_args(["--automation-node", "container"]).automation_node
       == "container" and skn.parse_args([]).automation_node is None)
-check("--automation-node is written to lab.cfg",
-      skn._flag_values(skn.parse_args(["--automation-node", "container"]))["_automation_node"] == "container")
-check("the template defaults _automation_node to vm", '_automation_node="vm"' in template)
+check("--automation-node is written to automation.cfg",
+      skn._automation_flag_values(skn.parse_args(["--automation-node", "container"]))["_automation_node"] == "container")
+check("--bridge-name is written to kvm_host.cfg, not automation.cfg",
+      "_bridge_name" in skn._kvm_flag_values(skn.parse_args(["--bridge-name", "labbr0"]))
+      and "_bridge_name" not in skn._automation_flag_values(skn.parse_args(["--bridge-name", "labbr0"])))
+check("the automation template defaults _automation_node to vm", '_automation_node="vm"' in automation_template)
 k8s_args = skn.parse_args(["--automation-node", "kubernetes", "--k8s-kubeconfig", "/k.conf", "--k8s-network", "macvlan",
                            "--k8s-macvlan-master", "eth1", "--k8s-namespace", "labs", "--k8s-storage-class", "longhorn",
                            "--k8s-volume-size", "50Gi", "--automation-image", "reg/img:1"])
-check("the --k8s-* options and --automation-image are written to lab.cfg",
-      {k: v for k, v in skn._flag_values(k8s_args).items() if k.startswith(("_k8s", "_automation"))}
+check("the --k8s-* options and --automation-image are written to automation.cfg",
+      {k: v for k, v in skn._automation_flag_values(k8s_args).items() if k.startswith(("_k8s", "_automation"))}
       == {"_automation_node": "kubernetes", "_k8s_kubeconfig": "/k.conf", "_k8s_network": "macvlan",
           "_k8s_macvlan_master": "eth1", "_k8s_namespace": "labs", "_k8s_storage_class": "longhorn",
           "_k8s_volume_size": "50Gi", "_automation_image": "reg/img:1"})
-check("the template has every _k8s_* key",
-      all("\n{}=".format(k) in template for k in ("_k8s_kubeconfig", "_k8s_namespace", "_k8s_network",
+check("the automation template has every _k8s_* key",
+      all("\n{}=".format(k) in automation_template for k in ("_k8s_kubeconfig", "_k8s_namespace", "_k8s_network",
                                                  "_k8s_macvlan_master", "_k8s_storage_class", "_k8s_volume_size",
                                                  "_automation_image")))
 modes, written, died = None, None, None
@@ -477,7 +794,7 @@ def _run_with_results(cfg, results, download_error=None):
 
 modes, written, died = _run_with_results({}, [1, 0])
 check("a failed VM build is retried as a container", modes == ["vm", "container"] and not died)
-check("after the fallback lab.cfg records _automation_node=container",
+check("after the fallback automation.cfg records _automation_node=container",
       written == [{"_automation_node": "container"}])
 modes, written, died = _run_with_results({}, [0], download_error=OSError("record layer failure"))
 check("a failed image download goes straight to the container and records it",
@@ -603,6 +920,32 @@ with mock.patch.object(skn.subprocess, "run", return_value=done(rc=1)), \
     except SystemExit:
         pass
 check("run_remote: dies when the host is unreachable", died.called)
+
+
+# ── main(): interactive-only follow-ups — add another KVM node, add cloud credentials ────────
+tmp3 = Path(tempfile.mkdtemp())
+(tmp3 / "automation.cfg").write_text(automation_template)
+(tmp3 / "kvm_host.cfg").write_text(kvm_template)
+remote_calls = []
+cred_calls = []
+# The full --interactive input() sequence: (1) build an automation node here? (2) the "set up
+# this host" confirmation (3) add another KVM node? (4) its hostname (5) share storage with it?
+# (6) add cloud credentials?
+with mock.patch.object(skn, "_find", side_effect=lambda name: tmp3 / name), \
+     mock.patch.object(skn.kvm_host_profiles, "detect_profile", return_value=None), \
+     mock.patch.object(skn, "do_it_all"), \
+     mock.patch.object(skn, "build_values") as bv3, \
+     mock.patch.object(skn, "_automation_host_reachable", return_value=False), \
+     mock.patch.object(skn.host_network, "current_settings", return_value=NET), \
+     mock.patch.object(skn, "run_remote", side_effect=lambda t, a: remote_calls.append((t, a))), \
+     mock.patch.object(skn.setup_credentials, "interactive_build", side_effect=lambda d: cred_calls.append(d)), \
+     mock.patch("builtins.input", side_effect=["yes", "yes", "yes", "nuc9.lab", "yes", "yes"]):
+    skn.main(["--interactive"])
+check("main() offers to add another KVM node in interactive mode, and shares storage when asked",
+      remote_calls == [("nuc9.lab", ["--share-storage-from", NET.ip])])
+check("main() offers to add cloud credentials in interactive mode",
+      cred_calls == ["/etc/lab_creation/credentials"])
+
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

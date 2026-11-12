@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Part of lab-in-a-box — DNAT port-forwarding on the KVM hypervisor, for VMs
 # (the automation VM included) attached to a NAT'd libvirt network instead
-# of a real bridge (see setup_demo_server/lab.cfg.template's _network_mode).
+# of a real bridge (see setup_demo_server/kvm_host.cfg.template's _network_mode).
 # Author/s: Raul Mahiques
 # License: GPLv3
 #

@@ -1374,7 +1374,7 @@ class PortForwardService(AuxService):
     hypervisor's real IP — the counterpart, for lab VMs, of
     setup_lab_automation.sh's own configure_nat_port_forwarding() for the
     automation VM at bootstrap time (see setup_demo_server/
-    lab.cfg.template's _network_mode). Meant for VMs attached to a NAT'd
+    kvm_host.cfg.template's _network_mode). Meant for VMs attached to a NAT'd
     libvirt network (_network_mode=nat) rather than a real bridge, where a
     node's own "myip" is a private address unreachable from outside — but
     nothing here actually checks _network_mode; it just forwards whatever

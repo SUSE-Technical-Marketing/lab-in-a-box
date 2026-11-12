@@ -49,9 +49,9 @@ r = subprocess.run([sys.executable, str(_REPO / "scripts" / "schema_versions.py"
 check("schema_versions.py check passes on the repository:\n" + r.stdout, r.returncode == 0)
 current = sv.current_snapshots()
 check("every add-on in scripts/ is a schema", len([n for n in current if n.startswith("addon:")]) == len(sv.addon_paths()))
-check("the lab definition and five configuration files are schemas",
-      {"lab", "config:lab_creation.cfg", "config:lab_creation.defaults", "config:lab.cfg",
-       "config:harvester-cluster.json", "config:credentials"} <= set(current))
+check("the lab definition and six configuration files are schemas",
+      {"lab", "config:lab_creation.cfg", "config:lab_creation.defaults", "config:automation.cfg",
+       "config:kvm_host.cfg", "config:harvester-cluster.json", "config:credentials"} <= set(current))
 # The exact version is not pinned: any later change to the add-on raises it again. What must hold is that it is a
 # recorded schema at or past the 2.0 that its own migration step belongs to.
 check("rancher is a recorded schema, at 2.0 or later",
@@ -177,8 +177,9 @@ d = {"trento": {"trento_admin": "ops"}}
 check("trento_2_0 keeps a user-name trento_admin", migrations.migrate("lab", d, record) == [] and d["trento"] == {"trento_admin": "ops"})
 
 lines = ["# Schema version: 0.9", "A=1"]
-migrations.stamp("config:lab.cfg", lines, record)
-check("stamp rewrites a shell file's version line", lines[0] == "# Schema version: " + record["config:lab.cfg"][-1]["version"])
+migrations.stamp("config:lab_creation.cfg", lines, record)
+check("stamp rewrites a shell file's version line",
+      lines[0] == "# Schema version: " + record["config:lab_creation.cfg"][-1]["version"])
 d = {"common": {"ISO_IMAGE": "a.qcow2", "ISO_URL": "https://x/b.qcow2", "ISO_SHA256_URL": "https://x/SUMS"},
      "nodes": {"n1": {"INSTALL_RKE2_TYPE": "agent"},
                "n2": {"KUBERNETES_NODE_TYPE": "server", "INSTALL_RKE2_TYPE": "agent", "SOURCE_IMAGE": "c.qcow2",
@@ -247,6 +248,38 @@ check("migrate_config.py reads lab_creation.cfg", r.returncode == 0 and "up to d
 r = subprocess.run(tool + ["--kind", "nope", str(cfg)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                    universal_newlines=True)
 check("migrate_config.py rejects an unknown --kind", r.returncode == 2)
+
+# ── migrate_config.py: the one-time legacy lab.cfg split ──────────────────────────────────────
+legacy = work / "lab.cfg"
+legacy.write_text(
+    "# Schema version: 1.0\n"
+    "_myip=192.168.8.71\n_mydomain=mydemo.lab\n_automation_node=\"vm\"\n"
+    "_bridge_nic=\"\"\n_network_mode=\"bridge\"\n_QCOW_IMAGE=/x/leap.qcow2\n"
+    "SUSE_regcode=\"MY-REGCODE\"\nSUSE_email=\"me@example.com\"\nSUSE_url=\"\"\n"
+)
+r = subprocess.run(tool + ["--check", str(legacy)], stdout=subprocess.PIPE, universal_newlines=True)
+check("migrate_config.py --check detects a legacy lab.cfg from its filename alone, no --kind needed",
+      r.returncode == 1 and "split" in r.stdout)
+r = subprocess.run(tool + [str(legacy)], stdout=subprocess.PIPE, universal_newlines=True)
+automation_out = Path(str(legacy) + ".automation.cfg.system_modified")
+kvm_out = Path(str(legacy) + ".kvm_host.cfg.system_modified")
+check("migrate_config.py splits a legacy lab.cfg into both new files", r.returncode == 0
+      and automation_out.is_file() and kvm_out.is_file())
+automation_text, kvm_text = automation_out.read_text(), kvm_out.read_text()
+check("automation-identity fields land in automation.cfg",
+      "_myip=192.168.8.71" in automation_text and "_mydomain=mydemo.lab" in automation_text
+      and "_automation_node=\"vm\"" in automation_text)
+check("KVM-host fields land in kvm_host.cfg, not automation.cfg",
+      "_bridge_nic=\"\"" in kvm_text and "_network_mode=\"bridge\"" in kvm_text
+      and "_QCOW_IMAGE=/x/leap.qcow2" in kvm_text
+      and "_bridge_nic" not in automation_text and "_QCOW_IMAGE" not in automation_text)
+check("SUSE_regcode/email/url never land in either split file",
+      "SUSE_regcode" not in automation_text and "SUSE_regcode" not in kvm_text
+      and "SUSE_email" not in automation_text and "SUSE_email" not in kvm_text)
+check("the original legacy lab.cfg is never touched", "SUSE_regcode" in legacy.read_text())
+scc_path = Path("/etc/lab_creation/credentials/scc.yaml")
+check("the SCC regcode/email are written to the encrypted-credential-store location instead",
+      scc_path.is_file() and "scc_regcode" in scc_path.read_text() and "MY-REGCODE" in scc_path.read_text())
 
 
 # ── schema_versions.py diff / record / list ────────────────────────────────────────────────────────────────────────
