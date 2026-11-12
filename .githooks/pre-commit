@@ -40,4 +40,19 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 0
 fi
 
-"${_repo_root}/tests/run_tests.sh"
+"${_repo_root}/tests/run_tests.sh" || exit 1
+
+# install_demo_server_scripts.sh's own multi-OS test (tests/install_test/run.sh) pulls several
+# external OS images and runs real package installs — slow and network-dependent, so it only
+# runs when a file on the install path actually changed, not on every commit.
+_install_changed=0
+while IFS= read -r _file; do
+    case "${_file}" in
+        install_demo_server_scripts.sh|install_automation_node_scripts.sh| \
+        setup_demo_server/*|libs/kvm_host_profiles.py|tests/install_test/*) _install_changed=1; break ;;
+    esac
+done < <(git diff --cached --name-only)
+if [[ ${_install_changed} -eq 1 ]]; then
+    echo "pre-commit: install-path files changed — running tests/install_test/run.sh (real OS images)" >&2
+    "${_repo_root}/tests/install_test/run.sh"
+fi

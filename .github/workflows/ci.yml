@@ -15,6 +15,11 @@ name: CI
 #   test-suite  - the authoritative gate: the project's own containerized
 #                 test suite (tests/run_tests.sh), unchanged. Every check
 #                 that already runs locally before a commit runs here too.
+#   install-test - tests/install_test/run.sh: install_demo_server_scripts.sh run for real
+#                 against every distribution it claims to support (one base image per
+#                 distribution, real package manager, no stubs). Gated separately from
+#                 test-suite since it pulls several external OS images and only needs to
+#                 run when a file on the install path actually changed.
 on:
   push:
     branches: [main, dev]
@@ -31,6 +36,7 @@ jobs:
     outputs:
       py: ${{ steps.filter.outputs.py }}
       code: ${{ steps.filter.outputs.code }}
+      install: ${{ steps.filter.outputs.install }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,11 +52,12 @@ jobs:
           if [[ "$EVENT" != "pull_request" ]]; then
             echo "py=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "install=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
           echo "Changed files:"; echo "$files"
-          py=false; code=false
+          py=false; code=false; install=false
           while IFS= read -r f; do
             [[ -z "$f" ]] && continue
             case "$f" in
@@ -60,9 +67,14 @@ jobs:
             case "$f" in
               *.py|scripts/lab_schema|scripts/install_*|libs/*) py=true; code=true ;;
             esac
+            case "$f" in
+              install_demo_server_scripts.sh|install_automation_node_scripts.sh| \
+              setup_demo_server/*|libs/kvm_host_profiles.py|tests/install_test/*) install=true ;;
+            esac
           done <<< "$files"
           echo "py=$py" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "install=$install" >> "$GITHUB_OUTPUT"
 
   python311:
     needs: changes
@@ -126,6 +138,20 @@ jobs:
             "./$f" --schema yaml >/dev/null || { echo "FAIL (yaml): $f"; fail=1; }
           done < <(git ls-files 'scripts/install_*')
           exit "$fail"
+
+  install-test:
+    needs: changes
+    if: needs.changes.outputs.install == 'true'
+    name: Real multi-OS install test (tests/install_test/run.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+      - name: Run install_demo_server_scripts.sh for real against every supported distribution
+        run: tests/install_test/run.sh
 
   test-suite:
     needs: changes
