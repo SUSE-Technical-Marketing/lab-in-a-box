@@ -1,5 +1,6 @@
 #!/bin/bash
-# Part of lab-in-a-box: one-command setup of a KVM hypervisor and its automation VM.
+# Part of lab-in-a-box: one-command setup of the automation system (and, when needed or asked
+# for, the KVM hypervisor it runs on).
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
@@ -14,12 +15,15 @@
 #
 # Installs git and Python 3 (python311 on openSUSE Leap / SLES 15, the distribution's python3
 # elsewhere), fetches lab-in-a-box into /var/tmp/setup_demo_server and runs
-# setup_demo_server/setup_kvm_node.py with every other option (see its --help). Nothing is asked
-# unless --interactive is given; its prompts are then read from the terminal.
+# setup_demo_server/setup_automation.py with every other option (see its --help) — building the
+# automation node is the one mandatory step; a KVM host under it (for vm mode) is prepared
+# automatically, and for container/kubernetes mode it's a genuinely optional add-on. Nothing is
+# asked unless --interactive is given; its prompts are then read from the terminal.
 #
 # Options handled here:
 #   --source DIR    use the lab-in-a-box checkout in DIR instead of cloning
-#   --fetch-only    only fetch the code; edit setup_demo_server/lab.cfg and run setup_kvm_node.py yourself
+#   --fetch-only    only fetch the code; edit setup_demo_server/automation.cfg and run
+#                   setup_automation.py yourself
 # Environment: LAB_REPO_URL, LAB_REPO_BRANCH (default: the SUSE-Technical-Marketing repo, main).
 
 set -euo pipefail
@@ -75,11 +79,11 @@ else
     git clone --branch "$_branch" "$_repo_url" "$_dest" || die "could not clone $_repo_url"
     _repo=$_dest
 fi
-_setup="$_repo/setup_demo_server/setup_kvm_node.py"
+_setup="$_repo/setup_demo_server/setup_automation.py"
 [[ -f $_setup ]] || die "$_setup not found"
 
 if (( _fetch_only )); then
-    echo "Fetched into $_repo. Next: edit $_repo/setup_demo_server/lab.cfg (or let the setup write it) and run:"
+    echo "Fetched into $_repo. Next: edit $_repo/setup_demo_server/automation.cfg (or let the setup write it) and run:"
     echo "  $_py $_setup"
     exit 0
 fi

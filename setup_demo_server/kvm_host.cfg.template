@@ -1,0 +1,83 @@
+# Schema version: 1.0
+#
+# This host as a KVM hypervisor: packages, bridge/network, storage, and (when the automation
+# node is VM-mode) the specifics of the VM libvirt builds for it. Not needed at all for a
+# container or kubernetes automation node — see automation.cfg for that.
+#################################
+#### What you should change: ####
+#################################
+
+# Source QCOW2 image — version and download URL are derived from the filename.
+# NOTE: this only works for Leap 15.x's filename convention
+# (openSUSE-Leap-<ver>-Minimal-VM.x86_64-...-kvm-and-xen...qcow2). Leap 16.0's
+# appliance directory uses a genuinely different filename shape
+# (Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2 — no "openSUSE-" prefix, "Cloud"
+# build variant instead of "kvm-and-xen") — if targeting Leap 16, set this to
+# the real 16.x filename from download.opensuse.org yourself; it is not
+# auto-derived from a 15.x-style name.
+_QCOW_IMAGE=/var/lib/libvirt/images/sources/openSUSE-Leap-15.6-Minimal-VM.x86_64-kvm-and-xen.qcow2
+
+
+################################
+#### What you could change: ####
+################################
+
+# Bridge interface on this KVM host (leave empty to auto-detect)
+_bridge_name=""
+
+# NIC to enslave to _bridge_name if the bridge doesn't already exist (leave
+# empty to skip bridge creation and assume one is already configured, today's
+# default behavior)
+_bridge_nic=""
+
+# Networking mode for a VM-mode automation node: "bridge" (default) puts it directly
+# on this KVM host's own LAN via _bridge_name/_bridge_nic above, exactly as
+# today. "nat" is an EXTRA, opt-in alternative for hosts where bridging isn't
+# available or wanted (e.g. a single-NIC laptop used as the hypervisor) — the
+# automation VM instead gets a private IP on a new libvirt-managed NAT'd
+# virtual network, and _nat_forwarded_ports below gets forwarded in from the
+# host's own real IP automatically. Bridge mode is completely unaffected by
+# this setting; nothing about it changes when left at "bridge".
+_network_mode="bridge"
+
+# Only used when _network_mode="nat": name/CIDR for the new libvirt virtual
+# network this project defines (libvirt itself manages DHCP/gateway/NAT for
+# this range once started — this is exactly libvirt's own built-in "default"
+# network mechanism, just under our own name instead of reusing "default").
+_nat_network_name="labnat"
+_nat_network_cidr="192.168.150.0/24"
+
+# Only used when _network_mode="nat": which of the automation VM's own ports
+# get forwarded in from the KVM host's real IP, "<external>:<internal>/<protocol>"
+# per entry (same syntax as a lab node's own "forwarded_ports" JSON field).
+# Defaults to SSH + plain HTTP (VMs fetch their own provisioning files over
+# this during boot) + HTTPS (the webui). Add "8843:8843/TCP" too if MCP_PORT
+# is enabled and you want it reachable from outside the NAT'd network.
+_nat_forwarded_ports="22:22/TCP 80:80/TCP 443:443/TCP"
+
+# Extra packages to install on this KVM host, space-separated (appended to
+# whichever OS+version's own package list applies; leave empty for none)
+_extra_host_pkgs=""
+
+# MAC address for a VM-mode automation node (leave empty to auto-generate from _myip using QEMU OUI 52:54:00)
+_automation_mac=""
+
+# virt-install --graphics value for a VM-mode automation node. "spice" (default) falls back to
+# "vnc" automatically when this host's QEMU has no spice support (virsh domcapabilities);
+# "none" leaves it without a graphical console (it is managed over SSH/DNS/webui anyway).
+_automation_graphics="spice"
+
+# This KVM hypervisor's own SSH connection, for sshfs mount of source images shared from another
+# KVM host (--share-storage-from) — leave as the default when this host has its own source images.
+_virt_srv="root@hypervisor"
+
+
+###############################################################
+#### ADVANCED SETTINGS, unlikely needs to be changed:      ####
+###############################################################
+
+# Connection to libvirt
+_qemu_addr="qemu:///system"
+
+# Disk size for a VM-mode automation node, in GB
+_disk_size=40

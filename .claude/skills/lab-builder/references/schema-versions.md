@@ -28,6 +28,33 @@ and nothing caught it until a PR's CI run did.
   an old file into the new shape. `migrate_config.py` (and `migrations.ensure_current()`, called
   internally by `setup_*.py`/`setup_vm.py`/`setup_automation_node.py`) applies it automatically.
 
+## Migrations apply themselves — the entrypoint never leaves this to the operator
+
+Whatever reads a schema-versioned file must detect and fix an old shape itself, every run, not
+just offer a CLI the operator has to remember to run first. Two existing shapes of this:
+
+- **Per-field rewrite** (the common case — a renamed/removed/required field): `libs/migrations.py`'s
+  `ensure_current(definition, path)`, called by every `setup_*.py`/`setup_vm.py`/
+  `setup_automation_node.py` entrypoint as it loads a lab definition. Already current → nothing
+  happens. Otherwise: migrate in memory, print what changed, save to a sibling file (never over
+  the original — every add-on runs as its own process and reads the definition from disk, so a
+  run that kept the old path would hand them stale data), and continue the run with that sibling.
+- **Structural split** (one file's fields moving into two or more new files — too big a shape
+  change for a per-field rewrite to express): `setup_demo_server/setup_kvm_node.py`'s
+  `_auto_split_legacy_lab_cfg()`, called by both `setup_kvm_node.py`'s and `setup_automation.py`'s
+  `main()` before they decide whether to synthesize defaults. When the new file(s) don't exist yet
+  but the old one does (and `--reconfigure` wasn't passed, which means "start fully fresh,
+  deliberately"), it calls `scripts/migrate_config.py`'s `split_legacy_lab_cfg()` directly —
+  writing straight to the real, live new filenames (not `.system_modified` siblings) — and the run
+  continues with the migrated values. The old file is never touched; it gets overwritten later in
+  the same run anyway, once it's regenerated as a derived file from the new ones.
+
+`migrate_config.py` run by hand (`--check` then for real) is still there and still useful — it's
+how you review a migration's output before trusting it, or migrate a file that isn't about to be
+read by any entrypoint right now — but it is a convenience, never the *only* path. If you add a
+new breaking/structural config change, wire its auto-detection into whatever reads that file, the
+same way, in the same change that adds the migration itself.
+
 ## The actual workflow, every time you touch a schema's fields
 
 1. Change the fields (add/remove/rename one, change a default, etc.).

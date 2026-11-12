@@ -1,0 +1,19 @@
+{
+ "fields": {
+  "_QCOW_IMAGE": {},
+  "_automation_graphics": {},
+  "_automation_mac": {},
+  "_bridge_name": {},
+  "_bridge_nic": {},
+  "_disk_size": {},
+  "_extra_host_pkgs": {},
+  "_nat_forwarded_ports": {},
+  "_nat_network_cidr": {},
+  "_nat_network_name": {},
+  "_network_mode": {},
+  "_qemu_addr": {},
+  "_virt_srv": {}
+ },
+ "schema": "config:kvm_host.cfg",
+ "version": "1.0"
+}
