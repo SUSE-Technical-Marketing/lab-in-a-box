@@ -720,6 +720,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">Ejemplos</h2>
+<p>Los labs siguientes están escritos aquí por completo, pero esta instalación también los incluye como archivos y los lista con el número de VMs y de clústeres de Kubernetes, sus add-ons y su propia descripción:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # un bloque por ejemplo
+setup_lab.py --list-examples --json   # la misma lista, en JSON
+</code></pre>
+<p>Vienen de dos directorios: <code>/usr/share/lab_creation/examples</code>, que instala lab-in-a-box y que una actualización reemplaza, y <code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> en <code>lab_creation.cfg</code>), que es suyo. Deje ahí cualquier definición de lab <code>.json</code>, <code>.yaml</code> o <code>.yml</code> y también aparecerá en la lista, aquí y en el diálogo <em>Examples</em> de la <a href="#web-ui-lab-builder">interfaz web</a>, marcada como propia. Un archivo con el mismo nombre que uno incluido lo reemplaza.</p>
+<p>Cualquiera de ellos se puede construir directamente, sin escribir un archivo propio. La definición se escribe en un archivo temporal para la ejecución y se elimina después, así que no queda nada; la misma opción destruye el lab de nuevo, porque un ejemplo es un archivo fijo y una dirección que no indica se deriva del nombre del propio nodo. Todo lo demás funciona igual que con un archivo propio, incluidas <code>--keep</code>, <code>--debug</code>, <code>--parallel</code> y <code>--cloud-account</code>.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">Laboratorio mínimo de una sola VM</h3>
 <p>El laboratorio más pequeño posible: una VM, sin Kubernetes:</p>
 <pre><code class="language-jsonc">{
@@ -981,6 +990,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>Crea todas las VMs, configura los clústeres de Kubernetes e instala por orden todos los complementos de clúster y de VM. <code>--keep</code> omite toda VM que ya exista, coincida con la IP/MAC definida y sea accesible por SSH; sin esta opción, cada VM se destruye y se vuelve a crear.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>Lista los labs de ejemplo que esta instalación ofrece como punto de partida: los incluidos y los suyos, de <code>EXAMPLE_LABS_DIR</code>. <code>--json</code> imprime la misma lista en JSON, con el archivo del que se leyó cada uno.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>Construye, o destruye, uno de los labs de ejemplo sin un archivo propio. La definición vive en un archivo temporal solo durante esa ejecución.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>Crea o recrea una sola VM</td>
 </tr>
@@ -991,6 +1008,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Destruye todas las VMs de un laboratorio</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>Muestra el estado de energía de las VMs de un lab, o las detiene sin destruirlas y las vuelve a arrancar: sobre todo para un lab en un backend de nube, donde un lab detenido cuesta menos. Detiene los agentes antes que los servidores y mantiene encendidas más tiempo las VMs de DNS y del overlay de cada sitio; al arrancar invierte ese orden y vuelve a registrar el DNS del lab, porque el proveedor devuelve otra dirección pública. Cada backend indica qué supone detenerlo para su factura, que en Hetzner Cloud no es nada.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

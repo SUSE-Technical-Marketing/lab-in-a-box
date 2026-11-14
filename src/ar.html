@@ -720,6 +720,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">أمثلة</h2>
+<p>المعامل التالية مكتوبة هنا بالكامل، لكن هذا التثبيت يوفّرها كملفات أيضًا ويعرضها مع عدد الأجهزة الافتراضية وعناقيد Kubernetes فيها وإضافاتها ووصفها الخاص:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # كتلة لكل مثال
+setup_lab.py --list-examples --json   # القائمة نفسها بصيغة JSON
+</code></pre>
+<p>تأتي من دليلين: <code>/usr/share/lab_creation/examples</code> الذي يثبّته lab-in-a-box ويستبدله أي تحديث، و<code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> في <code>lab_creation.cfg</code>) وهو دليلك الخاص. ضع فيه أي تعريف معمل بصيغة <code>.json</code> أو <code>.yaml</code> أو <code>.yml</code> فيظهر في القائمة أيضًا، هنا وفي مربع الحوار <em>Examples</em> في <a href="#web-ui-lab-builder">واجهة الويب</a>، مع تمييزه كملفك الخاص. والملف الذي يحمل اسم مثال مُرفَق يستبدله.</p>
+<p>يمكن بناء أي منها مباشرة دون كتابة ملف خاص بك. يُكتب التعريف في ملف مؤقت أثناء التشغيل ثم يُحذف بعده، فلا يبقى شيء؛ والخيار نفسه يهدم المعمل لاحقًا، لأن المثال ملف ثابت وأي عنوان لا يذكره يُستنتج من اسم العقدة نفسها. وكل ما عدا ذلك يعمل كما مع ملف معمل خاص بك، بما في ذلك <code>--keep</code> و<code>--debug</code> و<code>--parallel</code> و<code>--cloud-account</code>.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">أصغر مختبر بجهاز افتراضي واحد</h3>
 <p>أصغر مختبر ممكن: جهاز افتراضي واحد دون Kubernetes:</p>
 <pre><code class="language-jsonc">{
@@ -981,6 +990,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>ينشئ جميع الأجهزة الافتراضية، ويُعدّ عناقيد Kubernetes، ويثبّت بالترتيب كل إضافات العناقيد والأجهزة الافتراضية. يتخطى <code>--keep</code> أي جهاز افتراضي موجود ويطابق عنوان IP/MAC المحدد ويمكن الوصول إليه عبر SSH؛ ودونه يُحذف كل جهاز افتراضي ويُعاد إنشاؤه.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>يعرض معامل الأمثلة التي يوفّرها هذا التثبيت كنقطة بداية: المرفقة معه وتلك الخاصة بك من <code>EXAMPLE_LABS_DIR</code>. تطبع <code>--json</code> القائمة نفسها بصيغة JSON مع الملف الذي قُرئ منه كل مثال.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>يبني أحد معامل الأمثلة أو يهدمه دون ملف معمل خاص بك. ويبقى التعريف في ملف مؤقت أثناء ذلك التشغيل فقط.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>إنشاء جهاز افتراضي واحد أو إعادة إنشائه</td>
 </tr>
@@ -991,6 +1008,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>حذف جميع الأجهزة الافتراضية في مختبر</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>يعرض حالة الطاقة لأجهزة المعمل الافتراضية، أو يوقفها دون حذفها ثم يعيد تشغيلها، وهو مفيد خاصة لمعمل على خدمة سحابية حيث يكلّف المعمل الموقوف أقل. يوقف العقد التابعة قبل الخوادم ويبقي جهاز DNS وجهاز الشبكة المتراكبة لكل موقع يعمل أطول مدة؛ والتشغيل يعكس هذا الترتيب ويسجّل DNS المعمل من جديد لأن المزوّد يعيد عنوانًا عامًا مختلفًا. وكل خدمة تبيّن ما يعنيه الإيقاف لفاتورتها، وهو في Hetzner Cloud لا شيء على الإطلاق.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

@@ -717,6 +717,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">示例</h2>
+<p>下面的实验环境在此完整列出，但本次安装同样以文件形式自带它们，并可列出每个的虚拟机数量、Kubernetes 集群数量、附加组件及其自身说明：</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # 每个示例一段
+setup_lab.py --list-examples --json   # 同一列表，以 JSON 输出
+</code></pre>
+<p>它们来自两个目录：由 lab-in-a-box 安装、升级时会被替换的 <code>/usr/share/lab_creation/examples</code>，以及属于你自己的 <code>/etc/lab_creation/examples</code>（<code>lab_creation.cfg</code> 中的 <code>EXAMPLE_LABS_DIR</code>）。把任意 <code>.json</code>、<code>.yaml</code> 或 <code>.yml</code> 实验定义放进后者，它也会出现在这里以及 <a href="#web-ui-lab-builder">Web 界面</a>的 <em>Examples</em> 对话框中，并标记为你自己的。与自带示例同名的文件会取代它。</p>
+<p>其中任何一个都可以直接构建，无需自己编写文件。定义只在本次运行期间写入临时文件，运行结束后即被删除，不留下任何东西；同一个选项也可用来销毁该实验环境，因为示例是固定的文件，其中未指明的地址由节点名称推导而来。其余行为与使用你自己的实验文件完全相同，<code>--keep</code>、<code>--debug</code>、<code>--parallel</code> 和 <code>--cloud-account</code> 同样适用。</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">最小的单虚拟机实验室</h3>
 <p>最小的实验室：一台虚拟机，没有 Kubernetes：</p>
 <pre><code class="language-jsonc">{
@@ -976,6 +985,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>创建所有虚拟机、设置 Kubernetes 集群，并按顺序安装所有集群级和虚拟机级附加组件。<code>--keep</code> 会跳过已存在、与定义的 IP/MAC 一致且可通过 SSH 访问的虚拟机；不加此选项时，每台虚拟机都会被销毁并重新创建。</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>列出本次安装作为起点提供的示例实验环境：自带的，以及 <code>EXAMPLE_LABS_DIR</code> 中你自己的。<code>--json</code> 以 JSON 输出同一列表，并包含每个示例的来源文件。</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>在没有自己实验文件的情况下构建或销毁某个示例实验环境。定义仅在该次运行期间存放于临时文件中。</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>创建或重新创建单台虚拟机</td>
 </tr>
@@ -986,6 +1003,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>销毁实验室中的所有虚拟机</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>查看实验环境中各虚拟机的电源状态，或在不销毁的前提下停止并再次启动它们，主要面向云后端上的实验环境，停止后花费更少。停止时先停 agent 再停 server，各站点的 DNS 虚拟机和 overlay 虚拟机保留到最后；启动顺序相反，并会重新登记实验环境的 DNS，因为云厂商会给回另一个公网地址。每个后端都会说明停止对其账单意味着什么，在 Hetzner Cloud 上则毫无影响。</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

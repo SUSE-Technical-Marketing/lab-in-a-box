@@ -718,6 +718,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">例</h2>
+<p>以下のラボは全文を掲載していますが、このインストールはそれらをファイルとしても同梱しており、VM 数と Kubernetes クラスター数、アドオン、各ラボ自身の説明とともに一覧表示できます:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # 例ごとに 1 ブロック
+setup_lab.py --list-examples --json   # 同じ一覧を JSON で
+</code></pre>
+<p>一覧は 2 つのディレクトリから集められます。lab-in-a-box がインストールし、アップグレードで置き換わる <code>/usr/share/lab_creation/examples</code> と、利用者自身のものである <code>/etc/lab_creation/examples</code>（<code>lab_creation.cfg</code> の <code>EXAMPLE_LABS_DIR</code>）です。後者に <code>.json</code>、<code>.yaml</code>、<code>.yml</code> のラボ定義を置けば、ここでも <a href="#web-ui-lab-builder">Web UI</a> の <em>Examples</em> ダイアログでも、自分のものとして一覧に現れます。同梱の例と同じ名前のファイルはそれを置き換えます。</p>
+<p>いずれも自分でファイルを書かずに直接構築できます。定義は実行のあいだだけ一時ファイルに書き出され、終了後に削除されるため、何も残りません。同じオプションでラボを削除できます。サンプルは固定されたファイルであり、そこに書かれていないアドレスはノード名から決まるためです。それ以外の挙動は自分のラボファイルと同じで、<code>--keep</code>、<code>--debug</code>、<code>--parallel</code>、<code>--cloud-account</code> もそのまま使えます。</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">最小構成の単一 VM ラボ</h3>
 <p>考えられる最小のラボです。VM 1 台、Kubernetes なし：</p>
 <pre><code class="language-jsonc">{
@@ -979,6 +988,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>すべての VM を作成し、Kubernetes クラスターをセットアップし、クラスターレベルと VM レベルのアドオンをすべて順にインストールします。<code>--keep</code> を付けると、既に存在し、定義どおりの IP/MAC で、SSH で到達できる VM はスキップします。付けない場合、すべての VM が削除されて再作成されます。</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>このインストールが出発点として提供するサンプルラボ（同梱のものと <code>EXAMPLE_LABS_DIR</code> にある自分のもの）を一覧表示します。<code>--json</code> は同じ一覧を、各ラボの読み込み元ファイルも含めて JSON で出力します。</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>自分のラボファイルなしでサンプルラボを構築、または削除します。定義はその実行のあいだだけ一時ファイルに置かれます。</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>単一の VM を作成または再作成</td>
 </tr>
@@ -989,6 +1006,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>ラボ内のすべての VM を削除</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>ラボの VM の電源状態を表示し、あるいは削除せずに停止して再び起動します。主にクラウドバックエンド上のラボ向けで、停止したラボのほうが費用は少なくなります。停止はエージェントをサーバーより先に行い、各サイトの DNS VM とオーバーレイ VM を最後まで残します。起動はその逆で、プロバイダーが別のパブリックアドレスを割り当てるため、ラボの DNS を再登録します。停止が課金にどう影響するかは各バックエンドが説明し、Hetzner Cloud では何も変わりません。</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

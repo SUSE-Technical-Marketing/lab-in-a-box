@@ -253,9 +253,14 @@ the Apache config):</p>
      anywhere.</li>
    </ul>
    A place a block cannot go is not highlighted while you drag, and a click-to-add there says why.</li>
-<li><strong>Start from an example</strong> — <strong>Examples…</strong> lists the lab definitions the project ships
-   in <code>examples/</code>, with what each one holds (VMs, Kubernetes clusters, add-ons); opening one builds the
-   canvas from it, exactly as opening a file does. The static GitHub Pages build carries the same examples.</li>
+<li><strong>Start from an example, or launch it</strong> — <strong>Examples…</strong> lists the example labs this
+   installation offers, with what each one holds (VMs, Kubernetes clusters, add-ons): the ones it ships in
+   <code>/usr/share/lab_creation/examples</code> and this operator's own from <code>EXAMPLE_LABS_DIR</code>
+   (<code>/etc/lab_creation/examples</code> by default), the latter marked "your own". <em>Open</em> builds the
+   canvas from one, exactly as opening a file does. <em>Launch</em>, offered once you are logged in, creates it on
+   the automation node as it is: nothing is saved on the server, because <code>setup_lab.py --example</code> writes
+   the definition to a temporary file for that run and removes it afterwards. The static GitHub Pages build carries
+   the same examples, Open only.</li>
 <li><strong>Open or edit lab.json</strong> — <strong>Open…</strong> loads a <code>.json</code> or <code>.yaml</code> lab
    definition from your computer, and the JSON view can be edited directly. Either way the canvas is rebuilt from
    the definition: VMs join the Kubernetes cluster their <code>kcluster</code> names, each <code>addons</code> entry
@@ -326,8 +331,16 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
   <code>&lt;provider-or-service&gt;-&lt;account&gt;.yaml</code>, encrypted with a passphrase unless you untick it.
   <em>Encrypt…</em> writes an <code>.encrypted.yaml</code> copy of a file with plaintext secrets and keeps the original
   until you delete it. <em>Delete</em> removes a file.</li>
+<li><strong>Stop or start a lab</strong> — each row of <strong>Saved labs…</strong> carries <em>Status</em>,
+  <em>Start</em> and <em>Stop</em>, and an example carries <em>Status</em> and <em>Stop</em> (its start is
+  <em>Launch</em>). They run <code>vm_power.py</code> as root and print one line per VM under the row, with what
+  the lab's backends say stopping does to the bill — on Hetzner Cloud, for instance, nothing at all, since a server
+  is billed until it is deleted. Stopping is not destroying: the VMs and their disks stay, and starting registers
+  the lab's DNS again because a provider hands back a different public address. A whole lab takes minutes, and the
+  button says so while it runs.</li>
 <li><strong>Create lab</strong> — shows what the lab creates, saves it on the server, then runs <code>setup_lab.py</code>
-  as root in the background and shows its log as it runs. <em>Keep VMs that already exist</em> (<code>--keep</code>) is
+  as root in the background and shows its log as it runs. An example launched from <strong>Examples…</strong> comes
+  through this same dialog, minus the save: the server builds it by name. <em>Keep VMs that already exist</em> (<code>--keep</code>) is
   ticked by default; unticked, existing VMs of the lab are destroyed and created again. A lab whose credentials are
   encrypted takes its passphrase in the dialog: it is handed to that one run's environment
   (<code>LAB_CREDENTIALS_PASSPHRASE</code>) and nowhere else — not in the job record, not in its log, not back to the
@@ -409,7 +422,16 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <tr>
 <td>POST</td>
 <td><code>admin?action=create</code></td>
-<td><code>{ "filename": "mylab.json", "keep": true }</code> → run <code>setup_lab.py</code> as a job</td>
+<td><code>{ "filename": "mylab.json", "keep": true }</code>, or <code>{ "example": "portable-k3s-rancher.json.template" }</code>
+    for an example lab, with an optional <code>"cloud_account"</code> → run <code>setup_lab.py</code> as a job</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=power</code></td>
+<td><code>{ "filename": "mylab.json", "action": "stop" }</code>, or <code>"example"</code> in place of
+    <code>"filename"</code> → run <code>vm_power.py</code> and answer <code>{ "result": { vm: state }, "note": … }</code>.
+    <code>"action"</code> is <code>status</code>, <code>start</code> or <code>stop</code>; <code>"note"</code> is what
+    the backends say stopping does to the bill</td>
 </tr>
 <tr>
 <td>POST</td>

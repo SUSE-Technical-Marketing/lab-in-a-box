@@ -378,7 +378,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="the-automation-node-in-a-cloud">Le nœud d'automatisation dans un cloud</h3>
-<p>Le nœud d'automatisation est la machine sur laquelle les commandes s'exécutent. Ce peut être la VM sur un hôte KVM que <code>setup_kvm_node.py</code> construit, un conteneur ou un pod (<code>_automation_node</code> dans <code>lab.cfg</code>), ou une instance cloud. Dans un cloud il est construit par <code>setup_automation_node.py &lt;lab.json&gt; &lt;nœud&gt;</code>, où le nœud est un nœud ordinaire d'une définition de lab sur un backend cloud : il est créé par le même chemin que tout autre nœud, puis le même <code>automation-node-lib.sh configure</code> qu'une VM d'automatisation reçoit s'exécute dessus par SSH.</p>
+<p>Le nœud d'automatisation est la machine sur laquelle les commandes s'exécutent. Ce peut être la VM sur un hôte KVM que <code>setup_kvm_node.py</code> construit, un conteneur ou un pod (<code>_automation_node</code> dans <code>lab.cfg</code>), ou une instance cloud. Dans un cloud il est construit par <code>setup_automation_node.py &lt;lab.json&gt; &lt;nœud&gt;</code>, où le nœud est un nœud ordinaire d'une définition de lab sur un backend cloud : il est créé par le même chemin que tout autre nœud, puis le même <code>automation-node-lib.sh configure</code> qu'une VM d'automatisation reçoit s'exécute dessus par SSH. Une instance qui existe déjà sous ce nom est seulement configurée, pas recréée : le relancer est donc sans risque. Un conteneur sur un hôte sans pont et non configuré comme hôte KVM partage le réseau et l'adresse de l'hôte : il n'exécute pas son propre serveur SSH, l'hôte reçoit des enveloppes pour les commandes du laboratoire (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) qui les exécutent dans le conteneur, et les fichiers de laboratoire qui leur sont passés doivent se trouver sous <code>/var/lib/lab-in-a-box/labs</code>, que le conteneur partage.</p>
 <p>La raison d'en vouloir un est la résolution de noms. Un lab dans un compte cloud résout ses propres nœuds via le serveur DNS de ce même compte, et un nœud d'automatisation là-bas sert lui-même la zone du lab, si bien que rien dans le lab ne dépend de l'accessibilité d'une machine à la maison. Son BIND répond de façon autoritative pour le domaine du lab depuis n'importe où et ne résout récursivement que pour les plages privées : une instance dont le port 53 est joignable depuis internet n'est donc pas un résolveur ouvert, car résoudre une VM du lab par son nom demande une réponse autoritative, jamais de la récursion. Le port 53 n'est joignable que si la liste de ports du nœud le dit, par exemple <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
 <p>Diriger quoi que ce soit vers ce serveur vous revient : ajoutez son adresse comme nameserver partout où les noms du lab doivent se résoudre. La commande affiche l'adresse à utiliser quand elle termine.</p>
 <h3 id="naming-an-image-instead-of-an-id">Nommer une image au lieu d'un identifiant</h3>
@@ -413,7 +413,15 @@ footer.site {
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1 avec votre propre abonnement (BYOS). <code>-byos</code> s'ajoute à tout nom <code>sles</code> ou <code>slmicro</code> : aucun abonnement AWS Marketplace n'est nécessaire, et le nœud est enregistré après son premier démarrage avec <code>SUSE_regcode</code> de <code>lab_creation.cfg</code>, sans lequel il n'a aucun dépôt de paquets</td>
+<td>SUSE Linux Micro 6.1, BYOS explicite (identique au défaut ; <code>-byos</code> s'ajoute à tout nom <code>sles</code> ou <code>slmicro</code> et est conservé pour la compatibilité ascendante). Nécessite une inscription avec <code>scc_regcode</code> ou via <code>client_registration</code></td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -426,10 +434,6 @@ footer.site {
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7, avec votre propre abonnement (BYOS)</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1, avec votre propre abonnement (BYOS)</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -465,7 +469,7 @@ footer.site {
 </tr>
 </tbody>
 </table>
-<p>Un nom de produit SUSE suivi de <code>-byos</code> choisit son image avec votre propre abonnement au lieu de l'image à l'usage. Cette image n'a aucun dépôt tant qu'elle n'est pas enregistrée : un nœud enregistré auprès d'un serveur SMLM via <code>client_registration</code> obtient ses paquets de celui-ci, et un nœud qui a besoin de paquets avant cela, comme un nœud Kubernetes, définit <code>scc_regcode</code> (et éventuellement <code>scc_email</code>), dans common ou par nœud, pour que cloud-init l'enregistre avec <code>SUSEConnect</code> au premier démarrage.</p>
+<p>Les noms de produits SUSE (<code>sles</code>, <code>sles16</code>, <code>slmicro</code>, etc.) résolvent par défaut leur image BYOS (bring-your-own-subscription). Ajoutez <code>-payg</code> pour choisir l'image à l'usage à la place — elle s'enregistre automatiquement auprès de l'infrastructure de mise à jour propre d'AWS au premier démarrage sans regcode, mais entraîne un abonnement AWS horaire. Ajouter <code>-byos</code> explicitement fonctionne toujours et sélectionne la même image que le nom de base. Une image BYOS n'a aucun dépôt tant qu'elle n'est pas enregistrée : un nœud enregistré auprès d'un serveur SMLM via <code>client_registration</code> obtient ses paquets de celui-ci, et un nœud qui a besoin de paquets avant cela, comme un nœud Kubernetes, définit <code>scc_regcode</code> (et éventuellement <code>scc_email</code>), dans common ou par nœud, pour que cloud-init l'enregistre avec <code>SUSEConnect</code> au premier démarrage.</p>
 <p>Les produits SUSE viennent du registre public d'images de SUSE, et les autres du paramètre public AWS Systems Manager de chaque éditeur ou de son propre compte AWS, jamais d'une recherche par nom qu'un autre compte pourrait satisfaire. Une valeur qui n'est pas un nom de produit, identifiant d'image ou nom de fichier d'image compris, est transmise telle quelle.</p>
 <p>Un lab cloud a aussi besoin que ses nœuds se résolvent entre eux. Une petite VM DNS par compte cloud sert le domaine du lab, et le réseau du compte est configuré pour distribuer ce serveur à chaque instance qu'il contient, de sorte qu'un nœud rejoint son cluster Kubernetes par nom d'hôte sans rien configurer dans l'invité. Sur AWS il s'agit d'un jeu d'options DHCP de VPC : il s'applique à tout le VPC, une instance lancée ensuite l'a immédiatement, et une instance déjà en marche le récupère au renouvellement de son bail DHCP.</p>
 <h3 id="kubernetes-setup">Mise en place de Kubernetes</h3>
@@ -625,7 +629,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p>Principaux paramètres de <code>lab_creation.cfg</code> :</p>
@@ -660,6 +663,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTP et HTTPS.</strong> La VM d'automatisation sert ses fichiers sur le port 80 (HTTP) et sur le port 443 (HTTPS, certificat auto-signé dans <code>/etc/lab_creation/tls/</code>). Les installateurs (AutoYaST, kickstart, preseed) et Helm les téléchargent en HTTPS et acceptent le certificat auto-signé. Définissez <code>PROVISIONING_TLS_VERIFY=1</code> pour le vérifier, ou <code>PROVISIONING_BASE_URL</code> (par ex. <code>http://192.168.88.250</code>) pour utiliser une autre adresse ou revenir à HTTP. Le démarrage iPXE de Harvester utilise toujours HTTP : iPXE n'accepte pas les certificats auto-signés.</p>
+<h3 id="upgrading-lab-in-a-box">Mettre à jour lab-in-a-box</h3>
+<p>Pour passer un nœud d'automatisation à la dernière version, exécutez en root :</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>Il déploie le dernier état de <code>main</code> du dépôt officiel ; <code>--repo</code> et <code>--branch</code> en choisissent un autre, comme un fork. Sur un hôte installé depuis le paquet RPM/DEB <code>lab-in-a-box</code>, il installe à la place le paquet de la dernière version publiée sur GitHub via zypper, dnf ou apt, et <code>--branch</code> ne s'applique pas.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Étape 5 : pointer le DNS du client vers la VM d'automatisation</h3>
 <p>Pour que les noms d'hôte se résolvent depuis votre poste :</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -808,6 +817,10 @@ rancher:
 <td>Commandes shell que cette VM exécute elle-même, en root : <code>pre_commands</code> dès qu'elle est démarrée et avant tout travail Kubernetes ou add-on, <code>post_commands</code> après tout cela. Définissables aussi dans <code>common</code> pour toutes les VMs ; la liste propre d'un nœud la remplace, et <code>[]</code> en exclut ce nœud</td>
 </tr>
 <tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>Clés SSH supplémentaires ajoutées à cette VM une fois démarrée. Chaque entrée est une ligne de clé publique, une URL https contenant des clés (comme <code>https://github.com/&lt;user&gt;.keys</code>) ou un chemin de fichier sur le nœud d'automatisation, en simple chaîne pour root ou en <code>{"key": ..., "user": "alice"}</code> pour un autre compte. Aussi réglable dans <code>common</code> ; les entrées propres à un nœud s'ajoutent à celles de common. Un utilisateur absent de la VM, ou une source de clés illisible, est un avertissement dans le résumé de l'exécution</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>Disque(s) supplémentaire(s) à attacher : <code>"/dev/sdb"</code>, ou <code>"/dev/sdb,bus=scsi"</code> pour changer le bus par défaut d'un disque</td>
 </tr>
@@ -886,6 +899,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">Exemples</h2>
+<p>Les labs ci-dessous sont écrits intégralement, mais cette installation les fournit aussi sous forme de fichiers et les liste avec leur nombre de VM et de clusters Kubernetes, leurs add-ons et leur propre description&nbsp;:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # un bloc par exemple
+setup_lab.py --list-examples --json   # la même liste, en JSON
+</code></pre>
+<p>Ils viennent de deux répertoires&nbsp;: <code>/usr/share/lab_creation/examples</code>, que lab-in-a-box installe et qu'une mise à jour remplace, et <code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> dans <code>lab_creation.cfg</code>), qui est le vôtre. Déposez-y n'importe quelle définition de lab <code>.json</code>, <code>.yaml</code> ou <code>.yml</code> et elle est listée aussi, ici et dans la boîte de dialogue <em>Examples</em> de l'<a href="#web-ui-lab-builder">interface web</a>, marquée comme la vôtre. Un fichier portant le nom d'un exemple fourni le remplace.</p>
+<p>Chacun d'eux peut être construit directement, sans écrire de fichier à vous. La définition est écrite dans un fichier temporaire pour l'exécution puis supprimée, donc rien ne reste&nbsp;; la même option détruit le lab ensuite, car un exemple est un fichier fixe et une adresse qu'il ne nomme pas se déduit du nom du nœud lui-même. Tout le reste se comporte comme avec votre propre fichier, y compris <code>--keep</code>, <code>--debug</code>, <code>--parallel</code> et <code>--cloud-account</code>.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">Laboratoire minimal à une seule VM</h3>
 <p>Le plus petit laboratoire possible : une VM, sans Kubernetes :</p>
 <pre><code class="language-jsonc">{
@@ -1147,6 +1169,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>Crée toutes les VM, met en place les clusters Kubernetes et installe dans l'ordre tous les modules de cluster et de VM. <code>--keep</code> ignore toute VM qui existe déjà, correspond à l'IP/MAC définie et répond en SSH ; sans cette option, chaque VM est détruite puis recréée.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>Liste les labs d'exemple que cette installation propose comme point de départ&nbsp;: ceux qu'elle fournit et les vôtres, depuis <code>EXAMPLE_LABS_DIR</code>. <code>--json</code> imprime la même liste en JSON, avec le fichier dont chacun a été lu.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>Construit, ou détruit, l'un des labs d'exemple sans fichier à vous. La définition ne vit dans un fichier temporaire que le temps de l'exécution.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>Crée ou recrée une seule VM</td>
 </tr>
@@ -1157,6 +1187,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Détruit toutes les VM d'un laboratoire</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>Affiche l'état d'alimentation des VM d'un lab, ou les arrête sans les détruire puis les redémarre&nbsp;: surtout pour un lab sur un backend cloud, où un lab arrêté coûte moins cher. Les agents s'arrêtent avant les serveurs et les VM de DNS et d'overlay de chaque site restent allumées le plus longtemps&nbsp;; le démarrage inverse cet ordre et réenregistre le DNS du lab, car le fournisseur rend une autre adresse publique. Chaque backend dit ce qu'un arrêt change à sa facture&nbsp;: chez Hetzner Cloud, rien du tout.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
@@ -1541,7 +1575,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>Installe rodeo-cli, une CLI de type Terraform qui déploie des labs KVM imbriqués (Harvester HCI, Rancher Prime, ou les deux), prête à l'emploi sur le nœud cible — les propres fichiers de plan/secrets de rodeo-cli ne relèvent pas de cet addon</td>
+<td>Installe rodeo-cli, une CLI de type Terraform qui déploie des labs KVM imbriqués (Harvester HCI, Rancher Prime, ou les deux), prête à l'emploi sur le nœud cible — les propres fichiers de plan/secrets de rodeo-cli ne relèvent pas de cet addon. Son Rodeo Builder (port 8678) répond au FQDN du nœud et à l'adresse vers laquelle il se résout (son IP publique sur un nœud cloud) ; tout autre nom utilisé par les clients se déclare dans <code>rodeo_cli_builder_allow</code>. Les options de l'installateur sont des champs de l'addon : <code>rodeo_cli_ref</code>, <code>rodeo_cli_repo_url</code>, <code>rodeo_cli_dir</code>, <code>rodeo_cli_mode</code> (<code>kvm-host</code> ou <code>control-plane</code>, qui n'a pas besoin de <code>/dev/kvm</code>), <code>rodeo_cli_builder</code> et <code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1642,7 +1676,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>Valeurs par défaut du système chargées par chaque script. Définit les chemins, les temporisations par défaut et les listes de paquets. <strong>Ne le modifiez pas</strong> à moins de savoir ce que vous faites.</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>Configuration propre au nœud pour la VM d'automatisation. Copiée depuis <code>/etc/lab_creation.cfg.example</code> pendant l'installation. Variables principales :</p>
+<p>Configuration propre au nœud pour la VM d'automatisation. L'installation du nœud d'automatisation l'écrit à partir de <code>/etc/lab_creation.cfg.example</code>, avec les valeurs du nœud, lorsqu'elle n'existe pas encore ; un fichier existant n'est jamais écrasé. Variables principales :</p>
 <table>
 <thead>
 <tr>

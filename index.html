@@ -378,7 +378,7 @@ footer.site {
 </table>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/backends.svg" alt="Compute backends: get_backend() routes to libvirt, Harvester or one of eight public clouds" loading="lazy"><img class="diagram--dark" src="media/diagrams/backends-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
 <h3 id="the-automation-node-in-a-cloud">The automation node in a cloud</h3>
-<p>The automation node is the machine the commands run on. It can be the VM on a KVM host that <code>setup_kvm_node.py</code> builds, a container or a pod (<code>_automation_node</code> in <code>lab.cfg</code>), or a cloud instance. In a cloud it is built by <code>setup_automation_node.py &lt;lab.json&gt; &lt;node&gt;</code>, where the node is an ordinary node of a lab definition on a cloud backend: it is created by the same provisioning path every other node uses, and then the same <code>automation-node-lib.sh configure</code> that a VM automation node gets runs on it over SSH.</p>
+<p>The automation node is the machine the commands run on. It can be the VM on a KVM host that <code>setup_kvm_node.py</code> builds, a container or a pod (<code>_automation_node</code> in <code>lab.cfg</code>), or a cloud instance. In a cloud it is built by <code>setup_automation_node.py &lt;lab.json&gt; &lt;node&gt;</code>, where the node is an ordinary node of a lab definition on a cloud backend: it is created by the same provisioning path every other node uses, and then the same <code>automation-node-lib.sh configure</code> that a VM automation node gets runs on it over SSH. An instance that already exists under that name is only configured, not created again, so running it again is safe. A container on a host that has no bridge and is not set up as a KVM host shares the host's network and address: it runs no SSH server of its own, the host gets wrappers for the lab commands (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) that run them inside it, and the lab files given to those commands must be under <code>/var/lib/lab-in-a-box/labs</code>, which the container shares.</p>
 <p>The reason to want one is name resolution. A lab in a cloud account resolves its own nodes through the DNS server in that same account, and an automation node there serves the lab's zone itself, so nothing about the lab depends on a machine at home being reachable. Its BIND answers authoritatively for the lab domain from anywhere and recurses only for the private ranges, so an instance whose port 53 is reachable from the internet is not an open resolver: resolving a lab VM by name needs an authoritative answer, never recursion. Port 53 is only reachable if the node's own open-ports list says so, for example <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
 <p>Pointing anything at that server is left to you: add its address as a nameserver wherever the lab's names should resolve. The command prints the address to use when it finishes.</p>
 <h3 id="naming-an-image-instead-of-an-id">Naming an image instead of an ID</h3>
@@ -413,7 +413,15 @@ footer.site {
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1, bring your own subscription. <code>-byos</code> works on any <code>sles</code> or <code>slmicro</code> name: no AWS Marketplace subscription is needed, and the node is registered after its first boot with <code>SUSE_regcode</code> from <code>lab_creation.cfg</code>, without which it has no package repositories</td>
+<td>SUSE Linux Micro 6.1, explicitly BYOS (same as the default; <code>-byos</code> works on any <code>sles</code> or <code>slmicro</code> name and is kept for backward compatibility). Requires registration with <code>scc_regcode</code> or through <code>client_registration</code></td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -426,10 +434,6 @@ footer.site {
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7, bring your own subscription</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1, bring your own subscription</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -465,7 +469,7 @@ footer.site {
 </tr>
 </tbody>
 </table>
-<p>A SUSE product name followed by <code>-byos</code> picks its bring-your-own-subscription image instead of the pay-as-you-go one. That image has no repositories until it is registered: a node registered to an SMLM server through <code>client_registration</code> gets its packages from there, and a node that needs packages before that, such as a Kubernetes node, sets <code>scc_regcode</code> (and optionally <code>scc_email</code>), in common or per node, so cloud-init registers it with <code>SUSEConnect</code> at first boot.</p>
+<p>SUSE product names (<code>sles</code>, <code>sles16</code>, <code>slmicro</code>, etc.) resolve to their BYOS (bring-your-own-subscription) image by default. Append <code>-payg</code> to pick the pay-as-you-go image instead — it auto-registers against AWS's own update infrastructure at first boot with no regcode needed, but carries a per-hour AWS subscription charge. Appending <code>-byos</code> explicitly still works and selects the same image as the bare name. A BYOS image has no repositories until it is registered: a node registered to an SMLM server through <code>client_registration</code> gets its packages from there, and a node that needs packages before that, such as a Kubernetes node, sets <code>scc_regcode</code> (and optionally <code>scc_email</code>), in common or per node, so cloud-init registers it with <code>SUSEConnect</code> at first boot.</p>
 <p>SUSE's own products come from SUSE's public image tracker, and the rest from each vendor's AWS Systems Manager public parameter or its own AWS account, never from a name search that another account could match. A value that is not a product name, an image ID or an image file name included, is passed through untouched.</p>
 <p>A cloud lab also needs its nodes to resolve each other. One small DNS VM per cloud account serves the lab domain, and the account's network is configured to hand that server to every instance in it, so a node joins its Kubernetes cluster by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set: it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews.</p>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
@@ -624,7 +628,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p>Key settings in <code>lab_creation.cfg</code>:</p>
@@ -659,6 +662,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTP and HTTPS.</strong> The automation VM serves its files on port 80 (HTTP) and port 443 (HTTPS, self-signed certificate in <code>/etc/lab_creation/tls/</code>). Installers (AutoYaST, kickstart, preseed) and Helm fetch them over HTTPS and accept the self-signed certificate. Set <code>PROVISIONING_TLS_VERIFY=1</code> to verify it instead, or <code>PROVISIONING_BASE_URL</code> (e.g. <code>http://192.168.88.250</code>) to use another address or go back to HTTP. Harvester's iPXE netboot always uses HTTP: iPXE cannot accept a self-signed certificate.</p>
+<h3 id="upgrading-lab-in-a-box">Upgrading lab-in-a-box</h3>
+<p>To move an automation node to the latest version, run as root:</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>It deploys the latest <code>main</code> of the official repository; <code>--repo</code> and <code>--branch</code> pick another one, such as a fork. On a host installed from the <code>lab-in-a-box</code> RPM/DEB package it installs the package of the latest GitHub release through zypper, dnf or apt instead, and <code>--branch</code> does not apply.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Step 5 — Point your client DNS at the automation VM</h3>
 <p>For hostnames to resolve from your desktop:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -807,6 +816,10 @@ rancher:
 <td>Shell commands this VM runs itself, as root: <code>pre_commands</code> once it is up and before any Kubernetes or add-on work, <code>post_commands</code> after all of it. Also settable in <code>common</code> for every VM; a node's own list replaces it, and <code>[]</code> opts that node out</td>
 </tr>
 <tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>Extra SSH keys added to this VM once it is up. Each entry is a public key line, an https URL holding keys (such as <code>https://github.com/&lt;user&gt;.keys</code>) or a file path on the automation node, as a plain string for root or as <code>{"key": ..., "user": "alice"}</code> for another account. Also settable in <code>common</code>; a node's own entries are added to common's. A user that does not exist on the VM, or a key source that cannot be read, is a warning in the run summary</td>
+</tr>
+<tr>
 <td><code>extra_dsk</code></td>
 <td>Additional disk(s) to attach — <code>"/dev/sdb"</code>, or <code>"/dev/sdb,bus=scsi"</code> to override the default bus per disk</td>
 </tr>
@@ -885,6 +898,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">Examples</h2>
+<p>The labs below are written out in full, but this installation ships them as files too, and lists them with their VM and Kubernetes-cluster counts, their add-ons and their own description:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # one block per example
+setup_lab.py --list-examples --json   # the same list, as JSON
+</code></pre>
+<p>They come from two directories: <code>/usr/share/lab_creation/examples</code>, which lab-in-a-box installs and an upgrade replaces, and <code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> in <code>lab_creation.cfg</code>), which is yours. Drop any <code>.json</code>, <code>.yaml</code> or <code>.yml</code> lab definition in it and it is listed too, here and in the <a href="#web-ui-lab-builder">web UI</a>'s <em>Examples</em> dialog, marked as your own. A file whose name matches a shipped one replaces it.</p>
+<p>Any of them can be built directly, without writing a file of your own. The definition is written to a temporary file for the run and removed afterwards, so nothing is left behind; the same option tears the lab down again, since an example is a fixed file and an address it does not name is derived from the node's own name. Everything else reads the same as on a lab file of your own, <code>--keep</code>, <code>--debug</code>, <code>--parallel</code> and <code>--cloud-account</code> included.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">Minimal single-VM lab</h3>
 <p>The smallest possible lab — one VM, no Kubernetes:</p>
 <pre><code class="language-jsonc">{
@@ -1184,6 +1206,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>Create all VMs, set up Kubernetes clusters, and install every cluster-level and VM-level addon in order. <code>--keep</code> skips any VM that already exists, matches the defined IP/MAC, and is SSH-reachable — without it, every VM is destroyed and recreated.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>List the example labs this installation offers as starting points — the ones it ships and your own, from <code>EXAMPLE_LABS_DIR</code>. <code>--json</code> prints the same list as JSON, with the file each one was read from.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>Build, or destroy, one of the example labs without a lab file of your own. The definition lives in a temporary file for that run only.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>Create or recreate a single VM</td>
 </tr>
@@ -1194,6 +1224,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Destroy all VMs in a lab</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>The power state of a lab's VMs, or stop them without destroying them and start them again — mainly for a lab on a cloud backend, where a stopped lab costs less. Stops the agents before the servers and keeps each site's DNS and overlay VM up longest; starting reverses that and registers the lab's DNS again, since a provider hands back a different public address. Every backend says what stopping does to its bill, which on Hetzner Cloud is nothing at all.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
@@ -1590,7 +1624,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>Installs rodeo-cli, a Terraform-style CLI that deploys nested KVM labs (Harvester HCI, Rancher Prime, or both), ready to use on the target node — rodeo-cli's own plan/secrets files are not this addon's concern</td>
+<td>Installs rodeo-cli, a Terraform-style CLI that deploys nested KVM labs (Harvester HCI, Rancher Prime, or both), ready to use on the target node — rodeo-cli's own plan/secrets files are not this addon's concern. Its Rodeo Builder (port 8678) answers to the node's FQDN and to the address it resolves to (its public IP on a cloud node); list any other name clients use in <code>rodeo_cli_builder_allow</code>. The installer's own options are add-on fields: <code>rodeo_cli_ref</code>, <code>rodeo_cli_repo_url</code>, <code>rodeo_cli_dir</code>, <code>rodeo_cli_mode</code> (<code>kvm-host</code> or <code>control-plane</code>, which needs no <code>/dev/kvm</code>), <code>rodeo_cli_builder</code> and <code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1707,7 +1741,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>System-wide defaults loaded by every script. Defines paths, default delay timers, and package lists. <strong>Do not edit</strong> unless you know what you are doing.</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>Node-specific configuration for the automation VM. Copied from <code>/etc/lab_creation.cfg.example</code> during setup. Key variables:</p>
+<p>Node-specific configuration for the automation VM. The automation node setup writes it from <code>/etc/lab_creation.cfg.example</code>, filled in with the node's own values, when it does not exist yet; an existing one is never overwritten. Key variables:</p>
 <table>
 <thead>
 <tr>

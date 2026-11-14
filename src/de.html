@@ -639,6 +639,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">Beispiele</h2>
+<p>Die folgenden Labs sind hier vollständig abgedruckt, diese Installation liefert sie aber auch als Dateien mit und listet sie mit der Anzahl ihrer VMs und Kubernetes-Cluster, ihren Add-ons und ihrer eigenen Beschreibung auf:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # ein Block pro Beispiel
+setup_lab.py --list-examples --json   # dieselbe Liste als JSON
+</code></pre>
+<p>Sie kommen aus zwei Verzeichnissen: <code>/usr/share/lab_creation/examples</code>, das lab-in-a-box installiert und bei einem Upgrade ersetzt, und <code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> in <code>lab_creation.cfg</code>), das Ihnen gehört. Legen Sie dort eine <code>.json</code>-, <code>.yaml</code>- oder <code>.yml</code>-Lab-Definition ab, und sie wird ebenfalls aufgeführt — hier und im Dialog <em>Examples</em> der <a href="#web-ui-lab-builder">Web-UI</a>, als eigene gekennzeichnet. Eine Datei mit dem Namen eines mitgelieferten Beispiels ersetzt dieses.</p>
+<p>Jedes davon lässt sich direkt bauen, ohne eine eigene Datei zu schreiben. Die Definition wird für den Lauf in eine temporäre Datei geschrieben und danach entfernt, es bleibt also nichts zurück; dieselbe Option baut das Lab wieder ab, denn ein Beispiel ist eine feste Datei, und eine Adresse, die es nicht nennt, ergibt sich aus dem Namen des Knotens. Alles andere verhält sich wie bei einer eigenen Lab-Datei, einschließlich <code>--keep</code>, <code>--debug</code>, <code>--parallel</code> und <code>--cloud-account</code>.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">Minimales Lab mit einer einzelnen VM</h3>
 <p>Das kleinstmögliche Lab: eine VM, ohne Kubernetes:</p>
 <pre><code class="language-jsonc">{
@@ -888,6 +897,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>Erstellt alle VMs, richtet Kubernetes-Cluster ein und installiert jedes Add-on auf Cluster- und VM-Ebene der Reihe nach. <code>--keep</code> überspringt jede VM, die bereits existiert, zur definierten IP/MAC passt und per SSH erreichbar ist. Ohne diesen Schalter wird jede VM zerstört und neu erstellt.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>Listet die Beispiel-Labs auf, die diese Installation als Startpunkt anbietet — die mitgelieferten und Ihre eigenen aus <code>EXAMPLE_LABS_DIR</code>. <code>--json</code> gibt dieselbe Liste als JSON aus, mit der Datei, aus der jedes gelesen wurde.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>Baut oder entfernt eines der Beispiel-Labs ohne eigene Lab-Datei. Die Definition liegt nur für diesen Lauf in einer temporären Datei.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>Erstellt eine einzelne VM neu oder erstellt sie</td>
 </tr>
@@ -898,6 +915,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Zerstört alle VMs eines Labs</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>Zeigt den Energiezustand der VMs eines Labs oder stoppt sie, ohne sie zu löschen, und startet sie wieder — vor allem für ein Lab auf einem Cloud-Backend, wo ein gestopptes Lab weniger kostet. Agenten werden vor den Servern gestoppt, die DNS- und Overlay-VM jedes Standorts bleiben am längsten laufen; beim Starten ist es umgekehrt, und das Lab-DNS wird neu geschrieben, weil der Anbieter eine andere öffentliche Adresse zurückgibt. Jedes Backend sagt, was ein Stopp für seine Rechnung bedeutet — bei Hetzner Cloud nämlich nichts.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

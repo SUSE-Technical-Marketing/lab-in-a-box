@@ -719,6 +719,15 @@ migrate_config.py lab.json           # write the migrated copy to lab.json.syste
 
 <hr />
 <h2 id="examples">Examples</h2>
+<p>The labs below are written out in full, but this installation ships them as files too, and lists them with their VM and Kubernetes-cluster counts, their add-ons and their own description:</p>
+<pre><code class="language-shell">setup_lab.py --list-examples          # one block per example
+setup_lab.py --list-examples --json   # the same list, as JSON
+</code></pre>
+<p>They come from two directories: <code>/usr/share/lab_creation/examples</code>, which lab-in-a-box installs and an upgrade replaces, and <code>/etc/lab_creation/examples</code> (<code>EXAMPLE_LABS_DIR</code> in <code>lab_creation.cfg</code>), which is yours. Drop any <code>.json</code>, <code>.yaml</code> or <code>.yml</code> lab definition in it and it is listed too, here and in the <a href="#web-ui-lab-builder">web UI</a>'s <em>Examples</em> dialog, marked as your own. A file whose name matches a shipped one replaces it.</p>
+<p>Any of them can be built directly, without writing a file of your own. The definition is written to a temporary file for the run and removed afterwards, so nothing is left behind; the same option tears the lab down again, since an example is a fixed file and an address it does not name is derived from the node's own name. Everything else reads the same as on a lab file of your own, <code>--keep</code>, <code>--debug</code>, <code>--parallel</code> and <code>--cloud-account</code> included.</p>
+<pre><code class="language-shell">setup_lab.py --example portable-k3s-rancher.json.template
+destroy_lab.py --example portable-k3s-rancher.json.template
+</code></pre>
 <h3 id="minimal-single-vm-lab">Minimal single-VM lab</h3>
 <p>The smallest possible lab — one VM, no Kubernetes:</p>
 <pre><code class="language-jsonc">{
@@ -1018,6 +1027,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>Create all VMs, set up Kubernetes clusters, and install every cluster-level and VM-level addon in order. <code>--keep</code> skips any VM that already exists, matches the defined IP/MAC, and is SSH-reachable — without it, every VM is destroyed and recreated.</td>
 </tr>
 <tr>
+<td><code>setup_lab.py --list-examples [--json]</code></td>
+<td>List the example labs this installation offers as starting points — the ones it ships and your own, from <code>EXAMPLE_LABS_DIR</code>. <code>--json</code> prints the same list as JSON, with the file each one was read from.</td>
+</tr>
+<tr>
+<td><code>setup_lab.py --example &lt;name&gt;</code><br><code>destroy_lab.py --example &lt;name&gt;</code></td>
+<td>Build, or destroy, one of the example labs without a lab file of your own. The definition lives in a temporary file for that run only.</td>
+</tr>
+<tr>
 <td><code>setup_vm.py &lt;lab.json&gt; &lt;hostname&gt;</code></td>
 <td>Create or recreate a single VM</td>
 </tr>
@@ -1028,6 +1045,10 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <tr>
 <td><code>destroy_lab.py &lt;lab.json&gt;</code></td>
 <td>Destroy all VMs in a lab</td>
+</tr>
+<tr>
+<td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
+<td>The power state of a lab's VMs, or stop them without destroying them and start them again — mainly for a lab on a cloud backend, where a stopped lab costs less. Stops the agents before the servers and keeps each site's DNS and overlay VM up longest; starting reverses that and registers the lab's DNS again, since a provider hands back a different public address. Every backend says what stopping does to its bill, which on Hetzner Cloud is nothing at all.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
