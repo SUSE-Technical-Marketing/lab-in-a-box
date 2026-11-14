@@ -173,7 +173,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="the-automation-node-in-a-cloud">O nó de automação em uma nuvem</h3>
-<p>O nó de automação é a máquina onde os comandos são executados. Pode ser a VM em um host KVM que o <code>setup_kvm_node.py</code> constrói, um contêiner ou um pod (<code>_automation_node</code> no <code>lab.cfg</code>), ou uma instância de nuvem. Em uma nuvem ele é construído por <code>setup_automation_node.py &lt;lab.json&gt; &lt;nó&gt;</code>, onde o nó é um nó comum de uma definição de laboratório em um backend de nuvem: ele é criado pelo mesmo caminho que qualquer outro nó, e depois o mesmo <code>automation-node-lib.sh configure</code> que uma VM de automação recebe é executado nele por SSH.</p>
+<p>O nó de automação é a máquina onde os comandos são executados. Pode ser a VM em um host KVM que o <code>setup_kvm_node.py</code> constrói, um contêiner ou um pod (<code>_automation_node</code> no <code>lab.cfg</code>), ou uma instância de nuvem. Em uma nuvem ele é construído por <code>setup_automation_node.py &lt;lab.json&gt; &lt;nó&gt;</code>, onde o nó é um nó comum de uma definição de laboratório em um backend de nuvem: ele é criado pelo mesmo caminho que qualquer outro nó, e depois o mesmo <code>automation-node-lib.sh configure</code> que uma VM de automação recebe é executado nele por SSH. Uma instância que já existe com esse nome é apenas configurada, não criada de novo, então executá-lo outra vez é seguro. Um contêiner em um host sem bridge e não configurado como host KVM compartilha a rede e o endereço do host: ele não executa um servidor SSH próprio, o host recebe wrappers para os comandos do laboratório (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …) que os executam dentro dele, e os arquivos de laboratório passados a esses comandos devem ficar em <code>/var/lib/lab-in-a-box/labs</code>, que o contêiner compartilha.</p>
 <p>O motivo para querer um é a resolução de nomes. Um laboratório em uma conta de nuvem resolve os próprios nós pelo servidor DNS dessa mesma conta, e um nó de automação ali serve a zona do laboratório por conta própria, de modo que nada no laboratório depende de uma máquina em casa estar acessível. Seu BIND responde de forma autoritativa para o domínio do laboratório de qualquer lugar e só resolve recursivamente para as faixas privadas, então uma instância com a porta 53 acessível pela internet não é um resolvedor aberto: resolver uma VM do laboratório pelo nome precisa de uma resposta autoritativa, nunca de recursão. A porta 53 só fica acessível se a lista de portas do nó disser isso, por exemplo <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
 <p>Apontar algo para esse servidor é com você: adicione o endereço dele como nameserver onde quiser que os nomes do laboratório sejam resolvidos. O comando imprime o endereço a usar ao terminar.</p>
 <h3 id="naming-an-image-instead-of-an-id">Nomear uma imagem em vez de um ID</h3>
@@ -208,7 +208,15 @@
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1 com assinatura própria (BYOS). <code>-byos</code> funciona com qualquer nome <code>sles</code> ou <code>slmicro</code>: não exige assinatura no AWS Marketplace, e o nó é registrado após a primeira inicialização com <code>SUSE_regcode</code> do <code>lab_creation.cfg</code>, sem o qual não tem repositórios de pacotes</td>
+<td>SUSE Linux Micro 6.1, BYOS explícito (mesmo que o padrão; <code>-byos</code> funciona com qualquer nome <code>sles</code> ou <code>slmicro</code> e é mantido por compatibilidade). Requer registro com <code>scc_regcode</code> ou por meio de <code>client_registration</code></td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -221,10 +229,6 @@
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7, com assinatura própria (BYOS)</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1, com assinatura própria (BYOS)</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -260,7 +264,7 @@
 </tr>
 </tbody>
 </table>
-<p>Um nome de produto SUSE seguido de <code>-byos</code> escolhe a imagem com assinatura própria em vez da imagem pré-paga por uso. Essa imagem não tem repositórios até ser registrada: um nó registrado em um servidor SMLM por meio de <code>client_registration</code> obtém seus pacotes de lá, e um nó que precisa de pacotes antes disso, como um nó Kubernetes, define <code>scc_regcode</code> (e opcionalmente <code>scc_email</code>), em common ou por nó, para que o cloud-init o registre com <code>SUSEConnect</code> na primeira inicialização.</p>
+<p>Os nomes de produtos SUSE (<code>sles</code>, <code>sles16</code>, <code>slmicro</code> etc.) resolvem por padrão para sua imagem BYOS (bring-your-own-subscription). Adicione <code>-payg</code> para escolher a imagem pay-as-you-go — ela se registra automaticamente na infraestrutura de atualização própria da AWS na primeira inicialização sem precisar de regcode, mas incorre em uma taxa de assinatura da AWS por hora. Adicionar <code>-byos</code> explicitamente ainda funciona e seleciona a mesma imagem que o nome base. Uma imagem BYOS não tem repositórios até ser registrada: um nó registrado em um servidor SMLM por meio de <code>client_registration</code> obtém seus pacotes de lá, e um nó que precisa de pacotes antes disso, como um nó Kubernetes, define <code>scc_regcode</code> (e opcionalmente <code>scc_email</code>), em common ou por nó, para que o cloud-init o registre com <code>SUSEConnect</code> na primeira inicialização.</p>
 <p>Os produtos da própria SUSE vêm do rastreador público de imagens da SUSE, e os demais do parâmetro público do AWS Systems Manager de cada fornecedor ou da sua própria conta AWS, nunca de uma busca por nome que outra conta pudesse satisfazer. Um valor que não seja um nome de produto, incluindo um ID de imagem ou um nome de arquivo de imagem, é repassado sem alteração.</p>
 <p>Um laboratório na nuvem também precisa que seus nós resolvam uns aos outros. Uma pequena VM de DNS por conta de nuvem serve o domínio do laboratório, e a rede da conta é configurada para entregar esse servidor a cada instância nela, de modo que um nó entra no seu cluster Kubernetes pelo nome de host sem nada configurado dentro do convidado. Na AWS isso é um conjunto de opções DHCP da VPC: ele se aplica a toda a VPC, uma instância iniciada depois o tem imediatamente, e uma já em execução o adota quando renova sua concessão DHCP.</p>
 <h3 id="kubernetes-setup">Configuração do Kubernetes</h3>
@@ -438,7 +442,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p>Principais configurações do <code>lab_creation.cfg</code>:</p>
@@ -473,6 +476,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTP e HTTPS.</strong> A VM de automação serve seus arquivos na porta 80 (HTTP) e na porta 443 (HTTPS, certificado autoassinado em <code>/etc/lab_creation/tls/</code>). Os instaladores (AutoYaST, kickstart, preseed) e o Helm os baixam por HTTPS e aceitam o certificado autoassinado. Defina <code>PROVISIONING_TLS_VERIFY=1</code> para verificá-lo, ou <code>PROVISIONING_BASE_URL</code> (por exemplo <code>http://192.168.88.250</code>) para usar outro endereço ou voltar ao HTTP. O boot iPXE do Harvester sempre usa HTTP: o iPXE não aceita certificados autoassinados.</p>
+<h3 id="upgrading-lab-in-a-box">Atualizar o lab-in-a-box</h3>
+<p>Para levar um nó de automação à versão mais recente, execute como root:</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>Ele implanta o estado mais recente de <code>main</code> do repositório oficial; <code>--repo</code> e <code>--branch</code> escolhem outro, como um fork. Em um host instalado a partir do pacote RPM/DEB <code>lab-in-a-box</code>, ele instala o pacote da versão mais recente publicada no GitHub via zypper, dnf ou apt, e <code>--branch</code> não se aplica.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Etapa 5: apontar o DNS do cliente para a VM de automação</h3>
 <p>Para que os nomes de host sejam resolvidos a partir do seu computador:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -627,6 +636,10 @@ rancher:
 <tr>
 <td><code>pre_commands</code>, <code>post_commands</code></td>
 <td>Comandos de shell que esta VM executa por si mesma, como root: <code>pre_commands</code> assim que ela está no ar e antes de qualquer trabalho de Kubernetes ou de add-ons, <code>post_commands</code> depois de tudo isso. Também podem ser definidos em <code>common</code> para todas as VMs; a lista própria de um nó a substitui, e <code>[]</code> exclui aquele nó</td>
+</tr>
+<tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>Chaves SSH extras adicionadas a esta VM assim que ela estiver no ar. Cada entrada é uma linha de chave pública, uma URL https com chaves (como <code>https://github.com/&lt;user&gt;.keys</code>) ou um caminho de arquivo no nó de automação, como string simples para root ou como <code>{"key": ..., "user": "alice"}</code> para outra conta. Também pode ser definido em <code>common</code>; as entradas próprias de um nó somam-se às de common. Um usuário que não existe na VM, ou uma fonte de chaves que não pode ser lida, é um aviso no resumo da execução</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -1362,7 +1375,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>Instala o rodeo-cli, uma CLI no estilo Terraform que implanta labs KVM aninhados (Harvester HCI, Rancher Prime, ou ambos), pronta para uso no nó de destino — os próprios arquivos de plan/secrets do rodeo-cli não são responsabilidade deste addon</td>
+<td>Instala o rodeo-cli, uma CLI no estilo Terraform que implanta labs KVM aninhados (Harvester HCI, Rancher Prime, ou ambos), pronta para uso no nó de destino — os próprios arquivos de plan/secrets do rodeo-cli não são responsabilidade deste addon. O Rodeo Builder dele (porta 8678) responde ao FQDN do nó e ao endereço para o qual ele resolve (o IP público em um nó de nuvem); qualquer outro nome usado pelos clientes vai em <code>rodeo_cli_builder_allow</code>. As opções do próprio instalador são campos do addon: <code>rodeo_cli_ref</code>, <code>rodeo_cli_repo_url</code>, <code>rodeo_cli_dir</code>, <code>rodeo_cli_mode</code> (<code>kvm-host</code> ou <code>control-plane</code>, que não precisa de <code>/dev/kvm</code>), <code>rodeo_cli_builder</code> e <code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1463,7 +1476,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>Padrões de todo o sistema carregados por todos os scripts. Define caminhos, temporizadores de espera padrão e listas de pacotes. <strong>Não edite</strong> a menos que saiba o que está fazendo.</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>Configuração específica do nó para a VM de automação. Copiada de <code>/etc/lab_creation.cfg.example</code> durante a configuração. Variáveis principais:</p>
+<p>Configuração específica do nó para a VM de automação. A configuração do nó de automação a escreve a partir de <code>/etc/lab_creation.cfg.example</code>, com os valores do próprio nó, quando ela ainda não existe; um arquivo existente nunca é sobrescrito. Variáveis principais:</p>
 <table>
 <thead>
 <tr>

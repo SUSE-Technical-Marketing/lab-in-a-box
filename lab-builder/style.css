@@ -155,6 +155,11 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 /* schema-driven live validation */
 .field input.invalid,.field select.invalid{border-color:var(--danger)}
 .field-error{color:var(--danger);font-size:.78rem;margin-top:.25rem}
+.items-list{display:flex;flex-direction:column;gap:.35rem}
+.items-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+.items-row input{flex:1 1 12rem;min-width:0}
+.items-row input[data-sub="user"]{flex:0 1 9rem}
+.items-row input.invalid{border-color:var(--danger)}
 
 /* SOURCE_IMAGE hybrid dropdown + custom URL input */
 .source-image-container{display:flex;flex-direction:column;gap:.4rem}

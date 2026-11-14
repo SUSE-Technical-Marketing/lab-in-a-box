@@ -173,7 +173,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="the-automation-node-in-a-cloud">Der Automatisierungsknoten in einer Cloud</h3>
-<p>Der Automatisierungsknoten ist die Maschine, auf der die Befehle laufen. Das kann die VM auf einem KVM-Host sein, die <code>setup_kvm_node.py</code> baut, ein Container oder ein Pod (<code>_automation_node</code> in <code>lab.cfg</code>), oder eine Cloud-Instanz. In einer Cloud wird er mit <code>setup_automation_node.py &lt;lab.json&gt; &lt;knoten&gt;</code> gebaut, wobei der Knoten ein gewöhnlicher Knoten einer Lab-Definition auf einem Cloud-Backend ist: Er wird über denselben Weg erstellt wie jeder andere Knoten, und danach läuft dasselbe <code>automation-node-lib.sh configure</code> darauf über SSH, das auch eine VM als Automatisierungsknoten erhält.</p>
+<p>Der Automatisierungsknoten ist die Maschine, auf der die Befehle laufen. Das kann die VM auf einem KVM-Host sein, die <code>setup_kvm_node.py</code> baut, ein Container oder ein Pod (<code>_automation_node</code> in <code>lab.cfg</code>), oder eine Cloud-Instanz. In einer Cloud wird er mit <code>setup_automation_node.py &lt;lab.json&gt; &lt;knoten&gt;</code> gebaut, wobei der Knoten ein gewöhnlicher Knoten einer Lab-Definition auf einem Cloud-Backend ist: Er wird über denselben Weg erstellt wie jeder andere Knoten, und danach läuft dasselbe <code>automation-node-lib.sh configure</code> darauf über SSH, das auch eine VM als Automatisierungsknoten erhält. Eine Instanz, die unter diesem Namen bereits existiert, wird nur konfiguriert, nicht neu erstellt; ein erneuter Aufruf ist daher sicher. Ein Container auf einem Host ohne Bridge, der nicht als KVM-Host eingerichtet ist, teilt Netzwerk und Adresse des Hosts: Er betreibt keinen eigenen SSH-Server, der Host erhält Wrapper für die Lab-Befehle (<code>setup_lab.py</code>, <code>setup_vm.py</code>, …), die sie im Container ausführen, und die an diese Befehle übergebenen Lab-Dateien müssen unter <code>/var/lib/lab-in-a-box/labs</code> liegen, das der Container mitbenutzt.</p>
 <p>Der Grund dafür ist die Namensauflösung. Ein Lab in einem Cloud-Konto löst seine eigenen Knoten über den DNS-Server in genau diesem Konto auf, und ein Automatisierungsknoten dort bedient die Zone des Labs selbst. Damit hängt nichts am Lab davon ab, dass eine Maschine zu Hause erreichbar ist. Sein BIND antwortet für die Lab-Domain von überall autoritativ und löst nur für die privaten Bereiche rekursiv auf. Eine Instanz, deren Port 53 aus dem Internet erreichbar ist, ist damit kein offener Resolver: Eine Lab-VM über den Namen zu finden braucht eine autoritative Antwort, niemals Rekursion. Port 53 ist nur erreichbar, wenn die Portliste des Knotens das sagt, zum Beispiel <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>.</p>
 <p>Etwas auf diesen Server auszurichten bleibt Ihnen überlassen: Tragen Sie seine Adresse als Nameserver dort ein, wo die Namen des Labs auflösbar sein sollen. Der Befehl gibt die zu verwendende Adresse am Ende aus.</p>
 <h3 id="naming-an-image-instead-of-an-id">Ein Image benennen statt einer ID</h3>
@@ -208,7 +208,15 @@
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1 mit eigenem Abonnement (BYOS). <code>-byos</code> lässt sich an jeden <code>sles</code>- oder <code>slmicro</code>-Namen anhängen: Es ist kein AWS-Marketplace-Abonnement nötig, und der Knoten wird nach dem ersten Start mit <code>SUSE_regcode</code> aus <code>lab_creation.cfg</code> registriert, ohne den er keine Paket-Repositorys hat</td>
+<td>SUSE Linux Micro 6.1, explizit BYOS (entspricht dem Standard; <code>-byos</code> lässt sich an jeden <code>sles</code>- oder <code>slmicro</code>-Namen anhängen und wird aus Rückwärtskompatibilität beibehalten). Erfordert die Registrierung mit <code>scc_regcode</code> oder über <code>client_registration</code></td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -221,10 +229,6 @@
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7, mit eigener Subscription (BYOS)</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1, mit eigener Subscription (BYOS)</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -260,7 +264,7 @@
 </tr>
 </tbody>
 </table>
-<p>Ein SUSE-Produktname mit angehängtem <code>-byos</code> wählt das Image mit eigener Subscription statt des Pay-as-you-go-Images. Dieses Image hat keine Repositories, bis es registriert ist: Ein Knoten, der über <code>client_registration</code> bei einem SMLM-Server registriert wird, erhält seine Pakete von dort, und ein Knoten, der vorher Pakete braucht, etwa ein Kubernetes-Knoten, setzt <code>scc_regcode</code> (und optional <code>scc_email</code>) in common oder pro Knoten, damit cloud-init ihn beim ersten Start mit <code>SUSEConnect</code> registriert.</p>
+<p>SUSE-Produktnamen (<code>sles</code>, <code>sles16</code>, <code>slmicro</code> usw.) lösen standardmäßig das BYOS-Image (Bring Your Own Subscription) auf. Hängen Sie <code>-payg</code> an, um stattdessen das Pay-as-you-go-Image zu verwenden — es registriert sich beim ersten Start automatisch bei der AWS-eigenen Update-Infrastruktur, ohne dass ein Regcode erforderlich ist, verursacht jedoch einen stündlichen AWS-Abonnementbeitrag. Das explizite Anhängen von <code>-byos</code> funktioniert weiterhin und wählt dasselbe Image wie der Basisname. Ein BYOS-Image hat keine Repositorys, bis es registriert ist: Ein Knoten, der über <code>client_registration</code> bei einem SMLM-Server registriert wird, erhält seine Pakete von dort, und ein Knoten, der vorher Pakete benötigt, etwa ein Kubernetes-Knoten, setzt <code>scc_regcode</code> (und optional <code>scc_email</code>) in common oder pro Knoten, damit cloud-init ihn beim ersten Start mit <code>SUSEConnect</code> registriert.</p>
 <p>SUSEs eigene Produkte kommen aus SUSEs öffentlichem Image-Tracker, die übrigen aus dem öffentlichen AWS-Systems-Manager-Parameter des jeweiligen Herstellers oder aus seinem eigenen AWS-Konto, niemals aus einer Namenssuche, die ein anderes Konto treffen könnte. Ein Wert, der kein Produktname ist, einschließlich einer Image-ID oder eines Image-Dateinamens, wird unverändert durchgereicht.</p>
 <p>Ein Cloud-Lab braucht außerdem, dass seine Knoten einander auflösen. Eine kleine DNS-VM pro Cloud-Konto bedient die Lab-Domain, und das Netzwerk des Kontos wird so konfiguriert, dass es diesen Server an jede Instanz darin ausgibt. So tritt ein Knoten seinem Kubernetes-Cluster über den Hostnamen bei, ohne dass im Gast etwas konfiguriert wird. Auf AWS ist das ein VPC-DHCP-Optionssatz: er gilt für die ganze VPC, eine danach gestartete Instanz hat ihn sofort, und eine bereits laufende übernimmt ihn bei der Erneuerung ihres DHCP-Lease.</p>
 <h3 id="kubernetes-setup">Kubernetes-Einrichtung</h3>
@@ -369,7 +373,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p>Wichtige Einstellungen in <code>lab_creation.cfg</code>:</p>
@@ -404,6 +407,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTP und HTTPS.</strong> Die Automatisierungs-VM stellt ihre Dateien auf Port 80 (HTTP) und Port 443 (HTTPS, selbstsigniertes Zertifikat in <code>/etc/lab_creation/tls/</code>) bereit. Installer (AutoYaST, Kickstart, Preseed) und Helm laden sie über HTTPS und akzeptieren das selbstsignierte Zertifikat. Mit <code>PROVISIONING_TLS_VERIFY=1</code> wird es stattdessen geprüft; <code>PROVISIONING_BASE_URL</code> (z. B. <code>http://192.168.88.250</code>) legt eine andere Adresse fest oder wechselt zurück zu HTTP. Der iPXE-Netzwerkstart von Harvester verwendet immer HTTP, da iPXE keine selbstsignierten Zertifikate akzeptiert.</p>
+<h3 id="upgrading-lab-in-a-box">lab-in-a-box aktualisieren</h3>
+<p>Um einen Automatisierungsknoten auf die neueste Version zu bringen, als root ausführen:</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>Es wird der neueste Stand von <code>main</code> aus dem offiziellen Repository bereitgestellt; <code>--repo</code> und <code>--branch</code> wählen ein anderes, etwa einen Fork. Auf einem Host, der aus dem RPM/DEB-Paket <code>lab-in-a-box</code> installiert wurde, wird stattdessen das Paket des neuesten GitHub-Releases über zypper, dnf oder apt installiert, und <code>--branch</code> gilt dort nicht.</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">Schritt 5 — Client-DNS auf die Automatisierungs-VM zeigen lassen</h3>
 <p>Damit Hostnamen von Ihrem Desktop aus aufgelöst werden:</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -558,6 +567,10 @@ rancher:
 <tr>
 <td><code>pre_commands</code>, <code>post_commands</code></td>
 <td>Shell-Befehle, die diese VM selbst als root ausführt: <code>pre_commands</code>, sobald sie läuft und bevor irgendeine Kubernetes- oder Add-on-Arbeit beginnt, <code>post_commands</code> nach all dem. Auch in <code>common</code> für jede VM setzbar; die eigene Liste eines Knotens ersetzt sie, und <code>[]</code> nimmt diesen Knoten aus</td>
+</tr>
+<tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>Zusätzliche SSH-Schlüssel, die dieser VM hinzugefügt werden, sobald sie läuft. Jeder Eintrag ist eine Public-Key-Zeile, eine https-URL mit Schlüsseln (etwa <code>https://github.com/&lt;user&gt;.keys</code>) oder ein Dateipfad auf dem Automatisierungsknoten, als einfacher String für root oder als <code>{"key": ..., "user": "alice"}</code> für ein anderes Konto. Auch in <code>common</code> setzbar; die Einträge eines Knotens kommen zu denen aus common hinzu. Ein Benutzer, den es auf der VM nicht gibt, oder eine nicht lesbare Schlüsselquelle ist eine Warnung in der Zusammenfassung des Laufs</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -1269,7 +1282,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>Installiert rodeo-cli, eine Terraform-artige CLI, die verschachtelte KVM-Labs bereitstellt (Harvester HCI, Rancher Prime oder beides), einsatzbereit auf dem Zielknoten — die eigenen Plan-/Secrets-Dateien von rodeo-cli sind nicht Aufgabe dieses Add-ons</td>
+<td>Installiert rodeo-cli, eine Terraform-artige CLI, die verschachtelte KVM-Labs bereitstellt (Harvester HCI, Rancher Prime oder beides), einsatzbereit auf dem Zielknoten — die eigenen Plan-/Secrets-Dateien von rodeo-cli sind nicht Aufgabe dieses Add-ons. Sein Rodeo Builder (Port 8678) antwortet auf den FQDN des Knotens und auf die Adresse, zu der er aufgelöst wird (auf einem Cloud-Knoten seine öffentliche IP); weitere Namen, die Clients verwenden, gehören in <code>rodeo_cli_builder_allow</code>. Die Optionen des Installers sind Add-on-Felder: <code>rodeo_cli_ref</code>, <code>rodeo_cli_repo_url</code>, <code>rodeo_cli_dir</code>, <code>rodeo_cli_mode</code> (<code>kvm-host</code> oder <code>control-plane</code>, das kein <code>/dev/kvm</code> braucht), <code>rodeo_cli_builder</code> und <code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1370,7 +1383,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>Systemweite Standardwerte, die jedes Skript lädt. Sie legen Pfade, Standard-Verzögerungen und Paketlisten fest. <strong>Nicht ändern</strong>, außer Sie wissen genau, was Sie tun.</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>Knotenspezifische Konfiguration der Automatisierungs-VM. Wird beim Setup aus <code>/etc/lab_creation.cfg.example</code> kopiert. Wichtige Variablen:</p>
+<p>Knotenspezifische Konfiguration der Automatisierungs-VM. Das Setup des Automatisierungsknotens schreibt sie aus <code>/etc/lab_creation.cfg.example</code> mit den Werten des Knotens, wenn sie noch nicht existiert; eine vorhandene wird nie überschrieben. Wichtige Variablen:</p>
 <table>
 <thead>
 <tr>

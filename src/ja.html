@@ -173,7 +173,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="the-automation-node-in-a-cloud">クラウド上の自動化ノード</h3>
-<p>自動化ノードとは、コマンドを実行するマシンです。<code>setup_kvm_node.py</code> が KVM ホスト上に作る VM でも、コンテナーやポッド（<code>lab.cfg</code> の <code>_automation_node</code>）でも、クラウドインスタンスでもかまいません。クラウドでは <code>setup_automation_node.py &lt;lab.json&gt; &lt;ノード&gt;</code> で構築します。ここでのノードはクラウドバックエンド上のラボ定義に含まれる普通のノードであり、他のノードとまったく同じ経路で作成され、その後 VM の自動化ノードと同じ <code>automation-node-lib.sh configure</code> が SSH 経由で実行されます。</p>
+<p>自動化ノードとは、コマンドを実行するマシンです。<code>setup_kvm_node.py</code> が KVM ホスト上に作る VM でも、コンテナーやポッド（<code>lab.cfg</code> の <code>_automation_node</code>）でも、クラウドインスタンスでもかまいません。クラウドでは <code>setup_automation_node.py &lt;lab.json&gt; &lt;ノード&gt;</code> で構築します。ここでのノードはクラウドバックエンド上のラボ定義に含まれる普通のノードであり、他のノードとまったく同じ経路で作成され、その後 VM の自動化ノードと同じ <code>automation-node-lib.sh configure</code> が SSH 経由で実行されます。 その名前のインスタンスがすでに存在する場合は作成し直さず設定だけを行うため、再実行しても安全です。 ブリッジがなく KVM ホストとしても設定されていないホスト上のコンテナは、ホストのネットワークとアドレスを共有します。独自の SSH サーバーは動かさず、ホストにはラボのコマンド（<code>setup_lab.py</code>, <code>setup_vm.py</code> など）をコンテナ内で実行するラッパーが置かれます。これらのコマンドに渡すラボファイルは、コンテナが共有する <code>/var/lib/lab-in-a-box/labs</code> の下に置く必要があります。</p>
 <p>これが必要になる理由は名前解決です。クラウドアカウント内のラボは同じアカウント内の DNS サーバーで自身のノードを解決し、そこにある自動化ノードがラボのゾーンそのものを提供します。したがってラボのどの部分も、自宅のマシンに到達できることを前提としません。その BIND はラボのドメインに対してはどこからでも権威応答を返し、再帰はプライベートな範囲に対してのみ行います。つまりポート 53 がインターネットから到達可能なインスタンスでもオープンリゾルバーにはなりません。ラボの VM を名前で解決するのに必要なのは権威応答であって、再帰ではないからです。ポート 53 が到達可能になるのは、ノード自身の公開ポート一覧にそう書いた場合だけです（例: <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>）。</p>
 <p>そのサーバーを参照させる設定はご自身で行ってください。ラボの名前を解決したい場所に、そのアドレスをネームサーバーとして追加します。コマンドは終了時に使用すべきアドレスを表示します。</p>
 <h3 id="naming-an-image-instead-of-an-id">ID ではなくイメージを名前で指定する</h3>
@@ -208,7 +208,15 @@
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>独自サブスクリプション (BYOS) の SUSE Linux Micro 6.1。<code>-byos</code> は任意の <code>sles</code> または <code>slmicro</code> の名前に付けられます。AWS Marketplace のサブスクリプションは不要ですが、ノードは初回起動後に <code>lab_creation.cfg</code> の <code>SUSE_regcode</code> で登録されます。これがない場合、ノードはパッケージリポジトリを持ちません</td>
+<td>SUSE Linux Micro 6.1（明示的な BYOS；デフォルトと同じ。<code>-byos</code> は任意の <code>sles</code> または <code>slmicro</code> 名に付けられ、後方互換性のために保持されています）。<code>scc_regcode</code> または <code>client_registration</code> によるユーザー登録が必要です</td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -221,10 +229,6 @@
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7（お手持ちのサブスクリプションを使用、BYOS）</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1（お手持ちのサブスクリプションを使用、BYOS）</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -260,7 +264,7 @@
 </tr>
 </tbody>
 </table>
-<p>SUSE の製品名の後ろに <code>-byos</code> を付けると、従量課金のイメージではなく、お手持ちのサブスクリプションを使う (BYOS) イメージが選ばれます。このイメージは登録されるまでリポジトリを持ちません。<code>client_registration</code> で SMLM サーバーに登録されるノードはそこからパッケージを取得し、それより前にパッケージが必要なノード (Kubernetes ノードなど) は common またはノードごとに <code>scc_regcode</code> (必要なら <code>scc_email</code> も) を設定します。cloud-init が初回起動時に <code>SUSEConnect</code> で登録します。</p>
+<p>SUSE の製品名（<code>sles</code>、<code>sles16</code>、<code>slmicro</code> など）はデフォルトで BYOS（お手持ちのサブスクリプション）イメージに解決されます。<code>-payg</code> を付けると従量課金イメージを選択できます — 初回起動時に AWS 独自の更新インフラに regcode なしで自動登録されますが、AWS サブスクリプション料金が時間単位で発生します。<code>-byos</code> を明示的に付けることも引き続き有効で、ベース名と同じイメージを選択します。BYOS イメージは登録されるまでリポジトリを持ちません。<code>client_registration</code> で SMLM サーバーに登録されるノードはそこからパッケージを取得し、それより前にパッケージが必要なノード（Kubernetes ノードなど）は common またはノードごとに <code>scc_regcode</code>（必要なら <code>scc_email</code> も）を設定します。cloud-init が初回起動時に <code>SUSEConnect</code> で登録します。</p>
 <p>SUSE 自身の製品は SUSE の公開イメージトラッカーから、それ以外は各ベンダーの AWS Systems Manager 公開パラメーターまたはそのベンダー自身の AWS アカウントから取得されます。別のアカウントが一致しうる名前検索は決して使いません。製品名でない値は、イメージ ID やイメージファイル名も含めて、そのまま渡されます。</p>
 <p>クラウドラボでは、ノードが互いの名前を解決できることも必要です。クラウドアカウントごとに 1 台の小さな DNS VM がラボのドメインを提供し、アカウントのネットワークはその中のすべてのインスタンスにそのサーバーを配布するよう構成されます。これにより、ゲスト内で何も設定せずに、ノードはホスト名で Kubernetes クラスターに参加できます。AWS では VPC の DHCP オプションセットがこれに当たります。VPC 全体に適用され、以降に起動したインスタンスは直ちに反映され、すでに稼働中のインスタンスは DHCP リースの更新時に取り込みます。</p>
 <h3 id="kubernetes-setup">Kubernetes のセットアップ</h3>
@@ -438,7 +442,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p><code>lab_creation.cfg</code> の主な設定：</p>
@@ -473,6 +476,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTPとHTTPS。</strong>オートメーションVMは、ファイルをポート80（HTTP）とポート443（HTTPS、自己署名証明書は<code>/etc/lab_creation/tls/</code>）の両方で提供します。インストーラー（AutoYaST、kickstart、preseed）とHelmはHTTPSで取得し、自己署名証明書を受け入れます。証明書を検証するには<code>PROVISIONING_TLS_VERIFY=1</code>を、別のアドレスを使うかHTTPに戻すには<code>PROVISIONING_BASE_URL</code>（例：<code>http://192.168.88.250</code>）を設定します。HarvesterのiPXEネットワークブートは常にHTTPを使用します。iPXEは自己署名証明書を受け入れられないためです。</p>
+<h3 id="upgrading-lab-in-a-box">lab-in-a-box のアップグレード</h3>
+<p>オートメーションノードを最新バージョンにするには、root で次を実行する:</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>公式リポジトリの最新の <code>main</code> をデプロイする。<code>--repo</code> と <code>--branch</code> でフォークなど別のものを選べる。<code>lab-in-a-box</code> の RPM/DEB パッケージからインストールしたホストでは、代わりに GitHub の最新リリースのパッケージを zypper、dnf または apt でインストールし、<code>--branch</code> は適用されない。</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">ステップ 5：クライアントの DNS をオートメーション VM に向ける</h3>
 <p>デスクトップからホスト名を解決するには：</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -627,6 +636,10 @@ rancher:
 <tr>
 <td><code>pre_commands</code>, <code>post_commands</code></td>
 <td>この VM が root として自分で実行するシェルコマンド。<code>pre_commands</code> は起動して到達可能になった直後、Kubernetes やアドオンの作業より前に、<code>post_commands</code> はそのすべてのあとに実行されます。<code>common</code> に書けばすべての VM が対象になり、ノード自身のリストがそれを置き換え、<code>[]</code> はそのノードを除外します</td>
+</tr>
+<tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>VM の起動後に追加する SSH 鍵。各エントリは公開鍵の行、鍵を含む https URL（<code>https://github.com/&lt;user&gt;.keys</code> など）、またはオートメーションノード上のファイルパスで、root 用には文字列のまま、別のアカウント用には <code>{"key": ..., "user": "alice"}</code> と書く。<code>common</code> にも設定でき、ノード自身のエントリは common のものに追加される。VM に存在しないユーザーや読めない鍵の取得元は、実行サマリーの警告になる</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -1360,7 +1373,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>rodeo-cli（ネストされた KVM ラボ、Harvester HCI や Rancher Prime、またはその両方をデプロイする Terraform 風 CLI）をターゲットノードにインストールし、すぐ使える状態にする — rodeo-cli 自身の plan/secrets ファイルはこのアドオンの関心事ではない</td>
+<td>rodeo-cli（ネストされた KVM ラボ、Harvester HCI や Rancher Prime、またはその両方をデプロイする Terraform 風 CLI）をターゲットノードにインストールし、すぐ使える状態にする — rodeo-cli 自身の plan/secrets ファイルはこのアドオンの関心事ではない。Rodeo Builder（ポート 8678）はノードの FQDN と、その名前が解決されるアドレス（クラウドノードではパブリック IP）に応答する。クライアントが使うそれ以外の名前は <code>rodeo_cli_builder_allow</code> に列挙する。インストーラー自身のオプションはアドオンのフィールドで指定する：<code>rodeo_cli_ref</code>、<code>rodeo_cli_repo_url</code>、<code>rodeo_cli_dir</code>、<code>rodeo_cli_mode</code>（<code>kvm-host</code> または <code>/dev/kvm</code> 不要の <code>control-plane</code>）、<code>rodeo_cli_builder</code>、<code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1461,7 +1474,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>すべてのスクリプトが読み込むシステム全体のデフォルトです。パス、デフォルトの待機時間、パッケージ一覧を定義します。内容を理解していない限り<strong>編集しないでください</strong>。</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>オートメーション VM 用のノード固有の設定です。セットアップ時に <code>/etc/lab_creation.cfg.example</code> からコピーされます。主な変数：</p>
+<p>オートメーション VM 用のノード固有の設定です。オートメーションノードのセットアップが、まだ存在しない場合に <code>/etc/lab_creation.cfg.example</code> からノード自身の値を入れて書き込みます。既存のファイルは上書きされません。主な変数：</p>
 <table>
 <thead>
 <tr>

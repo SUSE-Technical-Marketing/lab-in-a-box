@@ -173,7 +173,7 @@
     CB --&gt; CL[&quot;cloud instances&lt;br/&gt;in the account's own network&quot;]
 </pre>
 <h3 id="the-automation-node-in-a-cloud">云端的自动化节点</h3>
-<p>自动化节点就是运行命令的那台机器。它可以是 <code>setup_kvm_node.py</code> 在 KVM 主机上构建的虚拟机，可以是容器或 Pod（<code>lab.cfg</code> 中的 <code>_automation_node</code>），也可以是一个云实例。在云上，它由 <code>setup_automation_node.py &lt;lab.json&gt; &lt;节点&gt;</code> 构建，其中该节点就是云后端上实验室定义里的一个普通节点：它经由与其他任何节点相同的路径创建，随后在其上通过 SSH 执行与虚拟机自动化节点相同的 <code>automation-node-lib.sh configure</code>。</p>
+<p>自动化节点就是运行命令的那台机器。它可以是 <code>setup_kvm_node.py</code> 在 KVM 主机上构建的虚拟机，可以是容器或 Pod（<code>lab.cfg</code> 中的 <code>_automation_node</code>），也可以是一个云实例。在云上，它由 <code>setup_automation_node.py &lt;lab.json&gt; &lt;节点&gt;</code> 构建，其中该节点就是云后端上实验室定义里的一个普通节点：它经由与其他任何节点相同的路径创建，随后在其上通过 SSH 执行与虚拟机自动化节点相同的 <code>automation-node-lib.sh configure</code>。 如果同名实例已经存在，则只对其进行配置而不会重新创建，因此再次运行是安全的。 在没有网桥且未设置为 KVM 主机的主机上，容器共享主机的网络和地址：它不运行自己的 SSH 服务器，主机会获得在容器内运行实验室命令（<code>setup_lab.py</code>, <code>setup_vm.py</code> 等）的包装脚本，传给这些命令的实验室文件必须位于容器共享的 <code>/var/lib/lab-in-a-box/labs</code> 下。</p>
 <p>需要它的理由是名称解析。云账户中的实验室通过同一账户内的 DNS 服务器解析自己的节点，而那里的自动化节点自己提供实验室的区域，于是实验室的任何部分都不再依赖家中某台机器可达。它的 BIND 对实验室域名在任何位置都给出权威应答，而仅对私有地址段做递归解析，因此即使实例的 53 端口可从互联网访问，也不会成为开放解析器：按名称解析实验室虚拟机需要的是权威应答，而非递归。只有在节点自己的开放端口列表中写明时，53 端口才可达，例如 <code>"aws_open_ports": ["53", "53/udp", "80", "443"]</code>。</p>
 <p>把什么指向这台服务器由您决定：在希望解析实验室名称的地方，将它的地址添加为 nameserver。命令结束时会打印应当使用的地址。</p>
 <h3 id="naming-an-image-instead-of-an-id">用名称而非 ID 指定镜像</h3>
@@ -208,7 +208,15 @@
 </tr>
 <tr>
 <td><code>slmicro6.1-byos</code></td>
-<td>自带订阅 (BYOS) 的 SUSE Linux Micro 6.1。<code>-byos</code> 可追加到任意 <code>sles</code> 或 <code>slmicro</code> 名称后：无需 AWS Marketplace 订阅，节点在首次启动后使用 <code>lab_creation.cfg</code> 中的 <code>SUSE_regcode</code> 注册，未设置时节点没有软件包仓库</td>
+<td>SUSE Linux Micro 6.1，显式 BYOS（与默认相同；<code>-byos</code> 可追加到任意 <code>sles</code> 或 <code>slmicro</code> 名称后，保留以向后兼容）。需要通过 <code>scc_regcode</code> 或 <code>client_registration</code> 注册</td>
+</tr>
+<tr>
+<td><code>sles16-payg</code></td>
+<td>SUSE Linux Enterprise Server 16.x, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
+</tr>
+<tr>
+<td><code>slmicro6.1-payg</code></td>
+<td>SUSE Linux Micro 6.1, pay-as-you-go. Auto-registers via AWS infrastructure at first boot; no regcode needed. Carries a per-hour AWS subscription charge</td>
 </tr>
 <tr>
 <td><code>leap</code></td>
@@ -221,10 +229,6 @@
 <tr>
 <td><code>sles15.7-byos</code></td>
 <td>SUSE Linux Enterprise Server 15 SP7，自带订阅（BYOS）</td>
-</tr>
-<tr>
-<td><code>slmicro6.1-byos</code></td>
-<td>SUSE Linux Micro 6.1，自带订阅（BYOS）</td>
 </tr>
 <tr>
 <td><code>ubuntu24.04</code></td>
@@ -260,7 +264,7 @@
 </tr>
 </tbody>
 </table>
-<p>SUSE 产品名后加上 <code>-byos</code>，会选择该产品的自带订阅（BYOS）镜像，而不是按需付费镜像。该镜像在注册之前没有任何软件仓库：通过 <code>client_registration</code> 注册到 SMLM 服务器的节点从那里获取软件包；需要更早获取软件包的节点（例如 Kubernetes 节点）在 common 或单个节点中设置 <code>scc_regcode</code>（可选再加 <code>scc_email</code>），由 cloud-init 在首次启动时用 <code>SUSEConnect</code> 完成注册。</p>
+<p>SUSE 产品名称（<code>sles</code>、<code>sles16</code>、<code>slmicro</code> 等）默认解析为其 BYOS（自带订阅）镜像。追加 <code>-payg</code> 可选择按需付费镜像——它在首次启动时自动向 AWS 自有更新基础设施注册，无需 regcode，但会产生按小时计费的 AWS 订阅费用。显式追加 <code>-byos</code> 仍然有效，选择与基本名称相同的镜像。BYOS 镜像在注册之前没有任何软件仓库：通过 <code>client_registration</code> 注册到 SMLM 服务器的节点从那里获取软件包；需要更早获取软件包的节点（例如 Kubernetes 节点）在 common 或单个节点中设置 <code>scc_regcode</code>（可选再加 <code>scc_email</code>），由 cloud-init 在首次启动时用 <code>SUSEConnect</code> 完成注册。</p>
 <p>SUSE 自家产品取自 SUSE 的公开镜像追踪服务，其余取自各厂商的 AWS Systems Manager 公开参数或其自有 AWS 账户，绝不使用其他账户也可能匹配的名称搜索。凡不是产品名称的值，包括镜像 ID 和镜像文件名，都原样传递。</p>
 <p>云端实验室还需要节点之间能相互解析。每个云账户有一台小型 DNS 虚拟机提供实验室域名，并将账户网络配置为把该服务器分发给其中的每个实例，于是节点可以按主机名加入其 Kubernetes 集群，无需在客户机内部做任何配置。在 AWS 上这是一个 VPC DHCP 选项集：它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。</p>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
@@ -438,7 +442,6 @@ dd if=SLE-15-SP6-Online-x86_64-GM-Media1.iso of=/dev/sdX bs=4k &amp;&amp; sync
 <pre><code class="language-shell">ssh &lt;AUTOMATION_HOSTNAME&gt;
 ./install_automation_node_scripts.sh
 
-cp /etc/lab_creation.cfg.example /etc/lab_creation.cfg
 vim /etc/lab_creation.cfg
 </code></pre>
 <p><code>lab_creation.cfg</code> 中的主要设置：</p>
@@ -473,6 +476,12 @@ vim /etc/lab_creation.cfg
 </tbody>
 </table>
 <p><strong>HTTP 和 HTTPS。</strong>自动化 VM 同时在端口 80（HTTP）和端口 443（HTTPS，自签名证书位于 <code>/etc/lab_creation/tls/</code>）上提供文件。安装程序（AutoYaST、kickstart、preseed）和 Helm 通过 HTTPS 获取文件，并接受自签名证书。设置 <code>PROVISIONING_TLS_VERIFY=1</code> 可改为验证证书；设置 <code>PROVISIONING_BASE_URL</code>（例如 <code>http://192.168.88.250</code>）可使用其他地址或改回 HTTP。Harvester 的 iPXE 网络启动始终使用 HTTP，因为 iPXE 无法接受自签名证书。</p>
+<h3 id="upgrading-lab-in-a-box">升级 lab-in-a-box</h3>
+<p>要将自动化节点升级到最新版本，请以 root 身份运行：</p>
+<pre><code class="language-shell">upgrade_lab_in_a_box                                      # latest main, official repository
+upgrade_lab_in_a_box --repo https://github.com/&lt;you&gt;/lab-in-a-box.git --branch dev
+</code></pre>
+<p>它会部署官方仓库最新的 <code>main</code>；<code>--repo</code> 和 <code>--branch</code> 可选择其他仓库或分支，例如某个 fork。在通过 <code>lab-in-a-box</code> RPM/DEB 软件包安装的主机上，它会改为通过 zypper、dnf 或 apt 安装 GitHub 最新发布版本的软件包，此时 <code>--branch</code> 不适用。</p>
 <h3 id="step-5--point-your-client-dns-at-the-automation-vm">步骤 5：将客户端 DNS 指向自动化虚拟机</h3>
 <p>要在桌面上解析主机名：</p>
 <pre><code class="language-shell"># Linux (NetworkManager):
@@ -627,6 +636,10 @@ rancher:
 <tr>
 <td><code>pre_commands</code>, <code>post_commands</code></td>
 <td>此 VM 以 root 身份自行运行的 shell 命令：<code>pre_commands</code> 在它启动并可连接之后、任何 Kubernetes 或插件工作之前运行，<code>post_commands</code> 在这些工作全部完成之后运行。也可以写在 <code>common</code> 中以适用于所有 VM；节点自己的列表会替换它，<code>[]</code> 则让该节点不运行任何命令</td>
+</tr>
+<tr>
+<td><code>ssh_authorized_keys</code></td>
+<td>VM 启动后为其添加的额外 SSH 密钥。每个条目是一行公钥、包含密钥的 https URL（例如 <code>https://github.com/&lt;user&gt;.keys</code>）或自动化节点上的文件路径；写成普通字符串则添加给 root，写成 <code>{"key": ..., "user": "alice"}</code> 则添加给其他账户。也可在 <code>common</code> 中设置；节点自身的条目会追加到 common 的条目之后。VM 上不存在的用户或无法读取的密钥来源，会作为警告列入运行摘要</td>
 </tr>
 <tr>
 <td><code>extra_dsk</code></td>
@@ -1357,7 +1370,7 @@ install_longhorn --schema yaml      # ...or YAML
 </tr>
 <tr>
 <td><a href="https://github.com/avaleror/rodeo-cli"><code>rodeo_cli</code></a></td>
-<td>安装 rodeo-cli——一个 Terraform 风格的 CLI，用于部署嵌套的 KVM 实验环境（Harvester HCI、Rancher Prime 或两者），在目标节点上即装即用——rodeo-cli 自身的计划/密钥文件不在本插件的职责范围内</td>
+<td>安装 rodeo-cli——一个 Terraform 风格的 CLI，用于部署嵌套的 KVM 实验环境（Harvester HCI、Rancher Prime 或两者），在目标节点上即装即用——rodeo-cli 自身的计划/密钥文件不在本插件的职责范围内。其 Rodeo Builder（端口 8678）响应节点的 FQDN 及其解析到的地址（云节点上为公网 IP）；客户端使用的其他名称请列在 <code>rodeo_cli_builder_allow</code> 中。安装程序自身的选项即插件字段：<code>rodeo_cli_ref</code>、<code>rodeo_cli_repo_url</code>、<code>rodeo_cli_dir</code>、<code>rodeo_cli_mode</code>（<code>kvm-host</code> 或无需 <code>/dev/kvm</code> 的 <code>control-plane</code>）、<code>rodeo_cli_builder</code> 和 <code>rodeo_cli_builder_host</code></td>
 </tr>
 <tr>
 <td><a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box"><code>lab_in_a_box</code></a></td>
@@ -1458,7 +1471,7 @@ install_longhorn --schema yaml      # ...or YAML
 <h3 id="etclab_creationdefaults"><code>/etc/lab_creation.defaults</code></h3>
 <p>所有脚本都会加载的系统级默认值。定义路径、默认等待时间和软件包列表。除非清楚自己在做什么，否则<strong>请勿编辑</strong>。</p>
 <h3 id="etclab_creationcfg"><code>/etc/lab_creation.cfg</code></h3>
-<p>自动化虚拟机的节点特定配置。设置时从 <code>/etc/lab_creation.cfg.example</code> 复制。主要变量：</p>
+<p>自动化虚拟机的节点特定配置。当该文件尚不存在时，自动化节点的设置会根据 <code>/etc/lab_creation.cfg.example</code> 用节点自身的值写入它；已有的文件永远不会被覆盖。主要变量：</p>
 <table>
 <thead>
 <tr>

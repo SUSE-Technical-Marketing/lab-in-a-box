@@ -274,7 +274,14 @@ the Apache config):</p>
 <li><strong>Validate</strong> — runs the same preflight <code>setup_lab.py</code> runs, server-side: structural
    errors, and every value against the schema that declares it (an <code>myip</code> that is not an IP address, a
    <code>VM_MEM</code> below its minimum, a value outside a field's declared list). Its host checks are off, so a
-   node's reachability and the source image on the KVM host are not checked here.</li>
+   node's reachability and the source image on the KVM host are not checked here. Credential files are never read
+   by it: a <code>cloud_account</code> is only looked for, and its type is taken from its
+   <code>&lt;type&gt;-&lt;account&gt;</code> file name.<br>
+   When the lab uses a <code>cloud_account</code> and you can log in (HTTPS, a login set up), Validate runs the full
+   preflight as root instead, through <code>lab-builder-helper</code>, with its credentials read: host checks on, and
+   encrypted credentials decrypted. If they are encrypted, it asks for their passphrase, which is used for that
+   validation only and never saved or logged. A wrong passphrase is asked again after a 3-second wait; the third
+   wrong one ends the validation with a failure. Cancelling the login falls back to the check above.</li>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
    the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>
@@ -403,6 +410,11 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <td>POST</td>
 <td><code>admin?action=create</code></td>
 <td><code>{ "filename": "mylab.json", "keep": true }</code> → run <code>setup_lab.py</code> as a job</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>admin?action=validate-credentials</code></td>
+<td><code>{ "config": {…}, "passphrase": "…" }</code> → validate with the lab's cloud account credentials, through <code>lab-builder-helper</code></td>
 </tr>
 <tr>
 <td>GET</td>
