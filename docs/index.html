@@ -1240,6 +1240,12 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 install_longhorn --schema           # print this addon's configuration schema (JSON)
 install_longhorn --schema yaml      # ...or YAML
 </code></pre>
+<p>Every command listed above also has a man page, generated from its own <code>--help</code> by <code>build_man_pages.py</code> when the automation node is installed, so it can never drift from what the command actually does:</p>
+<pre><code class="language-shell">man setup_lab.py                    # the command's own help, as a man page
+man 8 lab-builder-helper            # the two root-only commands are in section 8
+apropos lab-in-a-box                # every command of this project
+build_man_pages.py --installed      # write them again after an upgrade
+</code></pre>
 <p align="right"><a href="#top">↑ back to top</a></p>
 
 <hr />
