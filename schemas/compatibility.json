@@ -381,7 +381,8 @@
    {"version": "2.6", "breaking": false, "changes": "ISO_URL and ISO_SHA256_URL declared again, hidden and deprecated: setup_lab.py still downloads them. A URL in SOURCE_IMAGE is downloaded the same way, once into ISO_LOC on each KVM host and checked against SOURCE_SHA256, which it requires."},
    {"version": "2.7", "breaking": false, "changes": "A disabled_nodes section, in the same form as nodes, for nodes that are part of a lab's design but are not deployed: nothing reads it, so a node waiting on an image or a release stays in the file instead of being deleted. SOURCE_IMAGE also accepts a cloud provider's own image ID or a product name (\"slmicro6.1\", \"sles16\", \"ubuntu24.04\", see libs/cloud_images.py), resolved to the provider's current image for the node's architecture at create time."},
    {"version": "3.0", "breaking": true, "changes": "INSTALL_RKE2_TYPE, ISO_IMAGE, ISO_URL, ISO_SHA256 and ISO_SHA256_URL removed from common and nodes: their values move to KUBERNETES_NODE_TYPE, SOURCE_IMAGE (a URL itself, downloaded under the URL's own file name) and SOURCE_SHA256. setup_lab.py, setup_vm.py and setup_automation_node.py now apply a pending migration themselves, warn per change and continue with the migrated sibling file.", "migration": "lab_3_0"},
-   {"version": "3.1", "breaking": false, "changes": "ssh_authorized_keys in common and nodes: extra SSH keys (a key, an https URL or a file path; for root or a named user) added to each VM once it is up."}
+   {"version": "3.1", "breaking": false, "changes": "ssh_authorized_keys in common and nodes: extra SSH keys (a key, an https URL or a file path; for root or a named user) added to each VM once it is up."},
+   {"version": "3.2", "breaking": false, "changes": "Declare aws_nested_virtualization in common and per node: an AWS-only knob the backend and the Harvester helper already read, and that examples/harvester-aws.json.template already sets, but the schema did not list"}
   ]
  }
 }

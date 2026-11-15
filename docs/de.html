@@ -1097,7 +1097,7 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 </tr>
 <tr>
 <td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
-<td>Zeigt den Energiezustand der VMs eines Labs oder stoppt sie, ohne sie zu löschen, und startet sie wieder — vor allem für ein Lab auf einem Cloud-Backend, wo ein gestopptes Lab weniger kostet. Agenten werden vor den Servern gestoppt, die DNS- und Overlay-VM jedes Standorts bleiben am längsten laufen; beim Starten ist es umgekehrt, und das Lab-DNS wird neu geschrieben, weil der Anbieter eine andere öffentliche Adresse zurückgibt. Jedes Backend sagt, was ein Stopp für seine Rechnung bedeutet — bei Hetzner Cloud nämlich nichts.</td>
+<td>Zeigt den Energiezustand der VMs eines Labs oder stoppt sie, ohne sie zu löschen, und startet sie wieder — vor allem für ein Lab auf einem Cloud-Backend, wo ein gestopptes Lab weniger kostet. Agenten werden vor den Servern gestoppt; die VMs, die das Lab für sich selbst gestartet hat (DNS- und Overlay-VM jedes Standorts), bleiben laufen, weil jedes Lab desselben Cloud-Kontos über sie auflöst — <code>--with-infra</code> stoppt auch diese. Beim Starten kommen sie zuerst hoch, und das Lab-DNS wird neu geschrieben, weil der Anbieter eine andere öffentliche Adresse zurückgibt. Jedes Backend sagt, was ein Stopp für seine Rechnung bedeutet — bei Hetzner Cloud nämlich nichts.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
@@ -1109,6 +1109,12 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <pre><code class="language-shell">setup_lab.py --version              # print the installed version
 install_longhorn --schema           # print this addon's configuration schema (JSON)
 install_longhorn --schema yaml      # ...or YAML
+</code></pre>
+<p>Zu jedem oben genannten Befehl gibt es auch eine Manpage, beim Einrichten des Automatisierungsknotens aus dessen eigenem <code>--help</code> von <code>build_man_pages.py</code> erzeugt, sodass sie nie von dem abweichen kann, was der Befehl wirklich tut:</p>
+<pre><code class="language-shell">man setup_lab.py                    # the command's own help, as a man page
+man 8 lab-builder-helper            # the two root-only commands are in section 8
+apropos lab-in-a-box                # every command of this project
+build_man_pages.py --installed      # write them again after an upgrade
 </code></pre>
 <p align="right"><a href="#top">↑ nach oben</a></p>
 

@@ -160,7 +160,7 @@ done
 
 # Non-addon, non-orchestration tooling.
 _TOOLING="pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py
-setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py upgrade_lab_in_a_box"
+setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py upgrade_lab_in_a_box build_man_pages.py"
 for i in ${_TOOLING}
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
@@ -196,6 +196,23 @@ rm -f /usr/local/bin/setup_lab.sh /usr/local/bin/setup_vm.sh /usr/local/bin/dest
 # already-deployed copies too, so a VM last deployed before this change
 # doesn't keep carrying dead weight forever.
 rm -f /usr/local/lib/lab_creation/lab_creation.bash /usr/local/lib/lab_creation/k8s_functions.bash /usr/local/lib/lab_creation/primary_functions.bash
+
+# Man pages for the commands installed above, generated from each command's own
+# --help by scripts/build_man_pages.py (see its docstring for why they are
+# generated rather than written a second time). Built from /usr/local/bin and
+# /usr/local/sbin, so a page describes the command as it was just deployed,
+# version line included. Non-fatal: a node with no man pages still works, and a
+# missing page must not fail an install that otherwise succeeded.
+if ! "${_python_bin}" /usr/local/bin/build_man_pages.py --installed \
+        --output-dir /usr/local/share/man >/dev/null
+then
+    echo "WARNING: some man pages were not generated (see above) — the commands themselves are installed"
+fi
+# So `man setup_lab.py` works without the operator setting MANPATH: mandb/makewhatis
+# indexes /usr/local/share/man when it is on the system's manpath, which it is by
+# default on every distro this project targets.
+command -v mandb >/dev/null 2>&1 && mandb -q /usr/local/share/man 2>/dev/null
+command -v makewhatis >/dev/null 2>&1 && makewhatis /usr/local/share/man 2>/dev/null
 
 
 for i in templates/salt/*

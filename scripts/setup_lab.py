@@ -54,7 +54,7 @@ import backends  # noqa: E402
 import harvester  # noqa: E402
 import ssh_keys  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
-from setup_vm import provision_vm, refresh_kept_node_dns  # noqa: E402
+from setup_vm import ensure_cloud_dns_ready, provision_vm, refresh_kept_node_dns  # noqa: E402
 
 _HELP_TEXT = """\
 Usage: setup_lab.py [--keep] [--debug] [--parallel[=N]] [--cloud-account <name>] <lab.json>
@@ -578,6 +578,19 @@ def _create_one_vm(definition, config, defaults, lab_file, keep, vm_name, node_c
         if keep_backend_error is not None:
             msg = "--keep check for '{}' could not reach its backend (leaving it untouched, " \
                   "continuing with the remaining nodes): {}".format(vm_name, keep_backend_error)
+            lc.error(msg)
+            _report.add_node(vm_name, "FAILED")
+            _report.add_error(msg)
+            return
+
+        # Before the node is destroyed, not after: a cloud node resolves through its site's DNS VM, which is shared
+        # infrastructure this lab does not own. If it cannot be brought up, provisioning cannot finish, and
+        # destroying a working node first would leave the lab with neither the old VM nor a usable new one.
+        try:
+            ensure_cloud_dns_ready(definition, config, defaults, vm_name)
+        except (SystemExit, RuntimeError) as e:
+            msg = "'{}' was left untouched: its site's DNS VM is not available{}".format(
+                vm_name, ": {}".format(e) if str(e) else "")
             lc.error(msg)
             _report.add_node(vm_name, "FAILED")
             _report.add_error(msg)

@@ -1,0 +1,1513 @@
+{
+  "common": {
+    "lab_name": "solar-system multi-OS matrix AWS ONLY",
+    "mydomain": "mydemoaws.lab",
+    "SOURCE_IMAGE": "slmicro6.1-byos",
+    "VM_MEM": "1024",
+    "VM_CPU": "1",
+    "VM_DSK": "20",
+    "config_method": "cloud-init",
+    "VM_ROOT_PASS": "supercomplexpassword123."
+  },
+  "nodes": {
+    "sol.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "sles15.7-byos",
+      "cloud_instance_type": "m6a.2xlarge",
+      "aws_open_ports": [
+        "80",
+        "443",
+        "4505",
+        "4506",
+        "9090",
+        "9100",
+        "9187",
+        "5556",
+        "5557",
+        "9800",
+        "3000"
+      ],
+      "VM_MEM": "32768",
+      "VM_CPU": "8",
+      "VM_DSK": "4096",
+      "addons": [
+        "smlm",
+        "prometheus",
+        "grafana"
+      ]
+    },
+    "saturn.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "debian13",
+      "cloud_instance_type": "t4g.nano",
+      "network_renderer": "networkd",
+      "VM_MEM": "1024",
+      "VM_CPU": "1",
+      "VM_DSK": "10",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-debian13arm64"
+          }
+        }
+      ]
+    },
+    "neptune.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "amazonlinux2023",
+      "cloud_instance_type": "t3.micro",
+      "VM_MEM": "1024",
+      "VM_CPU": "1",
+      "VM_DSK": "10",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-amazonlinux2023"
+          }
+        }
+      ]
+    },
+    "mercury.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "sles15.7",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-sles15sp7"
+          }
+        }
+      ]
+    },
+    "venus.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "sles16",
+      "aws_open_ports": [
+        "80"
+      ],
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-sles16"
+          }
+        },
+        "bci_website"
+      ]
+    },
+    "earth.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "slmicro6.1-byos",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-slemicro6"
+          }
+        }
+      ]
+    },
+    "mars.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "leap16",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-leap16"
+          }
+        }
+      ]
+    },
+    "phobos.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "rhel9",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-rhel9"
+          }
+        }
+      ]
+    },
+    "deimos.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "rhel10",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-rhel10"
+          }
+        }
+      ]
+    },
+    "io.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "alma10",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-alma10"
+          }
+        }
+      ]
+    },
+    "europa.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "rocky10",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-rocky10"
+          }
+        }
+      ]
+    },
+    "ganymede.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "ubuntu24.04",
+      "network_renderer": "networkd",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-ubuntu2404"
+          }
+        }
+      ]
+    },
+    "callisto.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "debian13",
+      "network_renderer": "networkd",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-debian13"
+          }
+        }
+      ]
+    },
+    "pluto.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "sles16",
+      "cloud_instance_type": "m6a.xlarge",
+      "VM_MEM": "16384",
+      "VM_CPU": "4",
+      "VM_DSK": "80",
+      "aws_open_ports": [
+        "80",
+        "443",
+        "8080"
+      ],
+      "kcluster": "ai",
+      "KUBERNETES_NODE_TYPE": "server"
+    },
+    "charon.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "sles16",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-sles16"
+          }
+        },
+        "ansible_control_node"
+      ]
+    },
+    "amalthea.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "slmicro6.1-byos",
+      "VM_MEM": "4096",
+      "VM_CPU": "4",
+      "VM_DSK": "80",
+      "kcluster": "jovian",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-slemicro6"
+          }
+        }
+      ],
+      "KUBERNETES_NODE_TYPE": "server"
+    },
+    "himalia.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "slmicro6.1-byos",
+      "VM_MEM": "4096",
+      "VM_CPU": "4",
+      "VM_DSK": "80",
+      "kcluster": "jovian",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-slemicro6"
+          }
+        }
+      ],
+      "KUBERNETES_NODE_TYPE": "server"
+    },
+    "thebe.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "slmicro6.1-byos",
+      "VM_MEM": "4096",
+      "VM_CPU": "4",
+      "VM_DSK": "80",
+      "kcluster": "jovian",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-slemicro6"
+          }
+        }
+      ],
+      "KUBERNETES_NODE_TYPE": "server"
+    },
+    "miranda.mydemoaws.lab": {
+      "backend": "aws",
+      "SOURCE_IMAGE": "slmicro6.1-byos",
+      "VM_MEM": "4096",
+      "VM_CPU": "2",
+      "VM_DSK": "40",
+      "kcluster": "uranian",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-slemicro6"
+          }
+        }
+      ],
+      "KUBERNETES_NODE_TYPE": "server"
+    }
+  },
+  "_disabled_nodes": {
+    "luna.mydemoaws.lab": {
+      "backend": "aws",
+      "ISO_IMAGE": "CentOS-7-x86_64-GenericCloud-20150628_01.qcow2",
+      "config_method": "virt_customize",
+      "VM_BOOT": "bios",
+      "VM_MACHINE": "pc",
+      "addons": [
+        {
+          "client_registration": {
+            "client_registration_activation_key": "1-centos7"
+          }
+        }
+      ]
+    },
+    "titan.mydemoaws.lab": {
+      "backend": "aws",
+      "ISO_IMAGE": "aliyun_2_1903_x64_20G_nocloud_alibase_20230103.qcow2",
+      "config_method": "virt_customize",
+      "VM_BOOT": "bios"
+    }
+  },
+  "client_registration": {
+    "client_registration_server": "sol.mydemoaws.lab",
+    "client_registration_server_type": "uyuni",
+    "client_registration_admin_user": "admin",
+    "client_registration_admin_pass": "supercomplexpassword123.",
+    "client_registration_activation_key": "1-sles15sp7"
+  },
+  "smlm": {
+    "smlm_admin_user": "admin",
+    "smlm_admin_pass": "supercomplexpassword123.",
+    "smlm_email": "admin@mydemoaws.lab",
+    "smlm_org": "SUSE Test",
+    "smlm_deployment": "podman",
+    "smlm_scc_regcode": "",
+    "smlm_scc_user": "",
+    "smlm_scc_password": "",
+    "smlm_channels": [
+      "sle-product-sles15-sp7-pool-x86_64",
+      "sle-product-sles-16.0-x86_64",
+      "sl-micro-6.1-pool-x86_64",
+      "centos7-x86_64",
+      "el10-pool-x86_64",
+      "el9-pool-x86_64",
+      "ubuntu-2404-amd64-main-amd64",
+      "almalinux10-x86_64",
+      "rockylinux-10-x86_64",
+      "debian-13-pool-amd64",
+      "debian-13-pool-arm64",
+      "opensuse-leap-16.0-x86_64",
+      "oraclelinux9-x86_64",
+      "amazonlinux2-core-x86_64",
+      "amazonlinux2023-x86_64",
+      "sle-product-sles15-sp7-updates-x86_64",
+      "sle15-sp7-installer-updates-x86_64",
+      "managertools-sle15-pool-x86_64-sp7",
+      "managertools-sle15-updates-x86_64-sp7",
+      "sle-module-basesystem15-sp7-pool-x86_64",
+      "sle-module-basesystem15-sp7-updates-x86_64",
+      "sle-16.0-installer-updates-x86_64",
+      "multi-linux-managertools-sle-16-x86_64",
+      "managertools-sl-micro-6.1-x86_64",
+      "multi-linux-managertools-sle-16-x86_64-opensuse-16.0",
+      "managertools-el9-pool-x86_64",
+      "managertools-el9-updates-x86_64",
+      "managertools-el10-pool-x86_64",
+      "managertools-el10-updates-x86_64",
+      "centos7-updates-x86_64",
+      "managertools-el7-pool-x86_64-centos7",
+      "managertools-el7-updates-x86_64-centos7",
+      "managertools-el10-pool-x86_64-alma",
+      "managertools-el10-updates-x86_64-alma",
+      "managertools-el10-pool-x86_64-rocky",
+      "managertools-el10-updates-x86_64-rocky",
+      "ubuntu-2404-amd64-main-security-amd64",
+      "ubuntu-2404-amd64-main-updates-amd64",
+      "managertools-ubuntu2404-updates-amd64",
+      "managertools-debian13-updates-amd64",
+      "managertools-debian13-updates-arm64",
+      "managertools-el9-pool-x86_64-ol9",
+      "managertools-el9-updates-x86_64-ol9",
+      "managertools-el7-pool-x86_64-amazon",
+      "managertools-el7-updates-x86_64-amazon",
+      "managertools-el9-pool-x86_64-amazon",
+      "managertools-el9-updates-x86_64-amazon",
+      "debian-13-main-security-amd64",
+      "debian-13-main-updates-amd64",
+      "debian-13-main-security-arm64",
+      "debian-13-main-updates-arm64",
+      "almalinux10-appstream-x86_64",
+      "rockylinux-10-appstream-x86_64",
+      "oraclelinux9-appstream-x86_64"
+    ],
+    "smlm_activation_keys": [
+      {
+        "smlm_activation_key": "sles15sp7",
+        "smlm_activation_key_base_channel": "sle-product-sles15-sp7-pool-x86_64",
+        "smlm_activation_key_child_channels": "sle-product-sles15-sp7-updates-x86_64 sle15-sp7-installer-updates-x86_64 managertools-sle15-pool-x86_64-sp7 managertools-sle15-updates-x86_64-sp7 sle-module-basesystem15-sp7-pool-x86_64 sle-module-basesystem15-sp7-updates-x86_64 sle-module-certifications-15-sp7-pool-x86_64 sle-module-certifications-15-sp7-updates-x86_64 sle-module-confidential-computing-15-sp7-pool-x86_64 sle-module-confidential-computing-15-sp7-updates-x86_64",
+        "smlm_activation_key_desc": "SLES 15 SP7",
+        "smlm_activation_key_groups": "prod"
+      },
+      {
+        "smlm_activation_key": "sles16",
+        "smlm_activation_key_base_channel": "sle-product-sles-16.0-x86_64",
+        "smlm_activation_key_child_channels": "sle-16.0-installer-updates-x86_64 multi-linux-managertools-sle-16-x86_64",
+        "smlm_activation_key_desc": "SLES 16",
+        "smlm_activation_key_groups": "prod"
+      },
+      {
+        "smlm_activation_key": "slemicro6",
+        "smlm_activation_key_base_channel": "sl-micro-6.1-pool-x86_64",
+        "smlm_activation_key_child_channels": "managertools-sl-micro-6.1-x86_64",
+        "smlm_activation_key_desc": "SLE Micro 6.1",
+        "smlm_activation_key_groups": "prod"
+      },
+      {
+        "smlm_activation_key": "leap16",
+        "smlm_activation_key_base_channel": "opensuse-leap-16.0-x86_64",
+        "smlm_activation_key_child_channels": "multi-linux-managertools-sle-16-x86_64-opensuse-16.0",
+        "smlm_activation_key_desc": "openSUSE Leap 16",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "rhel9",
+        "smlm_activation_key_base_channel": "el9-pool-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el9-pool-x86_64 managertools-el9-updates-x86_64 sll-9-updates-x86_64 sll-as-9-updates-x86_64 sll-cb-9-updates-x86_64",
+        "smlm_activation_key_desc": "RHEL 9 (SUSE Liberty Linux EL9 base)",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "rhel10",
+        "smlm_activation_key_base_channel": "el10-pool-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el10-pool-x86_64 managertools-el10-updates-x86_64 sll-10-updates-x86_64 sll-as-10-updates-x86_64 sll-cb-10-updates-x86_64",
+        "smlm_activation_key_desc": "RHEL 10",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "centos7",
+        "smlm_activation_key_base_channel": "centos7-x86_64",
+        "smlm_activation_key_child_channels": "centos7-updates-x86_64 managertools-el7-pool-x86_64-centos7 managertools-el7-updates-x86_64-centos7",
+        "smlm_activation_key_desc": "CentOS 7",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "alma10",
+        "smlm_activation_key_base_channel": "almalinux10-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el10-pool-x86_64-alma managertools-el10-updates-x86_64-alma almalinux10-appstream-x86_64",
+        "smlm_activation_key_desc": "AlmaLinux 10",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "rocky10",
+        "smlm_activation_key_base_channel": "rockylinux-10-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el10-pool-x86_64-rocky managertools-el10-updates-x86_64-rocky rockylinux-10-appstream-x86_64",
+        "smlm_activation_key_desc": "Rocky Linux 10",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "ubuntu2404",
+        "smlm_activation_key_base_channel": "ubuntu-2404-amd64-main-amd64",
+        "smlm_activation_key_child_channels": "ubuntu-2404-amd64-main-security-amd64 ubuntu-2404-amd64-main-updates-amd64 managertools-ubuntu2404-updates-amd64",
+        "smlm_activation_key_desc": "Ubuntu 24.04",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "debian13",
+        "smlm_activation_key_base_channel": "debian-13-pool-amd64",
+        "smlm_activation_key_child_channels": "managertools-debian13-updates-amd64 debian-13-main-security-amd64 debian-13-main-updates-amd64",
+        "smlm_activation_key_desc": "Debian 13 (amd64)",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "debian13arm64",
+        "smlm_activation_key_base_channel": "debian-13-pool-arm64",
+        "smlm_activation_key_child_channels": "managertools-debian13-updates-arm64 debian-13-main-security-arm64 debian-13-main-updates-arm64",
+        "smlm_activation_key_desc": "Debian 13 (arm64, AWS)",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "oraclelinux9",
+        "smlm_activation_key_base_channel": "oraclelinux9-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el9-pool-x86_64-ol9 managertools-el9-updates-x86_64-ol9 oraclelinux9-appstream-x86_64",
+        "smlm_activation_key_desc": "Oracle Linux 9 (AWS)",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "amazonlinux2",
+        "smlm_activation_key_base_channel": "amazonlinux2-core-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el7-pool-x86_64-amazon managertools-el7-updates-x86_64-amazon",
+        "smlm_activation_key_desc": "Amazon Linux 2 (AWS)",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "amazonlinux2023",
+        "smlm_activation_key_base_channel": "amazonlinux2023-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el9-pool-x86_64-amazon managertools-el9-updates-x86_64-amazon",
+        "smlm_activation_key_desc": "Amazon Linux 2023 (AWS)",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "rhel7",
+        "smlm_activation_key_base_channel": "rhel-x86_64-server-7",
+        "smlm_activation_key_child_channels": "managertools-el7-pool-x86_64-lbt managertools-el7-updates-x86_64-lbt res7-x86_64",
+        "smlm_activation_key_desc": "RHEL 7 (SUSE Liberty Linux EL7 base)",
+        "smlm_activation_key_groups": "qa"
+      },
+      {
+        "smlm_activation_key": "sles161",
+        "smlm_activation_key_base_channel": "sle-product-sles-16.1-x86_64",
+        "smlm_activation_key_child_channels": "",
+        "smlm_activation_key_desc": "SLES 16.1 (BETA)",
+        "smlm_activation_key_groups": "dev"
+      },
+      {
+        "smlm_activation_key": "k8s-node",
+        "smlm_activation_key_base_channel": "el9-pool-x86_64",
+        "smlm_activation_key_child_channels": "managertools-el9-pool-x86_64 managertools-el9-updates-x86_64 sll-9-updates-x86_64 sll-as-9-updates-x86_64 sll-cb-9-updates-x86_64",
+        "smlm_activation_key_desc": "RHEL 9 node that gets a K3s cluster from the k8s-cluster Salt state",
+        "smlm_activation_key_groups": "kubernetes",
+        "smlm_activation_key_config_channels": "k8s-cluster",
+        "smlm_activation_key_enable_config_deployment": "true"
+      }
+    ],
+    "smlm_system_groups": [
+      {
+        "name": "prod",
+        "description": "SLES / SLE Micro systems"
+      },
+      {
+        "name": "dev",
+        "description": "Non-SUSE systems, dev half"
+      },
+      {
+        "name": "qa",
+        "description": "Non-SUSE systems, qa half"
+      },
+      {
+        "name": "star",
+        "description": "The G-type main-sequence star at the center of the system",
+        "systems": []
+      },
+      {
+        "name": "terrestrial-planets",
+        "description": "Rocky planets with solid surfaces",
+        "systems": [
+          "mercury.mydemoaws.lab",
+          "venus.mydemoaws.lab",
+          "earth.mydemoaws.lab",
+          "mars.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "gas-giants",
+        "description": "Giant planets composed mainly of hydrogen and helium",
+        "systems": [
+          "saturn.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "ice-giants",
+        "description": "Giant planets composed mainly of volatile ices (water, ammonia, methane)",
+        "systems": [
+          "neptune.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "moons",
+        "description": "Natural satellites, across every parent body",
+        "systems": [
+          "phobos.mydemoaws.lab",
+          "deimos.mydemoaws.lab",
+          "luna.mydemoaws.lab",
+          "io.mydemoaws.lab",
+          "europa.mydemoaws.lab",
+          "ganymede.mydemoaws.lab",
+          "callisto.mydemoaws.lab",
+          "titan.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "galilean-moons",
+        "description": "The four largest moons of Jupiter, discovered by Galileo in 1610",
+        "systems": [
+          "io.mydemoaws.lab",
+          "europa.mydemoaws.lab",
+          "ganymede.mydemoaws.lab",
+          "callisto.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "martian-moons",
+        "description": "The two small moons of Mars",
+        "systems": [
+          "phobos.mydemoaws.lab",
+          "deimos.mydemoaws.lab"
+        ]
+      },
+      {
+        "name": "kubernetes",
+        "description": "Kubernetes cluster nodes (RKE2 jovian, K3s uranian)",
+        "systems": [
+          "amalthea.mydemoaws.lab",
+          "himalia.mydemoaws.lab",
+          "thebe.mydemoaws.lab",
+          "miranda.mydemoaws.lab"
+        ]
+      }
+    ],
+    "smlm_orgs": [
+      {
+        "name": "edge",
+        "admin_user": "edgeadmin",
+        "admin_pass": "supercomplexpassword123.",
+        "admin_email": "edgeadmin@edge.mydemoaws.lab",
+        "admin_first_name": "Edge",
+        "admin_last_name": "Admin",
+        "trust_with": [
+          "SUSE Test"
+        ],
+        "smlm_users": [
+          {
+            "username": "jangyeongsil",
+            "password": "supercomplexpassword123.",
+            "first_name": "Yeong-sil",
+            "last_name": "Jang",
+            "email": "jangyeongsil@edge.mydemoaws.lab"
+          },
+          {
+            "username": "taqialdin",
+            "password": "supercomplexpassword123.",
+            "first_name": "Taqi",
+            "last_name": "al-Din",
+            "email": "taqialdin@edge.mydemoaws.lab"
+          },
+          {
+            "username": "shirakatsi",
+            "password": "supercomplexpassword123.",
+            "first_name": "Anania",
+            "last_name": "Shirakatsi",
+            "email": "shirakatsi@edge.mydemoaws.lab"
+          },
+          {
+            "username": "ruiz",
+            "password": "supercomplexpassword123.",
+            "first_name": "Maria Teresa",
+            "last_name": "Ruiz",
+            "email": "ruiz@edge.mydemoaws.lab"
+          },
+          {
+            "username": "shaviv",
+            "password": "supercomplexpassword123.",
+            "first_name": "Giora",
+            "last_name": "Shaviv",
+            "email": "shaviv@edge.mydemoaws.lab"
+          },
+          {
+            "username": "celsius",
+            "password": "supercomplexpassword123.",
+            "first_name": "Anders",
+            "last_name": "Celsius",
+            "email": "celsius@edge.mydemoaws.lab"
+          },
+          {
+            "username": "copernicus",
+            "password": "supercomplexpassword123.",
+            "first_name": "Nicolaus",
+            "last_name": "Copernicus",
+            "email": "copernicus@edge.mydemoaws.lab"
+          },
+          {
+            "username": "altusi",
+            "password": "supercomplexpassword123.",
+            "first_name": "Nasir al-Din",
+            "last_name": "al-Tusi",
+            "email": "altusi@edge.mydemoaws.lab"
+          },
+          {
+            "username": "herschel",
+            "password": "supercomplexpassword123.",
+            "first_name": "Caroline",
+            "last_name": "Herschel",
+            "email": "herschel@edge.mydemoaws.lab"
+          },
+          {
+            "username": "cassini",
+            "password": "supercomplexpassword123.",
+            "first_name": "Giovanni",
+            "last_name": "Cassini",
+            "email": "cassini@edge.mydemoaws.lab"
+          },
+          {
+            "username": "ulughbeg",
+            "password": "supercomplexpassword123.",
+            "first_name": "Ulugh",
+            "last_name": "Beg",
+            "email": "ulughbeg@edge.mydemoaws.lab"
+          },
+          {
+            "username": "burnell",
+            "password": "supercomplexpassword123.",
+            "first_name": "Jocelyn",
+            "last_name": "Bell Burnell",
+            "email": "burnell@edge.mydemoaws.lab"
+          },
+          {
+            "username": "alsufi",
+            "password": "supercomplexpassword123.",
+            "first_name": "Abd al-Rahman",
+            "last_name": "al-Sufi",
+            "email": "alsufi@edge.mydemoaws.lab"
+          },
+          {
+            "username": "wangzhenyi",
+            "password": "supercomplexpassword123.",
+            "first_name": "Zhenyi",
+            "last_name": "Wang",
+            "email": "wangzhenyi@edge.mydemoaws.lab"
+          },
+          {
+            "username": "chandrasekhar",
+            "password": "supercomplexpassword123.",
+            "first_name": "Subrahmanyan",
+            "last_name": "Chandrasekhar",
+            "email": "chandrasekhar@edge.mydemoaws.lab"
+          },
+          {
+            "username": "milankovic",
+            "password": "supercomplexpassword123.",
+            "first_name": "Milutin",
+            "last_name": "Milankovic",
+            "email": "milankovic@edge.mydemoaws.lab"
+          },
+          {
+            "username": "albattani",
+            "password": "supercomplexpassword123.",
+            "first_name": "Muhammad",
+            "last_name": "al-Battani",
+            "email": "albattani@edge.mydemoaws.lab"
+          },
+          {
+            "username": "oort",
+            "password": "supercomplexpassword123.",
+            "first_name": "Jan",
+            "last_name": "Oort",
+            "email": "oort@edge.mydemoaws.lab"
+          },
+          {
+            "username": "hertzsprung",
+            "password": "supercomplexpassword123.",
+            "first_name": "Ejnar",
+            "last_name": "Hertzsprung",
+            "email": "hertzsprung@edge.mydemoaws.lab"
+          },
+          {
+            "username": "guoshoujing",
+            "password": "supercomplexpassword123.",
+            "first_name": "Shoujing",
+            "last_name": "Guo",
+            "email": "guoshoujing@edge.mydemoaws.lab"
+          },
+          {
+            "username": "ptolemy",
+            "password": "supercomplexpassword123.",
+            "first_name": "Claudius",
+            "last_name": "Ptolemy",
+            "email": "ptolemy@edge.mydemoaws.lab"
+          },
+          {
+            "username": "haro",
+            "password": "supercomplexpassword123.",
+            "first_name": "Guillermo",
+            "last_name": "Haro",
+            "email": "haro@edge.mydemoaws.lab"
+          },
+          {
+            "username": "friedmann",
+            "password": "supercomplexpassword123.",
+            "first_name": "Aleksandr",
+            "last_name": "Friedmann",
+            "email": "friedmann@edge.mydemoaws.lab"
+          },
+          {
+            "username": "hayashi",
+            "password": "supercomplexpassword123.",
+            "first_name": "Chushiro",
+            "last_name": "Hayashi",
+            "email": "hayashi@edge.mydemoaws.lab"
+          },
+          {
+            "username": "medupe",
+            "password": "supercomplexpassword123.",
+            "first_name": "Thebe",
+            "last_name": "Medupe",
+            "email": "medupe@edge.mydemoaws.lab"
+          },
+          {
+            "username": "barbuy",
+            "password": "supercomplexpassword123.",
+            "first_name": "Beatriz",
+            "last_name": "Barbuy",
+            "email": "barbuy@edge.mydemoaws.lab"
+          },
+          {
+            "username": "bhathal",
+            "password": "supercomplexpassword123.",
+            "first_name": "Ragbir",
+            "last_name": "Bhathal",
+            "email": "bhathal@edge.mydemoaws.lab"
+          },
+          {
+            "username": "kwok",
+            "password": "supercomplexpassword123.",
+            "first_name": "Sun",
+            "last_name": "Kwok",
+            "email": "kwok@edge.mydemoaws.lab"
+          }
+        ],
+        "smlm_access_groups": [
+          {
+            "label": "engineering",
+            "description": "Content, config and Salt formula authoring",
+            "permissions": [
+              {
+                "namespace": "software.manage.list",
+                "mode": "W"
+              },
+              {
+                "namespace": "software.manage.details",
+                "mode": "W"
+              },
+              {
+                "namespace": "software.manage.packages",
+                "mode": "W"
+              },
+              {
+                "namespace": "software.manage.repos",
+                "mode": "W"
+              },
+              {
+                "namespace": "software.manage.clone",
+                "mode": "W"
+              },
+              {
+                "namespace": "config.channels",
+                "mode": "W"
+              },
+              {
+                "namespace": "config.files",
+                "mode": "W"
+              },
+              {
+                "namespace": "clm.project.build",
+                "mode": "W"
+              },
+              {
+                "namespace": "clm.project.list",
+                "mode": "R"
+              },
+              {
+                "namespace": "salt.formulas",
+                "mode": "W"
+              }
+            ],
+            "users": [
+              "jangyeongsil",
+              "taqialdin",
+              "herschel",
+              "cassini",
+              "ulughbeg",
+              "ptolemy",
+              "haro"
+            ]
+          },
+          {
+            "label": "qa",
+            "description": "Compliance/audit review and patch validation",
+            "permissions": [
+              {
+                "namespace": "audit.openscap",
+                "mode": "R"
+              },
+              {
+                "namespace": "audit.scap.execution",
+                "mode": "W"
+              },
+              {
+                "namespace": "audit.cve",
+                "mode": "R"
+              },
+              {
+                "namespace": "patches.list",
+                "mode": "R"
+              },
+              {
+                "namespace": "patches.search",
+                "mode": "R"
+              },
+              {
+                "namespace": "patches.details.overview",
+                "mode": "R"
+              },
+              {
+                "namespace": "software.search",
+                "mode": "R"
+              },
+              {
+                "namespace": "software.list",
+                "mode": "R"
+              },
+              {
+                "namespace": "systems.audit.openscap",
+                "mode": "R"
+              }
+            ],
+            "users": [
+              "shirakatsi",
+              "ruiz",
+              "burnell",
+              "alsufi",
+              "wangzhenyi",
+              "friedmann",
+              "hayashi"
+            ]
+          },
+          {
+            "label": "test",
+            "description": "Test-system provisioning and bootstrap",
+            "permissions": [
+              {
+                "namespace": "systems.bootstrap",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.autoinstallation",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.activation_keys.list",
+                "mode": "R"
+              },
+              {
+                "namespace": "systems.activation_keys.details",
+                "mode": "R"
+              },
+              {
+                "namespace": "systems.details.overview",
+                "mode": "R"
+              },
+              {
+                "namespace": "systems.groups.join",
+                "mode": "W"
+              }
+            ],
+            "users": [
+              "shaviv",
+              "celsius",
+              "chandrasekhar",
+              "milankovic",
+              "albattani",
+              "medupe",
+              "barbuy"
+            ]
+          },
+          {
+            "label": "operations",
+            "description": "Day-to-day fleet management and scheduling",
+            "permissions": [
+              {
+                "namespace": "systems.list",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.details.overview",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.groups.list",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.groups.systems",
+                "mode": "W"
+              },
+              {
+                "namespace": "schedule.pending",
+                "mode": "W"
+              },
+              {
+                "namespace": "schedule.completed",
+                "mode": "R"
+              },
+              {
+                "namespace": "schedule.failed",
+                "mode": "R"
+              },
+              {
+                "namespace": "systems.recurring",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.maintenance",
+                "mode": "W"
+              },
+              {
+                "namespace": "systems.software.channels",
+                "mode": "W"
+              }
+            ],
+            "users": [
+              "copernicus",
+              "altusi",
+              "oort",
+              "hertzsprung",
+              "guoshoujing",
+              "bhathal",
+              "kwok"
+            ]
+          }
+        ]
+      }
+    ],
+    "smlm_monitoring_enabled": true,
+    "smlm_image_stores": [
+      {
+        "label": "suse-registry",
+        "uri": "registry.suse.com",
+        "type": "registry"
+      }
+    ],
+    "smlm_image_profiles": [
+      {
+        "label": "sles15sp7-example-profile",
+        "type": "dockerfile",
+        "store": "suse-registry",
+        "path": "https://github.com/SUSE/BCI-dockerfile-generator.git#main:bci/base/x86_64",
+        "activation_key": "1-sles15sp7",
+        "_note": "Example only \u2014 adjust 'path' to a Dockerfile git ref you actually maintain before building; the mechanism (image.profile.create) is confirmed working live against this exact store/activation-key combination."
+      }
+    ],
+    "smlm_image_build_hosts": [
+      {
+        "system": "mercury.mydemoaws.lab",
+        "_note": "Same system referenced by smlm_image_imports' build_host_id (1000010000) below \u2014 this entry is what actually enables the 'Container Build Host' entitlement on it via install_smlm.py, closing the gap the _note on that entry used to flag as unaddressed."
+      }
+    ],
+    "smlm_image_imports": [
+      {
+        "name": "registry.suse.com/bci/bci-base",
+        "version": "latest",
+        "store": "suse-registry",
+        "build_host_id": 1000010000,
+        "activation_key": "1-sles15sp7",
+        "_note": "build_host_id is mercury.mydemoaws.lab's real numeric system id \u2014 now enabled via smlm_image_build_hosts above."
+      },
+      {
+        "name": "registry.suse.com/suse/sle15",
+        "version": "latest",
+        "store": "suse-registry",
+        "build_host_id": 1000010000,
+        "activation_key": "1-sles15sp7"
+      }
+    ],
+    "smlm_distributions": [
+      {
+        "name": "sles15sp7-autoinstall",
+        "path": "/srv/www/htdocs/pub/install-trees/sle15sp7",
+        "base_channel": "sle-product-sles15-sp7-pool-x86_64",
+        "install_type": "sles15generic",
+        "_note": "'path' must be populated with a real extracted SLES 15 SP7 installer tree (mount the ISO and copy it there) before this distribution can actually be created \u2014 distribution_create validates the tree exists, confirmed live."
+      },
+      {
+        "name": "rhel9-autoinstall",
+        "path": "/srv/www/htdocs/pub/install-trees/rhel9",
+        "base_channel": "el9-pool-x86_64",
+        "install_type": "rhel_9",
+        "_note": "Real RHEL 9.1 BaseOS DVD ISO, extracted 2026-09-24 onto sol.mydemoaws.lab at this exact path."
+      },
+      {
+        "name": "leap16-x86_64",
+        "iso_url": "https://download.opensuse.org/distribution/leap/16.0/offline/Leap-16.0-offline-installer-x86_64-Build178.27.install.iso",
+        "iso_checksum_url": "https://download.opensuse.org/distribution/leap/16.0/offline/Leap-16.0-offline-installer-x86_64-Build178.27.install.iso.sha512",
+        "base_channel": "opensuse-leap-16.0-x86_64",
+        "install_type": "suse",
+        "kernel_options": ""
+      }
+    ],
+    "smlm_kickstart_profiles": [
+      {
+        "name": "sles15sp7-example-ks",
+        "distribution": "sles15sp7-autoinstall",
+        "root_password": "supercomplexpassword123.",
+        "virt_type": "none",
+        "variables": {
+          "lab": "solar-system"
+        },
+        "activation_keys": [
+          "1-sles15sp7"
+        ]
+      },
+      {
+        "name": "rhel9-example-ks",
+        "distribution": "rhel9-autoinstall",
+        "root_password": "supercomplexpassword123.",
+        "virt_type": "none",
+        "variables": {
+          "lab": "solar-system"
+        },
+        "activation_keys": [
+          "1-rhel9"
+        ]
+      },
+      {
+        "name": "rke2-node-ks",
+        "distribution": "rhel9-autoinstall",
+        "root_password": "supercomplexpassword123.",
+        "virt_type": "none",
+        "variables": {
+          "lab": "solar-system",
+          "k8s_mode": "join",
+          "k8s_server": "amalthea.mydemoaws.lab",
+          "k8s_token": "jovian-7a3749624410b0ecd817f07c4a183156",
+          "k8s_channel": "stable"
+        },
+        "activation_keys": [
+          "1-rhel9"
+        ],
+        "scripts": [
+          {
+            "name": "rke2-node",
+            "type": "post",
+            "chroot": true,
+            "template": true,
+            "contents": "K8S_MODE=\"$k8s_mode\"\nK8S_SERVER=\"$k8s_server\"\nK8S_TOKEN=\"$k8s_token\"\nK8S_CHANNEL=\"$k8s_channel\"\n#raw\nsystemctl disable firewalld.service nm-cloud-setup.service nm-cloud-setup.timer 2>/dev/null || true\nmkdir -p /etc/rancher/rke2\nif [ \"$K8S_MODE\" = new ]; then\n  ROLE=server\n  printf 'token: %s\\n' \"$K8S_TOKEN\" > /etc/rancher/rke2/config.yaml\nelse\n  ROLE=agent\n  printf 'server: https://%s:9345\\ntoken: %s\\n' \"$K8S_SERVER\" \"$K8S_TOKEN\" > /etc/rancher/rke2/config.yaml\nfi\ncurl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=\"$ROLE\" INSTALL_RKE2_CHANNEL=\"$K8S_CHANNEL\" sh -\nsystemctl enable \"rke2-$ROLE.service\"\n#end raw\n"
+          }
+        ]
+      },
+      {
+        "name": "leap16-rke2-agent",
+        "distribution": "leap16-x86_64",
+        "agama_profile": {
+          "product": {
+            "id": "openSUSE_Leap"
+          },
+          "root": {
+            "password": "supercomplexpassword123.",
+            "hashedPassword": false
+          },
+          "localization": {
+            "language": "en_US.UTF-8",
+            "keyboard": "us",
+            "timezone": "UTC"
+          },
+          "questions": {
+            "policy": "auto"
+          },
+          "legacyAutoyastStorage": [
+            {
+              "device": "/dev/vda",
+              "use": "all",
+              "partitions": [
+                {
+                  "mount": "/boot/efi",
+                  "size": "512M",
+                  "filesystem": "vfat"
+                },
+                {
+                  "mount": "/",
+                  "size": "max",
+                  "filesystem": "btrfs"
+                }
+              ]
+            }
+          ],
+          "software": {
+            "extraRepositories": [
+              {
+                "url": "http://sol.mydemoaws.lab/ks/dist/child/multi-linux-managertools-sle-16-x86_64-opensuse-16.0/leap16-x86_64",
+                "alias": "manager-tools",
+                "allowUnsigned": true
+              }
+            ],
+            "packages": [
+              "openssh-server-config-rootlogin",
+              "tar",
+              "venv-salt-minion"
+            ]
+          },
+          "scripts": {
+            "post": [
+              {
+                "name": "lab-firstboot",
+                "chroot": true,
+                "content": "#!/bin/bash\nmkdir -p /usr/local/sbin\ncat > /usr/local/sbin/lab-firstboot.sh <<'FIRSTBOOT'\n#!/bin/bash\n# One-shot first boot: register with SMLM, then join the jovian RKE2 cluster as an agent.\nset -e\ncurl -sSfk https://sol.mydemoaws.lab/pub/bootstrap/1-leap16.sh | bash\nmkdir -p /etc/rancher/rke2\nprintf 'server: https://amalthea.mydemoaws.lab:9345\ntoken: %s\n' 'jovian-7a3749624410b0ecd817f07c4a183156' > /etc/rancher/rke2/config.yaml\ncurl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent INSTALL_RKE2_VERSION=v1.36.5+rke2r1 sh -\nsystemctl enable --now rke2-agent.service\nsystemctl disable lab-firstboot.service\nFIRSTBOOT\nchmod 0700 /usr/local/sbin/lab-firstboot.sh\ncat > /etc/systemd/system/lab-firstboot.service <<'UNIT'\n[Unit]\nDescription=Lab first boot: SMLM registration and RKE2 join\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/lab-firstboot.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\nUNIT\nsystemctl enable lab-firstboot.service\n"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "smlm_ansible_control_nodes": [
+      {
+        "system": "charon.mydemoaws.lab"
+      }
+    ],
+    "smlm_ansible_paths": [
+      {
+        "system": "charon.mydemoaws.lab",
+        "type": "playbook",
+        "path": "/srv/ansible/playbooks"
+      },
+      {
+        "system": "charon.mydemoaws.lab",
+        "type": "inventory",
+        "path": "/srv/ansible/inventory/uyuni_dynamic_inventory.py"
+      }
+    ],
+    "smlm_beta_channels": [
+      "sle-product-sles-16.1-x86_64"
+    ],
+    "smlm_coco_replicas": 1,
+    "smlm_config_channels": [
+      {
+        "label": "solar-system-motd",
+        "name": "Solar System Lab MOTD",
+        "description": "Centrally managed /etc/motd for every solar-system-lab client",
+        "type": "normal",
+        "files": [
+          {
+            "path": "/etc/motd",
+            "content": "Welcome to the solar-system-lab \u2014 managed centrally via SUSE Multi-Linux Manager config channels.\n",
+            "owner": "root",
+            "group": "root",
+            "mode": "0644"
+          }
+        ]
+      },
+      {
+        "label": "k8s-cluster",
+        "name": "Kubernetes cluster (K3s)",
+        "type": "state",
+        "init_sls": "k3s-install:\n  cmd.run:\n    - name: curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=stable sh -s - server\n    - unless: systemctl cat k3s.service\nk3s-service:\n  service.running:\n    - name: k3s\n    - enable: True\n    - require:\n      - cmd: k3s-install\n",
+        "description": "Installs a single-node K3s cluster and keeps its service running"
+      }
+    ],
+    "smlm_scap_scans": [
+      {
+        "system": "earth.mydemoaws.lab",
+        "xccdf_path": "/usr/share/xml/scap/ssg/content/ssg-slmicro6-xccdf.xml",
+        "profile": "Web-Default"
+      },
+      {
+        "group": "terrestrial-planets",
+        "xccdf_path": "/usr/share/xml/scap/ssg/content/ssg-sle15-xccdf.xml",
+        "profile": "Web-Default"
+      }
+    ],
+    "smlm_vhm_aws_account": "vhm_aws-tmm",
+    "smlm_virtual_host_managers": [
+      {
+        "label": "solar-system-aws-vhm",
+        "type": "aws",
+        "region": "eu-central-1",
+        "zone": "eu-central-1a"
+      },
+      {
+        "label": "nuc6-libvirt-vhm",
+        "type": "libvirt",
+        "uri": "qemu+ssh://root@nuc6.mydemoaws.lab/system"
+      }
+    ],
+    "smlm_virtual_guests": [
+      {
+        "host": "nuc6.mydemoaws.lab",
+        "name": "callisto-autoinstall-demo",
+        "kickstart_profile": "sles15sp7-example-ks",
+        "memory_mb": 2048,
+        "vcpus": 2,
+        "disk_gb": 20
+      },
+      {
+        "host": "nuc6.mydemoaws.lab",
+        "name": "io-rke2-ks",
+        "kickstart_profile": "rke2-node-ks",
+        "memory_mb": 4096,
+        "vcpus": 2,
+        "disk_gb": 30
+      }
+    ],
+    "smlm_snippets": [
+      {
+        "name": "solar-system-motd-snippet",
+        "content": "# Included via $SNIPPET('spacewalk/<org>/solar-system-motd-snippet') from a kickstart/AutoYaST profile's own %post section.\necho 'Provisioned by the solar-system-lab autoinstallation pipeline' >> /etc/motd\n"
+      }
+    ],
+    "smlm_mcp_server": {
+      "version": "latest",
+      "port": 8090,
+      "write_tools_enabled": false,
+      "_note": "Real github.com/uyuni-project/mcp-server-uyuni, deployed as a sibling podman container on sol.mydemoaws.lab, published on 127.0.0.1:8090 only. Reads smlm_admin_user/smlm_admin_pass for its own Uyuni login since no dedicated 'user'/'password' override is set here. write_tools_enabled stays false (read-only) until an operator deliberately opts in."
+    },
+    "smlm_users": [
+      {
+        "username": "keplerpam",
+        "password": "supercomplexpassword123.",
+        "first_name": "Johannes",
+        "last_name": "Kepler",
+        "email": "keplerpam@mydemoaws.lab",
+        "pam": true
+      },
+      {
+        "username": "brahe",
+        "password": "supercomplexpassword123.",
+        "first_name": "Tycho",
+        "last_name": "Brahe",
+        "email": "brahe@mydemoaws.lab"
+      }
+    ],
+    "smlm_custom_info_keys": [
+      {
+        "name": "lab_role",
+        "description": "Role this system plays in the solar-system-lab topology"
+      }
+    ],
+    "smlm_system_custom_values": [
+      {
+        "system": "mercury.mydemoaws.lab",
+        "key": "lab_role",
+        "value": "container-build-host"
+      },
+      {
+        "system": "venus.mydemoaws.lab",
+        "key": "lab_role",
+        "value": "terrestrial-planet"
+      },
+      {
+        "system": "mars.mydemoaws.lab",
+        "key": "lab_role",
+        "value": "terrestrial-planet"
+      }
+    ],
+    "smlm_recurring_actions": [
+      {
+        "name": "mercury-nightly-highstate",
+        "entity_type": "minion",
+        "entity": "mercury.mydemoaws.lab",
+        "cron_expr": "0 0 2 * * ?"
+      },
+      {
+        "name": "terrestrial-planets-weekly-highstate",
+        "entity_type": "group",
+        "entity": "terrestrial-planets",
+        "cron_expr": "0 0 3 ? * MON"
+      }
+    ],
+    "smlm_maintenance_calendars": [
+      {
+        "label": "solar-system-maintenance",
+        "ical": "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//lab-in-a-box//solar-system-lab//EN\nBEGIN:VEVENT\nUID:solar-system-maintenance-window-1@mydemoaws.lab\nDTSTAMP:20260930T000000Z\nDTSTART:20261003T000000Z\nDTEND:20261005T000000Z\nRRULE:FREQ=WEEKLY\nSUMMARY:Weekly solar-system-lab weekend maintenance window\nEND:VEVENT\nEND:VCALENDAR"
+      }
+    ],
+    "smlm_maintenance_schedules": [
+      {
+        "name": "solar-system-weekly",
+        "type": "multi",
+        "calendar": "solar-system-maintenance",
+        "systems": [
+          "mercury.mydemoaws.lab",
+          "venus.mydemoaws.lab"
+        ]
+      }
+    ],
+    "smlm_action_chains": [
+      {
+        "label": "solar-system-example-chain",
+        "actions": [
+          {
+            "system": "mercury.mydemoaws.lab",
+            "type": "script",
+            "script": "echo 'lab-in-a-box example action chain' > /tmp/lab-in-a-box-action-chain-example\n"
+          },
+          {
+            "system": "venus.mydemoaws.lab",
+            "type": "highstate"
+          }
+        ]
+      }
+    ],
+    "smlm_custom_channels": [
+      {
+        "label": "lab-in-a-box-tools",
+        "name": "lab-in-a-box tools",
+        "summary": "lab-in-a-box automation-node packages, mirrored for lab clients",
+        "arch_label": "channel-x86_64",
+        "packages": [
+          "/root/lab-in-a-box_rmahique/dist/lab-in-a-box-1.0.0-1.x86_64.rpm"
+        ]
+      }
+    ],
+    "smlm_patches": [
+      {
+        "advisory_name": "LAB-2026:0001",
+        "channel": "lab-in-a-box-tools",
+        "synopsis": "Example lab-in-a-box packaging patch",
+        "topic": "Demonstrates custom patch creation from scratch via errata.create.",
+        "description": "A harmless example patch created entirely via the API for the solar-system-lab demo.",
+        "solution": "No action needed \u2014 this is a demo patch.",
+        "advisory_type": "Product Enhancement Advisory",
+        "severity": "Low",
+        "packages": [
+          "lab-in-a-box"
+        ]
+      }
+    ],
+    "smlm_image_builds": [
+      {
+        "profile": "sles15sp7-example-profile",
+        "build_host": "mercury.mydemoaws.lab",
+        "version": "latest"
+      }
+    ],
+    "smlm_system_profiles": [
+      {
+        "system": "mercury.mydemoaws.lab",
+        "label": "mercury-baseline",
+        "description": "Package profile snapshot of mercury.mydemoaws.lab"
+      },
+      {
+        "system": "venus.mydemoaws.lab",
+        "label": "venus-baseline",
+        "description": "Package profile snapshot of venus.mydemoaws.lab"
+      }
+    ],
+    "smlm_org_system_transfers": [
+      {
+        "org": "edge",
+        "systems": [
+          "io.mydemoaws.lab",
+          "europa.mydemoaws.lab"
+        ]
+      }
+    ],
+    "smlm_content_projects": [
+      {
+        "label": "web_frontend",
+        "name": "Web frontend",
+        "sources": [
+          "sle-product-sles-16.0-x86_64",
+          "multi-linux-managertools-sle-16-x86_64"
+        ],
+        "environments": [
+          {
+            "label": "dev",
+            "name": "Development"
+          },
+          {
+            "label": "qa",
+            "name": "QA"
+          },
+          {
+            "label": "prod",
+            "name": "Production"
+          }
+        ]
+      }
+    ],
+    "smlm_sso": {
+      "keycloak_host": "pluto.mydemoaws.lab",
+      "keycloak_port": 8080,
+      "realm": "lab-in-a-box",
+      "admin_user": "admin",
+      "admin_password": "supercomplexpassword123.",
+      "demo_user": "brahe",
+      "demo_password": "supercomplexpassword123.",
+      "demo_email": "brahe@mydemoaws.lab"
+    }
+  },
+  "prometheus": {
+    "prometheus_scrape_smlm": "sol.mydemoaws.lab",
+    "prometheus_port": "9090",
+    "prometheus_retention": "15d"
+  },
+  "grafana": {
+    "grafana_prometheus_url": "http://sol.mydemoaws.lab:9090",
+    "grafana_import_smlm_dashboard": "true",
+    "grafana_smlm_job_name": "smlm-sol.mydemoaws.lab",
+    "grafana_admin_user": "admin",
+    "grafana_admin_password": "supercomplexpassword123."
+  },
+  "kclusters": {
+    "ai": {
+      "clu_type": "rke2",
+      "clu_rel": "stable",
+      "mydomain": "mydemoaws.lab",
+      "addons": [
+        "rancher",
+        "ollama",
+        "open_webui"
+      ]
+    },
+    "jovian": {
+      "clu_type": "rke2",
+      "clu_rel": "stable",
+      "mydomain": "mydemoaws.lab",
+      "clu_token": "jovian-7a3749624410b0ecd817f07c4a183156"
+    },
+    "uranian": {
+      "clu_type": "k3s",
+      "clu_rel": "stable",
+      "mydomain": "mydemoaws.lab",
+      "clu_token": "uranian-93ada8170425a7ada28c32a50935d68c"
+    }
+  },
+  "_disabled_nodes_note": "Nodes parked out of 'nodes' so no run creates them. AWS publishes no CentOS 7 or Alibaba Cloud Linux 2 image, and neither OS has an equivalent product name in libs/cloud_images.py. Move an entry back into 'nodes' with a resolvable SOURCE_IMAGE to bring it back.",
+  "ollama": {
+    "ollama_source": "upstream"
+  },
+  "open_webui": {
+    "open_webui_source": "upstream"
+  },
+  "bci_website": {
+    "bci_website_title": "Solar System Lab",
+    "bci_website_message": "This page is served by nginx inside a SUSE BCI container."
+  },
+  "schema_versions": {
+    "lab": "3.0",
+    "addon:ansible_control_node": "1.1",
+    "addon:bci_website": "1.0",
+    "addon:client_registration": "1.2",
+    "addon:grafana": "1.2",
+    "addon:ollama": "2.0",
+    "addon:open_webui": "2.0",
+    "addon:prometheus": "1.2",
+    "addon:smlm": "1.5"
+  }
+}

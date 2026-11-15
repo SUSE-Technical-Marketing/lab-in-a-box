@@ -141,6 +141,40 @@ _mac_lock = threading.Lock()
 # (LibvirtBackend.stop_vm, HarvesterBackend.stop_vm, scripts/vm_power.py's lab-wide ordering).
 POWER_POLL_SECONDS = 3
 
+# How long wait_for_power_state() gives a VM to reach the state asked for before returning its last one.
+POWER_WAIT_SECONDS = 300
+
+# Every spelling a backend reports for a VM that is up, and for one that is powered off but still exists and can be
+# started again, lowercased and matched as a prefix: "shut off" (libvirt), "Stopped" (Harvester, Alibaba),
+# "TERMINATED" (GCP), "SHELVED_OFFLOADED" (OVHcloud), "off" (Hetzner), "ACTIVE"/"Running"/"running"/"stopped".
+# Shared, because two unrelated decisions read the same vocabulary: whether a power action has finished
+# (scripts/vm_power.py) and whether a VM that exists is merely stopped rather than broken
+# (_ensure_cloud_dns_vm()).
+RUNNING_STATES = ("running", "active")
+POWERED_OFF_STATES = ("shut off", "shutoff", "stopped", "off", "terminated", "shelved", "poweroff")
+
+
+def state_matches(state: str, prefixes) -> bool:
+    """True when `state`, as a backend reported it, is one of `prefixes` (lowercased prefix match)."""
+    low = (state or "").strip().lower()
+    return bool(low) and any(low.startswith(prefix) for prefix in prefixes)
+
+
+def wait_for_power_state(backend, vm_name: str, prefixes, timeout: int = POWER_WAIT_SECONDS) -> str:
+    """
+    `vm_name`'s state once it matches one of `prefixes`, or its last state after `timeout` seconds.
+
+    Returns the state rather than raising, so the caller decides whether not arriving is an error: vm_power.py
+    reports it per VM, while _ensure_cloud_dns_vm() dies on it.
+    """
+    deadline = time.monotonic() + timeout
+    state = backend.vm_state(vm_name)
+    while not state_matches(state, prefixes) and time.monotonic() < deadline:
+        time.sleep(POWER_POLL_SECONDS)
+        state = backend.vm_state(vm_name)
+    return state
+
+
 # The same reason the MAC lock exists: picking an address, recording it in the shared definition and saving it are
 # one decision, and two nodes being created at once must not reach the same one.
 _ip_lock = threading.Lock()
@@ -4351,6 +4385,37 @@ def ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image
                                     preferred_image=preferred_image, site=site)
 
 
+def _start_stopped_cloud_dns_vm(backend, backend_name, dns_vm_name) -> bool:
+    """
+    Start the cloud DNS VM when the provider says it exists but is powered off, and return whether it was started.
+
+    A stopped DNS VM is the normal state after a lab is powered down (scripts/vm_power.py), not a broken one: it is
+    started again here rather than reported as unusable, so the next run of a lab brings its own DNS back with it.
+    False means there was nothing to start — the VM is already up, the provider does not report a state, or this
+    backend has no power support, in which case the caller's own health probe decides.
+
+    A provider that releases a public address on stop hands back a different one on start, so the caller re-reads
+    the address after this returns rather than keeping one read before it.
+    """
+    state = backend.vm_state(dns_vm_name)
+    if not state_matches(state, POWERED_OFF_STATES):
+        return False
+    log("- Cloud DNS VM \"{}{}{}\" exists on backend \"{}\" but is {} — starting it".format(
+        _RED, dns_vm_name, _RESET, backend_name, state))
+    try:
+        backend.start_vm(dns_vm_name)
+    except NotImplementedError:
+        log("- Backend \"{}\" cannot start a VM on its own: '{}' has to be started with the provider's own "
+            "tooling".format(backend_name, dns_vm_name))
+        return False
+    state = wait_for_power_state(backend, dns_vm_name, RUNNING_STATES, timeout=POWER_WAIT_SECONDS)
+    if not state_matches(state, RUNNING_STATES):
+        die("cloud DNS VM '{}' on backend '{}' did not start within {}s (state: {}) — every node of this lab "
+            "would resolve through it. Check it with the provider, or power the lab up again with "
+            "vm_power.py <lab-file> start.".format(dns_vm_name, backend_name, POWER_WAIT_SECONDS, state))
+    return True
+
+
 def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path,
                          preferred_image="", site=""):
     """
@@ -4378,6 +4443,8 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
     keeps the plain "lab-dns-<backend>" name.
 
     Reuse and creation: the fixed name "lab-dns-<backend_name>[-<account>]" is looked up with vm_exists() and get_ip().
+    A VM that exists but is powered off is started again first (_start_stopped_cloud_dns_vm()), since that is the
+    normal state after the lab was powered down and not a reason to replace it.
     If the VM does not exist, it is created with the same backend's create_vm(), at lab_creation.CLOUD_INFRA_VM_CPUS /
     CLOUD_INFRA_VM_MEM_MIB / CLOUD_INFRA_VM_DSK_GIB — the smallest size its image can boot, which is set by kernel
     decompression and not by BIND. Its image is the first of: `preferred_image` (the account's CLOUD_DNS_IMAGE,
@@ -4392,17 +4459,23 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
     networks = dns_recursion_networks(backend)
 
     if backend.vm_exists(dns_vm_name):
+        # A VM that exists but is powered off is started first, and its address read only afterwards: a provider
+        # that released its public address on stop hands back a different one.
+        started = _start_stopped_cloud_dns_vm(backend, backend_name, dns_vm_name)
         ip = backend.get_ip(dns_vm_name)
         if ip:
             # Having an address is not being alive: an instance that never booted still has one, and reusing it
             # points every node of the lab at a server that answers nothing. Ask it the same question the create
-            # path waits on, with a short timeout because a healthy server answers at once.
+            # path waits on — at once for a server that was already up, and with the create path's own patience
+            # for one just started from cold, which has to boot and bring named up before it can answer.
             if not _lc.wait_for_ssh_command(
-                    ip, "systemctl is-active named || systemctl is-active bind9", timeout=30):
-                die("cloud DNS VM '{}' ({}) exists on backend '{}' but is not serving DNS: no SSH, or named is "
-                    "not active. Every node of this lab would resolve through it. Destroy it and re-run, which "
-                    "creates a replacement: destroy_vm.py cannot, since it is not a node of any lab, so remove "
-                    "it with the provider's own tooling.".format(dns_vm_name, ip, backend_name))
+                    ip, "systemctl is-active named || systemctl is-active bind9",
+                    timeout=240 if started else 30):
+                die("cloud DNS VM '{}' ({}, state: {}) exists on backend '{}' but is not serving DNS: no SSH, or "
+                    "named is not active. Every node of this lab would resolve through it. Destroy it and re-run, "
+                    "which creates a replacement: destroy_vm.py cannot, since it is not a node of any lab, so "
+                    "remove it with the provider's own tooling.".format(
+                        dns_vm_name, ip, backend.vm_state(dns_vm_name), backend_name))
             log("- Reusing existing cloud DNS VM \"{}{}{}\" ({})".format(_RED, dns_vm_name, _RESET, ip))
             if site:
                 services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
