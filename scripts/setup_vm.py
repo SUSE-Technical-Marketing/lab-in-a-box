@@ -100,6 +100,37 @@ def register_dns(definition, config, backend, vm_name: str, env: dict, lab_setup
     return LabDns(site_dns_server, lab_dns_ip, site, private_ip)
 
 
+def ensure_cloud_dns_ready(definition, config, defaults, vm_name: str) -> None:
+    """
+    Make sure the DNS VM a cloud node will resolve through exists, is running and is answering, before anything is
+    destroyed for that node's sake.
+
+    This is a precondition, not provisioning: register_dns() ensures the same VM again later, where it also
+    configures the site view it serves. It is checked up front because the DNS VM is shared infrastructure outside
+    this lab, and a run that cannot have it is a run that cannot provision the node — recreating a working node
+    first would leave the lab worse off than not running at all. Dies (backends.ensure_cloud_dns_vm()) when the VM
+    cannot be made ready; does nothing for a node that is not on a cloud backend, or whose DNS is served by the
+    node itself (a Harvester cluster node).
+    """
+    backend_name = backends.effective_backend_name(definition, config, vm_name)
+    if backend_name not in backends.CLOUD_BACKEND_NAMES or harvester.cluster_of(definition, vm_name):
+        return
+    lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
+    backend = backends.get_backend(definition, config, vm_name, for_existing=True,
+                                    lab_setup_path=lab_setup_path)
+    env = {}
+    env.update(defaults)
+    env.update(config)
+    env.update(load_vm_vars(definition, vm_name))
+    # site="": existence and health only. The view this server serves is configured by register_dns()'s own call,
+    # once the node has an address to put in it.
+    backends.ensure_cloud_dns_vm(
+        backend, backend_name, Path("/root/.ssh/id_rsa.pub").read_text().strip(),
+        env.get("mydomain", ""), env.get("SOURCE_IMAGE", ""), lab_setup_path,
+        preferred_image=backends.cloud_dns_image(definition, config, vm_name),
+    )
+
+
 def refresh_kept_node_dns(definition, config, defaults, vm_name: str) -> None:
     """
     Register a node setup_lab.py --keep reuses in the lab's DNS masters, as provision_vm() does a node it creates,
@@ -441,6 +472,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 def main():
     if primary.wants_help(sys.argv[1:]):
         print(
+            "setup_vm.py — provision a single VM from a lab definition.\n\n"
             "Usage: setup_vm.py [--cloud-account <name>] <lab.json> <vm_hostname>\n\n""  --cloud-account <name>  use cloud account <name> for this VM, taking precedence\n""                          over \"cloud_account\" in the lab definition.\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"
             "(Ignition+Combustion or cloud-init), registers DNS, and calls virt-install.\n\n"

@@ -21,6 +21,11 @@ Options:
                             command behaved before ordering existed.
     --no-dns                on start, do not register the lab's DNS again. Only useful when
                             every node has a fixed address.
+    --with-infra            on stop, also stop the supporting VMs the lab brought up for itself
+                            but does not declare (each site's cloud DNS VM, each site's overlay
+                            gateway). They are left running by default, because they are shared
+                            by every lab on that cloud account and stopping them takes the other
+                            labs' DNS down with this one. Ignored by start and status.
 
 Prints one JSON object, {vm name: state}. A backend without power support
 reports "unsupported"; any other failure reports "error: <message>" and makes
@@ -28,8 +33,10 @@ the exit code 1. Without vm names: every node of the lab, plus the VMs the lab
 brought up for itself, and for start and stop in an order that suits the lab
 rather than the file:
 
-  stop   Kubernetes agents, then servers, then the infrastructure VMs the lab
-         brought up for itself (each site's cloud DNS VM and overlay gateway).
+  stop   Kubernetes agents, then servers. The infrastructure VMs the lab brought
+         up for itself (each site's cloud DNS VM and overlay gateway) are left
+         running, since they are shared by every lab on that cloud account;
+         --with-infra stops them too, after the lab's own nodes.
   start  the reverse, so the DNS and the overlay are up before the nodes that
          resolve and reach each other through them, and each cloud node's DNS
          records are written again afterwards, because a provider that releases
@@ -65,25 +72,23 @@ import primary  # noqa: E402
 ACTIONS = ("status", "start", "stop")
 
 # How long a VM is given to reach the state asked for before the next group of the lab is acted on.
-WAIT_SECONDS = 300
+WAIT_SECONDS = backends.POWER_WAIT_SECONDS
 
-# The states that count as having arrived, lowercased and matched as a prefix, so each provider's own
-# spelling is covered: "shut off" (libvirt), "Stopped" (Harvester, Alibaba), "TERMINATED" (GCP),
-# "SHELVED_OFFLOADED" (OVHcloud), "off" (Hetzner), "stopped", "running", "ACTIVE", "Running".
+# The states that count as having arrived, per action. The vocabulary itself is backends', since the same
+# spellings decide whether a VM that exists is merely powered off (backends._ensure_cloud_dns_vm()).
 _ARRIVED = {
-    "start": ("running", "active"),
-    "stop": ("shut off", "shutoff", "stopped", "off", "terminated", "shelved", "poweroff"),
+    "start": backends.RUNNING_STATES,
+    "stop": backends.POWERED_OFF_STATES,
 }
 
 
 def _arrived(action: str, state: str) -> bool:
     """True when `state` is one this backend reports for a VM that has finished `action`."""
-    low = (state or "").strip().lower()
-    if low in ("not found", ""):
+    if (state or "").strip().lower() in ("not found", ""):
         # Nothing to wait for: a VM the provider no longer lists is as stopped as it gets, and a start
         # that cannot find it has already failed with its own message.
         return True
-    return any(low.startswith(prefix) for prefix in _ARRIVED.get(action, ()))
+    return backends.state_matches(state, _ARRIVED.get(action, ()))
 
 
 def lab_groups(definition: dict, action: str, infra=None) -> list:
@@ -95,6 +100,9 @@ def lab_groups(definition: dict, action: str, infra=None) -> list:
     (each site's cloud DNS VM, each site's overlay gateway) — so a cluster loses its workers before its control
     plane, and the DNS and the overlay stay up while the nodes using them go down. Starting is the same list
     reversed, for the same reason.
+
+    `infra` empty leaves that last group out altogether, which is what a stop without --with-infra passes: those
+    VMs serve every lab on the cloud account, so this lab stopping them would take the others' DNS with it.
     """
     nodes = definition.get("nodes") or {}
     agents = [n for n, cfg in nodes.items() if k8s.node_role(cfg) != "server"]
@@ -102,6 +110,18 @@ def lab_groups(definition: dict, action: str, infra=None) -> list:
     groups = [agents, servers, list(infra if infra is not None else infra_backends(definition))]
     groups = [g for g in groups if g]
     return groups if action == "stop" else [list(reversed(g)) for g in reversed(groups)]
+
+
+def infra_to_act_on(action: str, infra: dict, with_infra: bool) -> dict:
+    """
+    The subset of `infra` (infra_backends()' answer) this run may power, as {vm name: backend}.
+
+    A stop leaves them alone unless `with_infra`: the VMs a lab brings up for itself are shared by every lab on the
+    same cloud account, so one lab stopping its site's DNS VM takes the other labs' name resolution down with it.
+    A start always includes them, since bringing them up again is what the lab's own nodes need and costs no other
+    lab anything, and status reads every one of them.
+    """
+    return infra if (action != "stop" or with_infra) else {}
 
 
 def infra_backends(definition: dict) -> dict:
@@ -241,7 +261,8 @@ def main():
         lc.die(str(e))
     wait = "--no-wait" not in args
     refresh_dns = "--no-dns" not in args
-    args = [a for a in args if a not in ("--no-wait", "--no-dns")]
+    with_infra = "--with-infra" in args
+    args = [a for a in args if a not in ("--no-wait", "--no-dns", "--with-infra")]
 
     if example:
         # The same definition setup_lab.py --example built from, in a temporary file this process removes.
@@ -263,15 +284,21 @@ def main():
     definition = primary.load_definition(lab_file)
     config = primary.load_config()
     infra = infra_backends(definition)
+    # `infra` itself is still what power() resolves backends through, so naming one of these VMs explicitly acts on
+    # it through the backend that owns it; acted_infra only decides which of them this run picks up on its own.
+    acted_infra = infra_to_act_on(action, infra, with_infra)
+    if infra and not acted_infra:
+        print("- leaving the supporting VMs this lab shares with every other lab on the same account running: {}"
+              " (--with-infra stops them too)".format(", ".join(sorted(infra))), file=sys.stderr)
     if rest:
         vm_names = rest
     elif action == "status":
         # The lab's own VMs too: a DNS VM left running is exactly the cost this command exists to find.
         vm_names = list(definition.get("nodes", {})) + list(infra)
     elif wait:
-        vm_names = lab_groups(definition, action, infra)
+        vm_names = lab_groups(definition, action, acted_infra)
     else:
-        vm_names = list(definition.get("nodes", {})) + list(infra)
+        vm_names = list(definition.get("nodes", {})) + list(acted_infra)
     result = power(definition, config, action, vm_names, wait=wait, refresh_dns=refresh_dns, infra=infra)
     print(json.dumps(result, indent=1, sort_keys=True))
     sys.exit(1 if any(str(v).startswith("error:") for v in result.values()) else 0)

@@ -1011,7 +1011,7 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 </tr>
 <tr>
 <td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
-<td>Mostra o estado de energia das VMs de um lab, ou as para sem destruí-las e as inicia de novo — principalmente para um lab em um backend de nuvem, onde um lab parado custa menos. Para os agentes antes dos servidores e mantém ligadas por mais tempo as VMs de DNS e do overlay de cada site; iniciar inverte essa ordem e registra o DNS do lab de novo, porque o provedor devolve outro endereço público. Cada backend diz o que parar significa para a sua fatura, que na Hetzner Cloud é nada.</td>
+<td>Mostra o estado de energia das VMs de um lab, ou as para sem destruí-las e as inicia de novo — principalmente para um lab em um backend de nuvem, onde um lab parado custa menos. Para os agentes antes dos servidores e deixa ligadas as VMs que o lab subiu para si mesmo (as de DNS e do overlay de cada site), porque todos os labs da mesma conta de nuvem resolvem através delas; <code>--with-infra</code> também as para. Ao iniciar, elas sobem primeiro e o DNS do lab é registrado de novo, porque o provedor devolve outro endereço público. Cada backend diz o que parar significa para a sua fatura, que na Hetzner Cloud é nada.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
@@ -1023,6 +1023,12 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <pre><code class="language-shell">setup_lab.py --version              # print the installed version
 install_longhorn --schema           # print this addon's configuration schema (JSON)
 install_longhorn --schema yaml      # ...or YAML
+</code></pre>
+<p>Todo comando listado acima também tem uma página de manual, gerada a partir do próprio <code>--help</code> por <code>build_man_pages.py</code> na instalação do nó de automação, de modo que nunca pode divergir do que o comando realmente faz:</p>
+<pre><code class="language-shell">man setup_lab.py                    # the command's own help, as a man page
+man 8 lab-builder-helper            # the two root-only commands are in section 8
+apropos lab-in-a-box                # every command of this project
+build_man_pages.py --installed      # write them again after an upgrade
 </code></pre>
 <p align="right"><a href="#top">↑ voltar ao topo</a></p>
 

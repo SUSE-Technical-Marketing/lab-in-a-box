@@ -54,6 +54,9 @@ class FakeBackend(object):
     def vm_exists(self, name):
         return self._exists
 
+    def vm_state(self, name):
+        return "running" if self._exists else "not found"
+
     def get_ip(self, name):
         return self._ip
 

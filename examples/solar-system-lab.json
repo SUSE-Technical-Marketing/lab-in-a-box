@@ -226,7 +226,7 @@
       "VM_MEM": "16384",
       "VM_CPU": "4",
       "VM_DSK": "200",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "kcluster": "ai-gpu",
       "SOURCE_IMAGE": "sles16"
     },
@@ -251,7 +251,7 @@
       "VM_CPU": "2",
       "VM_DSK": "40",
       "kcluster": "jovian",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "addons": [
         {
           "client_registration": {
@@ -268,7 +268,7 @@
       "VM_CPU": "2",
       "VM_DSK": "40",
       "kcluster": "jovian",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "addons": [
         {
           "client_registration": {
@@ -285,7 +285,7 @@
       "VM_CPU": "2",
       "VM_DSK": "40",
       "kcluster": "jovian",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "addons": [
         {
           "client_registration": {
@@ -302,7 +302,7 @@
       "VM_CPU": "2",
       "VM_DSK": "40",
       "kcluster": "uranian",
-      "INSTALL_RKE2_TYPE": "server",
+      "KUBERNETES_NODE_TYPE": "server",
       "addons": [
         {
           "client_registration": {

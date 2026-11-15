@@ -10,6 +10,8 @@ for _arg in "$@"
 do
         if [[ "${_arg}" == "-h" || "${_arg}" == "--help" ]]
         then
+                echo "${0##*/} — mirror a container image into this lab's own registry."
+                echo
                 echo "Usage: ${0##*/} <image>"
                 echo "Pulls <image>, tags it as \${MYREG}/<image> (MYREG from lab_creation.cfg) and pushes it."
                 echo "Options:"

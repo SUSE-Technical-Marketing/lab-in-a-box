@@ -102,12 +102,21 @@ except ImportError:
 
 # ── ensure_cloud_dns_vm(): reuse path — vm_exists() + get_ip(), no create_vm() call ──
 class _FakeBackendReuse:
-    def __init__(self):
+    def __init__(self, state="running"):
         self.calls = []
+        self.state = state
 
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return True
+
+    def vm_state(self, vm_name):
+        self.calls.append(("vm_state", vm_name))
+        return self.state
+
+    def start_vm(self, vm_name):
+        self.calls.append(("start_vm", vm_name))
+        self.state = "running"
 
     def get_ip(self, vm_name):
         self.calls.append(("get_ip", vm_name))
@@ -165,6 +174,80 @@ with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=False)
 check("a DNS VM that has an address but does not serve is refused, not reused",
       _refusals and "not serving DNS" in _refusals[0])
 check("the refusal says how to recover", _refusals and "Destroy it" in _refusals[0])
+
+# ── a DNS VM that is merely powered off is started again, not declared broken ──
+# This is the normal state after vm_power.py stopped the lab: the next run brings its own DNS back with it,
+# instead of telling the operator to delete the VM with the provider's own tooling.
+stopped_backend = _FakeBackendReuse(state="stopped")
+with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True) as probed, \
+        mock.patch.object(backends, "POWER_POLL_SECONDS", 0), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    ip = backends.ensure_cloud_dns_vm(
+        stopped_backend, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz", tempfile_dir)
+check("a stopped DNS VM is started instead of being refused",
+      ("start_vm", "lab-dns-aws") in stopped_backend.calls)
+check("...and is then reused, with its address read after the start, not before",
+      ip == "203.0.113.100"
+      and stopped_backend.calls.index(("start_vm", "lab-dns-aws"))
+      < stopped_backend.calls.index(("get_ip", "lab-dns-aws")))
+check("...and is given the create path's own patience to boot and bring named up",
+      probed.call_args[1].get("timeout") == 240)
+
+running_backend = _FakeBackendReuse(state="running")
+with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True) as probed, \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(
+        running_backend, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz", tempfile_dir)
+check("a DNS VM that is already up is not started again",
+      not any(c[0] == "start_vm" for c in running_backend.calls))
+check("...and is only given the short probe, because a healthy server answers at once",
+      probed.call_args[1].get("timeout") == 30)
+
+
+class _WontStart(_FakeBackendReuse):
+    def start_vm(self, vm_name):
+        self.calls.append(("start_vm", vm_name))   # the provider accepted it; the VM never comes up
+
+
+_refusals = []
+wont_start = _WontStart(state="stopped")
+with mock.patch.object(backends, "die", side_effect=lambda m, *a, **kw: _refusals.append(m)), \
+        mock.patch.object(backends, "POWER_POLL_SECONDS", 0), \
+        mock.patch.object(backends, "POWER_WAIT_SECONDS", 0), \
+        mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    backends.ensure_cloud_dns_vm(
+        wont_start, "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz", tempfile_dir)
+check("a DNS VM that does not come up is refused, naming the state it is stuck in",
+      _refusals and "did not start" in _refusals[0] and "stopped" in _refusals[0])
+
+
+class _NoPower(_FakeBackendReuse):
+    def start_vm(self, vm_name):
+        raise NotImplementedError
+
+
+with mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
+        tempfile.TemporaryDirectory() as tempfile_dir:
+    ip = backends.ensure_cloud_dns_vm(
+        _NoPower(state="stopped"), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab", "ami-xyz",
+        tempfile_dir)
+check("a backend with no power support falls through to the health probe rather than crashing",
+      ip == "203.0.113.100")
+
+# The state vocabulary itself: shared with scripts/vm_power.py, so one spelling cannot drift from the other.
+for _state in ("stopped", "Stopped", "shut off", "SHUTOFF", "TERMINATED", "SHELVED_OFFLOADED", "off", "poweroff"):
+    check("'{}' is a powered-off state".format(_state),
+          backends.state_matches(_state, backends.POWERED_OFF_STATES))
+for _state in ("running", "Running", "ACTIVE", "pending"):
+    check("'{}' is not read as powered off".format(_state),
+          not backends.state_matches(_state, backends.POWERED_OFF_STATES))
+check("a state the provider did not report matches nothing",
+      not backends.state_matches("", backends.POWERED_OFF_STATES)
+      and not backends.state_matches(None, backends.RUNNING_STATES))
+check("'running' and 'ACTIVE' are the states a started VM has arrived in",
+      backends.state_matches("running", backends.RUNNING_STATES)
+      and backends.state_matches("ACTIVE", backends.RUNNING_STATES))
 
 
 # ── ensure_cloud_dns_vm(): create path — vm_exists() False, full create flow, real IP returned ──
