@@ -1190,7 +1190,7 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 </tr>
 <tr>
 <td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
-<td>يعرض حالة الطاقة لأجهزة المعمل الافتراضية، أو يوقفها دون حذفها ثم يعيد تشغيلها، وهو مفيد خاصة لمعمل على خدمة سحابية حيث يكلّف المعمل الموقوف أقل. يوقف العقد التابعة قبل الخوادم ويبقي جهاز DNS وجهاز الشبكة المتراكبة لكل موقع يعمل أطول مدة؛ والتشغيل يعكس هذا الترتيب ويسجّل DNS المعمل من جديد لأن المزوّد يعيد عنوانًا عامًا مختلفًا. وكل خدمة تبيّن ما يعنيه الإيقاف لفاتورتها، وهو في Hetzner Cloud لا شيء على الإطلاق.</td>
+<td>يعرض حالة الطاقة لأجهزة المعمل الافتراضية، أو يوقفها دون حذفها ثم يعيد تشغيلها، وهو مفيد خاصة لمعمل على خدمة سحابية حيث يكلّف المعمل الموقوف أقل. يوقف العقد التابعة قبل الخوادم، ويترك الأجهزة التي أنشأها المعمل لنفسه تعمل (جهاز DNS وجهاز الشبكة المتراكبة لكل موقع)، لأن كل المعامل في الحساب السحابي نفسه تحلّ الأسماء عبرها؛ <code>--with-infra</code> يوقفها هي أيضًا؛ والتشغيل يعكس هذا الترتيب ويسجّل DNS المعمل من جديد لأن المزوّد يعيد عنوانًا عامًا مختلفًا. وكل خدمة تبيّن ما يعنيه الإيقاف لفاتورتها، وهو في Hetzner Cloud لا شيء على الإطلاق.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
@@ -1202,6 +1202,12 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <pre><code class="language-shell">setup_lab.py --version              # print the installed version
 install_longhorn --schema           # print this addon's configuration schema (JSON)
 install_longhorn --schema yaml      # ...or YAML
+</code></pre>
+<p>لكل أمر مذكور أعلاه صفحة دليل (man) أيضًا، يولّدها <code>build_man_pages.py</code> من <code>--help</code> الخاص بالأمر نفسه عند تثبيت عقدة الأتمتة، فلا يمكن أن تختلف أبدًا عمّا يفعله الأمر فعليًا:</p>
+<pre><code class="language-shell">man setup_lab.py                    # the command's own help, as a man page
+man 8 lab-builder-helper            # the two root-only commands are in section 8
+apropos lab-in-a-box                # every command of this project
+build_man_pages.py --installed      # write them again after an upgrade
 </code></pre>
 <p align="right"><a href="#top">↑ العودة إلى الأعلى</a></p>
 
