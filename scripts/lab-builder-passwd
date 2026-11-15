@@ -14,7 +14,12 @@ set -euo pipefail
 
 _users="${LABBUILDER_USERS:-/etc/lab-builder/htpasswd}"
 
-usage() { sed -n '5,7s/^#   //p' "$0"; exit "${1:-1}"; }
+# The summary line, a blank line, then the invocation lines of this file's own header comment.
+usage() {
+    sed -n '2,3s/^# //p' "$0" | tr '\n' ' ' | sed 's/ *$/\n\n/'
+    sed -n '5,7s/^#   //p' "$0"
+    exit "${1:-1}"
+}
 
 # Prints the users file without USER's line.
 without_user() { [[ -f "${_users}" ]] && awk -F: -v u="$1" '$1 != u' "${_users}"; return 0; }

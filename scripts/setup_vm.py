@@ -472,6 +472,7 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
 def main():
     if primary.wants_help(sys.argv[1:]):
         print(
+            "setup_vm.py — provision a single VM from a lab definition.\n\n"
             "Usage: setup_vm.py [--cloud-account <name>] <lab.json> <vm_hostname>\n\n""  --cloud-account <name>  use cloud account <name> for this VM, taking precedence\n""                          over \"cloud_account\" in the lab definition.\n\n"
             "Provisions a single VM: copies the disk image, generates provisioning files\n"
             "(Ignition+Combustion or cloud-init), registers DNS, and calls virt-install.\n\n"
