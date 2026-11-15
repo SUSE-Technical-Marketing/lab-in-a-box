@@ -1227,7 +1227,7 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 </tr>
 <tr>
 <td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
-<td>The power state of a lab's VMs, or stop them without destroying them and start them again — mainly for a lab on a cloud backend, where a stopped lab costs less. Stops the agents before the servers and keeps each site's DNS and overlay VM up longest; starting reverses that and registers the lab's DNS again, since a provider hands back a different public address. Every backend says what stopping does to its bill, which on Hetzner Cloud is nothing at all.</td>
+<td>The power state of a lab's VMs, or stop them without destroying them and start them again — mainly for a lab on a cloud backend, where a stopped lab costs less. Stops the agents before the servers, and leaves the supporting VMs the lab brought up for itself (each site's DNS and overlay VM) running, since every lab on the same cloud account resolves through them; <code>--with-infra</code> stops those too. Starting brings them up first and registers the lab's DNS again, since a provider hands back a different public address. Every backend says what stopping does to its bill, which on Hetzner Cloud is nothing at all.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

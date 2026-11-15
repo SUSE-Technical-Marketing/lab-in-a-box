@@ -1011,7 +1011,7 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 </tr>
 <tr>
 <td><code>vm_power.py &lt;lab.json&gt; {status|start|stop}</code></td>
-<td>Affiche l'état d'alimentation des VM d'un lab, ou les arrête sans les détruire puis les redémarre&nbsp;: surtout pour un lab sur un backend cloud, où un lab arrêté coûte moins cher. Les agents s'arrêtent avant les serveurs et les VM de DNS et d'overlay de chaque site restent allumées le plus longtemps&nbsp;; le démarrage inverse cet ordre et réenregistre le DNS du lab, car le fournisseur rend une autre adresse publique. Chaque backend dit ce qu'un arrêt change à sa facture&nbsp;: chez Hetzner Cloud, rien du tout.</td>
+<td>Affiche l'état d'alimentation des VM d'un lab, ou les arrête sans les détruire puis les redémarre&nbsp;: surtout pour un lab sur un backend cloud, où un lab arrêté coûte moins cher. Les agents s'arrêtent avant les serveurs, et les VM que le lab a lui-même démarrées (DNS et overlay de chaque site) restent allumées, car tous les labs du même compte cloud résolvent à travers elles&nbsp;; <code>--with-infra</code> les arrête aussi. Au démarrage, elles montent en premier et le DNS du lab est réenregistré, car le fournisseur rend une autre adresse publique. Chaque backend dit ce qu'un arrêt change à sa facture&nbsp;: chez Hetzner Cloud, rien du tout.</td>
 </tr>
 <tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>

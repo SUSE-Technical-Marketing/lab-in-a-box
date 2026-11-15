@@ -152,6 +152,36 @@ check("stopping takes the agents first, then the servers, then the lab's own VMs
 check("starting is the reverse, so DNS and the overlay are up first",
       vm_power.lab_groups(lab, "start") == [["lab-dns-aws"], ["srv1"], ["agent2", "agent1"]])
 
+# ── the supporting VMs this lab shares with every other lab on the account ──
+# A stop must not take them down: one lab stopping its site's DNS VM would stop every other lab on that account
+# resolving. A start always brings them up, since the lab's own nodes need them and no other lab loses anything.
+_infra = {"lab-dns-aws": fake, "lab-overlay-aws": fake}
+check("stop leaves the lab's shared supporting VMs alone by default",
+      vm_power.infra_to_act_on("stop", _infra, False) == {})
+check("--with-infra stops them too",
+      vm_power.infra_to_act_on("stop", _infra, True) == _infra)
+check("start always brings them up, with or without the flag",
+      vm_power.infra_to_act_on("start", _infra, False) == _infra
+      and vm_power.infra_to_act_on("start", _infra, True) == _infra)
+check("status reads every one of them",
+      vm_power.infra_to_act_on("status", _infra, False) == _infra)
+check("a stop with no supporting VMs to leave alone is unaffected",
+      vm_power.infra_to_act_on("stop", {}, False) == {})
+check("a default stop therefore acts on the lab's own nodes only",
+      vm_power.lab_groups(lab, "stop", vm_power.infra_to_act_on("stop", _infra, False))
+      == [["agent1", "agent2"], ["srv1"]])
+check("...and with --with-infra they go last, after the nodes that resolve through them",
+      vm_power.lab_groups(lab, "stop", vm_power.infra_to_act_on("stop", _infra, True))[-1]
+      == ["lab-dns-aws", "lab-overlay-aws"])
+check("--with-infra is documented in the usage text", "--with-infra" in vm_power.__doc__)
+check("...and so is why they are left running by default",
+      "shared by every lab" in vm_power.__doc__ or "every lab on that cloud account" in vm_power.__doc__)
+
+# The arrival vocabulary is backends', not a second copy of it here.
+check("vm_power reads its state vocabulary from backends",
+      vm_power._ARRIVED["stop"] is backends.POWERED_OFF_STATES
+      and vm_power._ARRIVED["start"] is backends.RUNNING_STATES)
+
 fake = Fake()
 vm_power.backends.get_backend = lambda definition, config, vm, for_existing=False: fake
 refreshed = []
