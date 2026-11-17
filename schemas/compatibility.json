@@ -233,6 +233,9 @@
   "addon:openldap": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:openshell": [
+   {"version": "1.0", "breaking": false, "changes": "Initial openshell addon: kubernetes (Helm chart) and host (upstream installer) modes"}
+  ],
   "addon:postgresql": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "2.0", "breaking": true, "changes": "Kubernetes mode runs a StatefulSet of registry.suse.com/suse/postgres:<postgresql_pg_version> (new postgresql_image, postgresql_storage) instead of the Bitnami chart, whose images are no longer published; postgresql_rel, postgresql_repo_url and postgresql_version removed. postgresql_pg_version applies to both modes.", "migration": "postgresql_2_0"},
