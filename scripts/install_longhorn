@@ -25,6 +25,7 @@ __version__ = "__LABVERSION__"
 
 # SUSE Storage is this product in the SUSE Application Collection (its slug at https://apps.rancher.io).
 APPCOLLECTION_CHART = "suse-storage"
+APPCOLLECTION_PREFIX = "lh"
 
 PLUGIN = {
     "name": "longhorn",
@@ -203,12 +204,7 @@ def main():
     if appco.from_appcollection(cfg, "lh", appco.SOURCE_APPCOLLECTION):
         # SUSE Storage, the same product, from the SUSE Application Collection's OCI chart. It needs an account, so
         # the credential is resolved the same way every other external-service credential is.
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "lh_appcollection_user": "appcollection_user",
-            "lh_appcollection_password": "appcollection_password",
-        }, account_key="lh_appcollection_account")
-        user = creds["lh_appcollection_user"]
-        password = creds["lh_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("longhorn: lh_source is \"appcollection\", so lh_appcollection_user and "
                 "lh_appcollection_password are needed — set them, set lh_appcollection_account to an "

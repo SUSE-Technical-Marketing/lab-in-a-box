@@ -29,6 +29,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "coredns"
+APPCOLLECTION_PREFIX = "coredns"
 
 PLUGIN = {
     "name": "coredns",
@@ -144,12 +145,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(coredns_cfg, "coredns", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(coredns_cfg, "appcollection", {
-            "coredns_appcollection_user": "appcollection_user",
-            "coredns_appcollection_password": "appcollection_password",
-        }, account_key="coredns_appcollection_account")
-        user = creds["coredns_appcollection_user"]
-        password = creds["coredns_appcollection_password"]
+        user, password = appco.credentials(coredns_cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("coredns: coredns_source is \"appcollection\", so coredns_appcollection_user and "
                 "coredns_appcollection_password are needed — set them, set coredns_appcollection_account "

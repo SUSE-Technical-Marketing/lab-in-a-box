@@ -1,0 +1,140 @@
+{
+ "fields": {
+  "vllm_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "vllm_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_chart": {
+   "default": "vllm-stack",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_cpu": {
+   "default": "6",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_gpu": {
+   "default": "1",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_hf_token": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_hf_token_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_image": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_image_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_ingress_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_max_model_len": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_memory": {
+   "default": "16Gi",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_model": {
+   "default": "microsoft/Phi-3-mini-4k-instruct",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_model_name": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_ns": {
+   "default": "vllm",
+   "required": false,
+   "type": "namespace"
+  },
+  "vllm_rel": {
+   "default": "vllm",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_release": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_replicas": {
+   "default": "1",
+   "required": false,
+   "type": "integer"
+  },
+  "vllm_repo_url": {
+   "default": "https://vllm-project.github.io/production-stack",
+   "required": false,
+   "type": "url"
+  },
+  "vllm_set": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_shorthn": {
+   "default": "vllm",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_source": {
+   "default": "upstream",
+   "enum": [
+    "upstream",
+    "appcollection"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "vllm_storage_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "vllm_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:vllm",
+ "version": "1.0"
+}

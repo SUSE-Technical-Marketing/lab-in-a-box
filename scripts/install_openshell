@@ -91,6 +91,7 @@ _RELEASE = "openshell"
 # The Application Collection's slug for OpenShell, once it carries one. Overridable, because this cannot be verified
 # until the chart is actually published there.
 _DEFAULT_APPCOLLECTION_CHART = "openshell"
+APPCOLLECTION_PREFIX = "openshell"
 
 
 def _mode(cfg: dict) -> str:
@@ -238,12 +239,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     chart, extra_set = "", ""
     if appco.from_appcollection(cfg, "openshell", appco.SOURCE_UPSTREAM):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "openshell_appcollection_user": "appcollection_user",
-            "openshell_appcollection_password": "appcollection_password",
-        }, account_key="openshell_appcollection_account")
-        user = creds["openshell_appcollection_user"]
-        password = creds["openshell_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("openshell: openshell_source is \"appcollection\", so openshell_appcollection_user and "
                 "openshell_appcollection_password are needed — set them, set openshell_appcollection_account to an "

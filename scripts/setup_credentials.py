@@ -30,7 +30,7 @@ __version__ = "1"
 
 # Version of the credentials-file schema (PROVIDER_FIELDS and SERVICE_CREDENTIAL_FIELDS), written to every file as
 # schema_version; see schemas/compatibility.json.
-CREDENTIALS_SCHEMA_VERSION = "1.3"
+CREDENTIALS_SCHEMA_VERSION = "1.4"
 
 import sys
 from pathlib import Path
@@ -147,6 +147,11 @@ SERVICE_CREDENTIAL_FIELDS = {
     "anthropic": [
         ("anthropic_oauth_token", False, True),
         ("anthropic_api_key", False, True),
+    ],
+    # The Hugging Face token a gated model is downloaded with (install_vllm). Only gated models need one, so a
+    # lab that serves an open model needs no such file at all.
+    "huggingface": [
+        ("huggingface_token", True, True),
     ],
     "vhm_aws": [
         ("vhm_aws_access_key_id", True, False),

@@ -180,6 +180,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mariadb_bind_address, mariadb_db, mariadb_password, mariadb_root_password, mariadb_user."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:mcpo": [
+   {"version": "1.0", "breaking": false, "changes": "First version: mcpo, serving a lab's MCP servers as OpenAPI endpoints"}
+  ],
   "addon:mediagoblin": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -346,6 +349,9 @@
    {"version": "1.2", "breaking": false, "changes": "uyuni_salt_states: custom Salt states and formulas installed into the server's persistent /srv/salt and /srv/formula_metadata"},
    {"version": "1.3", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:vllm": [
+   {"version": "1.0", "breaking": false, "changes": "First version: the vLLM serving engine from its upstream chart or the SUSE Application Collection, behind an ingress"}
+  ],
   "addon:weaviate": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -368,7 +374,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "scc gained scc_email/scc_url fields, so a host's SUSE registration email/URL can live in the encrypted credential store instead of plaintext in a config file."},
    {"version": "1.2", "breaking": false, "changes": "Add the searxng credential kind (searxng_secret_key)."},
-   {"version": "1.3", "breaking": false, "changes": "Add the anthropic credential kind (anthropic_oauth_token, anthropic_api_key), for install_anthropic_tools."}
+   {"version": "1.3", "breaking": false, "changes": "Add the anthropic credential kind (anthropic_oauth_token, anthropic_api_key), for install_anthropic_tools."},
+   {"version": "1.4", "breaking": false, "changes": "Added the huggingface credential kind, for the token a gated model is downloaded with"}
   ],
   "config:harvester-cluster.json": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
