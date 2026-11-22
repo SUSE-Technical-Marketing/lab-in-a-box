@@ -1,0 +1,515 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install SearXNG (https://searxng.org), a self-hosted metasearch engine that
+# aggregates results from other search services without tracking or profiling its users
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "searxng" — Self-hosted metasearch engine, as a podman container or a Kubernetes workload
+#
+# OPTIONAL
+#   searxng_deployment      : how it is installed. Unset follows where the lab places it: "kubernetes" when a
+#                             kcluster lists "searxng" in its addons[], "podman" when only a node does
+#                             (options: podman, kubernetes)
+#   searxng_image           : container image (default: docker.io/searxng/searxng). ghcr.io/searxng/searxng is the
+#                             same image, without Docker Hub's pull rate limits
+#   searxng_version         : image tag. Upstream publishes rolling date-and-hash tags, e.g. 2026.10.17-541c6c3cb
+#                             (default: latest)
+#   searxng_port            : port the service answers on: the published host port in podman mode, the Service's
+#                             port in kubernetes mode. The container itself always listens on 8080
+#                             (default: 8080)
+#   searxng_shorthn         : hostname prefix of the ingress, in kubernetes mode (default: searxng)
+#   searxng_ns              : namespace, in kubernetes mode (default: searxng)
+#   searxng_replicas        : how many web pods, in kubernetes mode (default: 1) (min: 1) (max: 10)
+#   searxng_ingress_class   : ingressClassName of the ingress. Unset takes the kcluster's own ingress controller
+#                             (its clu_ingress, or the one its distribution brings)
+#   searxng_instance_name   : name shown in the UI (default: SearXNG)
+#   searxng_secret          : server.secret_key. Unset generates one and keeps it across re-runs, read back from
+#                             what is already deployed
+#   searxng_account         : name of a "searxng" credential file holding searxng_secret_key; one such file in the
+#                             store is found on its own. Takes precedence over searxng_secret
+#   searxng_base_url        : server.base_url, the public URL of the instance. Unset derives it from the ingress
+#                             hostname (kubernetes) or the node's own hostname and searxng_port (podman)
+#   searxng_limiter         : server.limiter, the rate limit that blocks bots. Needs Valkey, which is deployed
+#                             automatically when this is "true". It also rate-limits this lab's own clients: leave
+#                             it off for an instance an agent queries, e.g. through the open_webui addon
+#                             (default: false) (options: true, false)
+#   searxng_public_instance : server.public_instance, the features meant for an instance open to everyone. Needs
+#                             Valkey, which is deployed automatically when this is "true" — SearXNG exits at
+#                             startup when this is on and no Valkey answers (default: false) (options: true, false)
+#   searxng_image_proxy     : server.image_proxy, proxying image results through SearXNG, which costs memory
+#                             (default: false) (options: true, false)
+#   searxng_valkey          : deploy the companion Valkey, which only the limiter and bot detection use. Forced on
+#                             by searxng_limiter or searxng_public_instance, unless searxng_valkey_url names an
+#                             external one (default: false) (options: true, false)
+#   searxng_valkey_url      : an external Valkey to use instead of the companion, e.g. valkey://valkey.mydemo.lab:6379/0
+#   searxng_valkey_image    : companion Valkey's image (default: docker.io/valkey/valkey)
+#   searxng_valkey_version  : companion Valkey's image tag (default: 9-alpine)
+#   searxng_formats         : result formats the instance serves, as a list or a comma-separated string, from html,
+#                             csv, json and rss. json is what an API client needs, the open_webui addon included;
+#                             upstream's own default is html alone (default: html, json)
+#   searxng_safe_search     : search.safe_search: 0 none, 1 moderate, 2 strict (default: 0) (options: 0, 1, 2)
+#   searxng_autocomplete    : search.autocomplete backend; empty turns suggestions off (default: duckduckgo)
+#   searxng_default_lang    : search.default_lang; "auto" detects it from the browser (default: auto)
+#   searxng_default_theme   : ui.default_theme (default: simple)
+#   searxng_engines_remove  : engines to drop from the defaults, as a list or a comma-separated string, e.g.
+#                             ["google", "bing"]. Mutually exclusive with searxng_engines_keep_only
+#   searxng_engines_keep_only : the only engines to keep, as a list or a comma-separated string. Mutually exclusive
+#                             with searxng_engines_remove
+#   searxng_open_metrics    : password that opens /metrics for the prometheus addon to scrape; empty leaves it closed
+#   searxng_settings_extra  : any further settings.yml keys, as a mapping, merged over everything above
+#   searxng_data_dir        : host directory holding the favicon cache, in podman mode (default: /var/lib/searxng)
+#   searxng_storage_size    : size of the favicon cache volume, in kubernetes mode; empty keeps the cache in the
+#                             pod and loses it on a restart
+#
+# Target node(s): kubernetes mode installs on the first server node of the kcluster that lists "searxng". podman
+# mode installs on every node listing "searxng" in its own addons[] list, each node's config read through
+# k8s.addon_node_config(). In podman mode the service answers on the node's own hostname, which already has a DNS
+# record, so no service record is registered; kubernetes mode registers its ingress hostname.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "searxng",
+    # podman mode runs one container on a node or an existing machine; kubernetes mode is a Deployment behind an
+    # ingress. main() dispatches between them, so both are listed here.
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["kubernetes", "standalone-container"],
+    "requires_kubernetes": None,
+    # The web UI is reached through an ingress. A storage class is not listed: the favicon cache is an emptyDir
+    # unless searxng_storage_size asks for a volume, and that field's own description says a storage class is needed.
+    "requires_cluster": ["ingress"],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import secrets
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import apps  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import die, ensure_podman, process_template, ssh_output, ssh_run  # noqa: E402
+
+_DEPLOYMENTS = ("podman", "kubernetes")
+_DEFAULT_IMAGE = "docker.io/searxng/searxng"
+_DEFAULT_VERSION = "latest"
+_DEFAULT_VALKEY_IMAGE = "docker.io/valkey/valkey"
+_DEFAULT_VALKEY_VERSION = "9-alpine"
+_DEFAULT_FORMATS = ("html", "json")
+_DEFAULT_DATA_DIR = "/var/lib/searxng"
+# The port inside the image, which is not configurable there: searxng_port is what the host or the Service answers on.
+_CONTAINER_PORT = 8080
+_CONTAINER = "searxng"
+_VALKEY_CONTAINER = "searxng-valkey"
+_PODMAN_NETWORK = "searxng"
+_SETTINGS_PATH = "/etc/searxng/settings.yml"
+_CONFIGMAP = "searxng-settings"
+_FORMATS = ("html", "csv", "json", "rss")
+
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+def _as_list(value):
+    """`value` as a list of strings: a list stays one, a string splits on commas and whitespace, empty gives []."""
+    if value in ("", None):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [part.strip() for part in str(value).replace(",", " ").split() if part.strip()]
+
+
+def _truthy(value):
+    """True when `value` is the string "true", in any case — the form every boolean field of this project takes."""
+    return str(value or "").strip().lower() == "true"
+
+
+def _addon_entries(section):
+    """The addons[] entries of every kcluster or node in `section`."""
+    for entry in (section or {}).values():
+        for listed in (entry or {}).get("addons") or []:
+            yield listed
+
+
+def _listed_on_kcluster(definition):
+    """True when a kcluster lists "searxng" in its own addons[]."""
+    return any(apps.addon_entry_name(e) == "searxng" for e in _addon_entries(definition.get("kclusters")))
+
+
+def _listed(definition):
+    """True when any kcluster or node of the lab lists "searxng" in its own addons[]."""
+    return _listed_on_kcluster(definition) or any(
+        apps.addon_entry_name(e) == "searxng" for e in _addon_entries(definition.get("nodes")))
+
+
+def _deployment(definition, cfg):
+    """
+    Which mode installs this add-on: searxng_deployment when the lab sets it, otherwise "kubernetes" when a kcluster
+    lists "searxng" in its addons[] and "podman" when only a node does.
+    """
+    asked = str(cfg.get("searxng_deployment") or "").strip().lower()
+    if asked:
+        return asked
+    if os.environ.get("clu_name") or _listed_on_kcluster(definition):
+        return "kubernetes"
+    return "podman"
+
+
+def _wants_valkey(cfg):
+    """True when the companion Valkey has to be deployed: asked for, or needed by a feature that cannot work without it."""
+    if cfg.get("searxng_valkey_url"):
+        return False
+    return (_truthy(cfg.get("searxng_valkey")) or _truthy(cfg.get("searxng_limiter"))
+            or _truthy(cfg.get("searxng_public_instance")))
+
+
+def _valkey_url(cfg, host):
+    """The valkey.url to write into settings.yml, "" when this instance uses none. `host` is the companion's hostname."""
+    if cfg.get("searxng_valkey_url"):
+        return str(cfg["searxng_valkey_url"])
+    return "valkey://{}:6379/0".format(host) if _wants_valkey(cfg) else ""
+
+
+def _secret_in(settings_text):
+    """server.secret_key of a settings.yml text, "" when it carries none."""
+    for line in (settings_text or "").splitlines():
+        if line.startswith("  secret_key:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def _resolved_secret(cfg, existing=""):
+    """
+    server.secret_key: the "searxng" credential file's own searxng_secret_key, else searxng_secret, else `existing`
+    as already deployed, else a new random one — so a re-run keeps the sessions of the instance it updates.
+    """
+    creds = ac.resolve_credential(cfg, "searxng", {"searxng_secret_key": "searxng_secret"},
+                                  account_key="searxng_account")
+    return creds.get("searxng_secret_key") or existing or secrets.token_hex(32)
+
+
+def _merged(base, extra):
+    """`base` with `extra` merged over it, recursively for nested mappings; `extra` wins on every other type."""
+    out = dict(base)
+    for key, value in (extra or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merged(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def settings_yaml(cfg, base_url, secret, valkey_url=""):
+    """
+    SearXNG's settings.yml for this lab, as text: a partial override on top of the image's own defaults
+    (use_default_settings), carrying only what this add-on's fields set. searxng_settings_extra is merged last.
+    """
+    try:
+        import yaml
+    except ImportError:
+        die("searxng: python3's pyyaml is needed to write settings.yml — install python3-PyYAML on the automation node")
+
+    use_defaults = True
+    remove = _as_list(cfg.get("searxng_engines_remove"))
+    keep_only = _as_list(cfg.get("searxng_engines_keep_only"))
+    if remove and keep_only:
+        die("searxng: searxng_engines_remove and searxng_engines_keep_only are mutually exclusive — set one")
+    if remove:
+        use_defaults = {"engines": {"remove": remove}}
+    elif keep_only:
+        use_defaults = {"engines": {"keep_only": keep_only}}
+
+    general = {"instance_name": str(cfg.get("searxng_instance_name") or "SearXNG")}
+    if cfg.get("searxng_open_metrics"):
+        general["open_metrics"] = str(cfg["searxng_open_metrics"])
+
+    settings = {
+        "use_default_settings": use_defaults,
+        "general": general,
+        "search": {
+            "safe_search": int(str(cfg.get("searxng_safe_search") or 0)),
+            "autocomplete": str(cfg.get("searxng_autocomplete", "duckduckgo")
+                                if cfg.get("searxng_autocomplete") is not None else "duckduckgo"),
+            "default_lang": str(cfg.get("searxng_default_lang") or "auto"),
+            "formats": _as_list(cfg.get("searxng_formats")) or list(_DEFAULT_FORMATS),
+        },
+        "server": {
+            "base_url": base_url,
+            "secret_key": secret,
+            "limiter": _truthy(cfg.get("searxng_limiter")),
+            "public_instance": _truthy(cfg.get("searxng_public_instance")),
+            "image_proxy": _truthy(cfg.get("searxng_image_proxy")),
+        },
+        "ui": {"default_theme": str(cfg.get("searxng_default_theme") or "simple")},
+    }
+    if valkey_url:
+        settings["valkey"] = {"url": valkey_url}
+    settings = _merged(settings, cfg.get("searxng_settings_extra") or {})
+    return yaml.safe_dump(settings, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+def _validate(v):
+    cfg = v.definition.get("searxng", {}) or {}
+    deployment = str(cfg.get("searxng_deployment") or "").strip().lower()
+    if deployment and deployment not in _DEPLOYMENTS:
+        v.errors.append("[ERROR] searxng.searxng_deployment '{}' is invalid — use one of: {}".format(
+            deployment, ", ".join(_DEPLOYMENTS)))
+    v.vns("searxng")
+    v.vport("searxng", "searxng_port")
+    for field in ("searxng_limiter", "searxng_public_instance", "searxng_image_proxy", "searxng_valkey"):
+        v.vbool("searxng", field)
+    if _as_list(cfg.get("searxng_engines_remove")) and _as_list(cfg.get("searxng_engines_keep_only")):
+        v.errors.append("[ERROR] searxng.searxng_engines_remove and searxng.searxng_engines_keep_only are mutually "
+                        "exclusive — set one")
+    unknown = [f for f in _as_list(cfg.get("searxng_formats")) if f not in _FORMATS]
+    if unknown:
+        v.errors.append("[ERROR] searxng.searxng_formats '{}' is invalid — use any of: {}".format(
+            ", ".join(unknown), ", ".join(_FORMATS)))
+    if "html" not in (_as_list(cfg.get("searxng_formats")) or list(_DEFAULT_FORMATS)):
+        print("[WARNING] searxng.searxng_formats does not list html: the web UI answers every search with an error")
+    if cfg.get("searxng_valkey_url") and _truthy(cfg.get("searxng_valkey")):
+        print("[WARNING] searxng.searxng_valkey_url names an external Valkey, so searxng_valkey 'true' is ignored "
+              "and no companion is deployed")
+    extra = cfg.get("searxng_settings_extra")
+    if extra not in ("", None) and not isinstance(extra, dict):
+        v.errors.append("[ERROR] searxng.searxng_settings_extra must be a mapping of settings.yml keys")
+
+
+# ── podman mode ──────────────────────────────────────────────────────────────
+
+def _systemd_unit(name, description):
+    """A systemd unit that starts and stops the already-created podman container `name`, so it survives a reboot."""
+    return ("[Unit]\n"
+            "Description={description}\n"
+            "After=network-online.target podman.socket\n"
+            "Wants=network-online.target\n\n"
+            "[Service]\n"
+            "Restart=always\n"
+            "ExecStart=/usr/bin/podman start -a {name}\n"
+            "ExecStop=/usr/bin/podman stop -t 10 {name}\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n").format(name=name, description=description)
+
+
+def _install_unit(hostname, name, description):
+    ssh_run(hostname, "cat > /etc/systemd/system/{}.service".format(name),
+            input_text=_systemd_unit(name, description))
+    ssh_run(hostname, "systemctl daemon-reload && systemctl enable {}.service".format(name), check=False)
+
+
+def _deployed_settings_podman(hostname):
+    """The settings.yml already on `hostname`, "" when there is none."""
+    return ssh_output(hostname, "cat {} 2>/dev/null".format(shlex.quote(_SETTINGS_PATH)))
+
+
+def setup_searxng_podman(hostname, cfg):
+    """Install SearXNG, and the companion Valkey when something needs it, as podman containers on `hostname`."""
+    image = cfg.get("searxng_image") or _DEFAULT_IMAGE
+    version = cfg.get("searxng_version") or _DEFAULT_VERSION
+    port = str(cfg.get("searxng_port") or _CONTAINER_PORT)
+    data_dir = cfg.get("searxng_data_dir") or _DEFAULT_DATA_DIR
+    base_url = cfg.get("searxng_base_url") or "http://{}:{}/".format(hostname, port)
+    valkey = _wants_valkey(cfg)
+
+    print("- Installing podman (if not already present)")
+    ensure_podman(hostname)
+    ssh_run(hostname, "mkdir -p {} {}".format(shlex.quote(str(Path(_SETTINGS_PATH).parent)), shlex.quote(data_dir)))
+
+    network = ""
+    if valkey:
+        print("- Deploying the companion Valkey, which the limiter and bot detection need")
+        ssh_run(hostname, "podman network exists {net} || podman network create {net}".format(
+            net=shlex.quote(_PODMAN_NETWORK)))
+        ssh_run(hostname, "podman rm -f {} 2>/dev/null".format(_VALKEY_CONTAINER), check=False)
+        ssh_run(hostname,
+                "podman run -d --name {name} --restart=always --network {net} "
+                "-v {name}-data:/data "
+                "{image}:{version} valkey-server --save 300 1 --save 60 1000 --loglevel warning".format(
+                    name=_VALKEY_CONTAINER, net=shlex.quote(_PODMAN_NETWORK),
+                    image=shlex.quote(cfg.get("searxng_valkey_image") or _DEFAULT_VALKEY_IMAGE),
+                    version=shlex.quote(cfg.get("searxng_valkey_version") or _DEFAULT_VALKEY_VERSION)))
+        _install_unit(hostname, _VALKEY_CONTAINER, "Valkey for SearXNG (lab-in-a-box)")
+        network = "--network {} ".format(shlex.quote(_PODMAN_NETWORK))
+
+    print("- Writing {}".format(_SETTINGS_PATH))
+    settings = settings_yaml(cfg, base_url,
+                             _resolved_secret(cfg, _secret_in(_deployed_settings_podman(hostname))),
+                             _valkey_url(cfg, _VALKEY_CONTAINER))
+    ssh_run(hostname, "cat > {}".format(shlex.quote(_SETTINGS_PATH)), input_text=settings)
+
+    print("- Deploying the SearXNG container (port {})".format(port))
+    ssh_run(hostname, "podman rm -f {} 2>/dev/null".format(_CONTAINER), check=False)
+    ssh_run(hostname,
+            "podman run -d --name {name} --restart=always {network}-p {port}:{cport} "
+            "-v {conf}:/etc/searxng:Z -v {data}:/var/cache/searxng:Z "
+            "{image}:{version}".format(
+                name=_CONTAINER, network=network, port=shlex.quote(port), cport=_CONTAINER_PORT,
+                conf=shlex.quote(str(Path(_SETTINGS_PATH).parent)), data=shlex.quote(data_dir),
+                image=shlex.quote(image), version=shlex.quote(version)))
+    _install_unit(hostname, _CONTAINER, "SearXNG metasearch engine (lab-in-a-box)")
+
+    print("SearXNG available at: {}".format(base_url))
+    print("The node itself must allow traffic on port {} — this add-on manages no firewall or security group".format(
+        port))
+    return base_url
+
+
+# ── kubernetes mode ──────────────────────────────────────────────────────────
+
+def _deployed_settings_kubernetes(hostname, ns):
+    """The settings.yml of the ConfigMap already in `ns`, "" when there is none."""
+    return ssh_output(hostname, "kubectl -n {} get configmap {} -o jsonpath='{{.data.settings\\.yml}}' "
+                                "2>/dev/null".format(shlex.quote(ns), shlex.quote(_CONFIGMAP)))
+
+
+def _apply(hostname, manifest):
+    ssh_run(hostname, "kubectl apply -f -", input_text=manifest)
+
+
+def setup_searxng_kubernetes(hostname, clu_name, mydomain, cfg, templ_addons_loc, ingress_class=""):
+    """Install SearXNG, and the companion Valkey when something needs it, on the kcluster `hostname` belongs to."""
+    ns = ac.require_k8s_name(cfg, "searxng_ns", "searxng")
+    port = str(cfg.get("searxng_port") or _CONTAINER_PORT)
+    fqdn = ".".join(p for p in (cfg.get("searxng_shorthn") or "searxng", clu_name, mydomain) if p)
+    base_url = cfg.get("searxng_base_url") or "http://{}/".format(fqdn)
+    valkey = _wants_valkey(cfg)
+    templates = str(templ_addons_loc).rstrip("/") + "/searxng"
+
+    ssh_run(hostname, "kubectl create namespace {ns} --dry-run=client -o yaml | kubectl apply -f -".format(
+        ns=shlex.quote(ns)))
+
+    deployed = _deployed_settings_kubernetes(hostname, ns)
+    settings = settings_yaml(cfg, base_url, _resolved_secret(cfg, _secret_in(deployed)),
+                             _valkey_url(cfg, "{}.{}.svc.cluster.local".format(_VALKEY_CONTAINER, ns)))
+    print("- Writing the settings.yml of the instance into the {} ConfigMap".format(_CONFIGMAP))
+    ssh_run(hostname, "cat > /tmp/searxng-settings.yml", input_text=settings)
+    ssh_run(hostname, "kubectl -n {ns} create configmap {cm} --from-file=settings.yml=/tmp/searxng-settings.yml "
+                      "--dry-run=client -o yaml | kubectl apply -f -".format(ns=shlex.quote(ns),
+                                                                             cm=shlex.quote(_CONFIGMAP)))
+    ssh_run(hostname, "rm -f /tmp/searxng-settings.yml", check=False)
+
+    if valkey:
+        print("- Deploying the companion Valkey, which the limiter and bot detection need")
+        _apply(hostname, process_template("{}/valkey.yml.tmpl".format(templates), {
+            "searxng_ns": ns,
+            "searxng_valkey_name": _VALKEY_CONTAINER,
+            "searxng_valkey_image": cfg.get("searxng_valkey_image") or _DEFAULT_VALKEY_IMAGE,
+            "searxng_valkey_version": cfg.get("searxng_valkey_version") or _DEFAULT_VALKEY_VERSION,
+        }))
+
+    storage_size = str(cfg.get("searxng_storage_size") or "")
+    if storage_size:
+        print("- Claiming a {} volume for the favicon cache".format(storage_size))
+        _apply(hostname, process_template("{}/cache_pvc.yml.tmpl".format(templates), {
+            "searxng_ns": ns, "searxng_storage_size": storage_size}))
+
+    print("- Deploying SearXNG in namespace {}, behind {}".format(ns, fqdn))
+    _apply(hostname, process_template("{}/searxng.yml.tmpl".format(templates), {
+        "searxng_ns": ns,
+        "searxng_image": cfg.get("searxng_image") or _DEFAULT_IMAGE,
+        "searxng_version": cfg.get("searxng_version") or _DEFAULT_VERSION,
+        "searxng_replicas": str(cfg.get("searxng_replicas") or 1),
+        "searxng_port": port,
+        "searxng_container_port": str(_CONTAINER_PORT),
+        "searxng_configmap": _CONFIGMAP,
+        "searxng_cache_volume": ("persistentVolumeClaim: {claimName: searxng-cache}" if storage_size
+                                 else "emptyDir: {}"),
+        "searxng_fqdn": fqdn,
+        # An empty class leaves the ingress without ingressClassName, so the cluster's default controller serves it.
+        "searxng_ingress_class_line": "ingressClassName: {}".format(ingress_class) if ingress_class else "",
+    }))
+
+    if deployed and deployed != settings:
+        print("- Restarting the pods, because the settings changed")
+        ssh_run(hostname, "kubectl -n {} rollout restart deployment/searxng".format(shlex.quote(ns)), check=False)
+
+    print("SearXNG available at: http://{}".format(fqdn))
+    print("Its JSON API answers at http://{}/search?q=<query>&format=json when searxng_formats lists json".format(fqdn))
+    return fqdn
+
+
+# ── --check ──────────────────────────────────────────────────────────────────
+
+def _check(c):
+    """Compare the deployed SearXNG with the lab's own "searxng" section, in whichever mode installed it."""
+    definition = c.definition
+    cfg = definition.get("searxng", {}) or {}
+    if not _listed(definition):
+        c.ok("this lab installs no searxng, so there is nothing to check")
+        return
+    host = c.vm_name
+    if not host:
+        c.fail("no target node to check: $_vm_name names none")
+        return
+
+    if _deployment(definition, cfg) == "kubernetes":
+        ns = str(cfg.get("searxng_ns") or "searxng")
+        ready = ssh_output(host, "kubectl -n {} get deployment searxng -o jsonpath='{{.status.readyReplicas}}' "
+                                 "2>/dev/null".format(shlex.quote(ns))) or "0"
+        c.expect("the ready SearXNG pods in {}".format(ns), str(cfg.get("searxng_replicas") or 1), ready)
+        image = ssh_output(host, "kubectl -n {} get deployment searxng -o jsonpath="
+                                 "'{{.spec.template.spec.containers[0].image}}' 2>/dev/null".format(shlex.quote(ns)))
+        c.expect("the image of the SearXNG deployment",
+                 "{}:{}".format(cfg.get("searxng_image") or _DEFAULT_IMAGE,
+                                cfg.get("searxng_version") or _DEFAULT_VERSION), image)
+        hosts = ssh_output(host, "kubectl -n {} get ingress searxng -o jsonpath='{{.spec.rules[*].host}}' "
+                                 "2>/dev/null".format(shlex.quote(ns)))
+        if hosts:
+            c.ok("the ingress answers for {}".format(hosts))
+        else:
+            c.fail("there is no SearXNG ingress in namespace {}".format(ns))
+    else:
+        state = ssh_output(host, "podman inspect -f '{{{{.State.Running}}}}' {} 2>/dev/null".format(_CONTAINER))
+        c.expect("the SearXNG container on {}".format(host), "true", state or "absent")
+        image = ssh_output(host, "podman inspect -f '{{{{.Config.Image}}}}' {} 2>/dev/null".format(_CONTAINER))
+        c.expect("the image of the SearXNG container",
+                 "{}:{}".format(cfg.get("searxng_image") or _DEFAULT_IMAGE,
+                                cfg.get("searxng_version") or _DEFAULT_VERSION), image)
+
+    if _wants_valkey(cfg) or cfg.get("searxng_valkey_url"):
+        c.ok("this instance uses Valkey, which its limiter and bot detection need")
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    defaults = primary.load_defaults()
+    cfg = definition.get("searxng", {}) or {}
+
+    if _deployment(definition, cfg) == "kubernetes":
+        target = k8s.first_server_node(definition)
+        if not target:
+            sys.exit(1)
+        vm_name, _ssh_cmd = target
+        clu_name = k8s.get_vm_kcluster(definition, vm_name)
+        clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+        ingress_class = cfg.get("searxng_ingress_class") or (
+            k8s.cluster_choice(definition, clu_name, apps.CLUSTER_INGRESS) if clu_name else "")
+        fqdn = setup_searxng_kubernetes(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg,
+                                        defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/"),
+                                        ingress_class="" if ingress_class == "none" else ingress_class)
+        ac.register_service_dns(definition, clu_name, fqdn)
+        return
+
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "searxng", vm_name=env_vm_name):
+        setup_searxng_podman(vm_name, k8s.addon_node_config(definition, "searxng", vm_name))
+
+
+if __name__ == "__main__":
+    main()

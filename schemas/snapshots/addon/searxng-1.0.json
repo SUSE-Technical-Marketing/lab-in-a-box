@@ -1,0 +1,183 @@
+{
+ "fields": {
+  "searxng_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_autocomplete": {
+   "default": "duckduckgo",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_base_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "searxng_data_dir": {
+   "default": "/var/lib/searxng",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_default_lang": {
+   "default": "auto",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_default_theme": {
+   "default": "simple",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_deployment": {
+   "default": "",
+   "enum": [
+    "podman",
+    "kubernetes"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_engines_keep_only": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_engines_remove": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_formats": {
+   "default": "html, json",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_image": {
+   "default": "docker.io/searxng/searxng",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_image_proxy": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_ingress_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_instance_name": {
+   "default": "SearXNG",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_limiter": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_ns": {
+   "default": "searxng",
+   "required": false,
+   "type": "namespace"
+  },
+  "searxng_open_metrics": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_port": {
+   "default": "8080",
+   "required": false,
+   "type": "port"
+  },
+  "searxng_public_instance": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_replicas": {
+   "default": "1",
+   "max": 10,
+   "min": 1,
+   "required": false,
+   "type": "integer"
+  },
+  "searxng_safe_search": {
+   "default": "0",
+   "enum": [
+    "0",
+    "1",
+    "2"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_secret": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_settings_extra": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_shorthn": {
+   "default": "searxng",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_valkey": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "searxng_valkey_image": {
+   "default": "docker.io/valkey/valkey",
+   "required": false,
+   "type": "string"
+  },
+  "searxng_valkey_url": {
+   "default": "",
+   "required": false,
+   "type": "url"
+  },
+  "searxng_valkey_version": {
+   "default": "9-alpine",
+   "required": false,
+   "type": "version"
+  },
+  "searxng_version": {
+   "default": "latest",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:searxng",
+ "version": "1.0"
+}

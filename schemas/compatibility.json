@@ -223,7 +223,8 @@
   "addon:open_webui": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
-   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless open_webui_source says otherwise, with open_webui_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs open_webui_source \"upstream\", which the migration writes.", "migration": "open_webui_2_0"}
+   {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless open_webui_source says otherwise, with open_webui_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs open_webui_source \"upstream\", which the migration writes.", "migration": "open_webui_2_0"},
+   {"version": "2.1", "breaking": false, "changes": "Add open_webui_searxng_url: SearXNG as the web-search backend, derived from the lab's own searxng section."}
   ],
   "addon:openai": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -275,6 +276,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: seafile_admin_email, seafile_admin_password, seafile_cache_provider, seafile_db_password, seafile_db_root_password, seafile_deployment, seafile_edition, seafile_hostname, seafile_jwt_private_key."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:searxng": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:skynet_simulator": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -359,7 +363,8 @@
   ],
   "config:credentials": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
-   {"version": "1.1", "breaking": false, "changes": "scc gained scc_email/scc_url fields, so a host's SUSE registration email/URL can live in the encrypted credential store instead of plaintext in a config file."}
+   {"version": "1.1", "breaking": false, "changes": "scc gained scc_email/scc_url fields, so a host's SUSE registration email/URL can live in the encrypted credential store instead of plaintext in a config file."},
+   {"version": "1.2", "breaking": false, "changes": "Add the searxng credential kind (searxng_secret_key)."}
   ],
   "config:harvester-cluster.json": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}

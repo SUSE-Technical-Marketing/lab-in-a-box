@@ -30,7 +30,7 @@ __version__ = "1"
 
 # Version of the credentials-file schema (PROVIDER_FIELDS and SERVICE_CREDENTIAL_FIELDS), written to every file as
 # schema_version; see schemas/compatibility.json.
-CREDENTIALS_SCHEMA_VERSION = "1.1"
+CREDENTIALS_SCHEMA_VERSION = "1.2"
 
 import sys
 from pathlib import Path
@@ -138,6 +138,9 @@ SERVICE_CREDENTIAL_FIELDS = {
     ],
     "ds389": [
         ("ds389_dm_password", False, True),
+    ],
+    "searxng": [
+        ("searxng_secret_key", True, True),
     ],
     "vhm_aws": [
         ("vhm_aws_access_key_id", True, False),

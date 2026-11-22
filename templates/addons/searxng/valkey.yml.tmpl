@@ -1,0 +1,49 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${searxng_valkey_name:-searxng-valkey}
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: ${searxng_valkey_name:-searxng-valkey}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${searxng_valkey_name:-searxng-valkey}
+  template:
+    metadata:
+      labels:
+        app: ${searxng_valkey_name:-searxng-valkey}
+    spec:
+      containers:
+        - name: valkey
+          image: ${searxng_valkey_image:-docker.io/valkey/valkey}:${searxng_valkey_version:-9-alpine}
+          args: ["valkey-server", "--save", "300", "1", "--save", "60", "1000", "--loglevel", "warning"]
+          ports:
+            - name: valkey
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${searxng_valkey_name:-searxng-valkey}
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: ${searxng_valkey_name:-searxng-valkey}
+spec:
+  type: ClusterIP
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey
+  selector:
+    app: ${searxng_valkey_name:-searxng-valkey}
+...

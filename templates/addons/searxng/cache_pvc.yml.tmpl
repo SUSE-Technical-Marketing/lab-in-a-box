@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: searxng-cache
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: searxng
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: ${searxng_storage_size:-1Gi}
+...
