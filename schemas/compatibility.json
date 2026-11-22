@@ -234,7 +234,8 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
   "addon:openshell": [
-   {"version": "1.0", "breaking": false, "changes": "Initial openshell addon: kubernetes (Helm chart) and host (upstream installer) modes"}
+   {"version": "1.0", "breaking": false, "changes": "Initial openshell addon: kubernetes (Helm chart) and host (upstream installer) modes"},
+   {"version": "1.1", "breaking": false, "changes": "openshell_source: install the chart from the SUSE Application Collection"}
   ],
   "addon:postgresql": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},

@@ -34,6 +34,26 @@ def run(cfg):
     return cmds, printed, fqdn
 
 
+def run_appcollection(cfg):
+    """setup_openshell() with the Application Collection's chart reference and pull-secret flags, as main() hands
+    them over; returns the commands."""
+    import appco_common as appco
+    cmds = []
+
+    def fake_ssh(host, cmd, **kw):
+        cmds.append(cmd)
+        return mock.Mock(returncode=0)
+
+    with mock.patch.object(osh, "ssh_run", side_effect=fake_ssh), \
+            mock.patch.object(appco, "ssh_run", side_effect=fake_ssh), \
+            mock.patch("builtins.print"):
+        chart, extra_set = appco.prepare_appcollection_chart(
+            "node1", cfg.get("openshell_appcollection_chart") or osh._DEFAULT_APPCOLLECTION_CHART,
+            cfg.get("openshell_ns") or "openshell", "lab-user", "lab-token")
+        osh.setup_openshell("node1", "c1", "mydemo.lab", cfg, chart=chart, extra_set=extra_set)
+    return cmds
+
+
 def run_host(cfg):
     """setup_openshell_host() with `cfg`; returns (commands, printed lines)."""
     cmds, printed = [], []
@@ -110,6 +130,31 @@ cmds, _, _ = run({"openshell_agent_sandbox_url": "https://mirror.mydemo.lab/sand
 check("agent sandbox: openshell_agent_sandbox_url overrides the manifest",
       any(c == "kubectl apply --server-side -f https://mirror.mydemo.lab/sandbox.yaml" for c in cmds))
 
+# ── the SUSE Application Collection path ──────────────────────────────────────
+cmds = run_appcollection({})
+helm = [c for c in cmds if c.startswith("helm upgrade")]
+check("appcollection: the chart comes from the Collection's registry under its openshell slug",
+      helm[0].startswith("helm upgrade --install openshell oci://dp.apps.rancher.io/charts/openshell "))
+check("appcollection: the pods get the Collection's image pull secret",
+      "--set 'global.imagePullSecrets[0]'=application-collection" in helm[0])
+check("appcollection: an image pull secret is created and helm logs in to the registry",
+      any("kubectl create secret docker-registry application-collection" in c
+          and "--docker-server=dp.apps.rancher.io" in c for c in cmds)
+      and any(c.startswith("helm registry login dp.apps.rancher.io --username lab-user --password-stdin")
+              for c in cmds))
+check("appcollection: the access token reaches no helm command line",
+      not any("lab-token" in c for c in cmds if c.startswith("helm ")))
+cmds = run_appcollection({"openshell_appcollection_chart": "nvidia-openshell", "openshell_ns": "agents"})
+helm = [c for c in cmds if c.startswith("helm upgrade")]
+check("appcollection: openshell_appcollection_chart overrides the slug, in the add-on's own namespace",
+      helm[0].startswith("helm upgrade --install openshell oci://dp.apps.rancher.io/charts/nvidia-openshell ")
+      and "--namespace agents" in helm[0]
+      and any("kubectl create secret docker-registry application-collection" in c and "--namespace agents" in c
+              for c in cmds))
+cmds, _, _ = run({})
+check("upstream: no pull secret and no Collection registry when the source is upstream",
+      not any("application-collection" in c for c in cmds) and not any("dp.apps.rancher.io" in c for c in cmds))
+
 # ── host mode ─────────────────────────────────────────────────────────────────
 cmds, printed = run_host({})
 check("host: the upstream installer runs on the node",
@@ -136,6 +181,17 @@ check("validate: an invalid namespace is rejected", len(errors({"openshell_ns": 
 check("validate: both URLs must be http(s)",
       len(errors({"openshell_agent_sandbox_url": "sandbox.yaml"})) == 1
       and len(errors({"openshell_installer_url": "file:///tmp/install.sh"})) == 1)
+check("validate: openshell_source upstream needs no account, an unknown source is rejected",
+      errors({"openshell_source": "upstream"}) == []
+      and any("openshell_source" in e for e in errors({"openshell_source": "collection"})))
+check("validate: openshell_source appcollection needs a user and a token",
+      len([e for e in errors({"openshell_source": "appcollection"})
+           if "openshell_appcollection_user" in e or "openshell_appcollection_password" in e]) == 2)
+check("validate: a credential file satisfies both",
+      errors({"openshell_source": "appcollection", "openshell_appcollection_account": "appco-lab"}) == [])
+check("validate: appcollection and host mode are refused together",
+      any("openshell_mode" in e for e in errors({"openshell_source": "appcollection", "openshell_mode": "host",
+                                                 "openshell_appcollection_account": "appco-lab"})))
 check("validate: the booleans only take true/false",
       len(errors({"openshell_disable_tls": "yes"})) == 1
       and len(errors({"openshell_agent_sandbox": "0"})) == 1
