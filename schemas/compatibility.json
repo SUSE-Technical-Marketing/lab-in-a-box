@@ -18,6 +18,9 @@
    {"version": "2.0", "breaking": true, "changes": "The LiteLLM proxy installs from the OCI chart anthropic_chart (default oci://ghcr.io/berriai/litellm-helm); anthropic_rel and anthropic_repo_url removed. No database; clients use the master key in the anthropic-proxy-master-key secret; the API key is kept in a secret; the ingress uses the chart's ingress.hosts.", "migration": "anthropic_2_0"},
    {"version": "2.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:anthropic_tools": [
+   {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
   "addon:apertus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."},
@@ -364,7 +367,8 @@
   "config:credentials": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "scc gained scc_email/scc_url fields, so a host's SUSE registration email/URL can live in the encrypted credential store instead of plaintext in a config file."},
-   {"version": "1.2", "breaking": false, "changes": "Add the searxng credential kind (searxng_secret_key)."}
+   {"version": "1.2", "breaking": false, "changes": "Add the searxng credential kind (searxng_secret_key)."},
+   {"version": "1.3", "breaking": false, "changes": "Add the anthropic credential kind (anthropic_oauth_token, anthropic_api_key), for install_anthropic_tools."}
   ],
   "config:harvester-cluster.json": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}

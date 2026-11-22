@@ -30,7 +30,7 @@ __version__ = "1"
 
 # Version of the credentials-file schema (PROVIDER_FIELDS and SERVICE_CREDENTIAL_FIELDS), written to every file as
 # schema_version; see schemas/compatibility.json.
-CREDENTIALS_SCHEMA_VERSION = "1.2"
+CREDENTIALS_SCHEMA_VERSION = "1.3"
 
 import sys
 from pathlib import Path
@@ -141,6 +141,12 @@ SERVICE_CREDENTIAL_FIELDS = {
     ],
     "searxng": [
         ("searxng_secret_key", True, True),
+    ],
+    # Anthropic's own client tooling (install_anthropic_tools). Either field alone is enough, and a file with
+    # neither is valid: the tooling installs with no credential at all and is logged in by whoever uses it.
+    "anthropic": [
+        ("anthropic_oauth_token", False, True),
+        ("anthropic_api_key", False, True),
     ],
     "vhm_aws": [
         ("vhm_aws_access_key_id", True, False),

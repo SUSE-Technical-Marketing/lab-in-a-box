@@ -1324,6 +1324,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Anthropic Claude API 代理（LiteLLM）</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>在节点上安装 Anthropic 自己的客户端工具：由 <code>anthropic_tools_components</code> 选择的 Claude Code CLI、Claude Agent SDK、Anthropic API SDK 和 <code>ant</code> CLI。<code>anthropic_tools_install_method</code> 为 <code>native</code> 时运行 Anthropic 自己的安装程序，按用户安装并自动更新；<code>package</code> 则从 Anthropic 的仓库在整台机器上安装已签名的 <code>claude-code</code> 软件包。凭据是可选的：通常由使用 CLI 的人自行登录。与上面的 <code>anthropic</code> 插件无关，后者是 API 前面的代理</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API 代理（LiteLLM）</td>
 </tr>

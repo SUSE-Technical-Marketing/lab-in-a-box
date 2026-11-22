@@ -1557,6 +1557,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Anthropic Claude API proxy (LiteLLM)</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>Installs Anthropic's own client tooling on the node: the Claude Code CLI, the Claude Agent SDK, the Anthropic API SDK and the <code>ant</code> CLI, selected in <code>anthropic_tools_components</code>. <code>anthropic_tools_install_method</code> <code>native</code> runs Anthropic's own installer, which is per-user and auto-updating; <code>package</code> installs the signed <code>claude-code</code> package machine-wide from Anthropic's repository. Credentials are optional: whoever uses the CLI normally logs it in themselves. Unrelated to the <code>anthropic</code> addon above, which is a proxy in front of the API</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API proxy (LiteLLM)</td>
 </tr>

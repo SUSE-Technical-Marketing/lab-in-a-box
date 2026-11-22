@@ -1,0 +1,88 @@
+{
+ "fields": {
+  "anthropic_tools_anthropic_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_components": {
+   "default": "[\"claude_code\"]",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_disable_autoupdate": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_install_method": {
+   "default": "native",
+   "enum": [
+    "native",
+    "package"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_install_url": {
+   "default": "https://claude.ai/install.sh",
+   "required": false,
+   "type": "url"
+  },
+  "anthropic_tools_mcp_servers": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_model": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_oauth_token": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_path": {
+   "default": "true",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_release": {
+   "default": "latest",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_repo_url": {
+   "default": "https://downloads.claude.ai/claude-code",
+   "required": false,
+   "type": "url"
+  },
+  "anthropic_tools_settings": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "anthropic_tools_users": {
+   "default": "[\"root\"]",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:anthropic_tools",
+ "version": "1.0"
+}

@@ -1506,6 +1506,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Anthropic Claude API プロキシ（LiteLLM）</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>Anthropic のクライアントツールをノードに導入します。<code>anthropic_tools_components</code> で選ぶ Claude Code CLI、Claude Agent SDK、Anthropic API SDK、<code>ant</code> CLI です。<code>anthropic_tools_install_method</code> が <code>native</code> なら Anthropic 自身のインストーラーをユーザーごとに実行し、自動更新されます。<code>package</code> は署名付きパッケージ <code>claude-code</code> を Anthropic のリポジトリからシステム全体に導入します。資格情報は任意で、通常は CLI を使う本人がログインします。上の <code>anthropic</code> アドオンとは無関係で、あちらは API の前段に置くプロキシです</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API プロキシ（LiteLLM）</td>
 </tr>
