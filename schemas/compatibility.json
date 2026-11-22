@@ -350,6 +350,9 @@
   "addon:wordpress": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:xfce": [
+   {"version": "1.0", "breaking": false, "changes": "Initial xfce addon: XFCE from the distribution's own packages, console/xrdp/vnc access"}
+  ],
   "config:automation.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. The automation node's own identity (network, hostname, vm/container/kubernetes shape) -- needed regardless of whether a KVM host is even involved."},
    {"version": "1.1", "breaking": false, "changes": "_automation_network added: \"host\" puts a container automation node on its host's own network (set automatically when the host has no bridge and is not a KVM host); empty or \"bridge\" keeps the bridge as before."}

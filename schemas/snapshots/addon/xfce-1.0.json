@@ -1,0 +1,21 @@
+{
+ "fields": {
+  "xfce_access": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "xfce_extra_packages": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "xfce_port": {
+   "default": "3389",
+   "required": false,
+   "type": "port"
+  }
+ },
+ "schema": "addon:xfce",
+ "version": "1.0"
+}
