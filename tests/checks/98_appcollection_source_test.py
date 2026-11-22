@@ -61,6 +61,15 @@ check("helm is logged in to the registry",
 
 # ── longhorn, the first add-on to offer it ───────────────────────────────────
 lh = apps.load_addon_module("install_longhorn", str(_REPO / "scripts"))
+
+# lab_creation's own package helpers (install_packages/package_manager/ensure_podman) call lab_creation.ssh_run, not
+# lh's copy of it, so the fake this test installs on lh is routed there too. Resolved per call, so it
+# follows whatever lh.ssh_run is at the time.
+import lab_creation as _lc  # noqa: E402
+_lc.ssh_run = lambda host, cmd, **kw: (lh.ssh_run(host, cmd, **kw)
+                                       or mock.Mock(returncode=1 if "transactional-update" in cmd else 0))
+_lc.wait_for_transactional_update_lock = lambda host, timeout=600: None
+
 check("longhorn knows its slug in the Collection", lh.APPCOLLECTION_CHART == "suse-storage")
 
 commands = []

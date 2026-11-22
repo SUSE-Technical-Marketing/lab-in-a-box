@@ -8,6 +8,7 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 
 import k8s  # noqa: E402
+import lab_creation  # noqa: E402
 import lab_schema_base  # noqa: E402
 import schema_validate as sv  # noqa: E402
 
@@ -75,6 +76,9 @@ class _Node:
 
     def run(self, hostname, cmd, **kwargs):
         self.cmds.append(cmd)
+        if cmd == "command -v transactional-update":
+            # Only a transactional node has it, and there it is the package manager.
+            return mock.Mock(returncode=0 if self.transactional else 1, stdout="")
         for name in self.missing:
             if cmd == "command -v {}".format(name):
                 return mock.Mock(returncode=1, stdout="")
@@ -98,7 +102,11 @@ class _Node:
 
 
 def _install(node, clu_ctx, kind="server", token=None):
+    # lab_creation's package helpers (install_packages/package_manager) call lab_creation.ssh_run, not k8s's copy of
+    # it, so the node's fake is installed there too and the install commands land in node.cmds like the rest.
     with mock.patch.object(k8s, "ssh_run", side_effect=node.run), \
+         mock.patch.object(lab_creation, "ssh_run", side_effect=node.run), \
+         mock.patch.object(lab_creation, "wait_for_transactional_update_lock"), \
          mock.patch.object(k8s, "ssh_output", side_effect=node.output), \
          mock.patch.object(k8s, "is_transactional", return_value=node.transactional), \
          mock.patch.object(k8s, "reboot_into_pending_snapshot"):
@@ -192,11 +200,11 @@ check("a worker runs the plain join command",
       JOIN["join"] in node.joined() and "--control-plane" not in node.joined())
 
 # ── the package manager is detected, not assumed ────────────────────────────
-node = _Node(missing=("zypper", "dnf"))
+node = _Node(missing=("zypper", "dnf", "yum"))
 _install(node, CTX)
 check("an apt host gets the deb repository and its keyring",
       "/etc/apt/sources.list.d/kubernetes.list" in node.joined() and "apt-get install -y" in node.joined())
-node = _Node(missing=("zypper", "dnf", "apt-get"))
+node = _Node(missing=("zypper", "dnf", "yum", "apt-get"))
 try:
     _install(node, CTX)
     check("a host with no known package manager is refused", False)
@@ -206,7 +214,7 @@ except SystemExit:
 node = _Node(transactional=True)
 _install(node, CTX)
 check("a transactional host installs through transactional-update",
-      "transactional-update -n pkg install -y" in node.joined())
+      "transactional-update --quiet pkg install -y" in node.joined())
 
 # ── the node count comes from the lab, not from a guess ─────────────────────
 lab = {"nodes": {"a": {"kcluster": "c1"}, "b": {"kcluster": "c1"}, "c": {"kcluster": "other"}}}

@@ -1501,13 +1501,22 @@ def package_available(host: str, pkg: str, manager: str = "") -> bool:
                    check=False, capture=True).returncode == 0
 
 
-def install_packages(host: str, pkgs, manager: str = "", reboot: bool = True) -> str:
+def install_packages(host: str, pkgs, manager: str = "", reboot: bool = True, required: bool = True,
+                     extra_args: str = "") -> str:
     """
-    Install `pkgs` on `host` with its own package manager, whichever family it is. Returns the manager used.
+    Install `pkgs` on `host` with its own package manager, whichever family it is. Returns the manager used, or "" when
+    the install failed and `required` is False.
 
     On a transactional-update host the packages land in a new snapshot, which only becomes the running system after a
     reboot, so this reboots into it (`reboot=False` leaves that to the caller, which must then call
     reboot_into_pending_snapshot() itself before anything expects the packages to be there).
+
+    `required=False` warns instead of dying when the install fails — for a package the caller can do without, or one
+    whose absence it reports itself afterwards.
+
+    `extra_args` passes one package manager's own flags through (e.g. zypper's --gpg-auto-import-keys on a node whose
+    repository keys are not imported yet). It is manager-specific by nature, so a caller that sets it knows which
+    manager the node has.
 
     Does not check availability: a caller that wants to report "this distribution does not ship X" rather than the
     package manager's own error calls package_available() first.
@@ -1522,14 +1531,36 @@ def install_packages(host: str, pkgs, manager: str = "", reboot: bool = True) ->
     if manager == "transactional-update":
         wait_for_transactional_update_lock(host)
     quoted = " ".join(shlex.quote(p) for p in pkgs)
+    if extra_args:
+        quoted = "{} {}".format(extra_args, quoted)
     r = ssh_run(host, _PKG_INSTALL[manager].format(pkgs=quoted), check=False, capture=True)
     if r.returncode != 0:
-        die("could not install {} on '{}' with {}: {}".format(
-            ", ".join(pkgs), host, manager, (r.stderr or r.stdout or "").strip()))
+        msg = "could not install {} on '{}' with {}: {}".format(
+            ", ".join(pkgs), host, manager, (r.stderr or r.stdout or "").strip())
+        if required:
+            die(msg)
+        warn(msg)
+        return ""
     log("- Installed {} on '{}' (via {})".format(", ".join(pkgs), host, manager))
     if manager == "transactional-update" and reboot:
         reboot_into_pending_snapshot(host)
     return manager
+
+
+def ensure_podman(host: str) -> bool:
+    """
+    Idempotently make `host` able to run containers with podman: install it with the host's own package manager and
+    enable podman.socket. A no-op when podman is already there. True once podman is present.
+
+    Best effort, like the per-add-on command it replaces: a node whose distribution has no podman package warns here
+    and fails on its own, more specific error when the add-on actually uses a container.
+    """
+    if ssh_run(host, "command -v podman >/dev/null 2>&1", check=False).returncode == 0:
+        ssh_run(host, "systemctl enable --now podman.socket", check=False)
+        return True
+    install_packages(host, ["podman"], required=False)
+    ssh_run(host, "systemctl enable --now podman.socket", check=False)
+    return ssh_run(host, "command -v podman >/dev/null 2>&1", check=False).returncode == 0
 
 
 def open_guest_port(host: str, port, proto: str = "tcp") -> None:

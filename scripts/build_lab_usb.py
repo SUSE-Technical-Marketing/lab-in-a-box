@@ -33,7 +33,7 @@ from lab_creation import (  # noqa: E402
     log, die, ssh_run, ssh_output, run_libvirt_tool, check_ssh_conn,
     prepare_cloud_init, copy_to_hypervisor,
     total_lab_resources, ensure_lab_ssh_key, distribute_lab_ssh_key,
-    _generate_unused_mac, purge_known_host,
+    _generate_unused_mac, purge_known_host, install_packages,
 )
 
 # The lab-host VM uses openSUSE Leap 16.0 Cloud, not Leap Micro. Leap Micro has an immutable root, so virt-customize cannot write
@@ -217,15 +217,15 @@ def bootstrap_lab_host_vm(lab_host_ip, defaults):
     log("Installing python3.11 + nc (prerequisites setup_kvm_node.py itself only checks for, doesn't install)")
     # Leap 16.0 has no python311 package. Its system python3 is 3.13. setup_kvm_node.py calls python3.11 by name, so a symlink
     # python3.11 to python3 is created when the package is missing and python3 is new enough.
-    r = ssh_run(lab_host_ip, "zypper --gpg-auto-import-keys install -y python311", check=False)
-    if r.returncode != 0:
+    # --gpg-auto-import-keys: a fresh Cloud image has not imported its repositories' keys yet.
+    if not install_packages(lab_host_ip, ["python311"], required=False, extra_args="--gpg-auto-import-keys"):
         ssh_run(
             lab_host_ip,
             "command -v python3.11 >/dev/null 2>&1 || "
             "{ v=$(python3 -c 'import sys; print(sys.version_info[:2] >= (3, 7))'); "
             "[ \"$v\" = True ] && ln -sf \"$(command -v python3)\" /usr/local/bin/python3.11; }",
         )
-    ssh_run(lab_host_ip, "zypper --gpg-auto-import-keys install -y netcat-openbsd")
+    install_packages(lab_host_ip, ["netcat-openbsd"], extra_args="--gpg-auto-import-keys")
 
     # A Leap Cloud image may ship kernel-default-base, a kernel without KVM modules. /dev/kvm is then missing, and nested VMs would
     # use QEMU emulation. The real kernel-default package replaces it, and a reboot follows. The step is skipped once /dev/kvm

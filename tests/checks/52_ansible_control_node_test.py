@@ -17,6 +17,14 @@ sys.path.insert(0, str(_REPO / "scripts"))
 import apps  # noqa: E402
 acn = apps.load_addon_module("install_ansible_control_node", str(_REPO / "scripts"))  # no .py: loaded by path
 
+# lab_creation's own package helpers (install_packages/package_manager/ensure_podman) call lab_creation.ssh_run, not
+# acn's copy of it, so the fake this test installs on acn is routed there too. Resolved per call, so it
+# follows whatever acn.ssh_run is at the time.
+import lab_creation as _lc  # noqa: E402
+_lc.ssh_run = lambda host, cmd, **kw: acn.ssh_run(host, cmd, **kw)
+_lc.wait_for_transactional_update_lock = lambda host, timeout=600: None
+
+
 failures = []
 
 
@@ -40,6 +48,10 @@ def _fake_ssh_run(hostname, cmd, check=True, input_text=None, capture=False, use
     calls.append((hostname, cmd, input_text))
     if unreachable_targets and hostname in unreachable_targets:
         return FakeResult(returncode=1, stderr="Connection refused")
+    if "command -v ansible-playbook" in cmd:
+        return FakeResult(returncode=1)      # a fresh node has none, so the add-on installs ansible-core
+    if cmd == "command -v transactional-update":
+        return FakeResult(returncode=1)      # a normal node: a writable root, zypper/dnf/apt-get
     return FakeResult(returncode=0)
 
 

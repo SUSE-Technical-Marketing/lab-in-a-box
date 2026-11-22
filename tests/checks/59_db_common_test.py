@@ -19,6 +19,14 @@ sys.path.insert(0, str(_REPO / "libs"))
 
 import db_common  # noqa: E402
 
+# lab_creation's own package helpers (install_packages/package_manager/ensure_podman) call lab_creation.ssh_run, not
+# db_common's copy of it, so the fake this test installs on db_common is routed there too. Resolved per call, so it
+# follows whatever db_common.ssh_run is at the time.
+import lab_creation as _lc  # noqa: E402
+_lc.ssh_run = lambda host, cmd, **kw: db_common.ssh_run(host, cmd, **kw)
+_lc.wait_for_transactional_update_lock = lambda host, timeout=600: None
+
+
 failures = []
 
 
@@ -31,12 +39,18 @@ def check(desc, cond):
 ssh_calls = []
 
 
+# The package manager this fake host answers `command -v` for. zypper (a Leap host with a writable root) unless a
+# case below sets another one.
+probe_manager = {"name": "zypper"}
+
+
 def _fake_ssh_run(hostname, cmd, **kw):
     ssh_calls.append((hostname, cmd, kw))
     if cmd == "mysql -u root" and kw.get("input_text", "").startswith("ALTER USER"):
         return mock.Mock(returncode=0, stdout="", stderr="")  # fresh install, unix_socket auth works
-    if cmd == "command -v dnf":
-        return mock.Mock(returncode=1, stdout="", stderr="")
+    if cmd.startswith("command -v "):
+        rc = 0 if cmd.split()[-1] == probe_manager["name"] else 1
+        return mock.Mock(returncode=rc, stdout="", stderr="")
     return mock.Mock(returncode=0, stdout="", stderr="")
 
 
@@ -87,18 +101,20 @@ check("setup_mariadb_os: grants the created user privileges on the created datab
       any("GRANT ALL PRIVILEGES ON `labdb`.* TO `labuser`@'%';" in t for t in later_texts))
 
 # ── Per-family install dispatch ──────────────────────────────────────────────
-# rhel's own pkg_mgr detection genuinely runs `command -v dnf` first, real
-# behavior mirrored here rather than re-mocked away — _fake_ssh_run reports
-# dnf absent, so the real fallback path (yum) is what should be dispatched.
-for os_id, expect_substr in (("rhel", "yum install -y mariadb-server"),
-                              ("ubuntu", "apt-get install -y mariadb-server"),
-                              ("sles", "zypper install -y --no-confirm mariadb")):
+# The family function is picked from the detected OS (service name, firewall), while the install command itself comes
+# from the package manager the host really has — whichever `command -v` finds, not a guess from the OS name. A RHEL
+# host without dnf installs with yum, exactly as it would in reality.
+for os_id, manager, expect_substr in (("rhel", "yum", "yum install -y mariadb-server"),
+                                      ("ubuntu", "apt-get", "apt-get install -y mariadb-server"),
+                                      ("sles", "zypper", "zypper --non-interactive install -y mariadb mariadb-client")):
     ssh_calls.clear()
+    probe_manager["name"] = manager
     db_common.detect_os = lambda hostname, _id=os_id: {"id": _id, "ver_id": "1", "like": "", "ver_major": "1"}
     db_common.setup_mariadb_os("host1", {})
     cmds = [c[1] for c in ssh_calls]
     check("setup_mariadb_os: {} dispatches to the real distro-appropriate package install".format(os_id),
           any(expect_substr in c for c in cmds))
+probe_manager["name"] = "zypper"
 
 # ── digits_only(): a bare port/version guard shared by every OS-native
 #    installer (see also 18_live_bugfixes_test.py) ──────────────────────────
@@ -115,13 +131,35 @@ check("setup_mariadb_os: dies rather than interpolating a shell metacharacter in
 
 
 # ── OS-native PostgreSQL: per-family install, then the shared configuration ─────────────────────────────────────────
-def run_pg(os_info, cfg, ssh_rc=None):
-    """setup_postgresql_os() on a host detected as `os_info`, every remote command recorded: (result, commands)."""
+# Which package manager a simulated family has, as `command -v <manager>` answers it.
+_MANAGER_FOR = {"suse": "zypper", "micro": "transactional-update", "rhel": "dnf", "debian": "apt-get"}
+
+
+def _family(os_info):
+    if "micro" in os_info["id"]:
+        return "micro"
+    if os_info["id"] in ("sles", "suse") or "suse" in os_info["id"] or "suse" in os_info["like"]:
+        return "suse"
+    if any(k in os_info["like"] or k in os_info["id"] for k in ("rhel", "centos", "fedora")):
+        return "rhel"
+    return "debian"
+
+
+def run_pg(os_info, cfg, missing=()):
+    """setup_postgresql_os() on a host detected as `os_info`, every remote command recorded: (result, commands).
+
+    `missing` names packages this host's repositories do NOT carry, which is what now drives the version fallback.
+    """
     cmds = []
+    manager = _MANAGER_FOR[_family(os_info)]
 
     def fake_ssh(host, cmd, **kw):
         cmds.append((cmd, kw.get("input_text", "")))
-        rc = (ssh_rc or {}).get(cmd.split(" 2>&1")[0], 0)
+        rc = 0
+        if cmd.startswith("command -v "):
+            rc = 0 if cmd.split()[-1] == manager else 1
+        elif "search --match-exact" in cmd or cmd.startswith("apt-cache show") or " list available " in cmd:
+            rc = 1 if any(m in cmd for m in missing) else 0
         return mock.Mock(returncode=rc, stdout="", stderr="")
 
     with mock.patch.object(db_common, "detect_os", return_value=os_info), \
@@ -138,7 +176,7 @@ SLES = {"id": "sles", "like": "suse", "ver_major": "15"}
 result, cmds, sql, _ = run_pg(SLES, {"postgresql_pg_version": "15", "postgresql_db": "app", "postgresql_user": "u",
                                      "postgresql_password": "p'w", "postgresql_port": "5433"})
 check("setup_postgresql_os: SLES installs the requested version with zypper",
-      any(c.startswith("zypper install -y --no-confirm postgresql15-server postgresql15") for c in cmds))
+      any(c.startswith("zypper --non-interactive install -y postgresql15-server postgresql15") for c in cmds))
 check("setup_postgresql_os: returns the passwords and port", result == {"root_password": "p'w", "password": "p'w", "port": "5433"})
 check("pg_configure_os: sets the superuser password, creates the database and user, grants, all SQL-escaped",
       sql[:4] == ["ALTER USER postgres PASSWORD 'p''w';\n", 'CREATE DATABASE "app";\n',
@@ -146,9 +184,9 @@ check("pg_configure_os: sets the superuser password, creates the database and us
 check("pg_configure_os: sets listen_addresses and the port, allows md5 logins, restarts",
       any("listen_addresses = '*'" in c and "port = 5433" in c and "host all all 0.0.0.0/0 md5" in c for c in cmds)
       and any(c.startswith("systemctl restart postgresql.service") for c in cmds))
-_, cmds, _, _ = run_pg(SLES, {}, ssh_rc={"zypper install -y --no-confirm postgresql16-server postgresql16": 1})
+_, cmds, _, _ = run_pg(SLES, {}, missing=["postgresql16-server"])
 check("setup_postgresql_os: falls back to the unversioned SUSE packages",
-      any(c.startswith("zypper install -y --no-confirm postgresql-server postgresql") for c in cmds))
+      any(c.startswith("zypper --non-interactive install -y postgresql-server postgresql") for c in cmds))
 _, cmds, _, reboot = run_pg({"id": "sle-micro", "like": "suse", "ver_major": "6"}, {})
 check("setup_postgresql_os: SL Micro installs with transactional-update and reboots",
       any(c.startswith("transactional-update --quiet pkg install -y postgresql16-server") for c in cmds)
@@ -179,7 +217,7 @@ with mock.patch.object(db_common, "ssh_run", side_effect=lambda h, c, **k: cmds.
         mock.patch.object(db_common.time, "sleep"):
     db_common.mariadb_install_slemicro("db1", "qemu+ssh://hv/system")
 check("mariadb_install_slemicro: installs with transactional-update, reboots, waits for SSH, enables the service",
-      cmds[0].startswith("transactional-update --quiet pkg install -y mariadb mariadb-client")
+      any(c.startswith("transactional-update --quiet pkg install -y mariadb mariadb-client") for c in cmds)
       and reboot.called and back.call_args[0] == ("db1",) and cmds[-1] == "systemctl enable --now mariadb.service")
 
 if failures:

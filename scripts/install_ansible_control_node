@@ -72,7 +72,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import ssh_run, ensure_lab_ssh_key  # noqa: E402
+from lab_creation import ssh_run, ensure_lab_ssh_key, install_packages  # noqa: E402
 
 
 def _validate(v):
@@ -183,10 +183,8 @@ def setup_ansible_control_node(hostname, templ_addons_loc, cfg, managed_nodes, d
     push_examples = (cfg.get("ansible_control_node_examples") or "true").lower() != "false"
 
     print("- Installing ansible-core (if not already present via SMLM's own highstate)")
-    ssh_run(hostname, "command -v ansible-playbook >/dev/null 2>&1 || "
-                       "(zypper --non-interactive install -y ansible-core 2>/dev/null || "
-                       "apt-get install -y ansible-core 2>/dev/null || "
-                       "dnf install -y ansible-core 2>/dev/null)", check=False)
+    if ssh_run(hostname, "command -v ansible-playbook >/dev/null 2>&1", check=False).returncode != 0:
+        install_packages(hostname, ["ansible-core"], required=False)
 
     ssh_run(hostname, "mkdir -p {} {}".format(shlex.quote(playbook_dir), shlex.quote(inventory_dir)))
 

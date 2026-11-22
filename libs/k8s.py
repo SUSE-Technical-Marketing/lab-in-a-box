@@ -30,6 +30,7 @@ from lab_creation import (
     ssh_run, ssh_output,
     prepare_local_as_kubeclient, reboot_into_pending_snapshot, wait_for_transactional_update_lock, is_transactional,
     wait_for_ssh_command, update_kernel,
+    install_packages, package_manager,
 )
 from services import DNSService
 import apps
@@ -481,23 +482,14 @@ class KubeadmDistro(K8sDistro):
                           ">/dev/null")
 
         transactional = is_transactional(hostname)
-        prefix = "transactional-update -n pkg install -y" if transactional else None
-        if prefix is None:
-            for manager, install in (("zypper", "zypper --non-interactive install -y"),
-                                     ("dnf", "dnf install -y"), ("apt-get", "apt-get install -y")):
-                if ssh_run(hostname, "command -v {}".format(manager), check=False).returncode == 0:
-                    prefix = install
-                    break
-        if prefix is None:
-            die("'{}': none of zypper, dnf or apt-get is available, so the Kubernetes packages cannot be "
-                "installed".format(hostname))
+        manager = package_manager(hostname)
 
         # The repository and its key are set up before anything is installed: zypper skips a repository whose key
         # it does not trust and then exits 106 for every later install, which looks like a failure of whatever was
         # being installed at the time.
-        if "apt-get" in prefix:
-            ssh_run(hostname, "apt-get update -qq && apt-get install -y apt-transport-https ca-certificates "
-                              "curl gpg && mkdir -p /etc/apt/keyrings")
+        if manager == "apt-get":
+            install_packages(hostname, ["apt-transport-https", "ca-certificates", "curl", "gpg"], manager=manager)
+            ssh_run(hostname, "mkdir -p /etc/apt/keyrings")
             ssh_run(hostname, "curl -fsSL https://pkgs.k8s.io/core:/stable:/{m}/deb/Release.key | "
                               "gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg".format(m=minor))
             ssh_run(hostname, "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] "
@@ -513,10 +505,12 @@ class KubeadmDistro(K8sDistro):
             ssh_run(hostname, "printf '{repo}' > /etc/zypp/repos.d/kubernetes.repo 2>/dev/null || "
                               "printf '{repo}' > /etc/yum.repos.d/kubernetes.repo".format(repo=repo))
 
-        self._install_packages(hostname, prefix, "containerd")
+        # required=False: zypper exits 106 when it had to skip a repository, which says nothing about whether the
+        # packages went in. What they were for is checked right after instead.
+        install_packages(hostname, ["containerd"], manager=manager, reboot=False, required=False)
         ssh_run(hostname, "mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && "
                           "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
-        self._install_packages(hostname, prefix, "kubelet kubeadm kubectl")
+        install_packages(hostname, ["kubelet", "kubeadm", "kubectl"], manager=manager, reboot=False, required=False)
         missing = ssh_run(hostname, "for b in kubeadm kubelet kubectl; do command -v $b >/dev/null || echo $b; done",
                           check=False, capture=True)
         if (missing.stdout or "").strip():
@@ -526,17 +520,6 @@ class KubeadmDistro(K8sDistro):
         if transactional:
             reboot_into_pending_snapshot(hostname)
         ssh_run(hostname, "systemctl enable --now containerd && systemctl enable kubelet")
-
-    @staticmethod
-    def _install_packages(hostname, prefix, packages):
-        """
-        Install `packages` with the node's package manager. zypper exits 106 when it had to skip a repository, which
-        says nothing about whether the packages went in, so that code is not a failure here; what the packages were
-        for is checked afterwards instead.
-        """
-        result = ssh_run(hostname, "{} {}".format(prefix, packages), check=False)
-        if result.returncode not in (0, 106):
-            die("'{}': installing {} failed (exit {})".format(hostname, packages, result.returncode))
 
     def install_server(self, hostname, clu_name, clu_ctx, token=None, rancher1_ip=None):
         self.prepare_node(hostname, clu_ctx.get("clu_rel"))
