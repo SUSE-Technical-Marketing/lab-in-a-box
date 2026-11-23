@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Un archivo, un comando.</strong> Describa VMs, clústeres de Kubernetes (RKE2 o K3s) y complementos de forma declarativa. <code>setup_lab.py</code> los crea en orden de dependencias, sin que tenga que ejecutar <code>virt-install</code> o Ansible a mano.</li>
 <li><strong>Laboratorio en casa o en la nube, la misma definición.</strong> Las VMs del laboratorio se ejecutan en hosts KVM propios, en Harvester HCI o en AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud o Exoscale. Un laboratorio puede abarcar varios hosts KVM y combinar nubes y ubicaciones mediante una <a href="#cross-cloud-wireguard-overlay">red superpuesta WireGuard entre nubes</a>.</li>
-<li><strong>70 complementos listos para usar.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionadamente vulnerables para formación en seguridad.</li>
+<li><strong><span data-addon-count>102</span> complementos listos para usar.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionadamente vulnerables para formación en seguridad.</li>
 <li><strong>Una interfaz web que sigue al código.</strong> <a href="#web-ui-lab-builder">lab-builder</a> genera cada formulario a partir del esquema del propio complemento, de modo que un campo nuevo en un script aparece en la interfaz sin cambios en el frontend.</li>
 <li><strong>Aprovisionamiento intercambiable.</strong> Ignition y Combustion para SLE Micro, cloud-init para openSUSE y Ubuntu, <code>virt-customize</code> para imágenes antiguas, o una instalación desatendida desde una ISO de instalación (AutoYaST, Kickstart, Preseed o AutoInstall).</li>
 <li><strong>Credenciales fuera del archivo del laboratorio.</strong> Las credenciales de nubes y servicios pueden guardarse en archivos cifrados por cuenta (derivación de claves Argon2id y después AES-256-GCM y ChaCha20-Poly1305 en cascada).</li>
@@ -1108,6 +1108,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Alojamiento y escalado de servidores de juegos dedicados (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Aplica uno o varios manifiestos de Kubernetes (un archivo local, una URL http(s) o nfs://, o YAML/JSON en línea) a un kcluster con <code>kubectl apply</code>: una vía genérica para recursos puntuales que no merecen su propio complemento</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Aprovisiona un nodo de control Ansible real: instala <code>ansible-core</code>, copia playbooks de ejemplo y un script de inventario dinámico que consulta la lista de sistemas de <code>uyuni</code>/<code>smlm</code>, y configura el acceso SSH al resto del laboratorio. Se combina con el campo <code>*_ansible_control_nodes</code> de <code>uyuni</code>/<code>smlm</code>, que activa en el servidor el derecho "Ansible Control Node"</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Envía y ejecuta un playbook de Ansible cualquiera (un archivo local, una URL http(s) o nfs://, o YAML en línea) contra un <code>ansible_control_node</code> ya provisionado, usando su propio inventario dinámico</td>
 </tr>
 </tbody>
 </table>
@@ -1291,6 +1299,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Servidor Grafana independiente (contenedor podman, sin Kubernetes): aprovisiona automáticamente una fuente de datos Prometheus y, opcionalmente, el panel oficial de la comunidad de Grafana Labs para los exportadores de un servidor <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Ejecuta uno o varios comandos de shell, en orden, en el nodo de destino, o un script completo tomado de un archivo local o de una URL http(s) o nfs://: una vía genérica para un paso de aprovisionamiento puntual que no merece su propio complemento</td>
 </tr>
 </tbody>
 </table>

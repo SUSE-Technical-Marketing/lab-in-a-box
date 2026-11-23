@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong>70 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong><span data-addon-count>102</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -1285,6 +1285,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>専用ゲームサーバーのホスティングとスケーリング（agones.dev）</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>1 つ以上の Kubernetes マニフェスト（ローカルファイル、http(s) または nfs:// の URL、あるいはインライン YAML/JSON）を <code>kubectl apply</code> で kcluster に適用する。独自のアドオンを作るほどではない単発のリソース向けの汎用手段</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1368,6 +1372,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>本物の Ansible コントロールノードを構築します：<code>ansible-core</code> をインストールし、サンプルの Playbook と、<code>uyuni</code>/<code>smlm</code> のシステム一覧を問い合わせる動的インベントリースクリプトを配置し、ラボの他のノードへの SSH アクセスを設定します。サーバー側で「Ansible Control Node」エンタイトルメントを有効にする <code>uyuni</code>/<code>smlm</code> の <code>*_ansible_control_nodes</code> フィールドと組み合わせて使います</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>任意の Ansible プレイブック（ローカルファイル、http(s) または nfs:// の URL、あるいはインライン YAML）を、すでに構築済みの <code>ansible_control_node</code> に送り込み、その動的インベントリーを使って実行する</td>
 </tr>
 </tbody>
 </table>
@@ -1468,6 +1476,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>単独の Grafana サーバー（podman コンテナ、Kubernetes なし）：Prometheus データソースを自動で設定し、必要に応じて <code>smlm</code>/<code>uyuni</code> サーバーのエクスポーター用に Grafana Labs の公式コミュニティダッシュボードも設定します</td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>対象ノード上で 1 つ以上のシェルコマンドを順番に実行する。ローカルファイルや http(s)・nfs:// の URL から取得したスクリプト全体でもよい。独自のアドオンを作るほどではない単発の構成手順向けの汎用手段</td>
 </tr>
 </tbody>
 </table>

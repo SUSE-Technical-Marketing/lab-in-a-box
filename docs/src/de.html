@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Eine Datei, ein Befehl.</strong> Beschreiben Sie VMs, Kubernetes-Cluster (RKE2 oder K3s) und Add-ons deklarativ. <code>setup_lab.py</code> baut sie in Abhängigkeitsreihenfolge auf, ohne dass Sie <code>virt-install</code> oder Ansible von Hand ausführen müssen.</li>
 <li><strong>Home-Lab oder Cloud, dieselbe Definition.</strong> Lab-VMs laufen auf KVM-Hosts, die Ihnen gehören, auf Harvester HCI oder auf AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud oder Exoscale. Labs können sich über mehrere KVM-Hosts erstrecken, und ein einzelnes Lab kann über ein <a href="#cross-cloud-wireguard-overlay">Cross-Cloud-WireGuard-Overlay</a> Clouds und Standorte kombinieren.</li>
-<li><strong>70 vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
+<li><strong><span data-addon-count>102</span> vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
 <li><strong>Eine Web-UI, die dem Code folgt.</strong> <a href="#web-ui-lab-builder">lab-builder</a> rendert jedes Formular aus dem eigenen Schema des Add-ons. Ein neues Feld in einem Skript erscheint deshalb in der UI, ohne dass am Frontend etwas geändert werden muss.</li>
 <li><strong>Austauschbare Bereitstellung.</strong> Ignition und Combustion für SLE Micro, cloud-init für openSUSE und Ubuntu, <code>virt-customize</code> für ältere Images oder eine skriptgesteuerte Installation von einem Installations-ISO (AutoYaST, Kickstart, Preseed oder AutoInstall).</li>
 <li><strong>Zugangsdaten außerhalb der Lab-Datei.</strong> Cloud- und Service-Zugangsdaten können in verschlüsselten Dateien pro Konto liegen (Schlüsselableitung mit Argon2id, danach AES-256-GCM und ChaCha20-Poly1305 hintereinandergeschaltet).</li>
@@ -1015,6 +1015,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Hosting und Skalierung dedizierter Game-Server (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Wendet ein oder mehrere Kubernetes-Manifeste (eine lokale Datei, eine http(s)- oder nfs://-URL oder YAML/JSON direkt in der Definition) mit <code>kubectl apply</code> auf einen kcluster an: ein genereller Weg für einmalige Ressourcen, die kein eigenes Add-on rechtfertigen</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1098,6 +1102,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Richtet einen echten Ansible-Control-Node ein: installiert <code>ansible-core</code>, überträgt Beispiel-Playbooks und ein dynamisches Inventar-Skript, das die Systemliste von <code>uyuni</code>/<code>smlm</code> abfragt, und richtet den SSH-Zugang zum übrigen Lab ein. Passt zum Feld <code>*_ansible_control_nodes</code> von <code>uyuni</code>/<code>smlm</code>, das auf dem Server das Recht „Ansible Control Node“ aktiviert</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Überträgt ein beliebiges Ansible-Playbook (eine lokale Datei, eine http(s)- oder nfs://-URL oder YAML direkt in der Definition) und führt es über einen bereits bereitgestellten <code>ansible_control_node</code> aus, mit dessen eigenem dynamischen Inventar</td>
 </tr>
 </tbody>
 </table>
@@ -1198,6 +1206,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Eigenständiger Grafana-Server (Podman-Container, ohne Kubernetes). Richtet automatisch eine Prometheus-Datenquelle ein und optional das echte Community-Dashboard von Grafana Labs für die eigenen Exporter eines Servers <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Führt einen oder mehrere Shell-Befehle in der angegebenen Reihenfolge auf dem Zielknoten aus, oder ein ganzes Skript aus einer lokalen Datei oder einer http(s)- oder nfs://-URL: ein genereller Weg für einen einmaligen Bereitstellungsschritt, der kein eigenes Add-on rechtfertigt</td>
 </tr>
 </tbody>
 </table>

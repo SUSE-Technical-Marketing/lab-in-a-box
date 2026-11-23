@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Um arquivo, um comando.</strong> Descreva VMs, clusters Kubernetes (RKE2 ou K3s) e complementos de forma declarativa. O <code>setup_lab.py</code> os cria na ordem das dependências, sem que você precise executar <code>virt-install</code> ou Ansible manualmente.</li>
 <li><strong>Laboratório em casa ou na nuvem, a mesma definição.</strong> As VMs do laboratório rodam em hosts KVM próprios, no Harvester HCI ou na AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Um laboratório pode abranger vários hosts KVM e combinar nuvens e locais por meio de uma <a href="#cross-cloud-wireguard-overlay">rede sobreposta WireGuard entre nuvens</a>.</li>
-<li><strong>70 complementos prontos.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud e outros, além de aplicações de demonstração intencionalmente vulneráveis para treinamento em segurança.</li>
+<li><strong><span data-addon-count>102</span> complementos prontos.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud e outros, além de aplicações de demonstração intencionalmente vulneráveis para treinamento em segurança.</li>
 <li><strong>Uma interface web que acompanha o código.</strong> O <a href="#web-ui-lab-builder">lab-builder</a> gera cada formulário a partir do esquema do próprio complemento, então um campo novo em um script aparece na interface sem mudanças no frontend.</li>
 <li><strong>Provisionamento intercambiável.</strong> Ignition e Combustion para SLE Micro, cloud-init para openSUSE e Ubuntu, <code>virt-customize</code> para imagens antigas, ou uma instalação automatizada a partir de uma ISO de instalação (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
 <li><strong>Credenciais fora do arquivo do laboratório.</strong> As credenciais de nuvens e serviços podem ficar em arquivos criptografados por conta (derivação de chave Argon2id, seguida de AES-256-GCM e ChaCha20-Poly1305 em cascata).</li>
@@ -1108,6 +1108,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Hospedagem e escalonamento de servidores de jogos dedicados (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Aplica um ou mais manifestos do Kubernetes (um arquivo local, uma URL http(s) ou nfs://, ou YAML/JSON em linha) a um kcluster com <code>kubectl apply</code>: um caminho genérico para recursos pontuais que não justificam um complemento próprio</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Provisiona um nó de controle Ansible real: instala o <code>ansible-core</code>, envia playbooks de exemplo e um script de inventário dinâmico que consulta a lista de sistemas do <code>uyuni</code>/<code>smlm</code> e configura o acesso SSH ao resto do laboratório. Combina com o campo <code>*_ansible_control_nodes</code> do <code>uyuni</code>/<code>smlm</code>, que ativa no servidor o direito "Ansible Control Node"</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Envia e executa um playbook Ansible qualquer (um arquivo local, uma URL http(s) ou nfs://, ou YAML em linha) a partir de um <code>ansible_control_node</code> já provisionado, usando o seu próprio inventário dinâmico</td>
 </tr>
 </tbody>
 </table>
@@ -1291,6 +1299,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Servidor Grafana independente (contêiner podman, sem Kubernetes): provisiona automaticamente uma fonte de dados Prometheus e, opcionalmente, o painel oficial da comunidade Grafana Labs para os exportadores de um servidor <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Executa um ou mais comandos de shell, em ordem, no nó de destino, ou um script completo obtido de um arquivo local ou de uma URL http(s) ou nfs://: um caminho genérico para uma etapa de provisionamento pontual que não justifica um complemento próprio</td>
 </tr>
 </tbody>
 </table>

@@ -3,7 +3,7 @@
 <ul>
 <li><strong>ملف واحد وأمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes ‏(RKE2 أو K3s) والإضافات بأسلوب تصريحي. يبنيها <code>setup_lab.py</code> بترتيب الاعتماديات دون أن تشغّل <code>virt-install</code> أو Ansible يدويًا.</li>
 <li><strong>مختبر منزلي أو سحابي، والتعريف نفسه.</strong> تعمل الأجهزة الافتراضية للمختبر على مضيفات KVM تملكها، أو على Harvester HCI، أو على AWS وGoogle Cloud وAlibaba Cloud وHetzner وScaleway وUpCloud وOVHcloud وExoscale. يمكن أن يمتد المختبر على عدة مضيفات KVM، وأن يجمع سحابات ومواقع مختلفة عبر <a href="#cross-cloud-wireguard-overlay">شبكة WireGuard متراكبة بين السحابات</a>.</li>
-<li><strong>70 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
+<li><strong><span data-addon-count>102</span> إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
 <li><strong>واجهة ويب تتبع الشيفرة.</strong> يبني <a href="#web-ui-lab-builder">lab-builder</a> كل نموذج من مخطط الإضافة نفسها، فيظهر أي حقل جديد في السكربت في الواجهة دون تعديل الواجهة الأمامية.</li>
 <li><strong>تجهيز قابل للتبديل.</strong> Ignition وCombustion لـ SLE Micro، وcloud-init لـ openSUSE وUbuntu، و<code>virt-customize</code> للصور القديمة، أو تثبيت آلي من صورة ISO للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
 <li><strong>بيانات الاعتماد خارج ملف المختبر.</strong> يمكن حفظ بيانات اعتماد السحابات والخدمات في ملفات مشفّرة لكل حساب (اشتقاق المفتاح بـ Argon2id ثم AES-256-GCM وChaCha20-Poly1305 على التوالي).</li>
@@ -1108,6 +1108,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>استضافة خوادم الألعاب المخصصة وتوسيعها (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>يُطبّق بيانًا واحدًا أو أكثر من بيانات Kubernetes (ملف محلي، أو عنوان http(s) أو nfs://، أو YAML/JSON مضمّن) على kcluster بواسطة <code>kubectl apply</code>: مسار عام للموارد العابرة التي لا تستحق إضافة خاصة بها</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>يجهّز عقدة تحكم Ansible حقيقية: يثبّت <code>ansible-core</code>، وينشر أمثلة Playbook وسكربت جرد ديناميكي يستعلم قائمة أنظمة <code>uyuni</code>/<code>smlm</code>، ويضبط الوصول عبر SSH إلى بقية المختبر. يُستخدم مع حقل <code>*_ansible_control_nodes</code> في <code>uyuni</code>/<code>smlm</code>، الذي يفعّل على الخادم ترخيص "Ansible Control Node"</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>يَنقل ويُشغّل أي دليل تشغيل Ansible (ملف محلي، أو عنوان http(s) أو nfs://، أو YAML مضمّن) عبر <code>ansible_control_node</code> مُهيَّأ مسبقًا، باستخدام مخزونه الديناميكي الخاص</td>
 </tr>
 </tbody>
 </table>
@@ -1291,6 +1299,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>خادم Grafana مستقل (حاوية podman دون Kubernetes): يضبط تلقائيًا مصدر بيانات Prometheus، واختياريًا لوحة المعلومات الرسمية من مجتمع Grafana Labs لمصدّرات خادم <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>يُنفّذ أمرًا واحدًا أو أكثر من أوامر الصدفة، بالترتيب، على العقدة الهدف، أو نصًا برمجيًا كاملًا من ملف محلي أو عنوان http(s) أو nfs://: مسار عام لخطوة تهيئة عابرة لا تستحق إضافة خاصة بها</td>
 </tr>
 </tbody>
 </table>

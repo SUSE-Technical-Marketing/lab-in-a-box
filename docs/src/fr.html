@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Un fichier, une commande.</strong> Décrivez de façon déclarative des VM, des clusters Kubernetes (RKE2 ou K3s) et des modules complémentaires. <code>setup_lab.py</code> les construit dans l'ordre des dépendances, sans que vous ayez à lancer <code>virt-install</code> ou Ansible à la main.</li>
 <li><strong>Labo à domicile ou dans le cloud, même définition.</strong> Les VM du laboratoire tournent sur vos propres hôtes KVM, sur Harvester HCI ou sur AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Un laboratoire peut s'étendre sur plusieurs hôtes KVM et combiner clouds et sites grâce à un <a href="#cross-cloud-wireguard-overlay">réseau superposé WireGuard multi-cloud</a>.</li>
-<li><strong>70 modules prêts à l'emploi.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud et d'autres, ainsi que des applications de démonstration volontairement vulnérables pour la formation à la sécurité.</li>
+<li><strong><span data-addon-count>102</span> modules prêts à l'emploi.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud et d'autres, ainsi que des applications de démonstration volontairement vulnérables pour la formation à la sécurité.</li>
 <li><strong>Une interface web qui suit le code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> génère chaque formulaire à partir du schéma du module lui-même : un nouveau champ dans un script apparaît dans l'interface sans modification du frontend.</li>
 <li><strong>Provisionnement interchangeable.</strong> Ignition et Combustion pour SLE Micro, cloud-init pour openSUSE et Ubuntu, <code>virt-customize</code> pour les images anciennes, ou une installation automatisée depuis une ISO d'installation (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
 <li><strong>Identifiants hors du fichier de laboratoire.</strong> Les identifiants des clouds et des services peuvent être stockés dans des fichiers chiffrés par compte (dérivation de clé Argon2id, puis AES-256-GCM et ChaCha20-Poly1305 en cascade).</li>
@@ -1108,6 +1108,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Hébergement et mise à l'échelle de serveurs de jeu dédiés (agones.dev)</td>
 </tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Applique un ou plusieurs manifestes Kubernetes (un fichier local, une URL http(s) ou nfs://, ou du YAML/JSON en ligne) à un kcluster avec <code>kubectl apply</code> : une voie générique pour des ressources ponctuelles qui ne justifient pas leur propre module</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Provisionne un véritable nœud de contrôle Ansible : installe <code>ansible-core</code>, déploie des playbooks d'exemple et un script d'inventaire dynamique qui interroge la liste des systèmes de <code>uyuni</code>/<code>smlm</code>, et configure l'accès SSH au reste du laboratoire. Se combine avec le champ <code>*_ansible_control_nodes</code> de <code>uyuni</code>/<code>smlm</code>, qui active côté serveur le droit « Ansible Control Node »</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Transfère et exécute un playbook Ansible quelconque (un fichier local, une URL http(s) ou nfs://, ou du YAML en ligne) depuis un <code>ansible_control_node</code> déjà provisionné, avec son propre inventaire dynamique</td>
 </tr>
 </tbody>
 </table>
@@ -1291,6 +1299,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Serveur Grafana autonome (conteneur podman, sans Kubernetes) : provisionne automatiquement une source de données Prometheus et, en option, le tableau de bord communautaire officiel de Grafana Labs pour les exportateurs d'un serveur <code>smlm</code>/<code>uyuni</code></td>
+</tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Exécute une ou plusieurs commandes shell, dans l'ordre, sur le nœud cible, ou un script entier récupéré depuis un fichier local ou une URL http(s) ou nfs:// : une voie générique pour une étape de provisionnement ponctuelle qui ne justifie pas son propre module</td>
 </tr>
 </tbody>
 </table>

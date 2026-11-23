@@ -140,5 +140,9 @@ if __name__ == "__main__":
     version:` line alone is not enough, `scripts/schema_versions.py record` has to run too,
     and CI checks this on a clean tree even when your own local pre-commit run happened to
     pass with an untracked file still sitting in your working tree.
-11. **Docs**: add a row to the README's addon table (and any other doc listing addons) in
-    the same change.
+11. **Docs**: add a row to the add-on table of every `docs/src/*.html` page, all eight of
+    them, and raise the add-on counter each page carries as
+    `<span data-addon-count>N</span>` (`<!-- addon-count -->N` in README.md); then rebuild
+    with `python3.11 docs/build_docs.py`. `tests/checks/138_addon_docs_coverage.sh` fails
+    on an add-on with no row, on a counter that no longer matches, and on a source page
+    that was never rebuilt, so this is not optional and not a follow-up.
