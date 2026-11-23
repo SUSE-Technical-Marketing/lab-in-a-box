@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 LiteLLM proxy (https://docs.litellm.ai): an OpenAI-compatible endpoint in front of one hosted model, installed from the
-litellm-helm chart. Used by the anthropic, gemini, kimi and openai add-ons.
+litellm-helm chart. Used by the anthropic, gemini, kimi and openai add-ons, and by every add-on in PROVIDERS below,
+each of which is a script that names its provider and delegates the whole install to install_provider().
 
 The proxy runs without a database (no virtual keys or spend tracking). Clients authenticate with the master key kept in
 the <release>-master-key secret; the provider's API key is read from the <release>-provider secret.
@@ -17,6 +18,95 @@ from lab_creation import ssh_run
 
 DEFAULT_CHART = "oci://ghcr.io/berriai/litellm-helm"
 PORT = 4000
+
+# One hosted provider per add-on that delegates to install_provider(): its name as both the add-on and its JSON
+# section, then (label, LiteLLM route, where its API key comes from).
+#
+# The route is the prefix LiteLLM normally expects in a model id, e.g. "groq/llama-3.3-70b-versatile". It is
+# documentation, not a rule: no add-on validates a model against it, because LiteLLM's own routes move and a
+# provider may also be reached as an OpenAI-compatible endpoint, with an "openai/" model and <name>_api_base. Each
+# add-on's <name>_model field is MANDATORY for the same reason: a model id this project guessed would fail at the
+# provider, long after the install reported success. Confirm both at https://docs.litellm.ai/docs/providers.
+PROVIDERS = {
+    "ai21": ("AI21", "ai21/", "https://studio.ai21.com"),
+    "cerebras": ("Cerebras", "cerebras/", "https://cloud.cerebras.ai"),
+    "cohere": ("Cohere", "cohere/", "https://dashboard.cohere.com"),
+    "dashscope": ("Alibaba Cloud DashScope", "dashscope/", "https://dashscope.console.aliyun.com"),
+    "deepinfra": ("DeepInfra", "deepinfra/", "https://deepinfra.com/dash/api_keys"),
+    "ernie": ("Baidu ERNIE", "ernie/", "https://console.bce.baidu.com"),
+    "fireworks": ("Fireworks AI", "fireworks_ai/", "https://fireworks.ai"),
+    "groq": ("Groq", "groq/", "https://console.groq.com"),
+    "huggingface": ("Hugging Face Inference", "huggingface/", "https://huggingface.co/settings/tokens"),
+    "hyperbolic": ("Hyperbolic", "hyperbolic/", "https://app.hyperbolic.xyz"),
+    "jina": ("Jina AI embeddings", "jina_ai/", "https://jina.ai"),
+    "nebius": ("Nebius AI Studio", "nebius/", "https://studio.nebius.com"),
+    "novita": ("Novita AI", "novita/", "https://novita.ai"),
+    "openrouter": ("OpenRouter", "openrouter/", "https://openrouter.ai/keys"),
+    "perplexity": ("Perplexity", "perplexity/", "https://www.perplexity.ai/settings/api"),
+    "replicate": ("Replicate", "replicate/", "https://replicate.com/account/api-tokens"),
+    "sambanova": ("SambaNova Cloud", "sambanova/", "https://cloud.sambanova.ai"),
+    "together": ("Together AI", "together_ai/", "https://api.together.ai"),
+    "voyage": ("Voyage AI embeddings", "voyage/", "https://dash.voyageai.com"),
+    "xai": ("xAI Grok", "xai/", "https://console.x.ai"),
+    "zai": ("Z.ai GLM", "zai/", "https://z.ai"),
+}
+
+
+def provider(name: str) -> tuple:
+    """(label, route, console URL) of the hosted provider `name`, from PROVIDERS."""
+    if name not in PROVIDERS:
+        raise KeyError("no LiteLLM provider '{}' — add it to litellm_common.PROVIDERS".format(name))
+    return PROVIDERS[name]
+
+
+def validate_provider(v, section: str) -> None:
+    """
+    Validate the JSON section of a provider add-on: its key and its model are both required, and the rest follows
+    the shapes every add-on's fields do. The model is required rather than defaulted, see PROVIDERS.
+    """
+    v.vreq(section, "{}_api_key".format(section))
+    v.vreq(section, "{}_model".format(section))
+    v.vns(section)
+    v.vver(section)
+    v.vurl_field(section, "{}_api_base".format(section))
+
+
+def install_provider(definition: dict, section: str) -> str:
+    """
+    Install the LiteLLM proxy for the provider add-on `section` on the lab's kcluster, register its hostname in
+    DNS, and return that hostname. The whole body of such an add-on's main(), so each one is its own header,
+    PLUGIN and provider name and nothing else.
+    """
+    import addon_common as ac
+    import k8s
+    from lab_creation import die, setup_helm
+
+    label, _route, console = provider(section)
+    cfg = definition.get(section, {}) or {}
+    for field in ("{}_api_key".format(section), "{}_model".format(section)):
+        if not cfg.get(field):
+            die("{}: {} is mandatory — the {} key comes from {}, and the model is named rather than defaulted "
+                "because a guessed model id fails at the provider, not here".format(section, field, label, console))
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        die("{}: this lab has no kcluster server node to install the proxy on".format(section))
+    vm_name, _ssh_cmd = target
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+
+    setup_helm(vm_name, clu_name, online=definition.get("common", {}).get("online") == "1")
+    fqdn = ".".join(p for p in (str(cfg.get("{}_shorthn".format(section)) or section), clu_name,
+                                clu_cfg.get("mydomain", "")) if p)
+    setup_litellm_proxy(vm_name, "{}-proxy".format(section.replace("_", "-")),
+                        cfg.get("{}_ns".format(section)) or section, fqdn, section,
+                        str(cfg["{}_model".format(section)]), str(cfg["{}_api_key".format(section)]),
+                        chart=cfg.get("{}_chart".format(section)) or "",
+                        version=cfg.get("{}_version".format(section)) or "",
+                        api_base=cfg.get("{}_api_base".format(section)) or "")
+    print("{} is proxied at http://{}/v1 — any OpenAI client reaches it there".format(label, fqdn))
+    ac.register_service_dns(definition, clu_name, fqdn)
+    return fqdn
 
 
 def _env_cmd(var: str, value: str, cmd: str) -> str:

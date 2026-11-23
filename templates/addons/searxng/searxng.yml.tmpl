@@ -1,0 +1,81 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: searxng
+spec:
+  replicas: ${searxng_replicas:-1}
+  selector:
+    matchLabels:
+      app: searxng
+  template:
+    metadata:
+      labels:
+        app: searxng
+    spec:
+      containers:
+        - name: searxng
+          image: ${searxng_image:-docker.io/searxng/searxng}:${searxng_version:-latest}
+          ports:
+            - name: http
+              containerPort: ${searxng_container_port:-8080}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng
+            - name: cache
+              mountPath: /var/cache/searxng
+      volumes:
+        - name: config
+          configMap:
+            name: ${searxng_configmap:-searxng-settings}
+        - name: cache
+          ${searxng_cache_volume}
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: searxng
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: ${searxng_port:-8080}
+      targetPort: http
+  selector:
+    app: searxng
+...
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: searxng
+  namespace: ${searxng_ns:-searxng}
+  labels:
+    app: searxng
+spec:
+  ${searxng_ingress_class_line}
+  rules:
+    - host: ${searxng_fqdn}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: searxng
+                port:
+                  number: ${searxng_port:-8080}
+...

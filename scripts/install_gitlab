@@ -68,7 +68,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import ssh_run, helm_repo_add, die  # noqa: E402
+from lab_creation import ssh_run, helm_repo_add, die, ensure_podman  # noqa: E402
 
 _CHART_HOSTS = ("gitlab", "registry", "minio", "kas")
 
@@ -100,11 +100,7 @@ def setup_gitlab_podman(hostname, cfg):
     root_password = creds["gitlab_root_password"]
 
     print("- Installing podman (if not already present)")
-    ssh_run(hostname, "command -v podman >/dev/null 2>&1 || "
-                       "(zypper --non-interactive install -y podman 2>/dev/null || "
-                       "apt-get install -y podman 2>/dev/null || "
-                       "dnf install -y podman 2>/dev/null)", check=False)
-    ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+    ensure_podman(hostname)
 
     # GITLAB_OMNIBUS_CONFIG is GitLab's own real mechanism for injecting
     # Ruby-DSL Omnibus config lines at first boot — external_url is

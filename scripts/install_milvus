@@ -36,6 +36,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "milvus"
+APPCOLLECTION_PREFIX = "milvus"
 
 PLUGIN = {
     "name": "milvus",
@@ -139,12 +140,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(cfg, "milvus", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "milvus_appcollection_user": "appcollection_user",
-            "milvus_appcollection_password": "appcollection_password",
-        }, account_key="milvus_appcollection_account")
-        user = creds["milvus_appcollection_user"]
-        password = creds["milvus_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("milvus: milvus_source is \"appcollection\", so milvus_appcollection_user and "
                 "milvus_appcollection_password are needed — set them, set milvus_appcollection_account "

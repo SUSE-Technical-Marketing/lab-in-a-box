@@ -1,0 +1,102 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install a working XFCE desktop on a lab node, with the distribution's own packages
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "xfce" — XFCE desktop on a node, installed from the distribution's own repositories
+#   xfce_access          : [OPTIONAL] how the desktop is reached: "console" (default) serves nothing over the
+#                          network and is seen on the node's own screen (the hypervisor's display); "xrdp" serves it
+#                          over RDP; "vnc" serves the console display over VNC with x11vnc, without a password
+#   xfce_port            : [OPTIONAL] TCP port of xrdp (default: 3389) or vnc (default: 5900); ignored for console
+#   xfce_extra_packages  : [OPTIONAL] list of extra packages installed in the same transaction, named as this
+#                          node's own distribution names them (e.g. ["firefox"]); one it does not have is skipped
+#
+# The desktop packages, and which distribution ships them, are libs/desktop_common.py's DESKTOPS table, so another
+# desktop environment is an entry there rather than another add-on. The install dies with a "does not distribute"
+# message naming the missing package when the node's repositories have no XFCE.
+#
+# Target node(s): every node listing "xfce" in its own addons[] list, each node's config read through
+# k8s.addon_node_config(). No Kubernetes cluster is involved.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "xfce",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "aux_services": [],
+}
+
+import os
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+import desktop_common as desktop  # noqa: E402
+from lab_creation import detect_os  # noqa: E402
+
+
+_DESKTOP = "xfce"
+
+
+def _validate(v):
+    cfg = v.definition.get("xfce", {}) or {}
+    access = str(cfg.get("xfce_access") or desktop.ACCESS_CONSOLE).strip().lower()
+    if access not in desktop.ACCESS_METHODS:
+        v.errors.append("[ERROR] xfce.xfce_access='{}': must be one of {}".format(
+            cfg.get("xfce_access"), ", ".join(desktop.ACCESS_METHODS)))
+    v.vport("xfce", "xfce_port")
+    extra = cfg.get("xfce_extra_packages")
+    if extra and not isinstance(extra, list):
+        v.errors.append("[ERROR] xfce.xfce_extra_packages must be a list of package names")
+
+
+def setup_xfce(hostname: str, cfg: dict) -> int:
+    """Install XFCE on `hostname` from its own distribution's packages and make it reachable; returns the TCP port
+    serving it, or 0 when only the node's console shows it."""
+    os_info = detect_os(hostname)
+    access = str(cfg.get("xfce_access") or desktop.ACCESS_CONSOLE).strip().lower()
+    port = int(cfg.get("xfce_port") or 0)
+
+    desktop.install_desktop(hostname, _DESKTOP, extra_packages=cfg.get("xfce_extra_packages") or [],
+                            os_id=os_info.get("id", ""))
+    port = desktop.enable_access(hostname, access=access, port=port)
+
+    print("XFCE installed on {}".format(hostname))
+    if access == desktop.ACCESS_CONSOLE:
+        print("Shown on the node's own screen — open it from the hypervisor (virt-viewer, virt-manager or the "
+              "backend's console) — no network service listens for it")
+    elif access == desktop.ACCESS_XRDP:
+        print("Reachable over RDP at {}:{}".format(hostname, port))
+    else:
+        print("Reachable over VNC at {}:{}, with no password — a lab network only".format(hostname, port))
+    return port
+
+
+def main():
+    usage = ("Usage: {0} <lab-file> [<vm_name>]\n"
+             "       Installs XFCE on every node listing 'xfce' in its own addons[]").format(Path(__file__).name)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "xfce", vm_name=env_vm_name):
+        setup_xfce(vm_name, k8s.addon_node_config(definition, "xfce", vm_name))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,60 @@
+{
+ "fields": {
+  "mcpo_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_hot_reload": {
+   "default": "false",
+   "enum": [
+    "true",
+    "false"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_image": {
+   "default": "ghcr.io/open-webui/mcpo",
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_ingress_class": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_ns": {
+   "default": "mcpo",
+   "required": false,
+   "type": "namespace"
+  },
+  "mcpo_port": {
+   "default": "8000",
+   "required": false,
+   "type": "port"
+  },
+  "mcpo_replicas": {
+   "default": "1",
+   "required": false,
+   "type": "integer"
+  },
+  "mcpo_servers": {
+   "default": "a \"memory\" server, npx -y @modelcontextprotocol/server-memory",
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_shorthn": {
+   "default": "mcpo",
+   "required": false,
+   "type": "string"
+  },
+  "mcpo_version": {
+   "default": "main",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:mcpo",
+ "version": "1.0"
+}

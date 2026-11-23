@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "deepinfra_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "deepinfra_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "deepinfra_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "deepinfra_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "deepinfra_ns": {
+   "default": "deepinfra",
+   "required": false,
+   "type": "namespace"
+  },
+  "deepinfra_shorthn": {
+   "default": "deepinfra",
+   "required": false,
+   "type": "string"
+  },
+  "deepinfra_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:deepinfra",
+ "version": "1.0"
+}

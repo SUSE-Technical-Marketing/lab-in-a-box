@@ -19,6 +19,14 @@ sys.path.insert(0, str(_REPO / "scripts"))
 import apps  # noqa: E402
 inc = apps.load_addon_module("install_nextcloud", str(_REPO / "scripts"))  # no .py: loaded by path
 
+# lab_creation's own package helpers (install_packages/package_manager/ensure_podman) call lab_creation.ssh_run, not
+# inc's copy of it, so the fake this test installs on inc is routed there too. Resolved per call, so it
+# follows whatever inc.ssh_run is at the time.
+import lab_creation as _lc  # noqa: E402
+_lc.ssh_run = lambda host, cmd, **kw: inc.ssh_run(host, cmd, **kw)
+_lc.wait_for_transactional_update_lock = lambda host, timeout=600: None
+
+
 failures = []
 
 

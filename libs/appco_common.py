@@ -46,6 +46,25 @@ def from_appcollection(cfg: dict, prefix: str, default: str = SOURCE_UPSTREAM) -
     return chart_source(cfg, prefix, default) == SOURCE_APPCOLLECTION
 
 
+def credentials(cfg: dict, prefix: str) -> tuple:
+    """
+    (user, access token) of the Application Collection account an add-on pulls its chart with: from the
+    "appcollection" credential file the lab names, from the single such file in the store, or from the add-on's own
+    <prefix>_appcollection_user/<prefix>_appcollection_password fields. Either part is "" when it is set nowhere.
+
+    Every add-on resolves the account through this one function, because resolve_credential()'s field map reads
+    {the credential file's own field: the add-on's own field} and the two names are easy to transpose: a map built
+    the other way round silently resolves to "" from both the file and the lab definition.
+    """
+    from addon_common import resolve_credential
+
+    resolved = resolve_credential(cfg, "appcollection", {
+        "appcollection_user": "{}_appcollection_user".format(prefix),
+        "appcollection_password": "{}_appcollection_password".format(prefix),
+    }, account_key="{}_appcollection_account".format(prefix))
+    return str(resolved.get("appcollection_user") or ""), str(resolved.get("appcollection_password") or "")
+
+
 def appcollection_chart(slug: str, registry: str = "") -> str:
     """The OCI reference of the Application Collection's chart `slug` (its slug_name at https://apps.rancher.io)."""
     return "oci://{}/charts/{}".format((registry or DEFAULT_REGISTRY).rstrip("/"), slug)

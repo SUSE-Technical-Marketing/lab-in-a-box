@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "voyage_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "voyage_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "voyage_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "voyage_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "voyage_ns": {
+   "default": "voyage",
+   "required": false,
+   "type": "namespace"
+  },
+  "voyage_shorthn": {
+   "default": "voyage",
+   "required": false,
+   "type": "string"
+  },
+  "voyage_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:voyage",
+ "version": "1.0"
+}

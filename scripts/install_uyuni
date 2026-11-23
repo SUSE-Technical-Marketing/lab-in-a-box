@@ -149,7 +149,7 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import ssh_run, reboot_vm, check_ssh_conn, die  # noqa: E402
+from lab_creation import ssh_run, reboot_vm, check_ssh_conn, die, install_packages  # noqa: E402
 # The shared mgradm helpers are in libs/mgradm_common.py, and they are imported here under their original names.
 from mgradm_common import (  # noqa: E402
     run_install_with_pg_hba_guard as _run_install_with_pg_hba_guard,
@@ -176,8 +176,9 @@ def setup_uyuni(hostname, virt_srv, cfg):
         die("could not add/refresh the Uyuni server repository on '{}'".format(hostname))
 
     print("- Installing mgradm tooling")
-    ssh_run(hostname, "transactional-update --quiet pkg install -y mgradm mgradm-bash-completion "
-                       "mgrctl mgrctl-bash-completion uyuni-storage-setup-server")
+    # reboot=False: the reboot below goes through the hypervisor instead.
+    install_packages(hostname, ["mgradm", "mgradm-bash-completion", "mgrctl", "mgrctl-bash-completion",
+                                "uyuni-storage-setup-server"], reboot=False)
     reboot_vm(virt_srv, hostname)
     time.sleep(5)
     check_ssh_conn(hostname)

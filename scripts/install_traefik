@@ -32,6 +32,7 @@ __version__ = "__LABVERSION__"
 
 # Traefik Proxy is this product in the SUSE Application Collection (its slug at https://apps.rancher.io).
 APPCOLLECTION_CHART = "traefik-proxy"
+APPCOLLECTION_PREFIX = "traefik"
 
 PLUGIN = {
     "name": "traefik",
@@ -124,12 +125,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     chart, extra_set = "", ""
     if appco.from_appcollection(cfg, "traefik", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "traefik_appcollection_user": "appcollection_user",
-            "traefik_appcollection_password": "appcollection_password",
-        }, account_key="traefik_appcollection_account")
-        user = creds["traefik_appcollection_user"]
-        password = creds["traefik_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("traefik: traefik_source is \"appcollection\", so traefik_appcollection_user and "
                 "traefik_appcollection_password are needed — set them, set traefik_appcollection_account to an "

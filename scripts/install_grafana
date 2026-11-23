@@ -75,7 +75,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import ssh_run, die  # noqa: E402
+from lab_creation import ssh_run, die, ensure_podman  # noqa: E402
 
 
 def _validate(v):
@@ -142,11 +142,7 @@ def setup_grafana(hostname, cfg):
             "(its auto-generated smlm job is \"smlm-<hostname>\")")
 
     print("- Installing podman (if not already present)")
-    ssh_run(hostname, "command -v podman >/dev/null 2>&1 || "
-                       "(zypper --non-interactive install -y podman 2>/dev/null || "
-                       "apt-get install -y podman 2>/dev/null || "
-                       "dnf install -y podman 2>/dev/null)", check=False)
-    ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+    ensure_podman(hostname)
 
     ssh_run(hostname, "mkdir -p /etc/grafana/provisioning/datasources /etc/grafana/provisioning/dashboards")
 

@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "hyperbolic_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hyperbolic_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "hyperbolic_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "hyperbolic_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "hyperbolic_ns": {
+   "default": "hyperbolic",
+   "required": false,
+   "type": "namespace"
+  },
+  "hyperbolic_shorthn": {
+   "default": "hyperbolic",
+   "required": false,
+   "type": "string"
+  },
+  "hyperbolic_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:hyperbolic",
+ "version": "1.0"
+}

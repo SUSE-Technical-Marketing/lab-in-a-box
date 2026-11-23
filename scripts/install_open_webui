@@ -3,7 +3,7 @@
 # Author/s: Raul Mahiques
 # License: GPLv3
 #
-# Schema version: 2.0
+# Schema version: 2.1
 #
 # JSON section: "open_webui" — Chat frontend for Ollama / OpenAI-compatible endpoints
 #   open_webui_version         : [OPTIONAL] Helm chart version (empty = latest)
@@ -39,6 +39,14 @@
 #                                 as open_webui_openai_base_urls (each proxy addon in this project
 #                                 accepts any bearer token, so "sk-anything" works unless the proxy was
 #                                 configured with LiteLLM's own key enforcement)
+#   open_webui_searxng_url     : [OPTIONAL] SearXNG instance to use as the web-search backend, which turns web
+#                                 search on. Derived automatically as
+#                                 http://searxng.<searxng_ns>.svc.cluster.local:<searxng_port>/search?q=<query>
+#                                 when this lab's own "searxng" addon section is present and installs on the
+#                                 kcluster; set it explicitly for an instance outside the cluster, e.g. one the
+#                                 searxng addon installed on a node with podman
+#                                 (http://node1.mydemo.lab:8080/search?q=<query>). The instance must serve the
+#                                 json format, which the searxng addon's own default does
 #
 # The chart's PVCs need a StorageClass. requires_cluster below ("storageclass") makes
 # cluster_plan() (libs/k8s.py) add one automatically on a distribution that doesn't bundle its own
@@ -49,6 +57,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "open-webui"
+APPCOLLECTION_PREFIX = "open_webui"
 
 PLUGIN = {
     "name": "open_webui",
@@ -94,10 +103,25 @@ def setup_open_webui_repo(hostname, open_webui_rel=None, open_webui_repo_url=Non
     helm_repo_add(hostname, open_webui_rel or "open-webui", open_webui_repo_url or "https://helm.openwebui.com/")
 
 
+def searxng_query_url(definition, open_webui_searxng_url=None):
+    """
+    The SEARXNG_QUERY_URL for Open WebUI's web search: the field when the lab sets one, else the in-cluster Service
+    URL of this lab's own "searxng" addon when it installs on the kcluster, else "" (web search stays off).
+    """
+    if open_webui_searxng_url:
+        return str(open_webui_searxng_url)
+    cfg = definition.get("searxng")
+    if cfg is None or str((cfg or {}).get("searxng_deployment") or "").strip().lower() == "podman":
+        return ""
+    return "http://searxng.{}.svc.cluster.local:{}/search?q=<query>".format(
+        (cfg or {}).get("searxng_ns") or "searxng", (cfg or {}).get("searxng_port") or "8080")
+
+
 def setup_open_webui(hostname, clu_name, mydomain, definition, open_webui_rel=None, open_webui_ns=None,
                       open_webui_version=None, open_webui_shorthn=None, open_webui_ollama_url=None,
-                      open_webui_openai_base_urls=None, open_webui_openai_api_keys=None, extra_set=""):
-    """Install Open WebUI, wired to this lab's own Ollama/LiteLLM-proxy addons where present."""
+                      open_webui_openai_base_urls=None, open_webui_openai_api_keys=None,
+                      open_webui_searxng_url=None, extra_set=""):
+    """Install Open WebUI, wired to this lab's own Ollama/LiteLLM-proxy/SearXNG addons where present."""
     rel = open_webui_rel or "open-webui"
     ns = open_webui_ns or "open-webui"
     ver_arg = "--version {}".format(shlex.quote(open_webui_version)) if open_webui_version else ""
@@ -125,6 +149,13 @@ def setup_open_webui(hostname, clu_name, mydomain, definition, open_webui_rel=No
     if base_urls:
         set_args.append("--set enableOpenaiApi=true")
 
+    searxng_url = searxng_query_url(definition, open_webui_searxng_url)
+    if searxng_url:
+        for i, (name, value) in enumerate((("ENABLE_WEB_SEARCH", "true"), ("WEB_SEARCH_ENGINE", "searxng"),
+                                           ("SEARXNG_QUERY_URL", searxng_url))):
+            set_args.append("--set extraEnvVars[{}].name={}".format(i, name))
+            set_args.append("--set extraEnvVars[{}].value={}".format(i, shlex.quote(value)))
+
     ssh_run(hostname,
             "helm upgrade -i open-webui {}/open-webui --namespace {} --create-namespace {} "
             "{}{}".format(rel, ns, " ".join(set_args), ver_arg, extra_set))
@@ -135,6 +166,8 @@ def setup_open_webui(hostname, clu_name, mydomain, definition, open_webui_rel=No
         print("Attached Ollama endpoint: {}".format(ollama_url))
     if base_urls:
         print("Attached OpenAI-compatible endpoint(s): {}".format(", ".join(base_urls)))
+    if searxng_url:
+        print("Web search enabled, through SearXNG at: {}".format(searxng_url))
     if not ollama_url and not base_urls:
         print("No ollama/OpenAI-compatible endpoint configured — using the chart's own bundled Ollama subchart default.")
     return fqdn
@@ -162,12 +195,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(cfg, "open_webui", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "open_webui_appcollection_user": "appcollection_user",
-            "open_webui_appcollection_password": "appcollection_password",
-        }, account_key="open_webui_appcollection_account")
-        user = creds["open_webui_appcollection_user"]
-        password = creds["open_webui_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("open_webui: open_webui_source is \"appcollection\", so open_webui_appcollection_user and "
                 "open_webui_appcollection_password are needed — set them, set open_webui_appcollection_account "
@@ -186,6 +214,7 @@ def main():
                              open_webui_ollama_url=cfg.get("open_webui_ollama_url"),
                              open_webui_openai_base_urls=cfg.get("open_webui_openai_base_urls"),
                              open_webui_openai_api_keys=cfg.get("open_webui_openai_api_keys"),
+                             open_webui_searxng_url=cfg.get("open_webui_searxng_url"),
                              extra_set=extra_set)
     ac.register_service_dns(definition, clu_name, fqdn)
 

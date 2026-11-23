@@ -25,6 +25,7 @@ __version__ = "__LABVERSION__"
 
 # SUSE Storage is this product in the SUSE Application Collection (its slug at https://apps.rancher.io).
 APPCOLLECTION_CHART = "suse-storage"
+APPCOLLECTION_PREFIX = "lh"
 
 PLUGIN = {
     "name": "longhorn",
@@ -60,7 +61,7 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import versions  # noqa: E402
-from lab_creation import setup_helm, helm_repo_add, ssh_run, die  # noqa: E402
+from lab_creation import setup_helm, helm_repo_add, ssh_run, die, install_packages  # noqa: E402
 import appco_common as appco  # noqa: E402
 
 
@@ -116,8 +117,8 @@ def setup_lh(hostname, clu_name, mydomain, lh_rel=None, lh_shorthn=None, lh_vers
     rel = lh_rel or "longhorn"
     fqdn = "{}.{}.{}".format(lh_shorthn or "longhorn", clu_name, mydomain)
 
-    ssh_run(hostname, "zypper install -y open-iscsi cryptsetup; "
-                       "systemctl enable --now iscsid.service ; modprobe iscsi_tcp")
+    install_packages(hostname, ["open-iscsi", "cryptsetup"])
+    ssh_run(hostname, "systemctl enable --now iscsid.service ; modprobe iscsi_tcp")
     ssh_run(hostname, ac.namespace_command("longhorn-system"))
     ssh_run(hostname,
             "helm upgrade -i longhorn {} {} --namespace longhorn-system "
@@ -203,12 +204,7 @@ def main():
     if appco.from_appcollection(cfg, "lh", appco.SOURCE_APPCOLLECTION):
         # SUSE Storage, the same product, from the SUSE Application Collection's OCI chart. It needs an account, so
         # the credential is resolved the same way every other external-service credential is.
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "lh_appcollection_user": "appcollection_user",
-            "lh_appcollection_password": "appcollection_password",
-        }, account_key="lh_appcollection_account")
-        user = creds["lh_appcollection_user"]
-        password = creds["lh_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("longhorn: lh_source is \"appcollection\", so lh_appcollection_user and "
                 "lh_appcollection_password are needed — set them, set lh_appcollection_account to an "

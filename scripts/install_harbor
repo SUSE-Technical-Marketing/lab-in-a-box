@@ -27,6 +27,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "harbor"
+APPCOLLECTION_PREFIX = "harbor"
 
 PLUGIN = {
     "name": "harbor",
@@ -138,12 +139,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(cfg, "harbor", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "harbor_appcollection_user": "appcollection_user",
-            "harbor_appcollection_password": "appcollection_password",
-        }, account_key="harbor_appcollection_account")
-        user = creds["harbor_appcollection_user"]
-        password = creds["harbor_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("harbor: harbor_source is \"appcollection\", so harbor_appcollection_user and "
                 "harbor_appcollection_password are needed — set them, set harbor_appcollection_account "

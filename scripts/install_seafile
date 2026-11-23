@@ -145,7 +145,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import ssh_run, helm_repo_add, die  # noqa: E402
+from lab_creation import ssh_run, helm_repo_add, die, ensure_podman  # noqa: E402
 from db_common import setup_mariadb_os  # noqa: E402
 
 _DEFAULT_IMAGE = "seafileltd/seafile-mc"
@@ -197,11 +197,7 @@ def setup_seafile_podman(hostname, cfg, virt_srv=None):
             "documented JWT_PRIVATE_KEY requirement)")
 
     print("- Installing podman (if not already present)")
-    ssh_run(hostname, "command -v podman >/dev/null 2>&1 || "
-                       "(zypper --non-interactive install -y podman 2>/dev/null || "
-                       "apt-get install -y podman 2>/dev/null || "
-                       "dnf install -y podman 2>/dev/null)", check=False)
-    ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+    ensure_podman(hostname)
 
     db_options = cfg.get("seafile_db_options") or {}
     db_root_password = cfg.get("seafile_db_root_password") or secrets.token_urlsafe(18)

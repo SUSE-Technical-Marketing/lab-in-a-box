@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "jina_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "jina_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "jina_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "jina_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "jina_ns": {
+   "default": "jina",
+   "required": false,
+   "type": "namespace"
+  },
+  "jina_shorthn": {
+   "default": "jina",
+   "required": false,
+   "type": "string"
+  },
+  "jina_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:jina",
+ "version": "1.0"
+}

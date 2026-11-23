@@ -34,7 +34,8 @@ import ipaddress
 import shlex
 from pathlib import Path
 
-from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_command,
+from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_command, install_packages,
+                          package_manager,
                           CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB)
 import ipalloc
 
@@ -54,16 +55,15 @@ _DNS_REGISTRY_PATH = _WG_KEY_DIR + "/overlay_dns"
 _ROUTES_SCRIPT_PATH = "/etc/lab-overlay-routes.sh"
 _ROUTES_UNIT_PATH = "/etc/systemd/system/lab-overlay-routes.service"
 
-# Same one-liner OR-chain convention already used by
-# scripts/install_ansible_control_node for ansible-core — zypper (SUSE),
-# apt (Debian/Ubuntu — the "wireguard" meta-package pulls wireguard-tools),
-# dnf (RHEL family) in that order, first one that exists on the node wins.
-_INSTALL_CMD = (
-    "command -v wg >/dev/null 2>&1 || "
-    "(zypper --non-interactive install -y wireguard-tools 2>/dev/null || "
-    "apt-get install -y wireguard 2>/dev/null || "
-    "dnf install -y wireguard-tools 2>/dev/null)"
-)
+# The package that brings `wg`, per package manager: Debian/Ubuntu call it "wireguard" (a meta-package that pulls
+# wireguard-tools), everyone else "wireguard-tools".
+_WG_PACKAGES = {
+    "apt-get": ["wireguard"],
+    "zypper": ["wireguard-tools"],
+    "transactional-update": ["wireguard-tools"],
+    "dnf": ["wireguard-tools"],
+    "yum": ["wireguard-tools"],
+}
 
 
 def site_name_for(backend_name, account):
@@ -136,8 +136,11 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
 
 
 def ensure_wg_installed(host):
-    """Idempotently installs wireguard-tools on `host` (no-op if `wg` already exists)."""
-    ssh_run(host, _INSTALL_CMD)
+    """Idempotently installs the package that provides `wg` on `host` (no-op if `wg` already exists)."""
+    if ssh_run(host, "command -v wg >/dev/null 2>&1", check=False).returncode == 0:
+        return
+    manager = package_manager(host)
+    install_packages(host, _WG_PACKAGES.get(manager, ["wireguard-tools"]), manager=manager)
 
 
 def generate_wg_keypair(host):

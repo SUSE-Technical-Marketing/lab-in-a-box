@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "openrouter_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openrouter_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "openrouter_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "openrouter_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "openrouter_ns": {
+   "default": "openrouter",
+   "required": false,
+   "type": "namespace"
+  },
+  "openrouter_shorthn": {
+   "default": "openrouter",
+   "required": false,
+   "type": "string"
+  },
+  "openrouter_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:openrouter",
+ "version": "1.0"
+}

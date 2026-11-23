@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "fireworks_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "fireworks_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "fireworks_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "fireworks_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "fireworks_ns": {
+   "default": "fireworks",
+   "required": false,
+   "type": "namespace"
+  },
+  "fireworks_shorthn": {
+   "default": "fireworks",
+   "required": false,
+   "type": "string"
+  },
+  "fireworks_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:fireworks",
+ "version": "1.0"
+}
