@@ -5,6 +5,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:ai21": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:ansible_control_node": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
@@ -38,6 +41,9 @@
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
    {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
   ],
+  "addon:cerebras": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:client_registration": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: client_registration_admin_pass, client_registration_server_ip, client_registration_server_node, client_registration_server_type."},
@@ -47,6 +53,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: codellama_model."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:cohere": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:colt": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -62,6 +71,12 @@
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
    {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless coredns_source says otherwise, with coredns_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs coredns_source \"upstream\", which the migration writes.", "migration": "coredns_2_0"}
   ],
+  "addon:dashscope": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
+  "addon:deepinfra": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:deepseek": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -70,6 +85,12 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: ds389_dm_password, ds389_image, ds389_ldap_nodeport, ds389_ldaps_nodeport, ds389_name, ds389_ns, ds389_storage_class, ds389_storage_size."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:ernie": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
+  "addon:fireworks": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:fleet": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version: configures Fleet in Rancher (workspace, cluster labels, cluster groups, GitRepos, and the documented rancher/fleet-examples repo)."}
@@ -102,6 +123,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: grafana_admin_password, grafana_image."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:groq": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:harbor": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
@@ -120,6 +144,12 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: home_assistant_image_tag, home_assistant_ns, home_assistant_rel, home_assistant_repo_url, home_assistant_shorthn, home_assistant_storage_class, home_assistant_storage_size."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:huggingface": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
+  "addon:hyperbolic": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:insecure_app": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
@@ -130,6 +160,9 @@
   "addon:jenkins": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "New jenkins_ns and jenkins_shorthn. Installs from <jenkins_rel>/jenkins with jenkins_version, through the chart's own ingress (service jenkins:8080) instead of an ingress to jenkins-server:443, and registers the hostname in DNS."}
+  ],
+  "addon:jina": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:kagent": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -198,6 +231,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: mistral_model."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:nebius": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:neuvector": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "nv_pvc_access: the controller's volume access mode, ReadWriteOnce by default so every storage class can provide it"}
@@ -210,6 +246,9 @@
   "addon:nginx": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
+  ],
+  "addon:novita": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:nv-demo-helm": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -240,9 +279,15 @@
   "addon:openldap": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:openrouter": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:openshell": [
    {"version": "1.0", "breaking": false, "changes": "Initial openshell addon: kubernetes (Helm chart) and host (upstream installer) modes"},
    {"version": "1.1", "breaking": false, "changes": "openshell_source: install the chart from the SUSE Application Collection"}
+  ],
+  "addon:perplexity": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:postgresql": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -269,6 +314,9 @@
    {"version": "2.2", "breaking": false, "changes": "rancher_import_clusters: Kubernetes clusters to import into this Rancher, each a kcluster of the same lab or a cluster reached through a given node"},
    {"version": "2.3", "breaking": false, "changes": "rancher_install_appcollection: once Rancher is up, also register the SUSE Application Collection as a Rancher ClusterRepo, with no separate appcollection addon entry needed."}
   ],
+  "addon:replicate": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:rodeo_cli": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "rodeo_cli_install_lab_in_a_box opts in to installing lab-in-a-box itself on the node first, if not already present, since rodeo-cli needs something to deploy nested KVM labs into."},
@@ -277,6 +325,9 @@
   ],
   "addon:run_command": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "addon:sambanova": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "addon:seafile": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -331,6 +382,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:together": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:traefik": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "New traefik_ingress_class (default traefik-standalone, not the cluster default; the release serves only that class) and traefik_service_type (default NodePort), so the release runs next to the cluster's own ingress controller."},
@@ -352,6 +406,9 @@
   "addon:vllm": [
    {"version": "1.0", "breaking": false, "changes": "First version: the vLLM serving engine from its upstream chart or the SUSE Application Collection, behind an ingress"}
   ],
+  "addon:voyage": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:weaviate": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -363,8 +420,14 @@
   "addon:wordpress": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:xai": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
   "addon:xfce": [
    {"version": "1.0", "breaking": false, "changes": "Initial xfce addon: XFCE from the distribution's own packages, console/xrdp/vnc access"}
+  ],
+  "addon:zai": [
+   {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
   "config:automation.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. The automation node's own identity (network, hostname, vm/container/kubernetes shape) -- needed regardless of whether a KVM host is even involved."},

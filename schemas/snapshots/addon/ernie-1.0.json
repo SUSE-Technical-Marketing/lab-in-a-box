@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "ernie_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "ernie_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "ernie_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "ernie_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "ernie_ns": {
+   "default": "ernie",
+   "required": false,
+   "type": "namespace"
+  },
+  "ernie_shorthn": {
+   "default": "ernie",
+   "required": false,
+   "type": "string"
+  },
+  "ernie_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:ernie",
+ "version": "1.0"
+}

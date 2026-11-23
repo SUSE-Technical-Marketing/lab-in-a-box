@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "groq_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "groq_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "groq_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "groq_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "groq_ns": {
+   "default": "groq",
+   "required": false,
+   "type": "namespace"
+  },
+  "groq_shorthn": {
+   "default": "groq",
+   "required": false,
+   "type": "string"
+  },
+  "groq_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:groq",
+ "version": "1.0"
+}

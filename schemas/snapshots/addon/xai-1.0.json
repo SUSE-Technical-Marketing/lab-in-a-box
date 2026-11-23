@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "xai_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "xai_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "xai_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "xai_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "xai_ns": {
+   "default": "xai",
+   "required": false,
+   "type": "namespace"
+  },
+  "xai_shorthn": {
+   "default": "xai",
+   "required": false,
+   "type": "string"
+  },
+  "xai_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:xai",
+ "version": "1.0"
+}

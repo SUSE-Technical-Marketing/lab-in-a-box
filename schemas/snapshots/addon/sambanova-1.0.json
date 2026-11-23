@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "sambanova_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "sambanova_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "sambanova_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "sambanova_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "sambanova_ns": {
+   "default": "sambanova",
+   "required": false,
+   "type": "namespace"
+  },
+  "sambanova_shorthn": {
+   "default": "sambanova",
+   "required": false,
+   "type": "string"
+  },
+  "sambanova_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:sambanova",
+ "version": "1.0"
+}

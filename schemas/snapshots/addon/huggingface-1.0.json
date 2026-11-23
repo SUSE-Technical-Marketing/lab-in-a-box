@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "huggingface_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "huggingface_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "huggingface_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "huggingface_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "huggingface_ns": {
+   "default": "huggingface",
+   "required": false,
+   "type": "namespace"
+  },
+  "huggingface_shorthn": {
+   "default": "huggingface",
+   "required": false,
+   "type": "string"
+  },
+  "huggingface_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:huggingface",
+ "version": "1.0"
+}
