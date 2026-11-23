@@ -1,0 +1,89 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpo
+  namespace: ${mcpo_ns:-mcpo}
+  labels:
+    app: mcpo
+spec:
+  replicas: ${mcpo_replicas:-1}
+  selector:
+    matchLabels:
+      app: mcpo
+  template:
+    metadata:
+      labels:
+        app: mcpo
+      annotations:
+        lab-in-a-box.io/config-revision: "${mcpo_config_revision}"
+    spec:
+      containers:
+        - name: mcpo
+          image: ${mcpo_image:-ghcr.io/open-webui/mcpo}:${mcpo_version:-main}
+          # The image's entrypoint is mcpo itself; a shell wraps it so the API key reaches it from the
+          # Secret below instead of sitting in this pod's own specification.
+          command: ["/bin/sh", "-c"]
+          args:
+            - exec mcpo --config /etc/mcpo/config.json --port ${mcpo_container_port:-8000} --api-key "\$MCPO_API_KEY"${mcpo_extra_args}
+          env:
+            - name: MCPO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${mcpo_secret:-mcpo-api-key}
+                  key: MCPO_API_KEY
+          ports:
+            - name: http
+              containerPort: ${mcpo_container_port:-8000}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mcpo
+      volumes:
+        - name: config
+          configMap:
+            name: ${mcpo_configmap:-mcpo-config}
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpo
+  namespace: ${mcpo_ns:-mcpo}
+  labels:
+    app: mcpo
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: ${mcpo_port:-8000}
+      targetPort: http
+  selector:
+    app: mcpo
+...
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcpo
+  namespace: ${mcpo_ns:-mcpo}
+  labels:
+    app: mcpo
+spec:
+  ${mcpo_ingress_class_line}
+  rules:
+    - host: ${mcpo_fqdn}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcpo
+                port:
+                  number: ${mcpo_port:-8000}
+...

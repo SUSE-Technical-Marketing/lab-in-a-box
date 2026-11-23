@@ -1,0 +1,91 @@
+{
+ "fields": {
+  "openshell_agent_sandbox": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_agent_sandbox_url": {
+   "default": "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.11/sandbox.yaml",
+   "required": false,
+   "type": "url"
+  },
+  "openshell_allow_unauthenticated": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_appcollection_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_appcollection_chart": {
+   "default": "openshell",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_appcollection_password": {
+   "default": "",
+   "required": false,
+   "type": "password"
+  },
+  "openshell_appcollection_user": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_chart": {
+   "default": "oci://ghcr.io/nvidia/openshell/helm-chart",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_disable_tls": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_installer_url": {
+   "default": "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh",
+   "required": false,
+   "type": "url"
+  },
+  "openshell_mode": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_ns": {
+   "default": "openshell",
+   "required": false,
+   "type": "namespace"
+  },
+  "openshell_shorthn": {
+   "default": "openshell",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_source": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_storage_size": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_telemetry": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "openshell_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:openshell",
+ "version": "1.1"
+}

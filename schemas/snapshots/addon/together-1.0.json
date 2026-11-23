@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "together_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "together_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "together_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "together_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "together_ns": {
+   "default": "together",
+   "required": false,
+   "type": "namespace"
+  },
+  "together_shorthn": {
+   "default": "together",
+   "required": false,
+   "type": "string"
+  },
+  "together_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:together",
+ "version": "1.0"
+}

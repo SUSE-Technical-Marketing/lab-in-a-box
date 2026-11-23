@@ -3,7 +3,7 @@
 <ul>
 <li><strong>ملف واحد وأمر واحد.</strong> صف الأجهزة الافتراضية وعناقيد Kubernetes ‏(RKE2 أو K3s) والإضافات بأسلوب تصريحي. يبنيها <code>setup_lab.py</code> بترتيب الاعتماديات دون أن تشغّل <code>virt-install</code> أو Ansible يدويًا.</li>
 <li><strong>مختبر منزلي أو سحابي، والتعريف نفسه.</strong> تعمل الأجهزة الافتراضية للمختبر على مضيفات KVM تملكها، أو على Harvester HCI، أو على AWS وGoogle Cloud وAlibaba Cloud وHetzner وScaleway وUpCloud وOVHcloud وExoscale. يمكن أن يمتد المختبر على عدة مضيفات KVM، وأن يجمع سحابات ومواقع مختلفة عبر <a href="#cross-cloud-wireguard-overlay">شبكة WireGuard متراكبة بين السحابات</a>.</li>
-<li><strong>70 إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
+<li><strong><span data-addon-count>102</span> إضافة جاهزة.</strong> Rancher وLonghorn وNeuVector وHarbor وKeycloak وJenkins وArgo CD وSUSE Multi-Linux Manager/Uyuni وNextcloud وغيرها، إضافة إلى تطبيقات تجريبية ضعيفة عمدًا للتدريب على الأمن.</li>
 <li><strong>واجهة ويب تتبع الشيفرة.</strong> يبني <a href="#web-ui-lab-builder">lab-builder</a> كل نموذج من مخطط الإضافة نفسها، فيظهر أي حقل جديد في السكربت في الواجهة دون تعديل الواجهة الأمامية.</li>
 <li><strong>تجهيز قابل للتبديل.</strong> Ignition وCombustion لـ SLE Micro، وcloud-init لـ openSUSE وUbuntu، و<code>virt-customize</code> للصور القديمة، أو تثبيت آلي من صورة ISO للمثبّت (AutoYaST أو Kickstart أو Preseed أو AutoInstall).</li>
 <li><strong>بيانات الاعتماد خارج ملف المختبر.</strong> يمكن حفظ بيانات اعتماد السحابات والخدمات في ملفات مشفّرة لكل حساب (اشتقاق المفتاح بـ Argon2id ثم AES-256-GCM وChaCha20-Poly1305 على التوالي).</li>
@@ -1035,7 +1035,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">الإضافات المتاحة</h2>
 <p>يُشار إلى الإضافات بأسمائها في مصفوفة <code>addons</code> لعنقود kcluster أو لعقدة. ويجب أن يكون السكربت <code>install_&lt;name&gt;</code> المقابل في <code>PATH</code>.</p>
-<p><sub>انتقل إلى: <a href="#addons-k8s">Kubernetes وGitOps</a> · <a href="#addons-security">الأمن والامتثال</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">التخزين وقواعد البيانات</a> · <a href="#addons-collaboration">التعاون ومشاركة الملفات</a> · <a href="#addons-cicd">CI/CD والأدوات</a> · <a href="#addons-ai">الذكاء الاصطناعي / تعلم الآلة</a> · <a href="#addons-virt">المحاكاة الافتراضية</a> · <a href="#addons-demos">التطبيقات التجريبية</a> · <a href="#addons-games">الألعاب</a></sub></p>
+<p><sub>انتقل إلى: <a href="#addons-k8s">Kubernetes وGitOps</a> · <a href="#addons-security">الأمن والامتثال</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">التخزين وقواعد البيانات</a> · <a href="#addons-collaboration">التعاون ومشاركة الملفات</a> · <a href="#addons-cicd">CI/CD والأدوات</a> · <a href="#addons-ai">الذكاء الاصطناعي / تعلم الآلة</a> · <a href="#addons-virt">المحاكاة الافتراضية</a> · <a href="#addons-desktop">سطح المكتب</a> · <a href="#addons-demos">التطبيقات التجريبية</a> · <a href="#addons-games">الألعاب</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>منصة Kubernetes وGitOps</strong></summary>
@@ -1107,6 +1107,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>استضافة خوادم الألعاب المخصصة وتوسيعها (agones.dev)</td>
+</tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>يُطبّق بيانًا واحدًا أو أكثر من بيانات Kubernetes (ملف محلي، أو عنوان http(s) أو nfs://، أو YAML/JSON مضمّن) على kcluster بواسطة <code>kubectl apply</code>: مسار عام للموارد العابرة التي لا تستحق إضافة خاصة بها</td>
 </tr>
 </tbody>
 </table>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>يجهّز عقدة تحكم Ansible حقيقية: يثبّت <code>ansible-core</code>، وينشر أمثلة Playbook وسكربت جرد ديناميكي يستعلم قائمة أنظمة <code>uyuni</code>/<code>smlm</code>، ويضبط الوصول عبر SSH إلى بقية المختبر. يُستخدم مع حقل <code>*_ansible_control_nodes</code> في <code>uyuni</code>/<code>smlm</code>، الذي يفعّل على الخادم ترخيص "Ansible Control Node"</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>يَنقل ويُشغّل أي دليل تشغيل Ansible (ملف محلي، أو عنوان http(s) أو nfs://، أو YAML مضمّن) عبر <code>ansible_control_node</code> مُهيَّأ مسبقًا، باستخدام مخزونه الديناميكي الخاص</td>
 </tr>
 </tbody>
 </table>
@@ -1292,6 +1300,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>خادم Grafana مستقل (حاوية podman دون Kubernetes): يضبط تلقائيًا مصدر بيانات Prometheus، واختياريًا لوحة المعلومات الرسمية من مجتمع Grafana Labs لمصدّرات خادم <code>smlm</code>/<code>uyuni</code></td>
 </tr>
+<tr>
+<td><code>run_command</code></td>
+<td>يُنفّذ أمرًا واحدًا أو أكثر من أوامر الصدفة، بالترتيب، على العقدة الهدف، أو نصًا برمجيًا كاملًا من ملف محلي أو عنوان http(s) أو nfs://: مسار عام لخطوة تهيئة عابرة لا تستحق إضافة خاصة بها</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1313,6 +1325,98 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>بيئة تشغيل محلية لنماذج اللغة الكبيرة</td>
 </tr>
 <tr>
+<td><a href="https://docs.vllm.ai/"><code>vllm</code></a></td>
+<td>محرك خدمة لنماذج اللغة الكبيرة متوافق مع OpenAI، لعُقد وحدات معالجة الرسومات</td>
+</tr>
+<tr>
+<td><a href="https://github.com/open-webui/mcpo"><code>mcpo</code></a></td>
+<td>ينشر خوادم MCP كنقاط نهاية أدوات OpenAPI</td>
+</tr>
+<tr>
+<td><a href="https://studio.ai21.com"><code>ai21</code></a></td>
+<td>وكيل لواجهة AI21 البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://cloud.cerebras.ai"><code>cerebras</code></a></td>
+<td>وكيل لواجهة Cerebras البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dashboard.cohere.com"><code>cohere</code></a></td>
+<td>وكيل لواجهة Cohere البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dashscope.console.aliyun.com"><code>dashscope</code></a></td>
+<td>وكيل لواجهة Alibaba Cloud DashScope البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://deepinfra.com/dash/api_keys"><code>deepinfra</code></a></td>
+<td>وكيل لواجهة DeepInfra البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.bce.baidu.com"><code>ernie</code></a></td>
+<td>وكيل لواجهة Baidu ERNIE البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://fireworks.ai"><code>fireworks</code></a></td>
+<td>وكيل لواجهة Fireworks AI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.groq.com"><code>groq</code></a></td>
+<td>وكيل لواجهة Groq البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/settings/tokens"><code>huggingface</code></a></td>
+<td>وكيل لواجهة Hugging Face Inference البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://app.hyperbolic.xyz"><code>hyperbolic</code></a></td>
+<td>وكيل لواجهة Hyperbolic البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://jina.ai"><code>jina</code></a></td>
+<td>وكيل لواجهة تضمينات Jina AI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://studio.nebius.com"><code>nebius</code></a></td>
+<td>وكيل لواجهة Nebius AI Studio البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://novita.ai"><code>novita</code></a></td>
+<td>وكيل لواجهة Novita AI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openrouter.ai/keys"><code>openrouter</code></a></td>
+<td>وكيل لواجهة OpenRouter البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.perplexity.ai/settings/api"><code>perplexity</code></a></td>
+<td>وكيل لواجهة Perplexity البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://replicate.com/account/api-tokens"><code>replicate</code></a></td>
+<td>وكيل لواجهة Replicate البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://cloud.sambanova.ai"><code>sambanova</code></a></td>
+<td>وكيل لواجهة SambaNova Cloud البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://api.together.ai"><code>together</code></a></td>
+<td>وكيل لواجهة Together AI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dash.voyageai.com"><code>voyage</code></a></td>
+<td>وكيل لواجهة تضمينات Voyage AI البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.x.ai"><code>xai</code></a></td>
+<td>وكيل لواجهة xAI Grok البرمجية (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://z.ai"><code>zai</code></a></td>
+<td>وكيل لواجهة Z.ai GLM البرمجية (LiteLLM)</td>
+</tr>
+<tr>
 <td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
 <td>نموذج DeepSeek، يُقدَّم عبر Ollama</td>
 </tr>
@@ -1329,6 +1433,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>وكيل لواجهة Anthropic Claude البرمجية (LiteLLM)</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>يثبّت أدوات Anthropic العميلة على العقدة: واجهة Claude Code، وحزمة Claude Agent SDK، وحزمة واجهة Anthropic البرمجية، وأداة <code>ant</code>، وفق <code>anthropic_tools_components</code>. مع <code>anthropic_tools_install_method</code> بقيمة <code>native</code> يُنفَّذ مثبِّت Anthropic لكل مستخدم مع تحديث تلقائي، أما <code>package</code> فيثبّت حزمة <code>claude-code</code> الموقَّعة على مستوى النظام كله من مستودع Anthropic. بيانات الاعتماد اختيارية: عادةً يسجّل الدخول من يستخدم الأداة. لا علاقة له بالإضافة <code>anthropic</code> أعلاه، فتلك وكيل أمام الواجهة البرمجية</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>وكيل لواجهة OpenAI البرمجية (LiteLLM)</td>
 </tr>
@@ -1341,8 +1449,16 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>واجهة دردشة لـ Ollama ونقاط النهاية المتوافقة مع OpenAI</td>
 </tr>
 <tr>
+<td><a href="https://searxng.org/"><code>searxng</code></a></td>
+<td>محرك بحث وصفي مستضاف ذاتيًا؛ خدمة البحث على الويب الخاصة بإضافة open_webui</td>
+</tr>
+<tr>
 <td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
 <td>Hermes Agent: وكيل الذكاء الاصطناعي الشخصي ذاتي التحسن من Nous Research (روبوت Telegram/Discord/Slack + لوحة معلومات ويب)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell: بيئة التشغيل الخاصة من NVIDIA التي تُبقي أساطيل وكلاء الذكاء الاصطناعي المستقلين داخل بيئات معزولة خاضعة لفحص السياسات. <code>openshell_mode: "kubernetes"</code> (الافتراضي) يثبّت البوابة والمشرف على الـ kcluster من مخطط Helm بصيغة OCI؛ و<code>"host"</code> يشغّل مثبّت المشروع الأصلي على كل عقدة تذكر <code>openshell</code> في <code>addons[]</code> الخاص بها، فيمنح تلك العقدة واجهة <code>openshell</code> وبوابة محلية دون أي Kubernetes</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
@@ -1411,6 +1527,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>سطح المكتب</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>سطح مكتب XFCE عامل على عقدة في المختبر، مُثبَّت من حِزم توزيعة العقدة نفسها. يحدد <code>xfce_access</code> طريقة الوصول: <code>console</code> (الافتراضي) لا ينشر أي شيء على الشبكة ويظهر على شاشة العقدة نفسها، و<code>xrdp</code> يقدّمه عبر RDP، و<code>vnc</code> يقدّم شاشة الطرفية عبر VNC باستخدام x11vnc. الحِزم التي توفّرها كل توزيعة مذكورة في جدول <code>DESKTOPS</code> في <code>libs/desktop_common.py</code>، لذا فإن أي بيئة سطح مكتب أخرى تكون مدخلًا هناك لا إضافة أخرى</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

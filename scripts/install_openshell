@@ -1,0 +1,256 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install OpenShell (https://github.com/NVIDIA/OpenShell), a private runtime that keeps
+# fleets of autonomous AI agents in policy-checked sandboxes
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.1
+#
+# JSON section: "openshell" — Sandboxed runtime for autonomous AI agents
+#   openshell_mode             : [OPTIONAL] "kubernetes" (default) installs the gateway and supervisor on the
+#                                kcluster from the OCI Helm chart; "host" runs the upstream installer on every node
+#                                listing "openshell" in its own addons[], giving that node the openshell CLI and a
+#                                local gateway with no Kubernetes involved
+#   openshell_ns               : [OPTIONAL] namespace (default: openshell) — kubernetes mode
+#   openshell_source           : [OPTIONAL] where the chart comes from, in kubernetes mode:
+#                                "upstream" (the default: the project's own OCI chart, which needs no account), or
+#                                "appcollection" for the SUSE Application Collection's chart. The Collection does not
+#                                carry OpenShell yet, so "appcollection" only works once it does — and then only if
+#                                its slug is openshell, which openshell_appcollection_chart overrides.
+#                                "appcollection" needs an Application Collection user and access token:
+#                                openshell_appcollection_user/openshell_appcollection_password, or
+#                                openshell_appcollection_account naming a credential file of kind "appcollection"
+#                                (one such file in the store is found on its own)
+#   openshell_appcollection_chart    : [OPTIONAL] the Collection's slug for OpenShell (default: openshell)
+#   openshell_appcollection_user     : [OPTIONAL] Application Collection user
+#   openshell_appcollection_password : [OPTIONAL] Application Collection access token
+#   openshell_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file
+#   openshell_chart            : [OPTIONAL] OCI location of the chart, for openshell_source "upstream"
+#                                (default: oci://ghcr.io/nvidia/openshell/helm-chart)
+#   openshell_version          : [OPTIONAL] chart version (empty = latest). The chart is versioned 0.0.x
+#                                independently of the OpenShell release it ships (v0.1.x), so a release tag is not a
+#                                valid value here
+#   openshell_shorthn          : [OPTIONAL] hostname prefix of the gateway (default: openshell)
+#   openshell_agent_sandbox    : [OPTIONAL] "true" (default) or "false" — apply the Agent Sandbox CRDs and controller
+#                                (agent-sandbox.sigs.k8s.io) before the chart. The chart does not ship them and the
+#                                gateway cannot create a sandbox without them; "false" is for a cluster that already
+#                                has them or is air-gapped
+#   openshell_agent_sandbox_url: [OPTIONAL] manifest applied for the above — pinned to a release of its own
+#                                (default: https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.11/sandbox.yaml)
+#   openshell_allow_unauthenticated : [OPTIONAL] "true" (default) or "false" — server.auth.allowUnauthenticatedUsers.
+#                                The gateway otherwise needs an OIDC provider or a trusted access proxy before any
+#                                client can reach it. "true" leaves it open to everyone who can reach the hostname
+#   openshell_disable_tls      : [OPTIONAL] "true" or "false" (default) — server.disableTls, plaintext gateway
+#   openshell_telemetry        : [OPTIONAL] "true" or "false" (default) — server.telemetryEnabled. Off by default so a
+#                                lab sends nothing upstream
+#   openshell_storage_size     : [OPTIONAL] size of the gateway's data volume (empty = the chart's own 1Gi)
+#   openshell_installer_url    : [OPTIONAL] installer fetched in "host" mode
+#                                (default: https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh)
+#
+# Target node(s): kubernetes mode installs on the first server node of the kcluster. host mode installs on every node
+# listing "openshell" in its own addons[] list, each node's config read through k8s.addon_node_config().
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "openshell",
+    # Deployment modes: "kubernetes" (default) is the Helm chart on a kcluster. "host" (openshell_mode) is the
+    # upstream installer on a node or bare-metal machine. The two are dispatched separately in main(), so both are
+    # listed here.
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["kubernetes", "os-native"],
+    "requires_kubernetes": None,
+    # The gateway runs as a StatefulSet with a data volume, and its API is reached through an ingress.
+    "requires_cluster": ["ingress", "storageclass"],
+    "aux_services": [],
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import primary  # noqa: E402
+import k8s  # noqa: E402
+from lab_creation import setup_helm, ssh_run, die  # noqa: E402
+import appco_common as appco  # noqa: E402
+
+
+_MODES = ("kubernetes", "host")
+_DEFAULT_CHART = "oci://ghcr.io/nvidia/openshell/helm-chart"
+_DEFAULT_SANDBOX_URL = ("https://github.com/kubernetes-sigs/agent-sandbox/releases/download/"
+                        "v1.0.11/sandbox.yaml")
+_DEFAULT_INSTALLER_URL = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh"
+_GATEWAY_SERVICE = "openshell:8080"
+_RELEASE = "openshell"
+# The Application Collection's slug for OpenShell, once it carries one. Overridable, because this cannot be verified
+# until the chart is actually published there.
+_DEFAULT_APPCOLLECTION_CHART = "openshell"
+APPCOLLECTION_PREFIX = "openshell"
+
+
+def _mode(cfg: dict) -> str:
+    return (cfg.get("openshell_mode") or "kubernetes").strip().lower()
+
+
+def _is_true(value, default: bool = False) -> bool:
+    """A JSON "true"/"false" field as a bool; an unset or empty field keeps `default`."""
+    if value is None or str(value) == "":
+        return default
+    return str(value).strip().lower() == "true"
+
+
+def _validate(v):
+    cfg = v.definition.get("openshell", {}) or {}
+    mode = _mode(cfg)
+    if mode not in _MODES:
+        v.errors.append("[ERROR] openshell.openshell_mode='{}': must be one of {}".format(
+            cfg.get("openshell_mode"), ", ".join(_MODES)))
+    source = str(cfg.get("openshell_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] openshell.openshell_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        if mode == "host":
+            v.errors.append("[ERROR] openshell.openshell_source='appcollection' installs a Helm chart, so it needs "
+                            "openshell_mode 'kubernetes' — host mode runs the upstream installer")
+        v.vreq_or_credential("openshell", "openshell_appcollection_user", "appcollection",
+                             account_field="openshell_appcollection_account")
+        v.vreq_or_credential("openshell", "openshell_appcollection_password", "appcollection",
+                             account_field="openshell_appcollection_account")
+    v.vns("openshell")
+    v.vver("openshell")
+    v.vurl_field("openshell", "openshell_agent_sandbox_url")
+    v.vurl_field("openshell", "openshell_installer_url")
+    for field in ("openshell_agent_sandbox", "openshell_allow_unauthenticated",
+                  "openshell_disable_tls", "openshell_telemetry"):
+        v.vbool("openshell", field)
+
+
+def chart_values(cfg: dict) -> list:
+    """--set flags for the gateway: how clients authenticate, how they connect, telemetry and the data volume."""
+    flags = [
+        "--set server.auth.allowUnauthenticatedUsers={}".format(
+            str(_is_true(cfg.get("openshell_allow_unauthenticated"), True)).lower()),
+        "--set server.disableTls={}".format(str(_is_true(cfg.get("openshell_disable_tls"))).lower()),
+        "--set server.telemetryEnabled={}".format(str(_is_true(cfg.get("openshell_telemetry"))).lower()),
+    ]
+    if cfg.get("openshell_storage_size"):
+        flags.append("--set server.dataStorageSize={}".format(shlex.quote(str(cfg["openshell_storage_size"]))))
+    return flags
+
+
+def setup_agent_sandbox(hostname: str, cfg: dict) -> bool:
+    """Apply the Agent Sandbox CRDs and controller the chart depends on; False when openshell_agent_sandbox is
+    "false" and nothing was applied."""
+    if not _is_true(cfg.get("openshell_agent_sandbox"), True):
+        return False
+    url = cfg.get("openshell_agent_sandbox_url") or _DEFAULT_SANDBOX_URL
+    ssh_run(hostname, "kubectl apply --server-side -f {}".format(shlex.quote(url)))
+    return True
+
+
+def setup_openshell(hostname: str, clu_name: str, mydomain: str, cfg: dict, chart: str = "", extra_set: str = "") -> str:
+    """Install the OpenShell gateway on the kcluster and expose its API through an ingress; returns the gateway
+    hostname.
+
+    `chart` and `extra_set` come from the Application Collection path (the Collection's own chart reference and the
+    --set flags that hand its image pull secret to the chart); empty means the upstream chart.
+    """
+    ns = cfg.get("openshell_ns") or "openshell"
+    chart = (chart or cfg.get("openshell_chart") or _DEFAULT_CHART).rstrip("/")
+    ver_arg = " --version {}".format(shlex.quote(cfg["openshell_version"])) if cfg.get("openshell_version") else ""
+    fqdn = "{}.{}.{}".format(cfg.get("openshell_shorthn") or "openshell", clu_name, mydomain)
+
+    ssh_run(hostname, ac.namespace_command(ns))
+    # The chart's pods run under the restricted Pod Security standard, which its namespace has to ask for.
+    ssh_run(hostname, "kubectl label namespace {} pod-security.kubernetes.io/enforce=restricted "
+                      "--overwrite".format(shlex.quote(ns)))
+    applied_sandbox = setup_agent_sandbox(hostname, cfg)
+    ssh_run(hostname, "helm upgrade --install {} {} --namespace {}{} --wait --timeout 10m "
+                      "--set pkiInitJob.serverDnsNames[0]={} {}{}".format(
+                          _RELEASE, chart, shlex.quote(ns), ver_arg, fqdn, " ".join(chart_values(cfg)), extra_set))
+    ssh_run(hostname, "kubectl create ingress openshell -n {} --rule={}/*={} --dry-run=client -o yaml "
+                      "| kubectl apply -f -".format(shlex.quote(ns), fqdn, _GATEWAY_SERVICE))
+
+    print("OpenShell installed. Namespace: {}".format(ns))
+    print("Gateway API available at: http://{}".format(fqdn))
+    print("Point the CLI at it with: openshell --gateway http://{}".format(fqdn))
+    if not applied_sandbox:
+        print("openshell_agent_sandbox is 'false': the gateway cannot create a sandbox until the Agent Sandbox CRDs "
+              "and controller exist on this cluster — kubectl apply -f {}".format(_DEFAULT_SANDBOX_URL))
+    if _is_true(cfg.get("openshell_allow_unauthenticated"), True):
+        print("openshell_allow_unauthenticated is 'true': the gateway accepts unauthenticated clients. Set it to "
+              "'false' and configure OIDC or a trusted access proxy for anything but a lab")
+    print("Sandbox isolation depends on the CNI enforcing egress NetworkPolicy in namespace '{}'. On a CNI that "
+          "does not, a sandbox can reach the network without passing supervisor policy".format(
+              cfg.get("openshell_ns") or "openshell"))
+    return fqdn
+
+
+def setup_openshell_host(hostname: str, cfg: dict) -> None:
+    """Install the openshell CLI and a local gateway on one node with the upstream installer."""
+    url = cfg.get("openshell_installer_url") or _DEFAULT_INSTALLER_URL
+    ssh_run(hostname, "curl -LsSf {} | sh".format(shlex.quote(url)))
+    print("OpenShell CLI and local gateway installed on {}".format(hostname))
+    print("Create the first sandbox with: ssh root@{} openshell sandbox create --name demo".format(hostname))
+
+
+def main():
+    usage = ("Usage: {0} <lab-file> [<vm_name>]\n"
+             "       openshell_mode 'kubernetes' installs the gateway on the kcluster, 'host' runs the upstream\n"
+             "       installer on every node listing 'openshell' in its own addons[]").format(Path(__file__).name)
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, usage=usage, plugin=PLUGIN)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+
+    cfg = definition.get("openshell", {}) or {}
+
+    # "host" deployment — the upstream installer directly on a node, no Kubernetes cluster involved. Dispatched via
+    # k8s.addon_nodes() (any node with "openshell" in its addons[] list), same shape as install_run_command's own
+    # main() — NOT k8s.first_server_node(), which only makes sense for the Helm-chart deployment below.
+    if _mode(cfg) == "host":
+        if appco.from_appcollection(cfg, "openshell", appco.SOURCE_UPSTREAM):
+            die("openshell: openshell_source \"appcollection\" installs a Helm chart, so it needs openshell_mode "
+                "\"kubernetes\" — host mode runs the upstream installer on the node itself")
+        env_vm_name = os.environ.get("_vm_name") or None
+        for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "openshell", vm_name=env_vm_name):
+            setup_openshell_host(vm_name, k8s.addon_node_config(definition, "openshell", vm_name))
+        return
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    online = definition.get("common", {}).get("online") == "1"
+
+    setup_helm(vm_name, clu_name, online=online)
+    chart, extra_set = "", ""
+    if appco.from_appcollection(cfg, "openshell", appco.SOURCE_UPSTREAM):
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
+        if not user or not password:
+            die("openshell: openshell_source is \"appcollection\", so openshell_appcollection_user and "
+                "openshell_appcollection_password are needed — set them, set openshell_appcollection_account to an "
+                "\"appcollection\" credential file, or leave all three unset with exactly one such file in the "
+                "store (https://apps.rancher.io)")
+        chart, extra_set = appco.prepare_appcollection_chart(
+            vm_name, cfg.get("openshell_appcollection_chart") or _DEFAULT_APPCOLLECTION_CHART,
+            cfg.get("openshell_ns") or "openshell", user, password)
+    fqdn = setup_openshell(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg, chart=chart, extra_set=extra_set)
+    ac.register_service_dns(definition, clu_name, fqdn)
+
+
+if __name__ == "__main__":
+    main()

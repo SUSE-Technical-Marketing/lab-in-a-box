@@ -101,7 +101,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
-from lab_creation import ssh_run, scp_to, helm_repo_add, die  # noqa: E402
+from lab_creation import ssh_run, scp_to, helm_repo_add, die, ensure_podman  # noqa: E402
 from db_common import setup_mariadb_os, setup_postgresql_os  # noqa: E402
 
 _DEFAULT_IMAGE = "nextcloud"
@@ -246,11 +246,7 @@ def setup_nextcloud_podman(hostname, cfg, virt_srv=None):
             admin_password))
 
     print("- Installing podman (if not already present)")
-    ssh_run(hostname, "command -v podman >/dev/null 2>&1 || "
-                       "(zypper --non-interactive install -y podman 2>/dev/null || "
-                       "apt-get install -y podman 2>/dev/null || "
-                       "dnf install -y podman 2>/dev/null)", check=False)
-    ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
+    ensure_podman(hostname)
 
     env_args = [
         "-e NEXTCLOUD_ADMIN_USER={}".format(shlex.quote(admin_user)),

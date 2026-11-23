@@ -1,0 +1,308 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install mcpo, which serves MCP servers as plain OpenAPI endpoints
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "mcpo" — MCP-to-OpenAPI proxy, so MCP servers are reachable as ordinary REST tools
+#   mcpo_servers        : [OPTIONAL] object of MCP servers to serve, in mcpo's own configuration
+#                           shape: each key is the name the server answers under, and each value is
+#                           either {"command": "...", "args": [...], "env": {...}} for a server mcpo
+#                           starts itself, or {"type": "sse"|"streamable-http", "url": "...",
+#                           "headers": {...}} for one that already runs elsewhere. The image carries
+#                           both uvx and npx, so a command-based entry needs nothing installed
+#                           (default: a "memory" server, npx -y @modelcontextprotocol/server-memory)
+#   mcpo_ns             : [OPTIONAL] namespace (default: mcpo)
+#   mcpo_image          : [OPTIONAL] container image (default: ghcr.io/open-webui/mcpo)
+#   mcpo_version        : [OPTIONAL] tag of that image (default: main)
+#   mcpo_replicas       : [OPTIONAL] replicas (default: 1). A server that keeps state in the pod,
+#                           such as the memory server, keeps a separate copy of it per replica
+#   mcpo_port           : [OPTIONAL] port the Service answers on (default: 8000)
+#   mcpo_api_key        : [OPTIONAL] bearer token every caller must present. Unset generates one and
+#                           prints it, so the endpoint is never left open by default
+#   mcpo_hot_reload     : [OPTIONAL] watch the configuration and reload it without a restart
+#                           (options: true, false) (default: "false")
+#   mcpo_shorthn        : [OPTIONAL] hostname prefix of the ingress (default: mcpo)
+#   mcpo_ingress_class  : [OPTIONAL] ingressClassName of the ingress. Unset takes the kcluster's own
+#                           ingress controller; "none" leaves the class off the ingress entirely
+#
+# Target: the first server node of the lab's kcluster. Each configured server gets its own path, so
+# "memory" is served at http://<mcpo_shorthn>.<kcluster>.<domain>/memory, its interactive
+# documentation at /memory/docs, and its OpenAPI schema under that same path — which is what makes
+# an MCP server usable by anything that speaks OpenAPI rather than MCP.
+#
+# Open WebUI takes such an endpoint as a tool server, added under its own settings with the URL and
+# the key this add-on prints. That is a step in Open WebUI's interface: this add-on deliberately
+# writes nothing into the open_webui add-on's own values, because Open WebUI's documented values
+# expose no key for a tool server, and inventing one would configure nothing.
+#
+# The Application Collection carries an open-webui-mcpo application. It is not offered here: its
+# chart's values cannot be read without an entitlement, and libs/appco_common.py's rule is that an
+# add-on whose Collection chart has not been checked against the flags it would pass keeps to the
+# source that has been. Read it with `helm show values oci://dp.apps.rancher.io/charts/open-webui-mcpo`
+# and add mcpo_source once its keys are known.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "mcpo",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    # The OpenAPI endpoints are reached through an ingress. No storage class: a server that keeps
+    # state keeps it in its own pod, which mcpo_replicas' description says.
+    "requires_cluster": ["ingress"],
+    "aux_services": [],
+    "check": True,
+}
+
+import hashlib
+import json
+import secrets
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import apps  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import process_template, ssh_output, ssh_run  # noqa: E402
+
+_DEFAULT_NS = "mcpo"
+_DEFAULT_IMAGE = "ghcr.io/open-webui/mcpo"
+_DEFAULT_VERSION = "main"
+_DEFAULT_REPLICAS = 1
+_DEFAULT_SHORTHN = "mcpo"
+# The port inside the image, which its Dockerfile exposes; mcpo_port is what the Service answers on.
+_CONTAINER_PORT = 8000
+_CONFIGMAP = "mcpo-config"
+_SECRET = "mcpo-api-key"
+_SECRET_KEY = "MCPO_API_KEY"
+_REMOTE_TYPES = ("sse", "streamable-http")
+_DEFAULT_SERVERS = {"memory": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"]}}
+
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+def servers(cfg: dict) -> dict:
+    """The MCP servers to serve, the default one when the lab names none."""
+    configured = cfg.get("mcpo_servers")
+    if not configured:
+        return dict(_DEFAULT_SERVERS)
+    return dict(configured)
+
+
+def config_json(cfg: dict) -> str:
+    """mcpo's own configuration file: the servers under the "mcpServers" key its --config reads."""
+    return json.dumps({"mcpServers": servers(cfg)}, indent=2, sort_keys=True) + "\n"
+
+
+def config_revision(config: str) -> str:
+    """
+    A short digest of the rendered configuration, carried as a pod annotation so that a changed
+    configuration rolls the pods: a ConfigMap's new contents alone never restart what mounted it.
+    """
+    return hashlib.sha256(config.encode("utf-8")).hexdigest()[:12]
+
+
+def api_key(cfg: dict) -> str:
+    """The bearer token callers present: the lab's own, or a fresh one, so the endpoint is never left open."""
+    return str(cfg.get("mcpo_api_key") or "") or secrets.token_urlsafe(24)
+
+
+def extra_args(cfg: dict) -> str:
+    """The flags beyond --config, --port and --api-key, as they are appended to mcpo's command line."""
+    return " --hot-reload" if str(cfg.get("mcpo_hot_reload") or "false").strip().lower() == "true" else ""
+
+
+def fqdn(cfg: dict, clu_name: str, mydomain: str) -> str:
+    """The hostname the ingress answers for."""
+    return ".".join(p for p in (str(cfg.get("mcpo_shorthn") or _DEFAULT_SHORTHN), clu_name, mydomain) if p)
+
+
+def server_urls(cfg: dict, host: str) -> list:
+    """(name, url) of every served MCP server, in the order they are printed."""
+    return [(name, "http://{}/{}".format(host, name)) for name in sorted(servers(cfg))]
+
+
+def template_variables(cfg: dict, host: str, config: str, ingress_class: str) -> dict:
+    """Everything the manifest template needs."""
+    return {
+        "mcpo_ns": ac.require_k8s_name(cfg, "mcpo_ns", _DEFAULT_NS),
+        "mcpo_image": str(cfg.get("mcpo_image") or _DEFAULT_IMAGE),
+        "mcpo_version": str(cfg.get("mcpo_version") or _DEFAULT_VERSION),
+        "mcpo_replicas": str(cfg.get("mcpo_replicas") or _DEFAULT_REPLICAS),
+        "mcpo_port": str(cfg.get("mcpo_port") or _CONTAINER_PORT),
+        "mcpo_container_port": str(_CONTAINER_PORT),
+        "mcpo_configmap": _CONFIGMAP,
+        "mcpo_secret": _SECRET,
+        "mcpo_config_revision": config_revision(config),
+        "mcpo_extra_args": extra_args(cfg),
+        "mcpo_fqdn": host,
+        # An empty class leaves the ingress without ingressClassName, so the cluster's default controller serves it.
+        "mcpo_ingress_class_line": "ingressClassName: {}".format(ingress_class) if ingress_class else "",
+    }
+
+
+# ── installing ───────────────────────────────────────────────────────────────
+
+def write_config(hostname: str, ns: str, config: str) -> None:
+    """Put mcpo's configuration file into the ConfigMap the pods mount."""
+    ssh_run(hostname, "umask 077 && cat > /tmp/mcpo-config.json", input_text=config)
+    ssh_run(hostname, "kubectl -n {ns} create configmap {cm} --from-file=config.json=/tmp/mcpo-config.json "
+                      "--dry-run=client -o yaml | kubectl apply -f -".format(
+                          ns=shlex.quote(ns), cm=shlex.quote(_CONFIGMAP)))
+    ssh_run(hostname, "rm -f /tmp/mcpo-config.json", check=False)
+
+
+def write_api_key(hostname: str, ns: str, key: str) -> None:
+    """Put the bearer token into the Secret the pods read it from. It travels in an environment variable, never in
+    the command line of the pod or of kubectl."""
+    cmd = ("kubectl create secret generic {name} --from-literal={key}=\"$SECRET_VALUE\" --namespace {ns} "
+           "--dry-run=client -o yaml | kubectl apply -f -").format(
+        name=shlex.quote(_SECRET), key=shlex.quote(_SECRET_KEY), ns=shlex.quote(ns))
+    ssh_run(hostname, "SECRET_VALUE={} bash -c {}".format(shlex.quote(key), shlex.quote(cmd)))
+
+
+def setup_mcpo(hostname: str, clu_name: str, mydomain: str, cfg: dict, templ_addons_loc: str,
+               ingress_class: str = "", key: str = "") -> str:
+    """Install mcpo on the kcluster `hostname` belongs to, and return the hostname its ingress answers for."""
+    ns = ac.require_k8s_name(cfg, "mcpo_ns", _DEFAULT_NS)
+    host = fqdn(cfg, clu_name, mydomain)
+    config = config_json(cfg)
+    key = key or api_key(cfg)
+    templates = str(templ_addons_loc).rstrip("/") + "/mcpo"
+
+    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
+        shlex.quote(ns)))
+    print("- Writing the configuration of {} MCP server(s) into the {} ConfigMap".format(
+        len(servers(cfg)), _CONFIGMAP))
+    write_config(hostname, ns, config)
+    write_api_key(hostname, ns, key)
+
+    print("- Deploying mcpo in namespace {}, behind {}".format(ns, host))
+    ssh_run(hostname, "kubectl apply -f -", input_text=process_template(
+        "{}/mcpo.yml.tmpl".format(templates), template_variables(cfg, host, config, ingress_class)))
+
+    print("mcpo installed. Namespace: {}".format(ns))
+    for name, url in server_urls(cfg, host):
+        print("  {}: {} (its documentation at {}/docs)".format(name, url, url))
+    print("Every call carries the bearer token: Authorization: Bearer {}".format(key))
+    if not cfg.get("mcpo_api_key"):
+        print("  That token was generated for this install: set mcpo_api_key to keep one of your own across runs")
+    print("In Open WebUI, add each URL above under Settings > Tools as an OpenAPI tool server, with that token")
+    return host
+
+
+# ── --check ──────────────────────────────────────────────────────────────────
+
+def _check(c):
+    """Compare the deployed mcpo with the lab's own "mcpo" section."""
+    cfg = c.definition.get("mcpo", {}) or {}
+    host = c.vm_name
+    if not host:
+        c.fail("no target node to check: $_vm_name names none")
+        return
+    ns = str(cfg.get("mcpo_ns") or _DEFAULT_NS)
+
+    ready = ssh_output(host, "kubectl -n {} get deployment mcpo -o jsonpath='{{.status.readyReplicas}}' "
+                             "2>/dev/null".format(shlex.quote(ns))) or "0"
+    c.expect("the ready mcpo pods in {}".format(ns), str(cfg.get("mcpo_replicas") or _DEFAULT_REPLICAS), ready)
+
+    image = ssh_output(host, "kubectl -n {} get deployment mcpo -o jsonpath="
+                             "'{{.spec.template.spec.containers[0].image}}' 2>/dev/null".format(shlex.quote(ns)))
+    c.expect("the image of the mcpo deployment",
+             "{}:{}".format(cfg.get("mcpo_image") or _DEFAULT_IMAGE, cfg.get("mcpo_version") or _DEFAULT_VERSION),
+             image)
+
+    deployed = ssh_output(host, "kubectl -n {} get configmap {} -o jsonpath='{{.data.config\\.json}}' "
+                                "2>/dev/null".format(shlex.quote(ns), shlex.quote(_CONFIGMAP)))
+    try:
+        names = sorted((json.loads(deployed) or {}).get("mcpServers") or {})
+    except ValueError:
+        names = []
+    c.expect("the MCP servers mcpo serves in {}".format(ns), ", ".join(sorted(servers(cfg))), ", ".join(names))
+
+    hosts = ssh_output(host, "kubectl -n {} get ingress mcpo -o jsonpath='{{.spec.rules[*].host}}' "
+                             "2>/dev/null".format(shlex.quote(ns)))
+    if hosts:
+        c.ok("the ingress answers for {}".format(hosts))
+    else:
+        c.fail("there is no mcpo ingress in namespace {}".format(ns))
+
+
+# ── validation ───────────────────────────────────────────────────────────────
+
+def _validate(v):
+    cfg = v.definition.get("mcpo", {}) or {}
+    v.vns("mcpo")
+    v.vport("mcpo", "mcpo_port")
+    v.vbool("mcpo", "mcpo_hot_reload")
+    if cfg.get("mcpo_replicas") not in (None, "") and not str(cfg["mcpo_replicas"]).isdigit():
+        v.errors.append("[ERROR] mcpo.mcpo_replicas '{}' is invalid — it is a whole number of replicas".format(
+            cfg["mcpo_replicas"]))
+    configured = cfg.get("mcpo_servers")
+    if configured is None:
+        return
+    if not isinstance(configured, dict):
+        v.errors.append("[ERROR] mcpo.mcpo_servers is an object of MCP servers keyed by the name each answers "
+                        "under, e.g. {\"time\": {\"command\": \"uvx\", \"args\": [\"mcp-server-time\"]}}")
+        return
+    if not configured:
+        v.errors.append("[ERROR] mcpo.mcpo_servers is empty — name at least one MCP server, or leave the field "
+                        "out for the default one")
+    for name, entry in sorted(configured.items()):
+        if not isinstance(entry, dict):
+            v.errors.append("[ERROR] mcpo.mcpo_servers.{} is an object describing one MCP server".format(name))
+            continue
+        kind = str(entry.get("type") or "").strip().lower()
+        if kind and kind not in _REMOTE_TYPES:
+            v.errors.append("[ERROR] mcpo.mcpo_servers.{}.type '{}' is invalid — use one of: {}, or leave it out "
+                            "and give a command".format(name, kind, ", ".join(_REMOTE_TYPES)))
+        elif kind and not entry.get("url"):
+            v.errors.append("[ERROR] mcpo.mcpo_servers.{} is a {} server, so it needs the url it is reached "
+                            "at".format(name, kind))
+        elif not kind and not entry.get("command"):
+            v.errors.append("[ERROR] mcpo.mcpo_servers.{} needs either a command mcpo starts it with, or a type "
+                            "and url of one already running".format(name))
+        if entry.get("args") is not None and not isinstance(entry["args"], (list, tuple)):
+            v.errors.append("[ERROR] mcpo.mcpo_servers.{}.args is a list of arguments".format(name))
+        for field in ("env", "headers"):
+            if entry.get(field) is not None and not isinstance(entry[field], dict):
+                v.errors.append("[ERROR] mcpo.mcpo_servers.{}.{} is an object of name/value pairs".format(
+                    name, field))
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    defaults = primary.load_defaults()
+    cfg = definition.get("mcpo", {}) or {}
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    ingress_class = cfg.get("mcpo_ingress_class") or (
+        k8s.cluster_choice(definition, clu_name, apps.CLUSTER_INGRESS) if clu_name else "")
+
+    host = setup_mcpo(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg,
+                      defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/"),
+                      ingress_class="" if ingress_class == "none" else ingress_class)
+    ac.register_service_dns(definition, clu_name, host)
+
+
+if __name__ == "__main__":
+    main()

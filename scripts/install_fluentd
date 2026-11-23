@@ -25,6 +25,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "fluentd"
+APPCOLLECTION_PREFIX = "fluentd"
 
 PLUGIN = {
     "name": "fluentd",
@@ -101,12 +102,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(cfg, "fluentd", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "fluentd_appcollection_user": "appcollection_user",
-            "fluentd_appcollection_password": "appcollection_password",
-        }, account_key="fluentd_appcollection_account")
-        user = creds["fluentd_appcollection_user"]
-        password = creds["fluentd_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("fluentd: fluentd_source is \"appcollection\", so fluentd_appcollection_user and "
                 "fluentd_appcollection_password are needed — set them, set fluentd_appcollection_account "

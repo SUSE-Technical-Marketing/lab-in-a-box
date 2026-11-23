@@ -28,6 +28,7 @@
 __version__ = "__LABVERSION__"
 
 APPCOLLECTION_CHART = "ollama"
+APPCOLLECTION_PREFIX = "ollama"
 
 PLUGIN = {
     "name": "ollama",
@@ -118,12 +119,7 @@ def main():
     setup_helm(vm_name, clu_name, online=online)
     repo, extra_set = "", ""
     if appco.from_appcollection(cfg, "ollama", appco.SOURCE_APPCOLLECTION):
-        creds = ac.resolve_credential(cfg, "appcollection", {
-            "ollama_appcollection_user": "appcollection_user",
-            "ollama_appcollection_password": "appcollection_password",
-        }, account_key="ollama_appcollection_account")
-        user = creds["ollama_appcollection_user"]
-        password = creds["ollama_appcollection_password"]
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
         if not user or not password:
             die("ollama: ollama_source is \"appcollection\", so ollama_appcollection_user and "
                 "ollama_appcollection_password are needed — set them, set ollama_appcollection_account "

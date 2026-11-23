@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "nebius_api_base": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "nebius_api_key": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "nebius_chart": {
+   "default": "oci://ghcr.io/berriai/litellm-helm",
+   "required": false,
+   "type": "string"
+  },
+  "nebius_model": {
+   "default": "",
+   "required": true,
+   "type": "string"
+  },
+  "nebius_ns": {
+   "default": "nebius",
+   "required": false,
+   "type": "namespace"
+  },
+  "nebius_shorthn": {
+   "default": "nebius",
+   "required": false,
+   "type": "string"
+  },
+  "nebius_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:nebius",
+ "version": "1.0"
+}

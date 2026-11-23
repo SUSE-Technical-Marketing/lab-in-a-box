@@ -17,7 +17,8 @@ import secrets
 import shlex
 import time
 
-from lab_creation import ssh_run, ssh_output, reboot_vm, check_ssh_conn, detect_os, die
+from lab_creation import (ssh_run, ssh_output, reboot_vm, check_ssh_conn, detect_os, die, install_packages,
+                          open_guest_port, package_available)
 
 _SUSE_IDS = ("sle-micro", "slemicro")
 _SUSE_ZYPPER_IDS = ("sles", "suse", "opensuse-leap", "opensuse-tumbleweed")
@@ -46,17 +47,15 @@ def _sql_lit(s):
 
 def mariadb_install_suse(hostname):
     print("- Installing MariaDB on {} (SUSE/openSUSE)".format(hostname))
-    r = ssh_run(hostname, "zypper install -y --no-confirm mariadb mariadb-client 2>&1", check=False)
-    if r.returncode != 0:
-        die("Could not install MariaDB via zypper on {}.".format(hostname))
+    install_packages(hostname, ["mariadb", "mariadb-client"])
     ssh_run(hostname, "systemctl enable --now mariadb.service", check=False)
 
 
 def mariadb_install_slemicro(hostname, virt_srv):
     print("- Installing MariaDB on {} (SLE Micro — transactional)".format(hostname))
-    r = ssh_run(hostname, "transactional-update --quiet pkg install -y mariadb mariadb-client 2>&1", check=False)
-    if r.returncode != 0:
-        die("Could not install MariaDB via transactional-update on {}.".format(hostname))
+    # reboot=False: the reboot below goes through the hypervisor, which also covers a node whose own
+    # `systemctl reboot` does not come back.
+    install_packages(hostname, ["mariadb", "mariadb-client"], reboot=False)
     print("- Rebooting {} to activate transactional changes".format(hostname))
     reboot_vm(virt_srv, hostname)
     time.sleep(5)
@@ -66,30 +65,16 @@ def mariadb_install_slemicro(hostname, virt_srv):
 
 def mariadb_install_rhel(hostname, port):
     print("- Installing MariaDB on {} (RHEL/CentOS family)".format(hostname))
-    pkg_mgr = "dnf" if ssh_run(hostname, "command -v dnf", check=False, capture=True).returncode == 0 else "yum"
-    r = ssh_run(hostname, "{} install -y mariadb-server 2>&1".format(pkg_mgr), check=False)
-    if r.returncode != 0:
-        die("Could not install mariadb-server via {} on {}.".format(pkg_mgr, hostname))
+    install_packages(hostname, ["mariadb-server"])
     ssh_run(hostname, "systemctl enable --now mariadb.service", check=False)
-    ssh_run(hostname, (
-        "if systemctl is-active firewalld &>/dev/null; then\n"
-        "    firewall-cmd --permanent --add-port={}/tcp\n"
-        "    firewall-cmd --reload\n"
-        "fi"
-    ).format(port), check=False)
+    open_guest_port(hostname, port)
 
 
 def mariadb_install_debian(hostname, port):
     print("- Installing MariaDB on {} (Ubuntu/Debian family)".format(hostname))
-    r = ssh_run(hostname, "DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server 2>&1", check=False)
-    if r.returncode != 0:
-        die("Could not install mariadb-server via apt-get on {}.".format(hostname))
+    install_packages(hostname, ["mariadb-server"])
     ssh_run(hostname, "systemctl enable --now mariadb.service", check=False)
-    ssh_run(hostname, (
-        "if command -v ufw &>/dev/null && ufw status | grep -q 'Status: active'; then\n"
-        "    ufw allow {}/tcp\n"
-        "fi"
-    ).format(port), check=False)
+    open_guest_port(hostname, port)
 
 
 def _mariadb_configure_os(hostname, db, user, user_password, root_password, port, bind_address):
@@ -200,14 +185,16 @@ def _pg_ident(s):
 
 def pg_install_suse(hostname, pg_ver):
     print("- Installing PostgreSQL {} on {} (SUSE/openSUSE)".format(pg_ver, hostname))
-    r = ssh_run(hostname, "zypper install -y --no-confirm postgresql{}-server postgresql{} 2>&1".format(
-        pg_ver, pg_ver), check=False)
-    if r.returncode != 0:
-        r = ssh_run(hostname, "zypper install -y --no-confirm postgresql-server postgresql 2>&1", check=False)
-        if r.returncode != 0:
-            die("Could not install PostgreSQL via zypper on {}. On SLES, ensure the 'Server "
-                "Applications Module' is activated: SUSEConnect -p "
-                "sle-module-server-applications/<ver>/x86_64".format(hostname))
+    # The versioned packages when this distribution has them, the unversioned ones otherwise.
+    if package_available(hostname, "postgresql{}-server".format(pg_ver)):
+        pkgs = ["postgresql{}-server".format(pg_ver), "postgresql{}".format(pg_ver)]
+    elif package_available(hostname, "postgresql-server"):
+        pkgs = ["postgresql-server", "postgresql"]
+    else:
+        die("Could not install PostgreSQL on {}: neither 'postgresql{}-server' nor 'postgresql-server' is "
+            "available. On SLES, ensure the 'Server Applications Module' is activated: SUSEConnect -p "
+            "sle-module-server-applications/<ver>/x86_64".format(hostname, pg_ver))
+    install_packages(hostname, pkgs)
     ssh_run(hostname, (
         "if [[ ! -f /var/lib/pgsql/data/PG_VERSION ]]; then\n"
         "    su - postgres -s /bin/bash -c 'initdb -D /var/lib/pgsql/data' 2>/dev/null || \\\n"
@@ -222,13 +209,15 @@ def pg_install_suse(hostname, pg_ver):
 
 def pg_install_slemicro(hostname, pg_ver, virt_srv):
     print("- Installing PostgreSQL {} on {} (SLE Micro — transactional)".format(pg_ver, hostname))
-    r = ssh_run(hostname, "transactional-update --quiet pkg install -y postgresql{}-server postgresql{} 2>&1".format(
-        pg_ver, pg_ver), check=False)
-    if r.returncode != 0:
-        r = ssh_run(hostname, "transactional-update --quiet pkg install -y postgresql-server postgresql 2>&1",
-                    check=False)
-        if r.returncode != 0:
-            die("Could not install PostgreSQL via transactional-update on {}.".format(hostname))
+    if package_available(hostname, "postgresql{}-server".format(pg_ver)):
+        pkgs = ["postgresql{}-server".format(pg_ver), "postgresql{}".format(pg_ver)]
+    elif package_available(hostname, "postgresql-server"):
+        pkgs = ["postgresql-server", "postgresql"]
+    else:
+        die("Could not install PostgreSQL on {}: neither 'postgresql{}-server' nor 'postgresql-server' is "
+            "available in its repositories.".format(hostname, pg_ver))
+    # reboot=False: the reboot below goes through the hypervisor instead.
+    install_packages(hostname, pkgs, reboot=False)
     print("- Rebooting {} to activate transactional changes".format(hostname))
     reboot_vm(virt_srv, hostname)
     time.sleep(5)
@@ -251,31 +240,28 @@ def pg_install_rhel(hostname, pg_ver, os_info, port):
 
     pgdg_rpm = ("https://download.postgresql.org/pub/repos/yum/reporpms/"
                 "EL-{}-x86_64/pgdg-redhat-repo-latest.noarch.rpm".format(el_ver))
-    ssh_run(hostname, "{} install -y {} 2>&1 || true".format(pkg_mgr, pgdg_rpm), check=False)
+    # The PGDG repository itself: already present on a re-run, and the versioned package below reports its own
+    # absence, so a failure here is not fatal.
+    install_packages(hostname, [pgdg_rpm], required=False)
     if el_ver and int(el_ver) >= 8:
         ssh_run(hostname, "{} -qy module disable postgresql 2>/dev/null || true".format(pkg_mgr), check=False)
 
-    r = ssh_run(hostname, "{} install -y postgresql{}-server 2>&1".format(pkg_mgr, pg_ver), check=False)
-    if r.returncode != 0:
+    if not package_available(hostname, "postgresql{}-server".format(pg_ver)):
         die("Could not install postgresql{}-server on {}. Check PGDG repo availability.".format(pg_ver, hostname))
+    install_packages(hostname, ["postgresql{}-server".format(pg_ver)])
 
     ssh_run(hostname,
             "/usr/pgsql-{pg_ver}/bin/postgresql-{pg_ver}-setup initdb 2>/dev/null || "
             "postgresql{pg_ver}-setup initdb 2>/dev/null || true".format(pg_ver=pg_ver), check=False)
     ssh_run(hostname, "systemctl enable --now postgresql-{}.service".format(pg_ver))
-    ssh_run(hostname, (
-        "if systemctl is-active firewalld &>/dev/null; then\n"
-        "    firewall-cmd --permanent --add-port={}/tcp\n"
-        "    firewall-cmd --reload\n"
-        "fi"
-    ).format(port), check=False)
+    open_guest_port(hostname, port)
 
 
 def pg_install_debian(hostname, pg_ver, port):
     print("- Installing PostgreSQL {} on {} (Ubuntu/Debian family)".format(pg_ver, hostname))
+    install_packages(hostname, ["curl", "ca-certificates", "lsb-release", "gnupg"])
     ssh_run(hostname, (
         "export DEBIAN_FRONTEND=noninteractive\n"
-        "apt-get install -y curl ca-certificates lsb-release gnupg 2>&1\n"
         "install -d /usr/share/postgresql-common/pgdg\n"
         "curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc "
         "-o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n"
@@ -284,15 +270,10 @@ def pg_install_debian(hostname, pg_ver, port):
         "> /etc/apt/sources.list.d/pgdg.list\n"
         "apt-get update -qq"
     ))
-    r = ssh_run(hostname, "DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-{} 2>&1".format(pg_ver),
-                check=False)
-    if r.returncode != 0:
+    if not package_available(hostname, "postgresql-{}".format(pg_ver)):
         die("Could not install postgresql-{} on {}. Check PGDG repo availability.".format(pg_ver, hostname))
-    ssh_run(hostname, (
-        "if command -v ufw &>/dev/null && ufw status | grep -q 'Status: active'; then\n"
-        "    ufw allow {}/tcp\n"
-        "fi"
-    ).format(port), check=False)
+    install_packages(hostname, ["postgresql-{}".format(pg_ver)])
+    open_guest_port(hostname, port)
 
 
 def pg_configure_os(hostname, db, user, user_password, root_password, pg_ver, port, listen):

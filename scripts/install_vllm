@@ -1,0 +1,444 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box, it will install vLLM, an OpenAI-compatible inference server, on a kcluster
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# Schema version: 1.0
+#
+# JSON section: "vllm" — OpenAI-compatible LLM serving engine, behind the chart's own router
+#   vllm_source         : [OPTIONAL] where the chart comes from: "upstream" (the default, the vLLM
+#                           project's own vllm-stack chart from
+#                           https://vllm-project.github.io/production-stack, which needs no account)
+#                           or "appcollection" (vllm from the SUSE Application Collection,
+#                           oci://dp.apps.rancher.io/charts/vllm), which needs an Application
+#                           Collection user and token (options: upstream, appcollection)
+#                           (default: upstream)
+#   vllm_appcollection_user     : [OPTIONAL] Application Collection user
+#   vllm_appcollection_password : [OPTIONAL] Application Collection access token
+#   vllm_appcollection_account  : [OPTIONAL] name of an "appcollection" credential file; one such
+#                           file in the store is found on its own
+#   vllm_ns             : [OPTIONAL] namespace (default: vllm)
+#   vllm_release        : [OPTIONAL] Helm chart version (empty = the newest the repository offers)
+#   vllm_rel            : [OPTIONAL] Helm repo alias (default: vllm)
+#   vllm_repo_url       : [OPTIONAL] Helm repo URL of the upstream chart
+#                           (default: https://vllm-project.github.io/production-stack)
+#   vllm_chart          : [OPTIONAL] chart name inside that repository (default: vllm-stack)
+#   vllm_model          : [OPTIONAL] the model to serve, as a Hugging Face model id or a path inside
+#                           the image (default: microsoft/Phi-3-mini-4k-instruct)
+#   vllm_model_name     : [OPTIONAL] the name the model is served and routed under; derived from
+#                           vllm_model's last path component when unset
+#   vllm_image          : [OPTIONAL] serving image repository; the default follows vllm_source,
+#                           lmcache/vllm-openai upstream and containers/vllm-openai on the
+#                           Application Collection
+#   vllm_image_tag      : [OPTIONAL] tag of that image. The default follows vllm_source too: the
+#                           upstream image's "latest", and the tag SUSE documents for the
+#                           Collection's build
+#   vllm_replicas       : [OPTIONAL] serving engine replicas, one GPU each (default: 1)
+#   vllm_cpu            : [OPTIONAL] CPU request per replica (default: 6)
+#   vllm_memory         : [OPTIONAL] memory request per replica (default: 16Gi)
+#   vllm_gpu            : [OPTIONAL] GPUs requested per replica. 0 asks for none, which only works
+#                           with an image built to run on the CPU (default: 1)
+#   vllm_max_model_len  : [OPTIONAL] maximum context length, lowered when the weights do not fit
+#   vllm_storage_size   : [OPTIONAL] size of the volume the downloaded weights are cached in, e.g.
+#                           "50Gi". Unset downloads them into the pod on every start
+#   vllm_storage_class  : [OPTIONAL] StorageClass of that volume; unset takes the cluster's default
+#   vllm_hf_token       : [OPTIONAL] Hugging Face token, needed only for a gated model (e.g. Llama).
+#                           Prefer vllm_hf_token_account: a token written into a lab definition is a
+#                           real credential sitting in a plain file
+#   vllm_hf_token_account : [OPTIONAL] name of a "huggingface" credential file to take the token
+#                           from; one such file in the store is found on its own
+#   vllm_api_key        : [OPTIONAL] bearer token callers must present. Unset leaves the endpoint
+#                           open to anything that reaches its ingress
+#   vllm_shorthn        : [OPTIONAL] hostname prefix of the ingress (default: vllm)
+#   vllm_ingress_class  : [OPTIONAL] ingressClassName of the ingress. Unset takes the kcluster's own
+#                           ingress controller; "none" leaves the class off the ingress entirely
+#   vllm_set            : [OPTIONAL] object of extra chart values, each key a dotted chart path and
+#                           each value what to set it to, merged after everything above. This is the
+#                           escape hatch for a key this add-on does not name, and for the places the
+#                           Collection's chart diverges from the upstream one
+#
+# Target: the first server node of the lab's kcluster, like every other chart add-on. The model is
+# served through the chart's own router, so the endpoint is OpenAI-compatible at
+# http://<vllm_shorthn>.<kcluster>.<domain>/v1 and in-cluster at the router's Service. The serving
+# image is built for NVIDIA GPUs: a node with a GPU the cluster can allocate (see the gpu_operator
+# add-on) is what a non-zero vllm_gpu needs, and this add-on warns, rather than refuses, when the
+# cluster reports none, since the GPU may arrive later.
+#
+# The two chart sources take the same values for everything this add-on sets, except the Hugging
+# Face token: upstream's modelSpec takes an object naming a Secret, while the Collection's takes the
+# token itself. Each is sent what its own documentation describes. "upstream" is the default because
+# its values were read field by field; the Collection's chart needs an entitlement to read at all,
+# so a lab cannot land on an unverified chart by doing nothing (see libs/appco_common.py).
+
+__version__ = "__LABVERSION__"
+
+APPCOLLECTION_CHART = "vllm"
+APPCOLLECTION_PREFIX = "vllm"
+
+PLUGIN = {
+    "name": "vllm",
+    "targets": ["container"],
+    "layers": ["kubernetes"],
+    "requires_kubernetes": None,
+    # The OpenAI endpoint is reached through an ingress. A storage class is only needed when
+    # vllm_storage_size asks for a weights cache, and that field's own description says so.
+    "requires_cluster": ["ingress"],
+    "aux_services": [],
+    "check": True,
+}
+
+import re
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import appco_common as appco  # noqa: E402
+import apps  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import die, helm_repo_add, setup_helm, ssh_output, ssh_run  # noqa: E402
+
+_DEFAULT_NS = "vllm"
+_DEFAULT_REL = "vllm"
+_DEFAULT_REPO_URL = "https://vllm-project.github.io/production-stack"
+_DEFAULT_CHART = "vllm-stack"
+_DEFAULT_MODEL = "microsoft/Phi-3-mini-4k-instruct"
+_DEFAULT_SHORTHN = "vllm"
+_DEFAULT_REPLICAS = 1
+_DEFAULT_CPU = "6"
+_DEFAULT_MEMORY = "16Gi"
+_DEFAULT_GPU = "1"
+# The image differs per source: the Collection serves its own build of the same upstream project.
+_UPSTREAM_IMAGE = "lmcache/vllm-openai"
+_UPSTREAM_IMAGE_TAG = "latest"
+_APPCO_IMAGE = "containers/vllm-openai"
+_APPCO_IMAGE_TAG = "0.19.0"
+_HF_SECRET = "vllm-huggingface"
+_HF_SECRET_KEY = "HUGGING_FACE_HUB_TOKEN"
+_API_KEY_SECRET = "vllm-api-key"
+_API_KEY_SECRET_KEY = "VLLM_API_KEY"
+# The router answers on this Service port, and the serving engine inside the pod on 8000. Both are
+# the chart's own defaults, which this add-on does not change.
+_ROUTER_SERVICE_PORT = 80
+_ROUTER_DEPLOYMENT = "vllm-deployment-router"
+
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+def from_appcollection(cfg: dict) -> bool:
+    """Whether the chart comes from the SUSE Application Collection rather than the vLLM project's own repository."""
+    return appco.from_appcollection(cfg, "vllm", appco.SOURCE_UPSTREAM)
+
+
+def model(cfg: dict) -> str:
+    """The model to serve: a Hugging Face model id, or a path inside the image."""
+    return str(cfg.get("vllm_model") or _DEFAULT_MODEL).strip()
+
+
+def model_name(cfg: dict) -> str:
+    """
+    The name the model is served and routed under. vllm_model_name when set; otherwise the model's own last path
+    component, lowercased, with everything a Kubernetes name may not carry replaced by a dash, since the chart
+    builds object names out of it.
+    """
+    name = str(cfg.get("vllm_model_name") or "").strip()
+    if not name:
+        name = model(cfg).rstrip("/").split("/")[-1]
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
+
+
+def image(cfg: dict) -> tuple:
+    """(repository, tag) of the serving image, defaulting per chart source."""
+    appcollection = from_appcollection(cfg)
+    repository = str(cfg.get("vllm_image") or (_APPCO_IMAGE if appcollection else _UPSTREAM_IMAGE))
+    tag = str(cfg.get("vllm_image_tag") or (_APPCO_IMAGE_TAG if appcollection else _UPSTREAM_IMAGE_TAG))
+    return repository, tag
+
+
+def fqdn(cfg: dict, clu_name: str, mydomain: str) -> str:
+    """The hostname the ingress answers for."""
+    return ".".join(p for p in (str(cfg.get("vllm_shorthn") or _DEFAULT_SHORTHN), clu_name, mydomain) if p)
+
+
+def hf_token(cfg: dict) -> str:
+    """
+    The Hugging Face token a gated model is downloaded with: the "huggingface" credential file this lab names, or
+    one such file on its own, or vllm_hf_token from the lab definition. Empty when there is none, which is what an
+    open model needs.
+
+    The field map reads {the credential file's own field: this add-on's own field}, which is the order
+    resolve_credential() looks a file up in and falls back to the lab definition with.
+    """
+    resolved = ac.resolve_credential(cfg, "huggingface", {"huggingface_token": "vllm_hf_token"},
+                                     account_key="vllm_hf_token_account")
+    return str(resolved.get("huggingface_token") or "")
+
+
+def model_spec(cfg: dict, hf_token: str = "") -> list:
+    """
+    The (chart path, value) pairs of the one modelSpec entry this add-on installs.
+
+    Only what the lab asked for is sent, so every other field keeps the chart's own default. The entry is enabled
+    explicitly: the chart ships its example entry disabled, and a lab that names a model means to serve it.
+    """
+    repository, tag = image(cfg)
+    spec = [
+        ("name", model_name(cfg)),
+        ("enabled", "true"),
+        ("repository", repository),
+        ("tag", tag),
+        ("modelURL", model(cfg)),
+        ("replicaCount", str(cfg.get("vllm_replicas") or _DEFAULT_REPLICAS)),
+        ("requestCPU", str(cfg.get("vllm_cpu") or _DEFAULT_CPU)),
+        ("requestMemory", str(cfg.get("vllm_memory") or _DEFAULT_MEMORY)),
+        ("requestGPU", str(cfg.get("vllm_gpu") if cfg.get("vllm_gpu") not in (None, "") else _DEFAULT_GPU)),
+    ]
+    if from_appcollection(cfg):
+        spec.append(("registry", appco.DEFAULT_REGISTRY))
+    if cfg.get("vllm_storage_size"):
+        spec.append(("pvcStorage", str(cfg["vllm_storage_size"])))
+        spec.append(("pvcAccessMode[0]", "ReadWriteOnce"))
+        if cfg.get("vllm_storage_class"):
+            spec.append(("storageClass", str(cfg["vllm_storage_class"])))
+    if cfg.get("vllm_max_model_len"):
+        spec.append(("vllmConfig.maxModelLen", str(cfg["vllm_max_model_len"])))
+    if hf_token:
+        # Upstream's modelSpec points at a Secret; the Collection's documentation shows the token itself. Each
+        # chart is sent the shape its own documentation describes.
+        if from_appcollection(cfg):
+            spec.append(("hf_token", hf_token))
+        else:
+            spec.append(("hf_token.secretName", _HF_SECRET))
+            spec.append(("hf_token.secretKey", _HF_SECRET_KEY))
+    return [("servingEngineSpec.modelSpec[0].{}".format(key), value) for key, value in spec]
+
+
+def router_values(cfg: dict, host: str, ingress_class: str) -> list:
+    """The (chart path, value) pairs that expose the router through an ingress for `host`."""
+    values = [
+        ("routerSpec.ingress.enabled", "true"),
+        ("routerSpec.ingress.hosts[0].host", host),
+        ("routerSpec.ingress.hosts[0].paths[0].path", "/"),
+        ("routerSpec.ingress.hosts[0].paths[0].pathType", "Prefix"),
+    ]
+    if ingress_class:
+        values.append(("routerSpec.ingress.className", ingress_class))
+    return values
+
+
+def api_key_values(cfg: dict) -> list:
+    """
+    The (chart path, value) pairs that make the router and the serving engine demand `vllm_api_key`.
+
+    The key itself travels in a Secret, which both halves of the chart are pointed at, so it is in neither the
+    release's values nor any process list.
+    """
+    if not cfg.get("vllm_api_key"):
+        return []
+    return [("{}.vllmApiKey.secretName".format(part), _API_KEY_SECRET) for part in ("routerSpec", "servingEngineSpec")] \
+        + [("{}.vllmApiKey.secretKey".format(part), _API_KEY_SECRET_KEY)
+           for part in ("routerSpec", "servingEngineSpec")]
+
+
+def extra_values(cfg: dict) -> list:
+    """vllm_set, as (chart path, value) pairs, in a stable order."""
+    extra = cfg.get("vllm_set") or {}
+    return [(str(key), str(value)) for key, value in sorted(extra.items())]
+
+
+def helm_values(cfg: dict, host: str, ingress_class: str, hf_token: str = "") -> list:
+    """Every chart value this add-on sets, in the order the --set flags are passed."""
+    return (model_spec(cfg, hf_token) + router_values(cfg, host, ingress_class)
+            + api_key_values(cfg) + extra_values(cfg))
+
+
+def chart_reference(cfg: dict, repo: str) -> str:
+    """The chart helm is asked to install: the Collection's OCI chart, or "<repo alias>/<chart>" upstream."""
+    if from_appcollection(cfg):
+        return appco.appcollection_chart(APPCOLLECTION_CHART)
+    return "{}/{}".format(repo or str(cfg.get("vllm_rel") or _DEFAULT_REL),
+                          str(cfg.get("vllm_chart") or _DEFAULT_CHART))
+
+
+def helm_command(cfg: dict, ns: str, chart: str, values: list, extra_set: str = "") -> str:
+    """The helm command that installs or upgrades the release, idempotently."""
+    version = " --version {}".format(shlex.quote(str(cfg["vllm_release"]))) if cfg.get("vllm_release") else ""
+    return "helm upgrade -i vllm {chart} --namespace {ns} --create-namespace{version}{sets}{extra}".format(
+        chart=shlex.quote(chart), ns=shlex.quote(ns), version=version,
+        sets="".join(" --set {}".format(shlex.quote("{}={}".format(key, value))) for key, value in values),
+        extra=extra_set)
+
+
+# ── installing ───────────────────────────────────────────────────────────────
+
+def write_secret(hostname: str, ns: str, name: str, key: str, value: str) -> None:
+    """Create or update the Secret `name` in `ns` with the single entry `key`. The value travels in an environment
+    variable and on stdin, never in the command line."""
+    cmd = ("kubectl create secret generic {name} --from-literal={key}=\"$SECRET_VALUE\" --namespace {ns} "
+           "--dry-run=client -o yaml | kubectl apply -f -").format(
+        name=shlex.quote(name), key=shlex.quote(key), ns=shlex.quote(ns))
+    ssh_run(hostname, "SECRET_VALUE={} bash -c {}".format(shlex.quote(value), shlex.quote(cmd)))
+
+
+def warn_without_gpu(hostname: str, cfg: dict) -> bool:
+    """
+    Warn when the lab asks for GPUs the cluster cannot allocate. Returns whether the warning was printed, so this
+    stays a warning: a node may be given its GPU, or the gpu_operator add-on, after this add-on has run.
+    """
+    requested = str(cfg.get("vllm_gpu") if cfg.get("vllm_gpu") not in (None, "") else _DEFAULT_GPU)
+    if requested in ("0", ""):
+        return False
+    allocatable = ssh_output(hostname, "kubectl get nodes -o jsonpath='{range .items[*]}"
+                                       "{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}' 2>/dev/null") or ""
+    if any(line.strip() not in ("", "0") for line in allocatable.splitlines()):
+        return False
+    print("  WARNING: no node reports an allocatable nvidia.com/gpu, and this model asks for {} per replica, so "
+          "its pods will stay Pending. Install the gpu_operator add-on on a node with an NVIDIA GPU, or set "
+          "vllm_gpu to 0 with an image built to run on the CPU".format(requested))
+    return True
+
+
+def setup_vllm(hostname: str, clu_name: str, mydomain: str, cfg: dict, ingress_class: str = "",
+               hf_token: str = "", repo: str = "", extra_set: str = "") -> str:
+    """Install vLLM on the kcluster `hostname` belongs to, and return the hostname its ingress answers for."""
+    ns = ac.require_k8s_name(cfg, "vllm_ns", _DEFAULT_NS)
+    host = fqdn(cfg, clu_name, mydomain)
+
+    ssh_run(hostname, "kubectl create namespace {} --dry-run=client -o yaml | kubectl apply -f -".format(
+        shlex.quote(ns)))
+    if hf_token and not from_appcollection(cfg):
+        print("- Writing the Hugging Face token into the {} Secret, which the model pulls with".format(_HF_SECRET))
+        write_secret(hostname, ns, _HF_SECRET, _HF_SECRET_KEY, hf_token)
+    if cfg.get("vllm_api_key"):
+        print("- Writing the API key into the {} Secret, which callers must present".format(_API_KEY_SECRET))
+        write_secret(hostname, ns, _API_KEY_SECRET, _API_KEY_SECRET_KEY, str(cfg["vllm_api_key"]))
+
+    print("- Serving {} in namespace {}, behind {}".format(model(cfg), ns, host))
+    ssh_run(hostname, helm_command(cfg, ns, chart_reference(cfg, repo),
+                                   helm_values(cfg, host, ingress_class, hf_token), extra_set))
+    warn_without_gpu(hostname, cfg)
+
+    print("vLLM installed. Namespace: {}".format(ns))
+    print("OpenAI-compatible endpoint: http://{}/v1 (model {})".format(host, model_name(cfg)))
+    print("In-cluster, for an add-on on this same kcluster: http://vllm-router-service.{}.svc.cluster.local:{}/v1"
+          .format(ns, _ROUTER_SERVICE_PORT))
+    if not cfg.get("vllm_api_key"):
+        print("  Anything that reaches that ingress may use the model: set vllm_api_key to demand a bearer token")
+    return host
+
+
+# ── --check ──────────────────────────────────────────────────────────────────
+
+def _check(c):
+    """Compare the deployed vLLM with the lab's own "vllm" section."""
+    cfg = c.definition.get("vllm", {}) or {}
+    host = c.vm_name
+    if not host:
+        c.fail("no target node to check: $_vm_name names none")
+        return
+    ns = str(cfg.get("vllm_ns") or _DEFAULT_NS)
+
+    router = ssh_output(host, "kubectl -n {} get deployment {} -o jsonpath='{{.status.readyReplicas}}' "
+                              "2>/dev/null".format(shlex.quote(ns), shlex.quote(_ROUTER_DEPLOYMENT))) or "0"
+    if router.strip() in ("", "0"):
+        c.fail("the vLLM router has no ready replica in namespace {}".format(ns))
+    else:
+        c.ok("the vLLM router is ready in namespace {}".format(ns))
+
+    pods = ssh_output(host, "kubectl -n {} get pods -l model={} -o jsonpath='{{range .items[*]}}"
+                            "{{.status.phase}}{{\"\\n\"}}{{end}}' 2>/dev/null".format(
+                                shlex.quote(ns), shlex.quote(model_name(cfg)))) or ""
+    running = [p for p in pods.splitlines() if p.strip() == "Running"]
+    c.expect("the running serving pods of {} in {}".format(model_name(cfg), ns),
+             str(cfg.get("vllm_replicas") or _DEFAULT_REPLICAS), str(len(running)))
+
+    hosts = ssh_output(host, "kubectl -n {} get ingress -o jsonpath='{{.items[*].spec.rules[*].host}}' "
+                             "2>/dev/null".format(shlex.quote(ns)))
+    if hosts:
+        c.ok("the ingress answers for {}".format(hosts))
+    else:
+        c.fail("there is no vLLM ingress in namespace {}".format(ns))
+
+
+# ── validation ───────────────────────────────────────────────────────────────
+
+def _validate(v):
+    cfg = v.definition.get("vllm", {}) or {}
+    source = str(cfg.get("vllm_source") or appco.SOURCE_UPSTREAM).strip().lower()
+    if source not in appco.SOURCES:
+        v.errors.append("[ERROR] vllm.vllm_source '{}' is invalid — use one of: {}".format(
+            source, ", ".join(appco.SOURCES)))
+    elif source == appco.SOURCE_APPCOLLECTION:
+        v.vreq_or_credential("vllm", "vllm_appcollection_user", "appcollection",
+                             account_field="vllm_appcollection_account")
+        v.vreq_or_credential("vllm", "vllm_appcollection_password", "appcollection",
+                             account_field="vllm_appcollection_account")
+    v.vns("vllm")
+    v.vurl_field("vllm", "vllm_repo_url")
+    for field in ("vllm_replicas", "vllm_gpu"):
+        value = cfg.get(field)
+        if value not in (None, "") and not str(value).isdigit():
+            v.errors.append("[ERROR] vllm.{} '{}' is invalid — it is a whole number of {}".format(
+                field, value, "replicas" if field == "vllm_replicas" else "GPUs per replica"))
+    if cfg.get("vllm_set") is not None and not isinstance(cfg.get("vllm_set"), dict):
+        v.errors.append("[ERROR] vllm.vllm_set is an object of chart values, e.g. "
+                        "{\"routerSpec.routingLogic\": \"session\"}")
+    if cfg.get("vllm_storage_class") and not cfg.get("vllm_storage_size"):
+        v.errors.append("[ERROR] vllm.vllm_storage_class names a StorageClass but vllm_storage_size asks for no "
+                        "volume, so nothing would use it")
+    if cfg.get("vllm_hf_token") and cfg.get("vllm_hf_token_account"):
+        v.errors.append("[ERROR] vllm.vllm_hf_token and vllm_hf_token_account both name a Hugging Face token — "
+                        "keep the token in the credential store and name it with vllm_hf_token_account alone")
+    if not model_name(cfg):
+        v.errors.append("[ERROR] vllm.vllm_model_name is empty once it is reduced to a Kubernetes name — name the "
+                        "model with letters and digits")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    cfg = definition.get("vllm", {}) or {}
+
+    target = k8s.first_server_node(definition)
+    if not target:
+        sys.exit(1)
+    vm_name, _ssh_cmd = target
+    clu_name = k8s.get_vm_kcluster(definition, vm_name)
+    clu_cfg = k8s.load_kclu_vars(definition, clu_name) if clu_name else {}
+    online = definition.get("common", {}).get("online") == "1"
+    ingress_class = cfg.get("vllm_ingress_class") or (
+        k8s.cluster_choice(definition, clu_name, apps.CLUSTER_INGRESS) if clu_name else "")
+
+    token = hf_token(cfg)
+
+    setup_helm(vm_name, clu_name, online=online)
+    repo, extra_set = "", ""
+    if from_appcollection(cfg):
+        user, password = appco.credentials(cfg, APPCOLLECTION_PREFIX)
+        if not user or not password:
+            die("vllm: vllm_source is \"appcollection\", so vllm_appcollection_user and "
+                "vllm_appcollection_password are needed — set them, set vllm_appcollection_account to an "
+                "\"appcollection\" credential file, or leave all three unset with exactly one such file in the "
+                "store (https://apps.rancher.io)")
+        _chart, extra_set = appco.prepare_appcollection_chart(
+            vm_name, APPCOLLECTION_CHART, ac.require_k8s_name(cfg, "vllm_ns", _DEFAULT_NS), user, password)
+    else:
+        repo = str(cfg.get("vllm_rel") or _DEFAULT_REL)
+        helm_repo_add(vm_name, repo, str(cfg.get("vllm_repo_url") or _DEFAULT_REPO_URL))
+
+    host = setup_vllm(vm_name, clu_name, clu_cfg.get("mydomain", ""), cfg, ingress_class=(
+        "" if ingress_class == "none" else ingress_class), hf_token=token, repo=repo, extra_set=extra_set)
+    ac.register_service_dns(definition, clu_name, host)
+
+
+if __name__ == "__main__":
+    main()

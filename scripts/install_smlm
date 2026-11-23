@@ -449,7 +449,8 @@ import addon_common as ac  # noqa: E402
 import primary  # noqa: E402
 import k8s  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
-from lab_creation import setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log  # noqa: E402
+from lab_creation import (setup_helm, ssh_run, ssh_output, add_service_dns, check_ssh_conn, reboot_vm, die, log,  # noqa: E402
+                          install_packages, ensure_podman)  # noqa: E402
 
 
 _SALT_STATE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -771,13 +772,15 @@ def setup_smlm_podman(hostname, virt_srv, cfg, lab_file=None, only_step=None):
             _registry_login(hostname, scc_user, scc_password)
 
             print("- Installing mgradm tooling")
-            pkgs = "mgradm mgradm-bash-completion mgrctl mgrctl-bash-completion uyuni-storage-setup-server"
+            pkgs = ["mgradm", "mgradm-bash-completion", "mgrctl", "mgrctl-bash-completion",
+                    "uyuni-storage-setup-server"]
             is_transactional = ssh_run(hostname, "command -v transactional-update", check=False).returncode == 0
             if is_transactional:
                 # SL Micro base — ships podman by default; package changes land in a
                 # new snapshot that only takes effect after a reboot, same as
-                # install_uyuni's own (Micro-only) assumption.
-                ssh_run(hostname, "transactional-update --quiet pkg install -y {}".format(pkgs))
+                # install_uyuni's own (Micro-only) assumption. reboot=False: the
+                # reboot below goes through the hypervisor instead.
+                install_packages(hostname, pkgs, reboot=False)
                 reboot_vm(virt_srv, hostname)
                 time.sleep(5)
                 check_ssh_conn(hostname)
@@ -787,9 +790,8 @@ def setup_smlm_podman(hostname, virt_srv, cfg, lab_file=None, only_step=None):
                 # install/enable first (confirmed from the official docs). The
                 # containers module itself is already registered above, before the
                 # SMLM module registration attempt — no need to repeat it here.
-                ssh_run(hostname, "zypper --non-interactive install -y podman")
-                ssh_run(hostname, "systemctl enable --now podman.socket", check=False)
-                ssh_run(hostname, "zypper --non-interactive install -y {}".format(pkgs))
+                ensure_podman(hostname)
+                install_packages(hostname, pkgs)
 
         print("- Installing SUSE Multi-Linux Manager server")
         org = cfg.get("smlm_org") or "lab"

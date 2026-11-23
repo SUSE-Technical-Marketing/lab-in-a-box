@@ -1454,6 +1454,136 @@ def reboot_into_pending_snapshot(host: str, timeout: int = 600) -> bool:
     return True
 
 
+# ─── Packages on a lab node ──────────────────────────────────────────────────
+#
+# The package manager of each family, flat and literal. "transactional-update" is zypper on a read-only root
+# filesystem (SL Micro, MicroOS): it is the only way to install a package there, so it is a package manager like any
+# other here, selected first because such a host has both it and zypper.
+_PKG_MANAGERS = ("transactional-update", "zypper", "dnf", "yum", "apt-get")
+_PKG_INSTALL = {
+    "transactional-update": "transactional-update --quiet pkg install -y {pkgs}",
+    "zypper": "zypper --non-interactive install -y {pkgs}",
+    "dnf": "dnf install -y {pkgs}",
+    "yum": "yum install -y {pkgs}",
+    "apt-get": "DEBIAN_FRONTEND=noninteractive apt-get install -y {pkgs}",
+}
+# Whether one package name exists in the host's configured repositories, without installing it.
+_PKG_AVAILABLE = {
+    "transactional-update": "zypper --non-interactive search --match-exact {pkg}",
+    "zypper": "zypper --non-interactive search --match-exact {pkg}",
+    "dnf": "dnf --quiet list available {pkg} || dnf --quiet list installed {pkg}",
+    "yum": "yum --quiet list available {pkg} || yum --quiet list installed {pkg}",
+    "apt-get": "apt-cache show {pkg}",
+}
+_PKG_REFRESH = {
+    "apt-get": "DEBIAN_FRONTEND=noninteractive apt-get update -qq",
+}
+
+
+def package_manager(host: str) -> str:
+    """
+    The package manager to install with on `host`: "transactional-update" on a read-only-root SUSE system, otherwise
+    the first of zypper/dnf/yum/apt-get it has. Dies when it has none.
+    """
+    for manager in _PKG_MANAGERS:
+        if ssh_run(host, "command -v {}".format(shlex.quote(manager)), check=False, capture=True).returncode == 0:
+            return manager
+    die("no supported package manager ({}) on '{}'".format(", ".join(_PKG_MANAGERS), host))
+
+
+def package_available(host: str, pkg: str, manager: str = "") -> bool:
+    """Whether `pkg` is in `host`'s configured repositories (or already installed). Read-only."""
+    manager = manager or package_manager(host)
+    refresh = _PKG_REFRESH.get(manager)
+    if refresh:
+        ssh_run(host, refresh, check=False, capture=True)
+    return ssh_run(host, _PKG_AVAILABLE[manager].format(pkg=shlex.quote(pkg)),
+                   check=False, capture=True).returncode == 0
+
+
+def install_packages(host: str, pkgs, manager: str = "", reboot: bool = True, required: bool = True,
+                     extra_args: str = "") -> str:
+    """
+    Install `pkgs` on `host` with its own package manager, whichever family it is. Returns the manager used, or "" when
+    the install failed and `required` is False.
+
+    On a transactional-update host the packages land in a new snapshot, which only becomes the running system after a
+    reboot, so this reboots into it (`reboot=False` leaves that to the caller, which must then call
+    reboot_into_pending_snapshot() itself before anything expects the packages to be there).
+
+    `required=False` warns instead of dying when the install fails — for a package the caller can do without, or one
+    whose absence it reports itself afterwards.
+
+    `extra_args` passes one package manager's own flags through (e.g. zypper's --gpg-auto-import-keys on a node whose
+    repository keys are not imported yet). It is manager-specific by nature, so a caller that sets it knows which
+    manager the node has.
+
+    Does not check availability: a caller that wants to report "this distribution does not ship X" rather than the
+    package manager's own error calls package_available() first.
+    """
+    pkgs = [pkgs] if isinstance(pkgs, str) else list(pkgs)
+    if not pkgs:
+        return manager or package_manager(host)
+    manager = manager or package_manager(host)
+    refresh = _PKG_REFRESH.get(manager)
+    if refresh:
+        ssh_run(host, refresh, check=False, capture=True)
+    if manager == "transactional-update":
+        wait_for_transactional_update_lock(host)
+    quoted = " ".join(shlex.quote(p) for p in pkgs)
+    if extra_args:
+        quoted = "{} {}".format(extra_args, quoted)
+    r = ssh_run(host, _PKG_INSTALL[manager].format(pkgs=quoted), check=False, capture=True)
+    if r.returncode != 0:
+        msg = "could not install {} on '{}' with {}: {}".format(
+            ", ".join(pkgs), host, manager, (r.stderr or r.stdout or "").strip())
+        if required:
+            die(msg)
+        warn(msg)
+        return ""
+    log("- Installed {} on '{}' (via {})".format(", ".join(pkgs), host, manager))
+    if manager == "transactional-update" and reboot:
+        reboot_into_pending_snapshot(host)
+    return manager
+
+
+def ensure_podman(host: str) -> bool:
+    """
+    Idempotently make `host` able to run containers with podman: install it with the host's own package manager and
+    enable podman.socket. A no-op when podman is already there. True once podman is present.
+
+    Best effort, like the per-add-on command it replaces: a node whose distribution has no podman package warns here
+    and fails on its own, more specific error when the add-on actually uses a container.
+    """
+    if ssh_run(host, "command -v podman >/dev/null 2>&1", check=False).returncode == 0:
+        ssh_run(host, "systemctl enable --now podman.socket", check=False)
+        return True
+    install_packages(host, ["podman"], required=False)
+    ssh_run(host, "systemctl enable --now podman.socket", check=False)
+    return ssh_run(host, "command -v podman >/dev/null 2>&1", check=False).returncode == 0
+
+
+def open_guest_port(host: str, port, proto: str = "tcp") -> None:
+    """
+    Open `port` in `host`'s own firewall, whichever of firewalld/ufw is running there. A no-op on a host running
+    neither. Best effort: a firewall that refuses the rule warns rather than dying.
+
+    The guest's own firewall only. A cloud backend filters in its security groups instead — see libs/backends.py's
+    own per-backend port helpers.
+    """
+    cmd = (
+        "if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then\n"
+        "    firewall-cmd --permanent --add-port={port}/{proto} && firewall-cmd --reload\n"
+        "elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then\n"
+        "    ufw allow {port}/{proto}\n"
+        "fi\n"
+    ).format(port=port, proto=proto)
+    r = ssh_run(host, cmd, check=False, capture=True)
+    if r.returncode != 0:
+        warn("could not open {}/{} in '{}'s own firewall: {}".format(
+            port, proto, host, (r.stderr or r.stdout or "").strip()))
+
+
 # os-release IDs of the SUSE products whose package repositories come from a registration. openSUSE needs none.
 _SUSE_REGISTERED_IDS = ("sles", "sles_sap", "sl-micro", "sle-micro")
 
