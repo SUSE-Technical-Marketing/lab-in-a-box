@@ -1209,7 +1209,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">可用附加组件</h2>
 <p>附加组件通过名称在 kcluster 或节点的 <code>addons</code> 数组中引用。对应的 <code>install_&lt;name&gt;</code> 脚本必须位于 <code>PATH</code> 中。</p>
-<p><sub>跳转到：<a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub></p>
+<p><sub>跳转到：<a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-desktop">桌面</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes 平台与 GitOps</strong></summary>
@@ -1619,6 +1619,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Hermes Agent：Nous Research 的自我改进型个人 AI 智能体（Telegram/Discord/Slack 机器人 + Web 仪表板）</td>
 </tr>
 <tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell：NVIDIA 的私有运行时，将成组的自主 AI 智能体保持在经过策略校验的沙箱中。<code>openshell_mode: "kubernetes"</code>（默认）从 OCI Helm chart 在 kcluster 上安装网关和 supervisor；<code>"host"</code> 在每个将 <code>openshell</code> 列入自身 <code>addons[]</code> 的节点上运行上游安装程序，为该节点提供 <code>openshell</code> CLI 和本地网关，完全不涉及 Kubernetes</td>
+</tr>
+<tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
 <td>SUSE 自己的 Ollama + Open WebUI + Milvus AI 栈</td>
 </tr>
@@ -1685,6 +1689,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>桌面</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>附加组件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>在实验节点上安装可用的 XFCE 桌面，使用该节点所属发行版自己的软件包。<code>xfce_access</code> 决定访问方式：<code>console</code>（默认）不在网络上提供任何服务，只在节点自身的显示器上显示；<code>xrdp</code> 通过 RDP 提供；<code>vnc</code> 通过 x11vnc 以 VNC 提供控制台显示。各发行版提供哪些软件包记录在 <code>libs/desktop_common.py</code> 的 <code>DESKTOPS</code> 表中，因此另一个桌面环境是该表中的一项，而不是另一个附加组件</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

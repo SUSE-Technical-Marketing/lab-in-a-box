@@ -1214,7 +1214,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">الإضافات المتاحة</h2>
 <p>يُشار إلى الإضافات بأسمائها في مصفوفة <code>addons</code> لعنقود kcluster أو لعقدة. ويجب أن يكون السكربت <code>install_&lt;name&gt;</code> المقابل في <code>PATH</code>.</p>
-<p><sub>انتقل إلى: <a href="#addons-k8s">Kubernetes وGitOps</a> · <a href="#addons-security">الأمن والامتثال</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">التخزين وقواعد البيانات</a> · <a href="#addons-collaboration">التعاون ومشاركة الملفات</a> · <a href="#addons-cicd">CI/CD والأدوات</a> · <a href="#addons-ai">الذكاء الاصطناعي / تعلم الآلة</a> · <a href="#addons-virt">المحاكاة الافتراضية</a> · <a href="#addons-demos">التطبيقات التجريبية</a> · <a href="#addons-games">الألعاب</a></sub></p>
+<p><sub>انتقل إلى: <a href="#addons-k8s">Kubernetes وGitOps</a> · <a href="#addons-security">الأمن والامتثال</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">التخزين وقواعد البيانات</a> · <a href="#addons-collaboration">التعاون ومشاركة الملفات</a> · <a href="#addons-cicd">CI/CD والأدوات</a> · <a href="#addons-ai">الذكاء الاصطناعي / تعلم الآلة</a> · <a href="#addons-virt">المحاكاة الافتراضية</a> · <a href="#addons-desktop">سطح المكتب</a> · <a href="#addons-demos">التطبيقات التجريبية</a> · <a href="#addons-games">الألعاب</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>منصة Kubernetes وGitOps</strong></summary>
@@ -1624,6 +1624,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Hermes Agent: وكيل الذكاء الاصطناعي الشخصي ذاتي التحسن من Nous Research (روبوت Telegram/Discord/Slack + لوحة معلومات ويب)</td>
 </tr>
 <tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell: بيئة التشغيل الخاصة من NVIDIA التي تُبقي أساطيل وكلاء الذكاء الاصطناعي المستقلين داخل بيئات معزولة خاضعة لفحص السياسات. <code>openshell_mode: "kubernetes"</code> (الافتراضي) يثبّت البوابة والمشرف على الـ kcluster من مخطط Helm بصيغة OCI؛ و<code>"host"</code> يشغّل مثبّت المشروع الأصلي على كل عقدة تذكر <code>openshell</code> في <code>addons[]</code> الخاص بها، فيمنح تلك العقدة واجهة <code>openshell</code> وبوابة محلية دون أي Kubernetes</td>
+</tr>
+<tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
 <td>حزمة الذكاء الاصطناعي من SUSE: Ollama + Open WebUI + Milvus</td>
 </tr>
@@ -1690,6 +1694,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>سطح المكتب</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>اسم الإضافة</th>
+<th>الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>سطح مكتب XFCE عامل على عقدة في المختبر، مُثبَّت من حِزم توزيعة العقدة نفسها. يحدد <code>xfce_access</code> طريقة الوصول: <code>console</code> (الافتراضي) لا ينشر أي شيء على الشبكة ويظهر على شاشة العقدة نفسها، و<code>xrdp</code> يقدّمه عبر RDP، و<code>vnc</code> يقدّم شاشة الطرفية عبر VNC باستخدام x11vnc. الحِزم التي توفّرها كل توزيعة مذكورة في جدول <code>DESKTOPS</code> في <code>libs/desktop_common.py</code>، لذا فإن أي بيئة سطح مكتب أخرى تكون مدخلًا هناك لا إضافة أخرى</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

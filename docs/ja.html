@@ -1212,7 +1212,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">使用できるアドオン</h2>
 <p>アドオンは、kcluster またはノードの <code>addons</code> 配列で名前によって指定します。対応する <code>install_&lt;name&gt;</code> スクリプトが <code>PATH</code> 上にある必要があります。</p>
-<p><sub>移動先：<a href="#addons-k8s">Kubernetes と GitOps</a> · <a href="#addons-security">セキュリティとコンプライアンス</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージとデータベース</a> · <a href="#addons-collaboration">コラボレーションとファイル共有</a> · <a href="#addons-cicd">CI/CD とツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub></p>
+<p><sub>移動先：<a href="#addons-k8s">Kubernetes と GitOps</a> · <a href="#addons-security">セキュリティとコンプライアンス</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージとデータベース</a> · <a href="#addons-collaboration">コラボレーションとファイル共有</a> · <a href="#addons-cicd">CI/CD とツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-desktop">デスクトップ</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes プラットフォームと GitOps</strong></summary>
@@ -1622,6 +1622,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Hermes Agent：Nous Research による自己改善型のパーソナル AI エージェント（Telegram/Discord/Slack ボット + Web ダッシュボード）</td>
 </tr>
 <tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell：自律型 AI エージェント群をポリシー検査済みのサンドボックス内で動かす NVIDIA のプライベートランタイム。<code>openshell_mode: "kubernetes"</code>（既定）は OCI Helm チャートからゲートウェイとスーパーバイザーを kcluster にインストールし、<code>"host"</code> は自身の <code>addons[]</code> に <code>openshell</code> を列挙した各ノードで上流のインストーラーを実行して、そのノードに <code>openshell</code> CLI とローカルゲートウェイを Kubernetes なしで用意する</td>
+</tr>
+<tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
 <td>SUSE 独自の Ollama + Open WebUI + Milvus による AI スタック</td>
 </tr>
@@ -1688,6 +1692,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>デスクトップ</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>ラボノード上で動く XFCE デスクトップを、そのノード自身のディストリビューションのパッケージから導入する。<code>xfce_access</code> がアクセス方法を決める：<code>console</code>（既定）はネットワークには何も公開せずノード自身の画面に表示し、<code>xrdp</code> は RDP で、<code>vnc</code> は x11vnc を使って VNC でコンソール画面を提供する。どのディストリビューションがどのパッケージを配布しているかは <code>libs/desktop_common.py</code> の <code>DESKTOPS</code> テーブルなので、別のデスクトップ環境は別のアドオンではなくそこへの追加になる</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

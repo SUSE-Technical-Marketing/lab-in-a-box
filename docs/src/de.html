@@ -942,7 +942,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">Verfügbare Add-ons</h2>
 <p>Add-ons werden über ihren Namen im Array <code>addons</code> eines kclusters oder Knotens referenziert. Das passende Skript <code>install_&lt;name&gt;</code> muss im <code>PATH</code> liegen.</p>
-<p><sub>Direkt zu: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sicherheit &amp; Compliance</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Speicher &amp; Datenbanken</a> · <a href="#addons-collaboration">Zusammenarbeit &amp; Dateifreigabe</a> · <a href="#addons-cicd">CI/CD &amp; Entwicklerwerkzeuge</a> · <a href="#addons-ai">KI / ML</a> · <a href="#addons-virt">Virtualisierung</a> · <a href="#addons-demos">Demo-Anwendungen</a> · <a href="#addons-games">Spiele</a></sub></p>
+<p><sub>Direkt zu: <a href="#addons-k8s">Kubernetes &amp; GitOps</a> · <a href="#addons-security">Sicherheit &amp; Compliance</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Speicher &amp; Datenbanken</a> · <a href="#addons-collaboration">Zusammenarbeit &amp; Dateifreigabe</a> · <a href="#addons-cicd">CI/CD &amp; Entwicklerwerkzeuge</a> · <a href="#addons-ai">KI / ML</a> · <a href="#addons-virt">Virtualisierung</a> · <a href="#addons-desktop">Desktop</a> · <a href="#addons-demos">Demo-Anwendungen</a> · <a href="#addons-games">Spiele</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes-Plattform &amp; GitOps</strong></summary>
@@ -1352,6 +1352,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Hermes Agent, der sich selbst verbessernde persönliche KI-Agent von Nous Research (Bot für Telegram/Discord/Slack plus Web-Dashboard)</td>
 </tr>
 <tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell, die private Laufzeitumgebung von NVIDIA, die Flotten autonomer KI-Agenten in richtliniengeprüften Sandboxes hält. <code>openshell_mode: "kubernetes"</code> (die Vorgabe) installiert Gateway und Supervisor über das OCI-Helm-Chart auf dem kcluster; <code>"host"</code> führt das Installationsprogramm des Projekts auf jedem Knoten aus, der <code>openshell</code> in seinem eigenen <code>addons[]</code> auflistet, und gibt diesem Knoten die <code>openshell</code>-CLI und ein lokales Gateway ohne Kubernetes</td>
+</tr>
+<tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
 <td>Der KI-Stack von SUSE mit Ollama, Open WebUI und Milvus</td>
 </tr>
@@ -1418,6 +1422,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>Desktop</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Add-on-Name</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>Ein funktionierender XFCE-Desktop auf einem Lab-Knoten, installiert aus den Paketen der Distribution des Knotens selbst. <code>xfce_access</code> bestimmt den Zugang: <code>console</code> (die Vorgabe) stellt nichts über das Netz bereit und erscheint auf dem Bildschirm des Knotens, <code>xrdp</code> stellt ihn über RDP bereit, <code>vnc</code> stellt die Konsolenanzeige mit x11vnc über VNC bereit. Welche Pakete jede Distribution mitbringt, steht in der Tabelle <code>DESKTOPS</code> in <code>libs/desktop_common.py</code>; eine weitere Desktop-Umgebung ist daher ein Eintrag dort und kein weiteres Add-on</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>
