@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>一个文件，一条命令。</strong>以声明方式描述虚拟机、Kubernetes 集群（RKE2 或 K3s）和附加组件。<code>setup_lab.py</code> 按依赖顺序构建它们，无需您手动运行 <code>virt-install</code> 或 Ansible。</li>
 <li><strong>家庭实验室或云端，同一份定义。</strong>实验室虚拟机运行在您自己的 KVM 主机、Harvester HCI，或 AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale 上。一个实验室可以跨越多台 KVM 主机，并可通过<a href="#cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</a>组合多个云和站点。</li>
-<li><strong>70 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
+<li><strong><span data-addon-count>102</span> 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
 <li><strong>与代码同步的 Web 界面。</strong><a href="#web-ui-lab-builder">lab-builder</a> 根据附加组件自身的架构生成每个表单，因此脚本中新增的字段无需修改前端即可显示在界面中。</li>
 <li><strong>可插拔的预配方式。</strong>SLE Micro 使用 Ignition 和 Combustion，openSUSE 和 Ubuntu 使用 cloud-init，旧镜像使用 <code>virt-customize</code>，也可以从安装程序 ISO 进行自动安装（AutoYaST、Kickstart、Preseed 或 AutoInstall）。</li>
 <li><strong>凭据不放在实验室文件中。</strong>云和服务的凭据可以保存在按账户加密的文件中（使用 Argon2id 派生密钥，再级联使用 AES-256-GCM 和 ChaCha20-Poly1305）。</li>
@@ -1209,7 +1209,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">可用附加组件</h2>
 <p>附加组件通过名称在 kcluster 或节点的 <code>addons</code> 数组中引用。对应的 <code>install_&lt;name&gt;</code> 脚本必须位于 <code>PATH</code> 中。</p>
-<p><sub>跳转到：<a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub></p>
+<p><sub>跳转到：<a href="#addons-k8s">Kubernetes 与 GitOps</a> · <a href="#addons-security">安全与合规</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">存储与数据库</a> · <a href="#addons-collaboration">协作与文件共享</a> · <a href="#addons-cicd">CI/CD 与工具</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">虚拟化</a> · <a href="#addons-desktop">桌面</a> · <a href="#addons-demos">演示应用</a> · <a href="#addons-games">游戏</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes 平台与 GitOps</strong></summary>
@@ -1281,6 +1281,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>专用游戏服务器托管与扩缩容（agones.dev）</td>
+</tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>通过 <code>kubectl apply</code> 将一个或多个 Kubernetes 清单（本地文件、http(s) 或 nfs:// URL，或内联 YAML/JSON）应用到 kcluster：用于不值得单独做一个附加组件的一次性资源</td>
 </tr>
 </tbody>
 </table>
@@ -1365,6 +1369,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>预配一个真正的 Ansible 控制节点：安装 <code>ansible-core</code>，推送示例 Playbook 和一个查询 <code>uyuni</code>/<code>smlm</code> 系统列表的动态清单脚本，并设置到实验室其他节点的 SSH 访问。与 <code>uyuni</code>/<code>smlm</code> 的 <code>*_ansible_control_nodes</code> 字段配合使用，该字段会在服务器端启用“Ansible Control Node”授权</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>将任意 Ansible playbook（本地文件、http(s) 或 nfs:// URL，或内联 YAML）推送到已部署的 <code>ansible_control_node</code> 并运行，使用它自己的动态清单</td>
 </tr>
 </tbody>
 </table>
@@ -1466,6 +1474,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>独立的 Grafana 服务器（podman 容器，无 Kubernetes）：自动配置 Prometheus 数据源，并可选择为 <code>smlm</code>/<code>uyuni</code> 服务器的导出器配置 Grafana Labs 官方社区仪表板</td>
 </tr>
+<tr>
+<td><code>run_command</code></td>
+<td>在目标节点上按顺序运行一条或多条 shell 命令，也可以是从本地文件或 http(s)、nfs:// URL 获取的整个脚本：用于不值得单独做一个附加组件的一次性配置步骤</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1487,6 +1499,98 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>本地 LLM 运行时</td>
 </tr>
 <tr>
+<td><a href="https://docs.vllm.ai/"><code>vllm</code></a></td>
+<td>兼容 OpenAI 的 LLM 推理服务引擎，用于 GPU 节点</td>
+</tr>
+<tr>
+<td><a href="https://github.com/open-webui/mcpo"><code>mcpo</code></a></td>
+<td>将 MCP 服务器发布为 OpenAPI 工具端点</td>
+</tr>
+<tr>
+<td><a href="https://studio.ai21.com"><code>ai21</code></a></td>
+<td>AI21 API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://cloud.cerebras.ai"><code>cerebras</code></a></td>
+<td>Cerebras API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dashboard.cohere.com"><code>cohere</code></a></td>
+<td>Cohere API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dashscope.console.aliyun.com"><code>dashscope</code></a></td>
+<td>Alibaba Cloud DashScope API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://deepinfra.com/dash/api_keys"><code>deepinfra</code></a></td>
+<td>DeepInfra API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.bce.baidu.com"><code>ernie</code></a></td>
+<td>Baidu ERNIE API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://fireworks.ai"><code>fireworks</code></a></td>
+<td>Fireworks AI API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.groq.com"><code>groq</code></a></td>
+<td>Groq API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/settings/tokens"><code>huggingface</code></a></td>
+<td>Hugging Face Inference API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://app.hyperbolic.xyz"><code>hyperbolic</code></a></td>
+<td>Hyperbolic API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://jina.ai"><code>jina</code></a></td>
+<td>Jina AI 嵌入 API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://studio.nebius.com"><code>nebius</code></a></td>
+<td>Nebius AI Studio API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://novita.ai"><code>novita</code></a></td>
+<td>Novita AI API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openrouter.ai/keys"><code>openrouter</code></a></td>
+<td>OpenRouter API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.perplexity.ai/settings/api"><code>perplexity</code></a></td>
+<td>Perplexity API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://replicate.com/account/api-tokens"><code>replicate</code></a></td>
+<td>Replicate API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://cloud.sambanova.ai"><code>sambanova</code></a></td>
+<td>SambaNova Cloud API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://api.together.ai"><code>together</code></a></td>
+<td>Together AI API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dash.voyageai.com"><code>voyage</code></a></td>
+<td>Voyage AI 嵌入 API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.x.ai"><code>xai</code></a></td>
+<td>xAI Grok API 代理（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://z.ai"><code>zai</code></a></td>
+<td>Z.ai GLM API 代理（LiteLLM）</td>
+</tr>
+<tr>
 <td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
 <td>DeepSeek 模型，通过 Ollama 提供</td>
 </tr>
@@ -1503,6 +1607,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Anthropic Claude API 代理（LiteLLM）</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>在节点上安装 Anthropic 自己的客户端工具：由 <code>anthropic_tools_components</code> 选择的 Claude Code CLI、Claude Agent SDK、Anthropic API SDK 和 <code>ant</code> CLI。<code>anthropic_tools_install_method</code> 为 <code>native</code> 时运行 Anthropic 自己的安装程序，按用户安装并自动更新；<code>package</code> 则从 Anthropic 的仓库在整台机器上安装已签名的 <code>claude-code</code> 软件包。凭据是可选的：通常由使用 CLI 的人自行登录。与上面的 <code>anthropic</code> 插件无关，后者是 API 前面的代理</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API 代理（LiteLLM）</td>
 </tr>
@@ -1515,8 +1623,16 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>用于 Ollama 和 OpenAI 兼容端点的聊天前端</td>
 </tr>
 <tr>
+<td><a href="https://searxng.org/"><code>searxng</code></a></td>
+<td>自托管的聚合搜索引擎；open_webui 附加组件的网页搜索后端</td>
+</tr>
+<tr>
 <td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
 <td>Hermes Agent：Nous Research 的自我改进型个人 AI 智能体（Telegram/Discord/Slack 机器人 + Web 仪表板）</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell：NVIDIA 的私有运行时，将成组的自主 AI 智能体保持在经过策略校验的沙箱中。<code>openshell_mode: "kubernetes"</code>（默认）从 OCI Helm chart 在 kcluster 上安装网关和 supervisor；<code>"host"</code> 在每个将 <code>openshell</code> 列入自身 <code>addons[]</code> 的节点上运行上游安装程序，为该节点提供 <code>openshell</code> CLI 和本地网关，完全不涉及 Kubernetes</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
@@ -1585,6 +1701,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>桌面</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>附加组件名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>在实验节点上安装可用的 XFCE 桌面，使用该节点所属发行版自己的软件包。<code>xfce_access</code> 决定访问方式：<code>console</code>（默认）不在网络上提供任何服务，只在节点自身的显示器上显示；<code>xrdp</code> 通过 RDP 提供；<code>vnc</code> 通过 x11vnc 以 VNC 提供控制台显示。各发行版提供哪些软件包记录在 <code>libs/desktop_common.py</code> 的 <code>DESKTOPS</code> 表中，因此另一个桌面环境是该表中的一项，而不是另一个附加组件</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

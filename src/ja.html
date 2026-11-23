@@ -3,7 +3,7 @@
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong>70 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong><span data-addon-count>102</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -1033,7 +1033,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">使用できるアドオン</h2>
 <p>アドオンは、kcluster またはノードの <code>addons</code> 配列で名前によって指定します。対応する <code>install_&lt;name&gt;</code> スクリプトが <code>PATH</code> 上にある必要があります。</p>
-<p><sub>移動先：<a href="#addons-k8s">Kubernetes と GitOps</a> · <a href="#addons-security">セキュリティとコンプライアンス</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージとデータベース</a> · <a href="#addons-collaboration">コラボレーションとファイル共有</a> · <a href="#addons-cicd">CI/CD とツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub></p>
+<p><sub>移動先：<a href="#addons-k8s">Kubernetes と GitOps</a> · <a href="#addons-security">セキュリティとコンプライアンス</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">ストレージとデータベース</a> · <a href="#addons-collaboration">コラボレーションとファイル共有</a> · <a href="#addons-cicd">CI/CD とツール</a> · <a href="#addons-ai">AI / ML</a> · <a href="#addons-virt">仮想化</a> · <a href="#addons-desktop">デスクトップ</a> · <a href="#addons-demos">デモアプリケーション</a> · <a href="#addons-games">ゲーム</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Kubernetes プラットフォームと GitOps</strong></summary>
@@ -1105,6 +1105,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>専用ゲームサーバーのホスティングとスケーリング（agones.dev）</td>
+</tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>1 つ以上の Kubernetes マニフェスト（ローカルファイル、http(s) または nfs:// の URL、あるいはインライン YAML/JSON）を <code>kubectl apply</code> で kcluster に適用する。独自のアドオンを作るほどではない単発のリソース向けの汎用手段</td>
 </tr>
 </tbody>
 </table>
@@ -1189,6 +1193,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>本物の Ansible コントロールノードを構築します：<code>ansible-core</code> をインストールし、サンプルの Playbook と、<code>uyuni</code>/<code>smlm</code> のシステム一覧を問い合わせる動的インベントリースクリプトを配置し、ラボの他のノードへの SSH アクセスを設定します。サーバー側で「Ansible Control Node」エンタイトルメントを有効にする <code>uyuni</code>/<code>smlm</code> の <code>*_ansible_control_nodes</code> フィールドと組み合わせて使います</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>任意の Ansible プレイブック（ローカルファイル、http(s) または nfs:// の URL、あるいはインライン YAML）を、すでに構築済みの <code>ansible_control_node</code> に送り込み、その動的インベントリーを使って実行する</td>
 </tr>
 </tbody>
 </table>
@@ -1290,6 +1298,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>単独の Grafana サーバー（podman コンテナ、Kubernetes なし）：Prometheus データソースを自動で設定し、必要に応じて <code>smlm</code>/<code>uyuni</code> サーバーのエクスポーター用に Grafana Labs の公式コミュニティダッシュボードも設定します</td>
 </tr>
+<tr>
+<td><code>run_command</code></td>
+<td>対象ノード上で 1 つ以上のシェルコマンドを順番に実行する。ローカルファイルや http(s)・nfs:// の URL から取得したスクリプト全体でもよい。独自のアドオンを作るほどではない単発の構成手順向けの汎用手段</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1311,6 +1323,98 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>ローカル LLM ランタイム</td>
 </tr>
 <tr>
+<td><a href="https://docs.vllm.ai/"><code>vllm</code></a></td>
+<td>OpenAI 互換の LLM サービングエンジン（GPU ノード向け）</td>
+</tr>
+<tr>
+<td><a href="https://github.com/open-webui/mcpo"><code>mcpo</code></a></td>
+<td>MCP サーバーを OpenAPI ツールエンドポイントとして公開</td>
+</tr>
+<tr>
+<td><a href="https://studio.ai21.com"><code>ai21</code></a></td>
+<td>AI21 API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://cloud.cerebras.ai"><code>cerebras</code></a></td>
+<td>Cerebras API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dashboard.cohere.com"><code>cohere</code></a></td>
+<td>Cohere API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dashscope.console.aliyun.com"><code>dashscope</code></a></td>
+<td>Alibaba Cloud DashScope API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://deepinfra.com/dash/api_keys"><code>deepinfra</code></a></td>
+<td>DeepInfra API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.bce.baidu.com"><code>ernie</code></a></td>
+<td>Baidu ERNIE API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://fireworks.ai"><code>fireworks</code></a></td>
+<td>Fireworks AI API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.groq.com"><code>groq</code></a></td>
+<td>Groq API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/settings/tokens"><code>huggingface</code></a></td>
+<td>Hugging Face Inference API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://app.hyperbolic.xyz"><code>hyperbolic</code></a></td>
+<td>Hyperbolic API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://jina.ai"><code>jina</code></a></td>
+<td>Jina AI 埋め込み API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://studio.nebius.com"><code>nebius</code></a></td>
+<td>Nebius AI Studio API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://novita.ai"><code>novita</code></a></td>
+<td>Novita AI API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://openrouter.ai/keys"><code>openrouter</code></a></td>
+<td>OpenRouter API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://www.perplexity.ai/settings/api"><code>perplexity</code></a></td>
+<td>Perplexity API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://replicate.com/account/api-tokens"><code>replicate</code></a></td>
+<td>Replicate API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://cloud.sambanova.ai"><code>sambanova</code></a></td>
+<td>SambaNova Cloud API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://api.together.ai"><code>together</code></a></td>
+<td>Together AI API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://dash.voyageai.com"><code>voyage</code></a></td>
+<td>Voyage AI 埋め込み API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://console.x.ai"><code>xai</code></a></td>
+<td>xAI Grok API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
+<td><a href="https://z.ai"><code>zai</code></a></td>
+<td>Z.ai GLM API プロキシ（LiteLLM）</td>
+</tr>
+<tr>
 <td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
 <td>DeepSeek モデル（Ollama で提供）</td>
 </tr>
@@ -1327,6 +1431,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Anthropic Claude API プロキシ（LiteLLM）</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>Anthropic のクライアントツールをノードに導入します。<code>anthropic_tools_components</code> で選ぶ Claude Code CLI、Claude Agent SDK、Anthropic API SDK、<code>ant</code> CLI です。<code>anthropic_tools_install_method</code> が <code>native</code> なら Anthropic 自身のインストーラーをユーザーごとに実行し、自動更新されます。<code>package</code> は署名付きパッケージ <code>claude-code</code> を Anthropic のリポジトリからシステム全体に導入します。資格情報は任意で、通常は CLI を使う本人がログインします。上の <code>anthropic</code> アドオンとは無関係で、あちらは API の前段に置くプロキシです</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API プロキシ（LiteLLM）</td>
 </tr>
@@ -1339,8 +1447,16 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Ollama および OpenAI 互換エンドポイント用のチャットフロントエンド</td>
 </tr>
 <tr>
+<td><a href="https://searxng.org/"><code>searxng</code></a></td>
+<td>セルフホスト型メタ検索エンジン。open_webui アドオンのウェブ検索バックエンド</td>
+</tr>
+<tr>
 <td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
 <td>Hermes Agent：Nous Research による自己改善型のパーソナル AI エージェント（Telegram/Discord/Slack ボット + Web ダッシュボード）</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell：自律型 AI エージェント群をポリシー検査済みのサンドボックス内で動かす NVIDIA のプライベートランタイム。<code>openshell_mode: "kubernetes"</code>（既定）は OCI Helm チャートからゲートウェイとスーパーバイザーを kcluster にインストールし、<code>"host"</code> は自身の <code>addons[]</code> に <code>openshell</code> を列挙した各ノードで上流のインストーラーを実行して、そのノードに <code>openshell</code> CLI とローカルゲートウェイを Kubernetes なしで用意する</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
@@ -1409,6 +1525,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>デスクトップ</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>アドオン名</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>ラボノード上で動く XFCE デスクトップを、そのノード自身のディストリビューションのパッケージから導入する。<code>xfce_access</code> がアクセス方法を決める：<code>console</code>（既定）はネットワークには何も公開せずノード自身の画面に表示し、<code>xrdp</code> は RDP で、<code>vnc</code> は x11vnc を使って VNC でコンソール画面を提供する。どのディストリビューションがどのパッケージを配布しているかは <code>libs/desktop_common.py</code> の <code>DESKTOPS</code> テーブルなので、別のデスクトップ環境は別のアドオンではなくそこへの追加になる</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>

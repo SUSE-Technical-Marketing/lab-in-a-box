@@ -3,7 +3,7 @@
 <ul>
 <li><strong>Un archivo, un comando.</strong> Describa VMs, clústeres de Kubernetes (RKE2 o K3s) y complementos de forma declarativa. <code>setup_lab.py</code> los crea en orden de dependencias, sin que tenga que ejecutar <code>virt-install</code> o Ansible a mano.</li>
 <li><strong>Laboratorio en casa o en la nube, la misma definición.</strong> Las VMs del laboratorio se ejecutan en hosts KVM propios, en Harvester HCI o en AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud o Exoscale. Un laboratorio puede abarcar varios hosts KVM y combinar nubes y ubicaciones mediante una <a href="#cross-cloud-wireguard-overlay">red superpuesta WireGuard entre nubes</a>.</li>
-<li><strong>70 complementos listos para usar.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionadamente vulnerables para formación en seguridad.</li>
+<li><strong><span data-addon-count>102</span> complementos listos para usar.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud y más, además de aplicaciones de demostración intencionadamente vulnerables para formación en seguridad.</li>
 <li><strong>Una interfaz web que sigue al código.</strong> <a href="#web-ui-lab-builder">lab-builder</a> genera cada formulario a partir del esquema del propio complemento, de modo que un campo nuevo en un script aparece en la interfaz sin cambios en el frontend.</li>
 <li><strong>Aprovisionamiento intercambiable.</strong> Ignition y Combustion para SLE Micro, cloud-init para openSUSE y Ubuntu, <code>virt-customize</code> para imágenes antiguas, o una instalación desatendida desde una ISO de instalación (AutoYaST, Kickstart, Preseed o AutoInstall).</li>
 <li><strong>Credenciales fuera del archivo del laboratorio.</strong> Las credenciales de nubes y servicios pueden guardarse en archivos cifrados por cuenta (derivación de claves Argon2id y después AES-256-GCM y ChaCha20-Poly1305 en cascada).</li>
@@ -1035,7 +1035,7 @@ build_man_pages.py --installed      # write them again after an upgrade
 <hr />
 <h2 id="available-addons">Complementos disponibles</h2>
 <p>Los complementos se referencian por nombre en la lista <code>addons</code> de un kcluster o de un nodo. El script <code>install_&lt;name&gt;</code> correspondiente debe estar en el <code>PATH</code>.</p>
-<p><sub>Ir a: <a href="#addons-k8s">Kubernetes y GitOps</a> · <a href="#addons-security">Seguridad y cumplimiento</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Almacenamiento y bases de datos</a> · <a href="#addons-collaboration">Colaboración y archivos compartidos</a> · <a href="#addons-cicd">CI/CD y herramientas</a> · <a href="#addons-ai">IA / ML</a> · <a href="#addons-virt">Virtualización</a> · <a href="#addons-demos">Aplicaciones de demostración</a> · <a href="#addons-games">Juegos</a></sub></p>
+<p><sub>Ir a: <a href="#addons-k8s">Kubernetes y GitOps</a> · <a href="#addons-security">Seguridad y cumplimiento</a> · <a href="#addons-smlm">SUSE Multi-Linux Manager / Uyuni</a> · <a href="#addons-storage">Almacenamiento y bases de datos</a> · <a href="#addons-collaboration">Colaboración y archivos compartidos</a> · <a href="#addons-cicd">CI/CD y herramientas</a> · <a href="#addons-ai">IA / ML</a> · <a href="#addons-virt">Virtualización</a> · <a href="#addons-desktop">Escritorio</a> · <a href="#addons-demos">Aplicaciones de demostración</a> · <a href="#addons-games">Juegos</a></sub></p>
 <p><a id="addons-k8s"></a></p>
 <details open>
 <summary><strong>Plataforma Kubernetes y GitOps</strong></summary>
@@ -1107,6 +1107,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://agones.dev/"><code>agones</code></a></td>
 <td>Alojamiento y escalado de servidores de juegos dedicados (agones.dev)</td>
+</tr>
+<tr>
+<td><code>kubectl_apply</code></td>
+<td>Aplica uno o varios manifiestos de Kubernetes (un archivo local, una URL http(s) o nfs://, o YAML/JSON en línea) a un kcluster con <code>kubectl apply</code>: una vía genérica para recursos puntuales que no merecen su propio complemento</td>
 </tr>
 </tbody>
 </table>
@@ -1191,6 +1195,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://documentation.suse.com/multi-linux-manager/5.1/en/docs/administration/ansible-setup-control-node.html"><code>ansible_control_node</code></a></td>
 <td>Aprovisiona un nodo de control Ansible real: instala <code>ansible-core</code>, copia playbooks de ejemplo y un script de inventario dinámico que consulta la lista de sistemas de <code>uyuni</code>/<code>smlm</code>, y configura el acceso SSH al resto del laboratorio. Se combina con el campo <code>*_ansible_control_nodes</code> de <code>uyuni</code>/<code>smlm</code>, que activa en el servidor el derecho "Ansible Control Node"</td>
+</tr>
+<tr>
+<td><code>ansible_playbook</code></td>
+<td>Envía y ejecuta un playbook de Ansible cualquiera (un archivo local, una URL http(s) o nfs://, o YAML en línea) contra un <code>ansible_control_node</code> ya provisionado, usando su propio inventario dinámico</td>
 </tr>
 </tbody>
 </table>
@@ -1292,6 +1300,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://grafana.com/"><code>grafana</code></a></td>
 <td>Servidor Grafana independiente (contenedor podman, sin Kubernetes): aprovisiona automáticamente una fuente de datos Prometheus y, opcionalmente, el panel oficial de la comunidad de Grafana Labs para los exportadores de un servidor <code>smlm</code>/<code>uyuni</code></td>
 </tr>
+<tr>
+<td><code>run_command</code></td>
+<td>Ejecuta uno o varios comandos de shell, en orden, en el nodo de destino, o un script completo tomado de un archivo local o de una URL http(s) o nfs://: una vía genérica para un paso de aprovisionamiento puntual que no merece su propio complemento</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -1313,6 +1325,98 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Entorno local de ejecución de LLM</td>
 </tr>
 <tr>
+<td><a href="https://docs.vllm.ai/"><code>vllm</code></a></td>
+<td>Motor de servicio de LLM compatible con OpenAI, para nodos con GPU</td>
+</tr>
+<tr>
+<td><a href="https://github.com/open-webui/mcpo"><code>mcpo</code></a></td>
+<td>Publica servidores MCP como endpoints de herramientas OpenAPI</td>
+</tr>
+<tr>
+<td><a href="https://studio.ai21.com"><code>ai21</code></a></td>
+<td>Proxy de la API de AI21 (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://cloud.cerebras.ai"><code>cerebras</code></a></td>
+<td>Proxy de la API de Cerebras (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dashboard.cohere.com"><code>cohere</code></a></td>
+<td>Proxy de la API de Cohere (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dashscope.console.aliyun.com"><code>dashscope</code></a></td>
+<td>Proxy de la API de Alibaba Cloud DashScope (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://deepinfra.com/dash/api_keys"><code>deepinfra</code></a></td>
+<td>Proxy de la API de DeepInfra (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.bce.baidu.com"><code>ernie</code></a></td>
+<td>Proxy de la API de Baidu ERNIE (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://fireworks.ai"><code>fireworks</code></a></td>
+<td>Proxy de la API de Fireworks AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.groq.com"><code>groq</code></a></td>
+<td>Proxy de la API de Groq (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/settings/tokens"><code>huggingface</code></a></td>
+<td>Proxy de la API de Hugging Face Inference (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://app.hyperbolic.xyz"><code>hyperbolic</code></a></td>
+<td>Proxy de la API de Hyperbolic (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://jina.ai"><code>jina</code></a></td>
+<td>Proxy de la API de embeddings de Jina AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://studio.nebius.com"><code>nebius</code></a></td>
+<td>Proxy de la API de Nebius AI Studio (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://novita.ai"><code>novita</code></a></td>
+<td>Proxy de la API de Novita AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://openrouter.ai/keys"><code>openrouter</code></a></td>
+<td>Proxy de la API de OpenRouter (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://www.perplexity.ai/settings/api"><code>perplexity</code></a></td>
+<td>Proxy de la API de Perplexity (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://replicate.com/account/api-tokens"><code>replicate</code></a></td>
+<td>Proxy de la API de Replicate (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://cloud.sambanova.ai"><code>sambanova</code></a></td>
+<td>Proxy de la API de SambaNova Cloud (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://api.together.ai"><code>together</code></a></td>
+<td>Proxy de la API de Together AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://dash.voyageai.com"><code>voyage</code></a></td>
+<td>Proxy de la API de embeddings de Voyage AI (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://console.x.ai"><code>xai</code></a></td>
+<td>Proxy de la API de xAI Grok (LiteLLM)</td>
+</tr>
+<tr>
+<td><a href="https://z.ai"><code>zai</code></a></td>
+<td>Proxy de la API de Z.ai GLM (LiteLLM)</td>
+</tr>
+<tr>
 <td><a href="https://www.deepseek.com/"><code>deepseek</code></a></td>
 <td>Modelo DeepSeek, servido mediante Ollama</td>
 </tr>
@@ -1329,6 +1433,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Proxy de la API de Anthropic Claude (LiteLLM)</td>
 </tr>
 <tr>
+<td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
+<td>Instala las herramientas cliente de Anthropic en el nodo: la CLI de Claude Code, el Claude Agent SDK, el SDK de la API de Anthropic y la CLI <code>ant</code>, según <code>anthropic_tools_components</code>. Con <code>anthropic_tools_install_method</code> <code>native</code> se ejecuta el instalador de Anthropic, por usuario y con actualización automática; <code>package</code> instala el paquete firmado <code>claude-code</code> para todo el sistema desde el repositorio de Anthropic. Las credenciales son opcionales: normalmente inicia sesión quien usa la CLI. No tiene relación con el addon <code>anthropic</code> anterior, que es un proxy delante de la API</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>Proxy de la API de OpenAI (LiteLLM)</td>
 </tr>
@@ -1341,8 +1449,16 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>Interfaz de chat para Ollama y endpoints compatibles con OpenAI</td>
 </tr>
 <tr>
+<td><a href="https://searxng.org/"><code>searxng</code></a></td>
+<td>Metabuscador autoalojado; el backend de búsqueda web del addon open_webui</td>
+</tr>
+<tr>
 <td><a href="https://github.com/NousResearch/hermes-agent"><code>hermes</code></a></td>
 <td>Hermes Agent: el agente de IA personal y automejorable de Nous Research (bot de Telegram/Discord/Slack + panel web)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/NVIDIA/OpenShell"><code>openshell</code></a></td>
+<td>OpenShell: el runtime privado de NVIDIA que mantiene flotas de agentes de IA autónomos en entornos aislados verificados por políticas. <code>openshell_mode: "kubernetes"</code> (el valor predeterminado) instala la puerta de enlace y el supervisor en el kcluster desde el chart Helm OCI; <code>"host"</code> ejecuta el instalador original en cada nodo que incluya <code>openshell</code> en su propio <code>addons[]</code>, lo que da a ese nodo la CLI <code>openshell</code> y una puerta de enlace local sin Kubernetes</td>
 </tr>
 <tr>
 <td><a href="https://www.suse.com/solutions/artificial-intelligence/"><code>suse_ai</code></a></td>
@@ -1411,6 +1527,26 @@ build_man_pages.py --installed      # write them again after an upgrade
 </tbody>
 </table>
 
+</details>
+
+<p><a id="addons-desktop"></a></p>
+<details open>
+<summary><strong>Escritorio</strong></summary>
+
+<table>
+<thead>
+<tr>
+<th>Nombre del complemento</th>
+<th>Descripción</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://xfce.org/"><code>xfce</code></a></td>
+<td>Un escritorio XFCE funcional en un nodo del laboratorio, instalado con los paquetes de la propia distribución del nodo. <code>xfce_access</code> elige cómo se accede: <code>console</code> (el valor predeterminado) no publica nada en la red y se ve en la pantalla del propio nodo, <code>xrdp</code> lo sirve por RDP y <code>vnc</code> sirve la pantalla de la consola por VNC con x11vnc. Los paquetes de cada distribución están en la tabla <code>DESKTOPS</code> de <code>libs/desktop_common.py</code>, así que otro entorno de escritorio es una entrada ahí y no otro complemento</td>
+</tr>
+</tbody>
+</table>
 </details>
 
 <p><a id="addons-demos"></a></p>
