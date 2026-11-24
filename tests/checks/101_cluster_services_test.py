@@ -32,7 +32,7 @@ check("k3s brings both an ingress controller and a storage class",
       set(k8s.K3sDistro.bundled) == {apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS})
 check("rke2 brings an ingress controller and no storage class",
       set(k8s.RKE2Distro.bundled) == {apps.CLUSTER_INGRESS})
-check("upstream Kubernetes brings neither", set(k8s.KubeadmDistro.bundled) == set())
+check("upstream Kubernetes brings neither", set(k8s.VanillaDistro.bundled) == set())
 check("harvester brings both, and does not let them be replaced",
       set(k8s.HarvesterDistro.bundled) == {apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS}
       and k8s.HarvesterDistro.can_disable_bundled is False)
@@ -43,31 +43,31 @@ for name, cls in k8s.DISTROS.items():
 # ── nothing is installed that the lab did not ask for ───────────────────────
 check("a cluster whose distribution brings both gets nothing", k8s.cluster_services(lab("k3s"), "c1") == [])
 check("a cluster that brings neither gets nothing while nothing needs it",
-      k8s.cluster_services(lab("kubeadm"), "c1") == [])
+      k8s.cluster_services(lab("vanilla"), "c1") == [])
 check("an existing rke2 lab is left exactly as it was", k8s.cluster_services(lab("rke2"), "c1") == [])
 
 # ── an add-on's requires_cluster is what pulls one in ──────────────────────
 with mock.patch.object(apps, "load_plugin", return_value={"requires_cluster": ["ingress"]}):
     check("an add-on that needs an ingress controller gets one on a cluster with none",
-          k8s.cluster_services(lab("kubeadm", addons=["rancher"]), "c1") == ["nginx"])
+          k8s.cluster_services(lab("vanilla", addons=["rancher"]), "c1") == ["nginx"])
     check("...and nothing on a cluster that already has one",
           k8s.cluster_services(lab("rke2", addons=["rancher"]), "c1") == [])
 with mock.patch.object(apps, "load_plugin", return_value={"requires_cluster": ["ingress", "storageclass"]}):
     check("the ingress controller comes before the storage class that follows it",
-          k8s.cluster_services(lab("kubeadm", addons=["harbor"]), "c1") == ["nginx", "longhorn"])
+          k8s.cluster_services(lab("vanilla", addons=["harbor"]), "c1") == ["nginx", "longhorn"])
     check("the SUSE-friendly defaults are nginx and Longhorn",
           (k8s.DEFAULT_INGRESS, k8s.DEFAULT_STORAGE) == ("nginx", "longhorn"))
 with mock.patch.object(apps, "load_plugin", return_value={"requires_cluster": ["storageclass"],
                                                           "provides_cluster": []}):
     check("an add-on the lab already lists is not installed twice",
-          k8s.cluster_services(lab("kubeadm", addons=["longhorn", "harbor"]), "c1") == [])
+          k8s.cluster_services(lab("vanilla", addons=["longhorn", "harbor"]), "c1") == [])
 
 # ── the lab's own choice ────────────────────────────────────────────────────
 check("a named ingress controller is installed even when nothing requires it",
-      k8s.cluster_services(lab("kubeadm", clu_ingress="traefik"), "c1") == ["traefik"])
+      k8s.cluster_services(lab("vanilla", clu_ingress="traefik"), "c1") == ["traefik"])
 check("a named storage class is installed on its own",
-      k8s.cluster_services(lab("kubeadm", clu_storage="local-path"), "c1") == ["local_path"])
-check("\"none\" installs nothing", k8s.cluster_services(lab("kubeadm", clu_ingress="none"), "c1") == [])
+      k8s.cluster_services(lab("vanilla", clu_storage="local-path"), "c1") == ["local_path"])
+check("\"none\" installs nothing", k8s.cluster_services(lab("vanilla", clu_ingress="none"), "c1") == [])
 check("naming what the distribution already brings installs nothing",
       k8s.cluster_services(lab("k3s", clu_ingress="traefik"), "c1") == []
       and k8s.cluster_services(lab("rke2", clu_ingress="nginx"), "c1") == [])
@@ -77,7 +77,7 @@ check("a different storage class replaces k3s's own",
       k8s.cluster_services(lab("k3s", clu_storage="longhorn"), "c1") == ["longhorn"])
 for field, value in (("clu_ingress", "istio"), ("clu_storage", "nfs")):
     try:
-        k8s.cluster_services(lab("kubeadm", **{field: value}), "c1")
+        k8s.cluster_services(lab("vanilla", **{field: value}), "c1")
         check("{} '{}' is refused".format(field, value), False)
     except SystemExit:
         pass
@@ -90,21 +90,21 @@ except SystemExit:
 # ── what the cluster will have, for the preflight to weigh ─────────────────
 check("a k3s cluster provides both", k8s.cluster_provides(lab("k3s"), "c1")
       == {apps.CLUSTER_INGRESS, apps.CLUSTER_STORAGECLASS})
-check("a bare kubeadm cluster provides nothing", k8s.cluster_provides(lab("kubeadm"), "c1") == set())
+check("a bare vanilla cluster provides nothing", k8s.cluster_provides(lab("vanilla"), "c1") == set())
 check("one with a named ingress controller provides it",
-      k8s.cluster_provides(lab("kubeadm", clu_ingress="nginx"), "c1") == {apps.CLUSTER_INGRESS})
+      k8s.cluster_provides(lab("vanilla", clu_ingress="nginx"), "c1") == {apps.CLUSTER_INGRESS})
 with mock.patch.object(apps, "load_plugin", return_value={"provides_cluster": ["storageclass"]}):
     check("an add-on the lab lists itself provides it too",
-          k8s.cluster_provides(lab("kubeadm", addons=["longhorn"]), "c1") == {apps.CLUSTER_STORAGECLASS})
+          k8s.cluster_provides(lab("vanilla", addons=["longhorn"]), "c1") == {apps.CLUSTER_STORAGECLASS})
 check("what the cluster is given is recorded need by need, not guessed from the add-on's name",
-      k8s.cluster_plan(lab("kubeadm", clu_ingress="nginx", clu_storage="local-path"), "c1")
+      k8s.cluster_plan(lab("vanilla", clu_ingress="nginx", clu_storage="local-path"), "c1")
       == [(apps.CLUSTER_INGRESS, "nginx"), (apps.CLUSTER_STORAGECLASS, "local_path")])
 
 NEEDS_INGRESS = dict(apps.DEFAULT_PLUGIN, name="x", requires_cluster=["ingress"])
 check("an add-on that needs an ingress controller is refused on a cluster with none",
-      "ingress" in (apps.requirement_issue(NEEDS_INGRESS, "container", clu_type="kubeadm", provides=set()) or ""))
+      "ingress" in (apps.requirement_issue(NEEDS_INGRESS, "container", clu_type="vanilla", provides=set()) or ""))
 check("the message names the field that fixes it",
-      "clu_ingress" in (apps.requirement_issue(NEEDS_INGRESS, "container", clu_type="kubeadm",
+      "clu_ingress" in (apps.requirement_issue(NEEDS_INGRESS, "container", clu_type="vanilla",
                                                provides=set()) or ""))
 check("...and allowed on a cluster that has one",
       apps.requirement_issue(NEEDS_INGRESS, "container", clu_type="rke2",

@@ -197,6 +197,21 @@ check("lab_3_0: a successor already set keeps its value and the retired key is d
 check("lab_3_0: disabled_nodes are migrated too", d["disabled_nodes"]["n3"] == {"SOURCE_IMAGE": "f.qcow2"})
 check("lab_3_0: a second run changes nothing", migrations.lab_3_0(d) == [])
 
+d = {"kclusters": {"c1": {"clu_type": "kubeadm", "clu_cni": "calico"}, "c2": {"clu_type": "rke2"}},
+     "cluster": {"clu_type": "KubeAdm"}}
+changes = migrations.lab_4_0(d)
+check("lab_4_0: clu_type kubeadm becomes vanilla", d["kclusters"]["c1"]["clu_type"] == "vanilla")
+check("lab_4_0: the rest of the kcluster is left alone", d["kclusters"]["c1"]["clu_cni"] == "calico")
+check("lab_4_0: another cluster type is untouched", d["kclusters"]["c2"]["clu_type"] == "rke2")
+check("lab_4_0: a legacy single-cluster section is migrated too, whatever its case",
+      d["cluster"]["clu_type"] == "vanilla")
+check("lab_4_0: each rewrite is reported with the section it was in",
+      sorted(changes) == ['cluster: clu_type "kubeadm" renamed to "vanilla"',
+                          'kclusters.c1: clu_type "kubeadm" renamed to "vanilla"'])
+check("lab_4_0: a second run changes nothing", migrations.lab_4_0(d) == [])
+check("lab_4_0: a lab that never used the old value is left alone",
+      migrations.lab_4_0({"kclusters": {"c": {"clu_type": "vanilla"}}}) == [])
+
 
 class _Definition(dict):
     def __init__(self, data, source_path):

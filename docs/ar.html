@@ -473,7 +473,7 @@ footer.site {
 <p>تأتي منتجات SUSE نفسها من متتبّع الصور العام الخاص بـ SUSE، ويأتي الباقي من معامل AWS Systems Manager العام لكل مزوّد أو من حسابه الخاص على AWS، ولا يأتي أبداً من بحث بالاسم قد يطابقه حساب آخر. وأي قيمة ليست اسم منتج، بما في ذلك مُعرّف صورة أو اسم ملف صورة، تُمرّر كما هي.</p>
 <p>يحتاج المختبر السحابي أيضاً إلى أن تحلّ عقده أسماء بعضها. يخدم جهاز ظاهري صغير واحد لـ DNS لكل حساب سحابي نطاق المختبر، وتُضبط شبكة الحساب لتسليم ذلك الخادم إلى كل نسخة فيها، فتنضم العقدة إلى عنقود Kubernetes الخاص بها باسم المضيف دون أي ضبط داخل النظام الضيف. وعلى AWS يكون ذلك مجموعة خيارات DHCP لشبكة VPC: تنطبق على VPC بأكملها، وتسري فوراً على أي نسخة تُطلق بعدها، وتتبنّاها نسخة تعمل بالفعل عند تجديد عقد DHCP الخاص بها.</p>
 <h3 id="kubernetes-setup">إعداد Kubernetes</h3>
-<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: kubeadm</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك). يحدّد <code>clu_ingress</code> و<code>clu_storage</code> متحكم الدخول (<code>nginx</code> أو <code>traefik</code>) وفئة التخزين الافتراضية (<code>longhorn</code> أو <code>local-path</code>) للعنقود. وبدون تحديد يبقى ما تأتي به التوزيعة — nginx في RKE2، وTraefik وlocal-path في K3s، وكلاهما في Harvester — أما التوزيعة التي لا تأتي بأيٍّ منهما فيُثبَّت لها واحد بمجرد أن تحتاجه إحدى إضافات العنقود؛ وتحديد غيره يستبدل المكوّن المضمّن، و<code>none</code> لا يثبّت شيئًا.</p>
+<p>بعد تشغيل الأجهزة الافتراضية، يثبّت <code>setup_lab.py</code> نظام Kubernetes على كل عقدة وفق قسم <code>kclusters</code> في ملف JSON. يدعم RKE2 وK3s. عندما يصبح العنقود جاهزًا تعمل إضافاته بالتتابع؛ أما إضافات الأجهزة الافتراضية (المرتبطة بعقدة واحدة لا بعنقود) فتعمل بعد تجهيز تلك العقدة. تحصل كل عقدة RKE2 وكل عقدة خادم K3s على <code>/etc/profile.d/rke2.sh</code> أو <code>/etc/profile.d/k3s.sh</code> الذي يضبط <code>KUBECONFIG</code>، فيعمل <code>kubectl</code> و<code>helm</code> في أي صدفة root على العقدة، بما في ذلك أوامر SSH. تسجّل الإضافات التي تعرض اسم مضيف ويب (مثل <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) هذا الاسم في DNS المختبر مشيرًا إلى عقد الـ kcluster، ويؤدي حذف عقدة إلى إزالة السجلات التي تشير إليها. أما <code>clu_type: vanilla</code> فيبني Kubernetes الأصلي بأداة kubeadm: الإصدار الفرعي من <code>clu_rel</code>، وملحق الشبكة من <code>clu_cni</code> (flannel افتراضيًا، أو calico، أو none لإحضار ملحقك). يحدّد <code>clu_ingress</code> و<code>clu_storage</code> متحكم الدخول (<code>nginx</code> أو <code>traefik</code>) وفئة التخزين الافتراضية (<code>longhorn</code> أو <code>local-path</code>) للعنقود. وبدون تحديد يبقى ما تأتي به التوزيعة — nginx في RKE2، وTraefik وlocal-path في K3s، وكلاهما في Harvester — أما التوزيعة التي لا تأتي بأيٍّ منهما فيُثبَّت لها واحد بمجرد أن تحتاجه إحدى إضافات العنقود؛ وتحديد غيره يستبدل المكوّن المضمّن، و<code>none</code> لا يثبّت شيئًا.</p>
 <h3 id="multi-host-labs">المختبرات متعددة المضيفات</h3>
 <p>لا يقتصر المختبر على مضيف واحد. اضبط <code>KVM_HOSTS</code> (مفصولة بمسافات) في <code>/etc/lab_creation.cfg</code> على آلة الأتمتة الافتراضية لإتاحة أكثر من مضيف:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -727,7 +727,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;vanilla&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -773,7 +773,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;vanilla&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]

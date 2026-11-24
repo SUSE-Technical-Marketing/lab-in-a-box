@@ -234,7 +234,7 @@ check("a cluster that never goes ready still reports its id, and says it may sti
 # ── which clusters, and how each is reached ──────────────────────────────
 LAB = {"nodes": {"k1.lab": {"kcluster": "kubelab"}, "k2.lab": {"kcluster": "kubelab",
                                                                "KUBERNETES_NODE_TYPE": "agent"}},
-       "kclusters": {"kubelab": {"clu_type": "kubeadm"}}}
+       "kclusters": {"kubelab": {"clu_type": "vanilla"}}}
 calls = []
 with mock.patch.object(rancher, "import_cluster",
                        side_effect=lambda h, f, p, name, target, insecure_tls=True:
@@ -259,7 +259,7 @@ with mock.patch.object(rancher, "import_cluster") as never:
 # A kcluster of the lab is reached through its own node with its own kubeconfig, so an in-lab import needs no URL,
 # user or password of any kind.
 ALL_LAB = {"nodes": {"r1.lab": {"kcluster": "rancherlab"}, "k1.lab": {"kcluster": "kubelab"}},
-           "kclusters": {"rancherlab": {"clu_type": "k3s"}, "kubelab": {"clu_type": "kubeadm"},
+           "kclusters": {"rancherlab": {"clu_type": "k3s"}, "kubelab": {"clu_type": "vanilla"},
                          "harv": {"clu_type": "harvester"}}}
 with mock.patch.object(rancher, "warn"):
     entries = rancher.lab_import_entries(ALL_LAB, "rancherlab")

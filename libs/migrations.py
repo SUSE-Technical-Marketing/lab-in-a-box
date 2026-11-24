@@ -273,6 +273,24 @@ def lab_3_0(definition: dict) -> list:
     return changes
 
 
+
+def lab_4_0(definition: dict) -> list:
+    """
+    lab 4.0: the clu_type "kubeadm" is now "vanilla". The cluster it builds is unchanged, upstream Kubernetes built
+    with kubeadm; only the name of the type is different, so every kcluster naming the old value is rewritten to the
+    new one. A legacy single-cluster "cluster" section is rewritten the same way.
+    """
+    changes = []
+    owners = [("kclusters." + name, cfg) for name, cfg in (definition.get("kclusters") or {}).items()]
+    if isinstance(definition.get("cluster"), dict):
+        owners.append(("cluster", definition["cluster"]))
+    for where, cfg in owners:
+        if not isinstance(cfg, dict) or str(cfg.get("clu_type") or "").strip().lower() != "kubeadm":
+            continue
+        cfg["clu_type"] = "vanilla"
+        changes.append("{}: clu_type \"kubeadm\" renamed to \"vanilla\"".format(where))
+    return changes
+
 def _appcollection_default_2_0(name: str, prefix: str = ""):
     """
     The step for an add-on whose chart now comes from the SUSE Application Collection by default. It writes
@@ -319,6 +337,7 @@ MIGRATIONS = {
     "keycloak_2_0": keycloak_2_0,
     "kimi_2_0": _litellm_2_0("kimi"),
     "lab_3_0": lab_3_0,
+    "lab_4_0": lab_4_0,
     "linkerd_2_0": linkerd_2_0,
     "longhorn_2_0": _appcollection_default_2_0("longhorn", "lh"),
     "milvus_2_0": _appcollection_default_2_0("milvus"),
