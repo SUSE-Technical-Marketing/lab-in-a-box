@@ -1,4 +1,4 @@
-# Schema version: 1.3
+# Schema version: 1.4
 #################################
 #### What you should change: ####
 #################################
@@ -110,10 +110,30 @@ mysource='automation.mydemo.lab'
 
 ## Set to "true" to let the MCP endpoint's deploy_lab/rebuild_lab/
 ## destroy_lab/destroy_vm tools run real deploy/destroy operations. Every
-## call still requires an exact target-identifier "confirm" string — this
-## just controls whether those tools exist at all. Default: unset (false) —
-## the endpoint is read-only until you opt in.
+## call still requires an exact target-identifier "confirm" string, and the
+## calling client's own "write" scope — this just controls whether those
+## tools exist at all. Default: unset (false) — the endpoint is read-only
+## until you opt in.
+## Turning this on makes a per-client bearer token MANDATORY: a caller that
+## can destroy a lab has to be identifiable, so the service refuses to start
+## until at least one client is registered (see MCP_CLIENTS below). A
+## read-only endpoint needs no token and authenticates with mTLS alone.
 #MCP_ALLOW_MUTATIONS=false
+
+## Registry of the MCP clients allowed to call this endpoint: their names,
+## the SHA-256 of each one's bearer token, and its scopes ("read", or "read"
+## and "write" for the mutating tools). Written by lab-mcp-issue-client-cert,
+## which issues the token alongside the client certificate; read on every
+## call, so issuing or revoking a client needs no restart. Root-only (0600)
+## and holds no usable credential, only hashes.
+## Default: /etc/lab-mcp/clients.json
+#MCP_CLIENTS=/etc/lab-mcp/clients.json
+
+## The token issuer this endpoint advertises in its OAuth protected-resource
+## metadata. It is never fetched — this server issues its own client tokens —
+## so it only has to be this endpoint's own HTTPS URL. Unset: built from this
+## host's fully qualified name and MCP_PORT.
+#MCP_ISSUER_URL=
 
 ## Where every MCP tool call (accepted or rejected) gets logged, one JSON
 ## object per line.

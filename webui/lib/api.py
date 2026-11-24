@@ -29,7 +29,10 @@ def dispatch(action, method, params, body, user=None, https=False):
     https   : bool           the request came over HTTPS
     returns : (http_status:int, obj:dict|list)
 
-    The actions in admin.ACTIONS need both a user and HTTPS.
+    The actions in admin.ACTIONS need HTTPS, a user, and that user on admin.authorized()'s allowlist. Being
+    authenticated is not being permitted: an identity provider in front of this (see
+    ../apache/lab-builder-sso.conf.example) authenticates its whole directory, so the allowlist is the grant.
+    Every attempt at one of these actions is recorded with its user by admin.audit().
     """
     try:
         if action in admin.ACTIONS:
@@ -37,8 +40,18 @@ def dispatch(action, method, params, body, user=None, https=False):
                 return 403, {"error": "You must connect via HTTPS to use this UI"}
             if not user:
                 return 401, {"error": "log in to use %s" % action}
+            if not admin.authorized(user):
+                admin.audit(user, action, "refused: not authorized")
+                return 403, {"error": "'%s' is authenticated but not authorized to use lab-builder — add the "
+                                      "identity to %s" % (user, admin.authorized_file())}
             data = json.loads(body.decode("utf-8") or "{}") if body else {}
-            return 200, admin.dispatch(action, method, params, data)
+            try:
+                status, obj = 200, admin.dispatch(action, method, params, data)
+            except Exception as e:
+                admin.audit(user, action, "failed: {}".format(type(e).__name__))
+                raise
+            admin.audit(user, action)
+            return status, obj
 
         if action == "auth" and method == "GET":
             return 200, {"login_configured": admin.login_configured(), "user": user or ""}

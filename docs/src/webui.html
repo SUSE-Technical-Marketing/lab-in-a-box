@@ -326,6 +326,28 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
   <code>/usr/local/sbin/lab-builder-helper</code>, which the web server may run through sudo and nothing else. A
   login can therefore create labs and manage credentials on the automation node: give one only to
   administrators.</li>
+<li><strong>Single sign-on</strong> — the UI itself never authenticates anyone. Apache does, and sets
+  <code>REMOTE_USER</code>, which the CGI passes on; so any Apache module that sets it works, and OpenID Connect
+  (SUSE ID, Keycloak, Entra ID, Okta, …) or SAML is a configuration change rather than a code change.
+  <code>/etc/lab-builder/lab-builder-sso.conf.example</code> carries a commented <code>mod_auth_openidc</code>
+  block and a commented <code>mod_auth_mellon</code> one; the installer ships it and activates nothing, so fill in
+  your provider's values and install one of them in place of the Basic-auth block. Keep the client secret in a
+  root-only include, since Apache config is world-readable on most distributions.</li>
+<li><strong>Who is allowed, as opposed to who can log in</strong> — being authenticated is not being permitted. An
+  identity provider authenticates its whole directory, so the grant is
+  <code>/etc/lab-builder/authorized</code>: one identity per line, <code>#</code> for comments, <code>*</code> for
+  any authenticated identity. Create it as root; <code>/etc/lab-builder</code> is already group-readable by the
+  web server, so the default <code>0644</code> is enough and nothing else needs changing. The identity must be
+  what your module puts in <code>REMOTE_USER</code> (for OIDC the
+  claim named by <code>OIDCRemoteUserClaim</code>, for SAML the attribute named by <code>MellonUser</code>). With
+  the file absent, a local <code>lab-builder-passwd</code> account is allowed and nothing else is — so an existing
+  install is unchanged, and configuring a provider without writing the allowlist refuses every directory identity
+  rather than admitting all of them. An authenticated identity that is not allowed gets 403 naming the file, and
+  no privileged work runs.</li>
+<li><strong>Who did what</strong> — every attempt at one of these actions is written to syslog
+  (<code>LOG_AUTH</code>, tag <code>lab-builder</code>) with the user, the action and the outcome, including the
+  refusals and the failures. The helper runs as root and can only see that the web server called it, so this is
+  the only record of which identity asked.</li>
 <li><strong>Credentials</strong> — lists the cloud accounts (<code>cloud_account</code>) and service credentials (SCC, SUSE
   Application Collection, …) stored on the automation node, never their values. <em>Add a credential</em> writes
   <code>&lt;provider-or-service&gt;-&lt;account&gt;.yaml</code>, encrypted with a passphrase unless you untick it.

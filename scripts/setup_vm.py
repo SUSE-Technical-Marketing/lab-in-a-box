@@ -400,14 +400,14 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         if this_site == hub_site:
             # This node's own site IS the hub account's site — the hub is
             # this site's gateway too. Register the hub's own site subnet
-            # (so OTHER sites can route to this node) and disable AWS
-            # source/dest-check on the hub instance (best-effort, AWS-only
-            # today) so it can actually forward for this node.
-            site_cidr = hub_backend.get_subnet_cidr()
+            # (so OTHER sites can route to this node) and clear the provider's
+            # source/dest filter on the hub instance (best effort; only AWS and
+            # GCP have one) so it can actually forward for this node.
+            hub_vm_name = overlay.hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
+            site_cidr = hub_backend.get_subnet_cidr(hub_vm_name)
             if site_cidr:
                 overlay.ensure_overlay_hub_ready(hub_host, wg_port=wg_port, overlay_cidr=overlay_cidr,
                                                   site_name=hub_site, site_cidr=site_cidr)
-                hub_vm_name = overlay.hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
                 hub_backend.disable_source_dest_check(hub_vm_name)
                 hub_backend.allow_internal_traffic()
                 gateway_lan_ip = hub_backend.get_private_ip(hub_vm_name)
@@ -429,7 +429,9 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
                 warn("- 'mygw'/'mymask' not set — cannot determine this site's own subnet, "
                      "'{}' will not be routable across the overlay from other sites".format(vm_name))
         else:
-            site_cidr = backend.get_subnet_cidr()
+            # This node, not the gateway: the gateway VM does not exist yet on a first run, and the node is on the
+            # same network, so it answers the same question for a backend that reads the range off an instance.
+            site_cidr = backend.get_subnet_cidr(vm_name)
             if site_cidr:
                 gw_vm_name = overlay.hub_vm_name(this_backend_name, getattr(backend, "account", ""))
                 gw_public_ip = overlay.ensure_site_gateway_vm(

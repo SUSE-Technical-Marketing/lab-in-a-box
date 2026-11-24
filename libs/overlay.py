@@ -24,8 +24,11 @@ Known limits:
   - Routes are pushed when a node is provisioned. A node provisioned before a new site joins gets the new routes when it is
     provisioned again.
   - Route persistence uses a systemd oneshot unit, so it assumes systemd.
-  - On AWS, the gateway's network interface needs source/destination checking disabled, which
-    backends.AWSBackend.disable_source_dest_check() does. The other cloud backends do not implement this.
+  - A gateway forwards for its site's other nodes, which a provider filtering on the instance's own addresses
+    drops. Only AWS (SourceDestCheck) and GCP (canIpForward) have such a filter and a way to clear it, which
+    backends.disable_source_dest_check() does on both, and which GCP also takes at create time
+    (create_vm(can_ip_forward=True)). Hetzner Cloud, Alibaba Cloud, Scaleway, UpCloud, Exoscale and OVHcloud
+    publish no such per-instance filter, so there is nothing to clear there.
   - The hub is never destroyed automatically, as with the cloud DNS VM. It is a single point of failure, and cross-site traffic
     goes through its region.
 """
@@ -37,6 +40,7 @@ from pathlib import Path
 from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_command, install_packages,
                           package_manager,
                           CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB)
+import backends
 import ipalloc
 
 
@@ -122,9 +126,12 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
 
     backend.copy_vm_image(iso_image, vm_name, CLOUD_INFRA_VM_DSK_GIB, config_method="cloud-init")
     backend.push_provisioning_files(vm_name, config_method="cloud-init")
+    # can_ip_forward: a gateway forwards for its site's other nodes, which a provider that filters on the
+    # instance's own addresses drops. Only the backends with such a filter act on it (GCPBackend); the rest ignore
+    # it through **kwargs. The equivalent for an already-created VM is backend.disable_source_dest_check().
     ip = backend.create_vm(vm_name, CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB,
                            None, config_method="cloud-init", iso_image=iso_image, mymac=None,
-                           open_ports=open_ports or [])
+                           open_ports=open_ports or [], can_ip_forward=True)
     if not ip:
         die("gateway VM '{}' was created on backend '{}' but create_vm() reported "
             "no IP".format(vm_name, backend_name))
@@ -562,6 +569,13 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
     gateway that needs an INBOUND port open; every spoke gateway connects
     OUT to it (see ensure_site_gateway_vm(), which does not open a port).
 
+    Reuse and creation are serialised per backend and account with
+    backends.shared_resource_lock(), so a --parallel run creates one hub
+    however many nodes ask for it at the same time. An existing hub that
+    the provider reports as powered off is started again first
+    (backends.start_if_stopped()), since that is the normal state after
+    scripts/vm_power.py powered the lab down.
+
     Returns (hub_public_ip, hub_overlay_ip, hub_pubkey). Does NOT register
     the hub's own site — call ensure_overlay_hub_ready() again (or rely on
     the one this function already made, it's idempotent) with
@@ -571,18 +585,22 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
     acct = getattr(backend, "account", "") or ""
     vm_name = hub_vm_name(backend_name, acct)
 
-    if backend.vm_exists(vm_name):
-        hub_public_ip = backend.get_ip(vm_name)
-        if not hub_public_ip:
-            die("overlay hub VM '{}' exists on backend '{}' but reported no IP — check it "
-                "manually before retrying".format(vm_name, backend_name))
-        log("- Reusing existing overlay hub VM \"{}\" ({})".format(vm_name, hub_public_ip))
-    else:
-        hub_public_ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
-                                            root_ssh_key, open_ports=["{}/udp".format(wg_port)])
+    with backends.shared_resource_lock(backend, "overlay"):
+        if backend.vm_exists(vm_name):
+            # A powered-off hub is started before its address is read: a provider that released its public address
+            # on stop hands back a different one, so an address read first would be the old one.
+            backends.start_if_stopped(backend, backend_name, vm_name, "overlay hub VM")
+            hub_public_ip = backend.get_ip(vm_name)
+            if not hub_public_ip:
+                die("overlay hub VM '{}' exists on backend '{}' but reported no IP — check it "
+                    "manually before retrying".format(vm_name, backend_name))
+            log("- Reusing existing overlay hub VM \"{}\" ({})".format(vm_name, hub_public_ip))
+        else:
+            hub_public_ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
+                                               root_ssh_key, open_ports=["{}/udp".format(wg_port)])
 
-    hub_overlay_ip, hub_pubkey = ensure_overlay_hub_ready(hub_public_ip, wg_port=wg_port,
-                                                           overlay_cidr=overlay_cidr)
+        hub_overlay_ip, hub_pubkey = ensure_overlay_hub_ready(hub_public_ip, wg_port=wg_port,
+                                                              overlay_cidr=overlay_cidr)
     return hub_public_ip, hub_overlay_ip, hub_pubkey
 
 
@@ -594,19 +612,26 @@ def ensure_site_gateway_vm(backend, backend_name, iso_image, lab_setup_path, roo
 
     The function returns the VM's IP, public or private as the provider reports it. Only SSH reachability from the automation node is
     needed.
+
+    Reuse and creation are serialised per backend and account with backends.shared_resource_lock(), so a --parallel
+    run creates one gateway however many nodes ask for it at the same time. An existing gateway that the provider
+    reports as powered off is started again first (backends.start_if_stopped()).
     """
     acct = getattr(backend, "account", "") or ""
     vm_name = hub_vm_name(backend_name, acct)
 
-    if backend.vm_exists(vm_name):
-        ip = backend.get_ip(vm_name)
-        if not ip:
-            die("site gateway VM '{}' exists on backend '{}' but reported no IP — check it "
-                "manually before retrying".format(vm_name, backend_name))
-        log("- Reusing existing site gateway VM \"{}\" ({})".format(vm_name, ip))
-        return ip
+    with backends.shared_resource_lock(backend, "overlay"):
+        if backend.vm_exists(vm_name):
+            # Started before its address is read, for the reason given in ensure_overlay_hub().
+            backends.start_if_stopped(backend, backend_name, vm_name, "overlay site gateway VM")
+            ip = backend.get_ip(vm_name)
+            if not ip:
+                die("site gateway VM '{}' exists on backend '{}' but reported no IP — check it "
+                    "manually before retrying".format(vm_name, backend_name))
+            log("- Reusing existing site gateway VM \"{}\" ({})".format(vm_name, ip))
+            return ip
 
-    return _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
+        return _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
 
 
 def ensure_overlay_site_gateway(site_name, gateway_host, hub_host, hub_pubkey, hub_wg_port,

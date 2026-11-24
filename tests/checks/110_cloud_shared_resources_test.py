@@ -8,6 +8,7 @@
 import sys
 import threading
 from pathlib import Path
+from unittest import mock
 
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
@@ -112,6 +113,52 @@ for t in _threads:
 for t in _threads:
     t.join()
 check("shared_resource_lock: four concurrent ensure steps create the resource once", len(_created) == 1)
+
+
+# ── start_if_stopped(): the shared VMs are started, not replaced ─────────────
+# One helper for every VM a lab reuses rather than creates (the cloud DNS VM, the overlay hub and site gateway),
+# so a stopped one is brought back instead of being reported as broken.
+class _Power:
+    def __init__(self, state, start=None):
+        self.state = state
+        self.calls = []
+        self._start = start
+
+    def vm_state(self, vm_name):
+        if self.state is None:
+            raise NotImplementedError
+        return self.state
+
+    def start_vm(self, vm_name):
+        self.calls.append(vm_name)
+        if self._start == "refuse":
+            raise NotImplementedError
+        if self._start != "never":
+            self.state = "running"
+
+
+check("start_if_stopped: a running VM is left alone and reports nothing started",
+      backends.start_if_stopped(_Power("running"), "aws", "lab-dns-aws", "cloud DNS VM") is False)
+_stopped = _Power("stopped")
+check("start_if_stopped: a stopped VM is started and reports it",
+      backends.start_if_stopped(_stopped, "aws", "lab-dns-aws", "cloud DNS VM") is True
+      and _stopped.calls == ["lab-dns-aws"])
+check("start_if_stopped: a backend that cannot report a state is not a failure",
+      backends.start_if_stopped(_Power(None), "libvirt", "lab-dns-x", "cloud DNS VM") is False)
+check("start_if_stopped: a backend that cannot start a VM is not a failure, the caller's probe decides",
+      backends.start_if_stopped(_Power("stopped", start="refuse"), "aws", "lab-dns-aws", "cloud DNS VM") is False)
+# POWER_WAIT_SECONDS/POWER_POLL_SECONDS to 0 so the refusal is reached at once instead of after the real wait.
+try:
+    with mock.patch.object(backends, "POWER_POLL_SECONDS", 0), \
+            mock.patch.object(backends, "POWER_WAIT_SECONDS", 0):
+        backends.start_if_stopped(_Power("stopped", start="never"), "aws", "lab-overlay-gw-aws", "overlay hub VM")
+    _never = ""
+except Died as e:
+    _never = str(e)
+check("start_if_stopped: a VM that never reaches a running state is refused, not assumed up", _never != "")
+check("start_if_stopped: the refusal names the VM and its role", "lab-overlay-gw-aws" in _never
+      and "overlay hub VM" in _never)
+check("start_if_stopped: the refusal says how to recover", "vm_power.py" in _never)
 
 
 # ── the cloud DNS VM: reuse only a server that answers ───────────────────────

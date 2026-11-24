@@ -511,7 +511,7 @@ check("port 53 is opened for it, which is what it exists for",
 
 
 class _Subnetted:
-    def get_subnet_cidr(self):
+    def get_subnet_cidr(self, vm_name=""):
         return "172.31.80.0/20"
 
 
@@ -522,7 +522,7 @@ check("no public range may recurse", not any(n.startswith(("0.", "1.", "8.", "18
 
 
 class _NoSubnet:
-    def get_subnet_cidr(self):
+    def get_subnet_cidr(self, vm_name=""):
         raise RuntimeError("no subnet configured")
 
 

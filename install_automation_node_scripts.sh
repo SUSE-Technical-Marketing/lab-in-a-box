@@ -489,6 +489,14 @@ then
     chgrp "${_lb_web_group}" /etc/lab-builder/htpasswd
     install -d -m 0700 -o root -g root /var/lib/lab-builder /var/lib/lab-builder/jobs
 
+    # Who may use the server actions, as opposed to who can log in (webui/lib/admin.py's authorized()). It stays
+    # ABSENT by default, which keeps the behaviour an install has always had: a local lab-builder-passwd account
+    # is authorized and nothing else is. It matters once an identity provider is in front, because that
+    # authenticates its whole directory — see the SSO example installed next to it, which is an example only and
+    # activates nothing. The web server's group reads this file; only root writes it.
+    install -m 0644 -o root -g root webui/apache/lab-builder-sso.conf.example \
+        /etc/lab-builder/lab-builder-sso.conf.example
+
     if [[ "${_webui_mode:-apache}" == "service" ]]
     then
         _lb_port="${_webui_port:-8677}"
@@ -636,6 +644,7 @@ UNITEOF
             _apache_apply apache2
             echo "lab-builder web UI installed -> ${_lb_scheme}://<automation-vm>/lab-builder/"
             echo "  add a login for its server actions with: lab-builder-passwd <user>"
+            echo "  single sign-on (OIDC/SAML) instead of local logins: see /etc/lab-builder/lab-builder-sso.conf.example"
             [[ -n "${_lb_tls_cert}" ]] && echo "  (also reachable, and redirected to, from http://<automation-vm>/lab-builder/ — self-signed cert, browsers will warn once)"
         elif [[ -d /etc/httpd/conf.d ]]            # RHEL family
         then

@@ -10,6 +10,7 @@
 import ipaddress
 import sys
 import tempfile
+import threading
 from unittest import mock
 from pathlib import Path
 
@@ -254,13 +255,22 @@ check("ensure_overlay_hub_ready: configured but down — brings wg0 up without r
 
 # ── ensure_overlay_hub / ensure_site_gateway_vm: reuse vs create (fake backend) ──
 class _FakeBackendReuse:
-    def __init__(self):
+    def __init__(self, state="running"):
         self.account = ""
         self.calls = []
+        self.state = state
 
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return True
+
+    def vm_state(self, vm_name):
+        self.calls.append(("vm_state", vm_name))
+        return self.state
+
+    def start_vm(self, vm_name):
+        self.calls.append(("start_vm", vm_name))
+        self.state = "running"
 
     def get_ip(self, vm_name):
         self.calls.append(("get_ip", vm_name))
@@ -295,6 +305,9 @@ class _FakeBackendCreate:
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return False
+
+    def vm_state(self, vm_name):
+        raise AssertionError("vm_state() must not be called when the VM does not exist")
 
     def copy_vm_image(self, *a, **kw):
         self.calls.append(("copy_vm_image", a, kw))
@@ -358,6 +371,111 @@ check("ensure_site_gateway_vm: sizes the gateway from the CLOUD_INFRA_VM_* const
           lab_creation.CLOUD_INFRA_VM_DSK_GIB))
 check("the gateway gets at least 1 GiB, the floor its image needs to decompress a kernel at boot",
       lab_creation.CLOUD_INFRA_VM_MEM_MIB >= 1024)
+
+
+# ── a stopped hub or gateway is started, not reported as broken ──────────────
+# Stopped is the normal state after vm_power.py powered the lab down, and both VMs are shared across labs, so the
+# next run starts them again rather than refusing or replacing them. The address is read AFTER the start, because a
+# provider that released the public address on stop hands back a different one.
+reset()
+scripted["203.0.113.9"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="REUSEDPUB\n"),
+}
+stopped_hub = _FakeBackendReuse(state="stopped")
+overlay.ensure_overlay_hub(stopped_hub, "aws", "ami-xyz", "/tmp/lab-setup", "ssh-ed25519 AAAAfake test@example")
+check("ensure_overlay_hub: a stopped hub is started instead of being refused",
+      ("start_vm", "lab-overlay-gw-aws") in stopped_hub.calls)
+check("ensure_overlay_hub: the hub's address is read only after it was started",
+      stopped_hub.calls.index(("start_vm", "lab-overlay-gw-aws"))
+      < stopped_hub.calls.index(("get_ip", "lab-overlay-gw-aws")))
+
+reset()
+scripted["203.0.113.9"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="REUSEDPUB\n"),
+}
+running_hub = _FakeBackendReuse(state="running")
+overlay.ensure_overlay_hub(running_hub, "aws", "ami-xyz", "/tmp/lab-setup", "ssh-ed25519 AAAAfake test@example")
+check("ensure_overlay_hub: a running hub is left alone, never restarted",
+      not any(c[0] == "start_vm" for c in running_hub.calls))
+
+reset()
+stopped_gw = _FakeBackendReuse(state="shut off")
+gw_ip_stopped = overlay.ensure_site_gateway_vm(stopped_gw, "aws", "ami-xyz", "/tmp/lab-setup",
+                                               "ssh-ed25519 AAAAfake test@example")
+check("ensure_site_gateway_vm: a stopped gateway is started instead of being refused",
+      ("start_vm", "lab-overlay-gw-aws") in stopped_gw.calls)
+check("ensure_site_gateway_vm: a started gateway's address is still returned",
+      gw_ip_stopped == "203.0.113.9")
+check("ensure_site_gateway_vm: the gateway's address is read only after it was started",
+      stopped_gw.calls.index(("start_vm", "lab-overlay-gw-aws"))
+      < stopped_gw.calls.index(("get_ip", "lab-overlay-gw-aws")))
+
+
+# ── a parallel run creates one hub, not one per worker ───────────────────────
+# Both functions look the VM up and then create it, so without the shared lock N workers each find it absent and
+# each create one (the four duplicate DNS instances of 2026-10-30). The hub and the site gateway of one account are
+# the same VM name, so they share the "overlay" lock.
+class _CountingBackend:
+    """Counts create_vm() calls, and reports the VM as existing only once one has been created."""
+
+    def __init__(self):
+        self.account = "race"
+        self.created = []
+        self._lock = threading.Lock()
+
+    def vm_exists(self, vm_name):
+        return bool(self.created)
+
+    def vm_state(self, vm_name):
+        return "running"
+
+    def get_ip(self, vm_name):
+        return "203.0.113.55"
+
+    def copy_vm_image(self, *a, **kw):
+        pass
+
+    def push_provisioning_files(self, *a, **kw):
+        pass
+
+    def create_vm(self, vm_name, cpu, mem, dsk, network, **kwargs):
+        with self._lock:
+            self.created.append(vm_name)
+        return "203.0.113.55"
+
+
+reset()
+scripted["203.0.113.55"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="RACEPUB\n"),
+}
+race_backend = _CountingBackend()
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
+    _race_threads = [threading.Thread(
+        target=overlay.ensure_overlay_hub,
+        args=(race_backend, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")) for _ in range(4)]
+    for _t in _race_threads:
+        _t.start()
+    for _t in _race_threads:
+        _t.join()
+check("ensure_overlay_hub: four concurrent calls create exactly one hub VM", len(race_backend.created) == 1)
+
+reset()
+race_gw = _CountingBackend()
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
+    _race_threads = [threading.Thread(
+        target=overlay.ensure_site_gateway_vm,
+        args=(race_gw, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")) for _ in range(4)]
+    for _t in _race_threads:
+        _t.start()
+    for _t in _race_threads:
+        _t.join()
+check("ensure_site_gateway_vm: four concurrent calls create exactly one gateway VM", len(race_gw.created) == 1)
 
 
 # ── ensure_overlay_site_gateway: full site-join flow, AllowedIPs covers every known site ──

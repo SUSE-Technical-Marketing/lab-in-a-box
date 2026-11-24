@@ -166,7 +166,7 @@ const HTTPS_ONLY = "You must connect via HTTPS to use this UI";
 function serverLock() {
   if (window.LAB_STATIC) return "Available on the lab-builder of your automation node";
   if (location.protocol !== "https:") return HTTPS_ONLY;
-  if (state.auth && !state.auth.login_configured) return "Add a login first: run lab-builder-passwd <user> on the automation node";
+  if (state.auth && !state.auth.login_configured) return "Set up access first: run lab-builder-passwd <user> on the automation node, or configure single sign-on and list the identity in /etc/lab-builder/authorized";
   return "";
 }
 

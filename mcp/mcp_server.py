@@ -59,9 +59,13 @@ logic and that the mutating tools call through with the exact args — not
 protocol-level interop or real infrastructure.
 """
 
+import contextlib
 import datetime
+import hashlib
+import io
 import json
 import os
+import socket
 import ssl
 import sys
 from pathlib import Path
@@ -95,8 +99,133 @@ from destroy_vm import destroy_vm as _destroy_vm  # noqa: E402
 
 from mcp.server.mcpserver import MCPServer  # noqa: E402  (pip install mcp)
 from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
+from mcp.server.auth.middleware.auth_context import get_access_token  # noqa: E402
+from mcp.server.auth.provider import AccessToken  # noqa: E402
+from mcp.server.auth.settings import AuthSettings  # noqa: E402
 
-mcp = MCPServer("lab-in-a-box")
+# ── which client is calling, and what it may do ───────────────────────────────
+# mTLS says a client holds a certificate this host's CA signed, which is all it says: every client cert is
+# equivalent to every other, so nothing distinguishes one caller from another and MCP_AUDIT_LOG can record what was
+# done but not by whom. A per-client bearer token, carried over that same mTLS connection, supplies both. It is the
+# SDK's own mechanism (MCPServer(token_verifier=..., auth=...)), so BearerAuthBackend reads the header,
+# RequireAuthMiddleware enforces the route's scopes and get_access_token() makes the caller readable anywhere in
+# request handling, including _audit(). Not a replacement for mTLS: a caller needs the certificate AND the token.
+#
+# The registry holds only a SHA-256 of each token, so the file cannot hand anyone a working credential.
+MCP_CLIENTS_PATH = "/etc/lab-mcp/clients.json"
+
+# What a client may do. "read" is every tool; "write" is additionally the mutating ones, and is granted only to a
+# client issued with it. MCP_ALLOW_MUTATIONS stays the server-wide switch: both it and the client's own scope have
+# to allow a mutation.
+SCOPE_READ = "read"
+SCOPE_WRITE = "write"
+
+
+def clients_path(cfg=None):
+    """Where the client registry lives: MCP_CLIENTS in /etc/lab_creation.cfg, else MCP_CLIENTS_PATH."""
+    return (cfg or {}).get("MCP_CLIENTS") or MCP_CLIENTS_PATH
+
+
+def load_clients(cfg=None):
+    """
+    The client registry as {token_sha256: {"name": str, "scopes": [str]}}, or {} when there is none.
+
+    Shape of the file (schema config:mcp-clients.json), written by lab-mcp-issue-client-cert:
+        {"schema_version": "1.0",
+         "clients": [{"name": "agent-a", "token_sha256": "<hex>", "scopes": ["read"]}]}
+    Unreadable, malformed or empty all give {}: the caller decides what that means, and for a server with
+    mutations enabled it is a refusal to start rather than an open door.
+    """
+    try:
+        with open(clients_path(cfg)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for entry in (data.get("clients") or []):
+        digest = str(entry.get("token_sha256") or "").strip().lower()
+        name = str(entry.get("name") or "").strip()
+        if digest and name:
+            out[digest] = {"name": name, "scopes": list(entry.get("scopes") or [SCOPE_READ])}
+    return out
+
+
+class ClientTokenVerifier:
+    """
+    The SDK's TokenVerifier for this server's own per-client tokens: it looks a presented token's SHA-256 up in
+    the registry and answers with that client's name and scopes, or None for anything unknown.
+
+    The registry is read on every call rather than cached, so issuing or revoking a client takes effect without
+    restarting the service.
+    """
+
+    def __init__(self, cfg=None):
+        self._cfg = cfg
+
+    async def verify_token(self, token: str):
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        entry = load_clients(self._cfg).get(digest)
+        if not entry:
+            return None
+        return AccessToken(token=token, client_id=entry["name"], scopes=entry["scopes"])
+
+
+def acting_client() -> str:
+    """The name of the client this request authenticated as, or "-" when the server is not requiring tokens."""
+    try:
+        token = get_access_token()
+    except LookupError:
+        return "-"
+    return (token.client_id if token else None) or "-"
+
+
+def client_scopes() -> list:
+    """The scopes of the client this request authenticated as, or [] when there is no token."""
+    try:
+        token = get_access_token()
+    except LookupError:
+        return []
+    return list(token.scopes) if token else []
+
+
+def _auth_components(cfg):
+    """
+    (token_verifier, AuthSettings) for MCPServer, or (None, None) when this server does not require tokens.
+
+    Tokens are required exactly when MCP_ALLOW_MUTATIONS is on: that is when a caller can destroy a lab, so that
+    is when knowing which caller it was stops being optional. A read-only server keeps working on mTLS alone, so
+    an existing deployment is unchanged until it enables mutations.
+
+    Returns (None, None) when mutations are on but the registry is empty, so the module still imports; main()
+    refuses to start in that case rather than serving mutating tools to any certificate holder.
+    """
+    if str(cfg.get("MCP_ALLOW_MUTATIONS", "")).strip().lower() not in ("1", "true", "yes", "on"):
+        return None, None
+    if not load_clients(cfg):
+        return None, None
+    issuer = cfg.get("MCP_ISSUER_URL") or "https://{}:{}".format(
+        socket.getfqdn(), cfg.get("MCP_PORT", "8843"))
+    return ClientTokenVerifier(cfg), AuthSettings(issuer_url=issuer, required_scopes=[SCOPE_READ])
+
+
+def _startup_config():
+    """
+    /etc/lab_creation.cfg for the construction-time auth decision, or {} when the host has none.
+
+    primary.load_config() reports a missing configuration file with die(), which raises SystemExit, and this runs
+    at import: the module has to stay importable on a host that is not a configured automation node (the test
+    suite, man-page generation, the dead-function scan). Its report is kept off stderr too, since a missing file
+    here is not an error. main() reads the configuration again for everything else, where it is.
+    """
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return primary.load_config()
+    except SystemExit:
+        return {}
+
+
+_verifier, _auth = _auth_components(_startup_config())
+mcp = MCPServer("lab-in-a-box", token_verifier=_verifier, auth=_auth)
 
 # streamable_http_app()'s default (host="127.0.0.1", transport_security=None)
 # auto-enables Host/Origin "DNS rebinding protection" restricted to
@@ -128,6 +257,7 @@ def _cfg():
 def _audit(tool, params, target, accepted, outcome):
     entry = {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "client": acting_client(),
         "tool": tool,
         "params": params,
         "target": target,
@@ -205,7 +335,27 @@ def save_lab(filename: str, config: dict) -> dict:
 
 
 # ── mutating tools: real deploy/destroy, in-process, gated behind
-#    MCP_ALLOW_MUTATIONS + a target-echoing confirm on every call ────────────
+#    MCP_ALLOW_MUTATIONS + the client's own "write" scope + a target-echoing
+#    confirm on every call ─────────────────────────────────────────────────────
+
+def _require_write_scope(tool, target, params):
+    """
+    Dies loudly (raises, so the MCP client sees a real tool error) unless the calling client was issued the
+    "write" scope. MCP_ALLOW_MUTATIONS says this SERVER may mutate; this says this CLIENT may. A server that
+    requires no tokens has no scopes to check and is left to MCP_ALLOW_MUTATIONS alone, which is the read-only
+    deployment's behaviour.
+
+    The refusal is audited, so an attempt by a read-only client is visible in MCP_AUDIT_LOG.
+    """
+    scopes = client_scopes()
+    if not scopes or SCOPE_WRITE in scopes:
+        return
+    _audit(tool, params, target, accepted=False, outcome="refused: client has no '{}' scope".format(SCOPE_WRITE))
+    raise ValueError(
+        "client '{}' may read this lab but not change it: {} needs the '{}' scope and this client has {}. "
+        "Reissue it with 'lab-mcp-issue-client-cert {} --allow-mutations' to grant it.".format(
+            acting_client(), tool, SCOPE_WRITE, scopes, acting_client()))
+
 
 def _run_mutation(tool_name, target, params, fn):
     """
@@ -226,6 +376,7 @@ def _run_mutation(tool_name, target, params, fn):
     only ever printed to stderr, by design, for a CLI context) — point the
     caller at the service log rather than fabricating a message here.
     """
+    _require_write_scope(tool_name, target, params)
     try:
         result = fn()
     except SystemExit as e:
@@ -358,6 +509,19 @@ def build_app():
 def main():
     cfg = _cfg()
     mutations_on = register_mutating_tools(cfg=cfg)
+
+    # A server that can destroy a lab must know which client asked. Refusing to start is the loud failure: the
+    # alternative is serving mutating tools to any certificate holder, with nothing in the audit log naming the
+    # caller. A read-only server needs no registry and is unaffected.
+    if mutations_on and not load_clients(cfg):
+        print("ERROR: MCP_ALLOW_MUTATIONS is on but no MCP client is registered in {} — a client that can "
+              "destroy a lab has to be identifiable. Issue one with 'lab-mcp-issue-client-cert <name> "
+              "--allow-mutations' (or '<name>' alone for a read-only client), or turn MCP_ALLOW_MUTATIONS off."
+              .format(clients_path(cfg)), file=sys.stderr)
+        sys.exit(1)
+    print("lab-mcp: clients {}".format(
+        "require a bearer token ({} registered)".format(len(load_clients(cfg))) if _auth
+        else "authenticate with their TLS certificate only (no token required)"))
     print("lab-mcp: mutations {}".format("ENABLED (deploy_lab/rebuild_lab/destroy_lab/destroy_vm registered)"
                                           if mutations_on else "disabled (read-only tools only)"))
 
