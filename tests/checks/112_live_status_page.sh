@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests-paths: libs/qr_util.py
+# Tests-paths: libs/qr_util.py scripts/lab_builder_helper.py webui/lib/api.py webui/lib/admin.py scripts/setup_lab.py webui/htdocs/status.html webui/htdocs/app.js webui/htdocs/index.html
 # QR code + public live-status page for a running/finished lab-create job: libs/qr_util.py,
 # lab_builder_helper.py's token/pub-status, webui's api.py pub-status route, setup_lab.py's own
 # link+QR line. Independent container — see tests/run_tests.sh.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests-paths: libs/addon_common.py scripts/install_longhorn
+# Tests-paths: libs/addon_common.py scripts/install_longhorn scripts/check_addon.py libs/apps.py
 # An add-on's --check: comparing what is deployed with the lab definition (libs/addon_common.py's Checker), its three
 # exit codes, the capability that advertises it, and the contract checker enforcing both.
 # Independent container — see tests/run_tests.sh.
