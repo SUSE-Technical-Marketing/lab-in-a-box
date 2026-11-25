@@ -276,6 +276,11 @@ class _FakeBackendReuse:
         self.calls.append(("get_ip", vm_name))
         return "203.0.113.9"
 
+    def ensure_stable_address(self, vm_name):
+        # A backend that reserves nothing answers "": the caller keeps the address the provider gave.
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
+
     def create_vm(self, *a, **kw):
         raise AssertionError("create_vm() must not be called when the VM already exists")
 
@@ -318,6 +323,10 @@ class _FakeBackendCreate:
     def create_vm(self, vm_name, cpu, mem, dsk, network, **kwargs):
         self.calls.append(("create_vm", vm_name, cpu, mem, dsk, network, kwargs))
         return "203.0.113.77"
+
+    def ensure_stable_address(self, vm_name):
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
 
 
 reset()
@@ -435,6 +444,9 @@ class _CountingBackend:
 
     def get_ip(self, vm_name):
         return "203.0.113.55"
+
+    def ensure_stable_address(self, vm_name):
+        return ""
 
     def copy_vm_image(self, *a, **kw):
         pass
@@ -759,6 +771,56 @@ check("--check and --prune are rejected together, since they ask for opposite th
       "--check and --prune ask for opposite things" in ctl)
 check("the reverse zone can be compared too, so PTR drift is not invisible",
       "mynet_reverse" in ctl)
+
+
+# ── both of a site DNS server's addresses, and which one a record is written through ──
+# A site's records reach another site's server over SSH. Across the overlay that is its PRIVATE address, which
+# never moves and keeps the traffic inside the tunnel; but an automation node whose own lab has no site of its own
+# is not a peer of the hub and has no route to it, so the public address stays recorded as the fallback.
+reset()
+overlay._private_dns_reachable.clear()
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a site's DNS server is recorded with both of its addresses",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53")
+
+reset()
+overlay._private_dns_reachable.clear()
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("the private address is only recorded behind a domain, so a line can always be read by position",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9")
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+check("a record is written through the site's private address when it answers, keeping the traffic on the "
+      "overlay", overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"true": FakeResult(returncode=1)}
+check("it falls back to the public address when the private one cannot be reached from here, which is the case "
+      "for an automation node that is not itself a site gateway",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "203.0.113.9")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+probes = [cmd for host, cmd, _body in calls if host == "10.0.0.53" and cmd == "true"]
+check("the private address is probed once per run however many nodes ask, not once per node", len(probes) == 1)
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73 mydemo.lab\n")}
+check("a line written before the private address was recorded is still read correctly",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("home", "192.168.88.73")])
 
 
 if failures:

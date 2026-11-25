@@ -61,6 +61,9 @@ class FakeBackend(object):
     def get_ip(self, name):
         return self._ip
 
+    def ensure_stable_address(self, name):
+        return ""   # as a backend that reserves nothing answers; the caller keeps the provider's address
+
     def get_private_ip(self, name):
         return self._private
 

@@ -30,6 +30,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 
 import primary  # noqa: E402
 import migrations  # noqa: E402
+import reconcile  # noqa: E402
 from lab_creation import (  # noqa: E402
     die, log, warn,
     validate_lab_definition, load_vm_vars,
@@ -136,6 +137,9 @@ def refresh_kept_node_dns(definition, config, defaults, vm_name: str) -> None:
     Register a node setup_lab.py --keep reuses in the lab's DNS masters, as provision_vm() does a node it creates,
     and point it at the lab's DNS server from inside the guest. Its address is read from its backend, since a cloud
     node's is not in the definition, and stored on the definition for the steps after this one.
+
+    This is also what brings an existing node current when its address moved (libs/reconcile.py), so it reserves
+    the node's address first when the lab asks for a fixed one.
     """
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
     backend = backends.get_backend(definition, config, vm_name, for_existing=True,
@@ -146,6 +150,10 @@ def refresh_kept_node_dns(definition, config, defaults, vm_name: str) -> None:
     env.update(defaults)
     env.update(config)
     env.update(load_vm_vars(definition, vm_name))
+    # Before the address is read: on some providers reserving one replaces the address the node is answering on,
+    # and this is where an existing node gets the reservation its definition asks for (static_ip).
+    reconcile.ensure_node_address(
+        backend, backends.effective_backend_name(definition, config, vm_name), vm_name, env)
     myip = backend.get_ip(vm_name) or env.get("myip", "")
     if myip:
         env["myip"] = myip
@@ -318,6 +326,16 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
         # Also on the definition, so every later step reaches the node at the address its provider assigned rather
         # than at a name only this lab's own DNS server resolves. setup_lab.py shares this dict with provision_vm().
         definition.setdefault("nodes", {}).setdefault(vm_name, {})["myip"] = created_ip
+
+    # static_ip: before the address is registered anywhere, because on some providers reserving one replaces the
+    # address the node is answering on. reconcile.ensure_node_address() is the same call every later run makes, so
+    # a node created before the flag was set gets its reservation then instead of only when it is rebuilt.
+    stable_ip = reconcile.ensure_node_address(
+        backend, backends.effective_backend_name(definition, config, vm_name), vm_name, env)
+    if stable_ip:
+        env["myip"] = stable_ip
+        definition.setdefault("nodes", {}).setdefault(vm_name, {})["myip"] = stable_ip
+
     if open_ports:
         # Every backend's own firewall/security-group mechanism (VMBackend.open_vm_ports).
         backend.open_vm_ports(vm_name, open_ports)
@@ -460,7 +478,11 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
             # site's server as well. add_to_dns() skips a line that is already there, so this is a re-run of the
             # same write with a wider list, not a second record.
             if site_dns_server:
-                overlay.register_dns_server(hub_host, this_site, site_dns_server, env.get("mydomain", ""))
+                # Both addresses: another site writes this lab's records through the private one over the overlay,
+                # and an automation node that is not itself a peer of the hub falls back to the public one. See
+                # overlay.register_dns_server().
+                overlay.register_dns_server(hub_host, this_site, site_dns_server, env.get("mydomain", ""),
+                                            private_ip=lab_dns_ip)
             other_dns = [ip for _site, ip in overlay.list_dns_servers(
                 hub_host, exclude_site=this_site, mydomain=env.get("mydomain", ""))]
             if other_dns and env.get("myip"):

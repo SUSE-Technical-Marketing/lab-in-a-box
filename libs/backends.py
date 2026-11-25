@@ -286,6 +286,15 @@ def _answers_ssh_for_keep(vm_name: str, target: str) -> bool:
     return True
 
 
+def static_ip_requested(env) -> bool:
+    """
+    True when the lab definition asks this node to keep its public address across restarts: static_ip "true" in
+    `common` or on the node itself. `env` is a merged variable mapping (lab_creation.load_vm_vars()), which has
+    already resolved the per-node value over the common one, so this is the single place the flag is interpreted.
+    """
+    return str((env or {}).get("static_ip", "")).lower() == "true"
+
+
 def _cloud_no_ip(myip):
     """
     A cloud backend's check_or_generate_ip(): the provider assigns the address, so there is nothing to allocate and
@@ -613,6 +622,33 @@ class VMBackend(object):
         """
         Allow all traffic between this backend's own VMs, so a node can reach its site gateway and its kcluster peers.
         No-op by default; AWSBackend adds a security-group rule whose source is the group itself.
+        """
+
+    def ensure_stable_address(self, vm_name):
+        """
+        Reserve this VM's public address with the provider, so stopping and starting it hands back the same one.
+        Returns the address in effect afterwards, which may differ from the one before the call, or "" when this
+        backend reserves nothing. Idempotent: an address this VM already holds is reused, not replaced.
+
+        Implemented where the provider releases an instance's auto-assigned public address on stop and offers a
+        reservation that replaces it: AWSBackend (an Elastic IP), GCPBackend (promoting the address already
+        assigned), AlibabaBackend (an EIP) and ScalewayBackend (a flexible IP in place of a dynamic one).
+
+        A no-op on HetznerBackend, UpCloudBackend and OVHcloudBackend, which hold an instance's address for its
+        whole lifetime and so have nothing to reserve, and on ExoscaleBackend, whose Elastic IP is an ADDITIONAL
+        address the guest has to configure itself rather than a replacement for the instance's own (and a manual
+        one does not survive a reboot without further automation). LibvirtBackend and HarvesterBackend address
+        their VMs from the lab definition's own `myip`, which never moves.
+
+        Callers must treat a "" return as "this backend keeps its address anyway", not as a failure.
+        """
+        return ""
+
+    def release_stable_address(self, vm_name):
+        """
+        Give back the address ensure_stable_address() reserved for `vm_name`, so a destroyed VM leaves no reserved
+        address behind to be billed. Best effort and idempotent: a VM that never had one is not an error. Called by
+        the delete_vm() of every backend that implements ensure_stable_address(); a no-op by default.
         """
 
     def opensuse_image(self, arch_suffix: str = "-x86_64") -> str:
@@ -2302,6 +2338,88 @@ class AWSBackend(VMBackend):
                 "Elastic IP not attached to a running instance still do. Without an Elastic IP its public "
                 "address changes on the next start, which is why starting re-registers the lab's DNS.")
 
+    def _find_eip(self, vm_name):
+        """
+        The Elastic IP reserved for `vm_name` as its DescribeAddresses entry, or None. Found by the same Name tag
+        _find_instance() looks instances up by, so the address survives the instance it was allocated for.
+        """
+        try:
+            result = self._aws("ec2", "describe-addresses", "--filters",
+                               "Name=tag:Name,Values={}".format(vm_name))
+        except RuntimeError as e:
+            _lc.warn("could not list Elastic IPs for '{}': {}".format(vm_name, e))
+            return None
+        addresses = (result or {}).get("Addresses", [])
+        return addresses[0] if addresses else None
+
+    def ensure_stable_address(self, vm_name):
+        """
+        VMBackend.ensure_stable_address() override — an Elastic IP, allocated once and tagged with the VM's name so
+        a later run finds the same one, then associated with the instance.
+
+        Associating an Elastic IP releases the instance's auto-assigned public address, so what this returns is the
+        instance's new public address and every caller has to use it in place of the one it had.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("EC2 instance '{}' not found — cannot reserve a stable address for it".format(vm_name))
+        instance_id = instance["InstanceId"]
+
+        existing = self._find_eip(vm_name)
+        if existing and existing.get("InstanceId") == instance_id:
+            return existing.get("PublicIp") or ""
+
+        if existing:
+            allocation_id, address = existing["AllocationId"], existing.get("PublicIp") or ""
+        else:
+            try:
+                allocated = self._aws(
+                    "ec2", "allocate-address", "--domain", "vpc", "--tag-specifications",
+                    "ResourceType=elastic-ip,Tags=[{{Key=Name,Value={}}}]".format(vm_name))
+            except RuntimeError as e:
+                if "AddressLimitExceeded" in str(e):
+                    die("backend 'aws': this region allows no further Elastic IP (AddressLimitExceeded). The "
+                        "default quota is 5 per region, and static_ip reserves one per node that asks for it, "
+                        "plus one each for the cloud DNS VM and the overlay hub. Either set static_ip to "
+                        "\"false\" on nodes that do not need a fixed address, or raise the "
+                        "\"EC2-VPC Elastic IPs\" quota for region '{}'.".format(self.region))
+                die(str(e))
+            allocation_id = (allocated or {}).get("AllocationId")
+            address = (allocated or {}).get("PublicIp") or ""
+            if not allocation_id:
+                die("backend 'aws': allocate-address returned no AllocationId for '{}'".format(vm_name))
+
+        try:
+            # --allow-reassociation: the tag names this VM, so an address still recorded against an earlier
+            # instance of the same name is this VM's own to take back.
+            self._aws("ec2", "associate-address", "--instance-id", instance_id,
+                      "--allocation-id", allocation_id, "--allow-reassociation")
+        except RuntimeError as e:
+            die(str(e))
+        log("- Reserved Elastic IP {} for \"{}{}{}\"".format(address, _RED, vm_name, _RESET))
+        return address or (self.get_ip(vm_name) or "")
+
+    def release_stable_address(self, vm_name):
+        """
+        VMBackend.release_stable_address() override — disassociate and release the Elastic IP tagged with this VM's
+        name. An Elastic IP that is still allocated is billed whether or not anything uses it, so this runs from
+        delete_vm() even when the instance itself is already gone.
+        """
+        existing = self._find_eip(vm_name)
+        if not existing:
+            return
+        if existing.get("AssociationId"):
+            try:
+                self._aws("ec2", "disassociate-address", "--association-id", existing["AssociationId"])
+            except RuntimeError as e:
+                _lc.warn("could not disassociate the Elastic IP of '{}': {}".format(vm_name, e))
+        try:
+            self._aws("ec2", "release-address", "--allocation-id", existing["AllocationId"])
+            log("- Released Elastic IP {} of '{}'".format(existing.get("PublicIp") or "", vm_name))
+        except RuntimeError as e:
+            _lc.warn("could not release the Elastic IP of '{}' ({}): it stays allocated and billed: {}".format(
+                vm_name, existing.get("PublicIp") or existing["AllocationId"], e))
+
     def open_vm_ports(self, vm_name, ports):
         """Same security-group rules create_vm() adds for open_ports (aws_open_ports)."""
         if ports:
@@ -2309,6 +2427,9 @@ class AWSBackend(VMBackend):
 
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
+        # Before the instance, and whether or not it still exists: an Elastic IP outlives the instance it was
+        # associated with and is billed on its own (see release_stable_address()).
+        self.release_stable_address(vm_name)
         instance = self._find_instance(vm_name)
         if not instance:
             return  # already gone — idempotent, matches every other backend's delete_vm()
@@ -3044,8 +3165,78 @@ class GCPBackend(VMBackend):
         except RuntimeError as e:
             die(str(e))
 
+    def _region(self):
+        """This backend's region, which Compute Engine derives from the zone by dropping its last component."""
+        return self.zone.rsplit("-", 1)[0]
+
+    def _address_name(self, vm_name):
+        """The name of the reserved address resource belonging to `vm_name` (_gce_name() rules, plus "-ip")."""
+        return "{}-ip".format(_gce_name(vm_name.split(".")[0]))
+
+    def ensure_stable_address(self, vm_name):
+        """
+        VMBackend.ensure_stable_address() override — promote the external address the instance already answers on
+        into a reserved address of the same value (`compute addresses create --addresses <ip>`). The instance keeps
+        the address it has, so nothing resolving to it changes; it simply stops being released when the instance
+        stops.
+
+        When a reservation for this VM exists but holds some other address, the instance is moved onto it by
+        replacing its access config, which is the only way Compute Engine lets a running instance change external
+        address. The access config is named from the instance's own, since the name is not fixed across the ways an
+        instance can be created.
+        """
+        name, region = self._address_name(vm_name), self._region()
+        try:
+            reserved = (self._gcloud("compute", "addresses", "describe", name, "--region", region) or {})
+        except RuntimeError:
+            reserved = {}
+        current = self.get_ip(vm_name)
+
+        if reserved.get("address"):
+            if reserved["address"] == current:
+                return reserved["address"]
+            instance = self._find_instance(vm_name) or {}
+            nics = instance.get("networkInterfaces") or []
+            configs = (nics[0].get("accessConfigs") if nics else None) or []
+            config_name = (configs[0].get("name") if configs else None) or "external-nat"
+            try:
+                if configs:
+                    self._gcloud("compute", "instances", "delete-access-config", vm_name,
+                                 "--zone", self.zone, "--access-config-name", config_name)
+                self._gcloud("compute", "instances", "add-access-config", vm_name, "--zone", self.zone,
+                             "--access-config-name", config_name, "--address", reserved["address"])
+            except RuntimeError as e:
+                die(str(e))
+            log("- Moved \"{}{}{}\" onto its reserved address {}".format(
+                _RED, vm_name, _RESET, reserved["address"]))
+            return reserved["address"]
+
+        if not current:
+            die("GCE instance '{}' has no external address to reserve".format(vm_name))
+        try:
+            self._gcloud("compute", "addresses", "create", name, "--addresses", current, "--region", region)
+        except RuntimeError as e:
+            die(str(e))
+        log("- Reserved address {} for \"{}{}{}\"".format(current, _RED, vm_name, _RESET))
+        return current
+
+    def release_stable_address(self, vm_name):
+        """
+        VMBackend.release_stable_address() override — delete this VM's reserved address resource. A reserved address
+        that no instance uses is still billed, so it goes with the instance.
+        """
+        try:
+            self._gcloud("compute", "addresses", "delete", self._address_name(vm_name),
+                         "--region", self._region())
+        except RuntimeError as e:
+            if "was not found" not in str(e) and "not found" not in str(e).lower():
+                _lc.warn("could not delete the reserved address of '{}': it stays reserved and billed: {}".format(
+                    vm_name, e))
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
+        # Before the instance: a reserved address outlives it and is billed on its own.
+        self.release_stable_address(vm_name)
         if not self.vm_exists(vm_name):
             return  # already gone — idempotent, matches every other backend's delete_vm()
         try:
@@ -3204,18 +3395,22 @@ class AlibabaBackend(VMBackend):
         return cls(access_key_id, access_key_secret, region, security_group_id, vswitch_id,
                    instance_types=instance_types, vm_img_loc=vm_img_loc, lab_setup_path=lab_setup_path)
 
-    def _aliyun(self, *args, **kwargs):
+    def _aliyun(self, *args, product="ecs", **kwargs):
         """One `aliyun` CLI invocation, region/auth applied uniformly. Returns the parsed JSON
         stdout (or None for no output), raises RuntimeError with the real CLI stderr on a non-zero
-        exit — same contract as the other cloud backends' own request helpers."""
-        cmd = ["aliyun", "ecs"] + list(args) + [
+        exit — same contract as the other cloud backends' own request helpers.
+
+        `product` is the Alibaba Cloud product the action belongs to. Instances are "ecs"; an EIP is
+        "vpc" (ensure_stable_address())."""
+        cmd = ["aliyun", product] + list(args) + [
             "--region", self.region,
             "--access-key-id", self.access_key_id,
             "--access-key-secret", self.access_key_secret,
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         if result.returncode != 0:
-            raise RuntimeError("aliyun ecs {} failed: {}".format(" ".join(args), result.stderr.strip()))
+            raise RuntimeError("aliyun {} {} failed: {}".format(
+                product, " ".join(args), result.stderr.strip()))
         return json.loads(result.stdout) if result.stdout.strip() else None
 
     def _require_cloud_init(self, config_method, vm_name):
@@ -3367,8 +3562,78 @@ class AlibabaBackend(VMBackend):
         switches = ((result or {}).get("VSwitches") or {}).get("VSwitch") or []
         return (switches[0].get("CidrBlock") or None) if switches else None
 
+    def _find_eip(self, vm_name):
+        """
+        The EIP named after `vm_name` as its DescribeEipAddresses entry, or None. The list is filtered here rather
+        than by the API, so the name of the filter parameter cannot drift out from under this.
+        """
+        try:
+            result = self._aliyun("DescribeEipAddresses", product="vpc")
+        except RuntimeError as e:
+            _lc.warn("could not list EIPs for '{}': {}".format(vm_name, e))
+            return None
+        entries = ((result or {}).get("EipAddresses") or {}).get("EipAddress", [])
+        return next((e for e in entries if e.get("Name") == vm_name), None)
+
+    def ensure_stable_address(self, vm_name):
+        """
+        VMBackend.ensure_stable_address() override — an EIP, allocated once under the VM's own name and bound to the
+        instance. A pay-as-you-go instance stopped in economical mode, the default for VPC instances, has its
+        system-assigned public address released; an EIP is not, and binding one replaces the address the instance
+        answers on.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("Alibaba Cloud instance '{}' not found — cannot reserve a stable address for it".format(vm_name))
+        instance_id = instance["InstanceId"]
+
+        existing = self._find_eip(vm_name)
+        if existing and existing.get("InstanceId") == instance_id:
+            return existing.get("IpAddress") or ""
+
+        if existing:
+            allocation_id, address = existing["AllocationId"], existing.get("IpAddress") or ""
+        else:
+            try:
+                allocated = self._aliyun("AllocateEipAddress", "--Name", vm_name, product="vpc") or {}
+            except RuntimeError as e:
+                die(str(e))
+            allocation_id, address = allocated.get("AllocationId"), allocated.get("EipAddress") or ""
+            if not allocation_id:
+                die("backend 'alibaba': AllocateEipAddress returned no AllocationId for '{}'".format(vm_name))
+        try:
+            self._aliyun("AssociateEipAddress", "--AllocationId", allocation_id,
+                         "--InstanceId", instance_id, product="vpc")
+        except RuntimeError as e:
+            die(str(e))
+        log("- Reserved EIP {} for \"{}{}{}\"".format(address, _RED, vm_name, _RESET))
+        return address or (self.get_ip(vm_name) or "")
+
+    def release_stable_address(self, vm_name):
+        """
+        VMBackend.release_stable_address() override — unbind and release this VM's EIP, which is billed for as long
+        as it is allocated whether or not anything uses it.
+        """
+        existing = self._find_eip(vm_name)
+        if not existing:
+            return
+        if existing.get("InstanceId"):
+            try:
+                self._aliyun("UnassociateEipAddress", "--AllocationId", existing["AllocationId"],
+                             "--InstanceId", existing["InstanceId"], product="vpc")
+            except RuntimeError as e:
+                _lc.warn("could not unbind the EIP of '{}': {}".format(vm_name, e))
+        try:
+            self._aliyun("ReleaseEipAddress", "--AllocationId", existing["AllocationId"], product="vpc")
+            log("- Released EIP {} of '{}'".format(existing.get("IpAddress") or "", vm_name))
+        except RuntimeError as e:
+            _lc.warn("could not release the EIP of '{}' ({}): it stays allocated and billed: {}".format(
+                vm_name, existing.get("IpAddress") or existing["AllocationId"], e))
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
+        # Before the instance: an EIP outlives it and is billed on its own (see release_stable_address()).
+        self.release_stable_address(vm_name)
         instance = self._find_instance(vm_name)
         if not instance:
             return  # already gone — idempotent, matches every other backend's delete_vm()
@@ -3635,8 +3900,66 @@ class ScalewayBackend(VMBackend):
         host = self.get_ip(vm_name)
         return (guest_subnet_cidr(host) or None) if host else None
 
+    def _find_flexible_ip(self, vm_name):
+        """The flexible IP tagged with `vm_name`, as its GET /ips entry, or None."""
+        try:
+            result = self._api("GET", "/ips")
+        except RuntimeError as e:
+            _lc.warn("could not list flexible IPs for '{}': {}".format(vm_name, e))
+            return None
+        return next((entry for entry in (result or {}).get("ips", [])
+                     if vm_name in (entry.get("tags") or [])), None)
+
+    def ensure_stable_address(self, vm_name):
+        """
+        VMBackend.ensure_stable_address() override — a flexible IP, created once with the VM's name as its tag and
+        attached to the server. A dynamic IP, which is what a server gets when none is given, is released back to
+        Scaleway's pool whenever the server is powered off; a flexible IP stays with the account, and attaching one
+        replaces the address the server answers on.
+        """
+        server = self._find_server(vm_name)
+        if not server:
+            die("Scaleway server '{}' not found — cannot reserve a stable address for it".format(vm_name))
+
+        existing = self._find_flexible_ip(vm_name)
+        if existing and (existing.get("server") or {}).get("id") == server["id"]:
+            return existing.get("address") or ""
+
+        if not existing:
+            try:
+                created = self._api("POST", "/ips", {"project": self.project_id, "tags": [vm_name]})
+            except RuntimeError as e:
+                die(str(e))
+            existing = (created or {}).get("ip") or {}
+            if not existing.get("id"):
+                die("backend 'scaleway': POST /ips returned no IP id for '{}'".format(vm_name))
+        try:
+            self._api("PATCH", "/ips/{}".format(existing["id"]), {"server": server["id"]})
+        except RuntimeError as e:
+            die(str(e))
+        address = existing.get("address") or ""
+        log("- Reserved flexible IP {} for \"{}{}{}\"".format(address, _RED, vm_name, _RESET))
+        return address or (self.get_ip(vm_name) or "")
+
+    def release_stable_address(self, vm_name):
+        """
+        VMBackend.release_stable_address() override — delete this VM's flexible IP, which is billed for as long as
+        the account holds it, powered off server or not.
+        """
+        existing = self._find_flexible_ip(vm_name)
+        if not existing:
+            return
+        try:
+            self._api("DELETE", "/ips/{}".format(existing["id"]))
+            log("- Released flexible IP {} of '{}'".format(existing.get("address") or "", vm_name))
+        except RuntimeError as e:
+            _lc.warn("could not delete the flexible IP of '{}' ({}): it stays reserved and billed: {}".format(
+                vm_name, existing.get("address") or existing["id"], e))
+
     def delete_vm(self, vm_name):
         log("Deleting VM '{}'".format(vm_name))
+        # Before the server: a flexible IP outlives it and is billed on its own.
+        self.release_stable_address(vm_name)
         server = self._find_server(vm_name)
         if not server:
             return
@@ -4702,6 +5025,26 @@ def dns_recursion_networks(backend):
     return networks
 
 
+def ensure_infra_address(backend, vm_name: str, role: str) -> str:
+    """
+    Reserve the public address of a shared infrastructure VM — the cloud DNS VM (ensure_cloud_dns_vm()), the overlay
+    hub or a site gateway (overlay.ensure_overlay_hub(), overlay.ensure_site_gateway_vm()) — and return it, or ""
+    on a backend that reserves nothing (VMBackend.ensure_stable_address()).
+
+    These VMs belong to no single lab, so the lab definition's own static_ip flag cannot speak for them, and they
+    are reserved unconditionally: every lab on that backend resolves through that DNS VM and routes through that
+    hub, so an address that moves breaks all of them at once, where a lab node's moving address breaks one lab.
+
+    `role` names the VM in the message when nothing is reserved, so an operator reading the log knows the address
+    was left as the provider assigned it rather than silently failed.
+    """
+    address = backend.ensure_stable_address(vm_name)
+    if not address:
+        log("- {} \"{}{}{}\" keeps the address its provider assigns: this backend reserves none".format(
+            role, _RED, vm_name, _RESET))
+    return address
+
+
 def cloud_dns_vm_name(backend, backend_name: str) -> str:
     """
     The name of the cloud DNS VM `backend` uses: "lab-dns-<backend_name>" for the unnamed or "default" cloud account,
@@ -4812,7 +5155,9 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
         # A VM that exists but is powered off is started first, and its address read only afterwards: a provider
         # that released its public address on stop hands back a different one.
         started = start_if_stopped(backend, backend_name, dns_vm_name, "cloud DNS VM")
-        ip = backend.get_ip(dns_vm_name)
+        # Reserved before the address is read, so a DNS VM that came back from a stop with a new public address
+        # gets its reserved one now and this run already uses that.
+        ip = ensure_infra_address(backend, dns_vm_name, "cloud DNS VM") or backend.get_ip(dns_vm_name)
         if ip:
             # Having an address is not being alive: an instance that never booted still has one, and reusing it
             # points every node of the lab at a server that answers nothing. Ask it the same question the create
@@ -4858,6 +5203,10 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
     if not ip:
         die("cloud DNS VM '{}' was created on backend '{}' but create_vm() reported no IP — "
             "cannot continue".format(dns_vm_name, backend_name))
+
+    # Reserved before anything is told this address: on AWS and Alibaba Cloud the reservation replaces the
+    # auto-assigned address, so the one create_vm() reported is not the one this VM will keep.
+    ip = ensure_infra_address(backend, dns_vm_name, "cloud DNS VM") or ip
 
     # create_vm() returns once the provider has assigned an IP, but cloud-init still needs time to
     # install bind9 and write the zone. Wait until cloud-init has finished and named is active, so

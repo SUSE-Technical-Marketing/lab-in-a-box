@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "4.0"
+LAB_SCHEMA_VERSION = "4.1"
 
 # A user name an ssh_authorized_keys entry may name (libs/ssh_keys.py).
 SSH_KEY_USER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_.-]{0,31}\$?$"
@@ -91,6 +91,7 @@ def base_lab_schema():
                     {"name": "open_ports", "required": False, "type": "array", "description": "Cloud backends: ports reachable from anywhere on each VM (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — aws: security-group rules (needs AWS_SECURITY_GROUP_ID); gcp: a firewall rule + network tag; alibaba: ALIBABA_SECURITY_GROUP_ID rules; exoscale: a per-VM security group; hetzner/scaleway/upcloud/ovhcloud: open by default"},
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "backend aws (older form of open_ports): ports opened to 0.0.0.0/0 in the security group (list, e.g. [\"443\", \"69/udp\"]; default protocol tcp) — needs AWS_SECURITY_GROUP_ID"},
                     {"name": "aws_nested_virtualization", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "backend aws: \"true\" runs the VMs on an instance type that supports nested virtualization (--cpu-options NestedVirtualization=enabled) — needed by a node that is itself a hypervisor, such as a Harvester node"},
+                    {"name": "static_ip", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "Cloud backends: \"true\" reserves each VM's public address with the provider, so stopping and starting it hands back the same address and the lab's DNS records stay right — aws: an Elastic IP; gcp: the assigned address promoted to a reserved one; alibaba: an EIP; scaleway: a flexible IP instead of a dynamic one; hetzner/upcloud/ovhcloud hold an instance's address for its lifetime anyway and reserve nothing; exoscale offers only an additional address the guest must configure itself. A reserved address is billed while the VM is stopped, and is released when the VM is destroyed"},
                     {"name": "ssh_pwauth", "required": False, "type": "string", "default": "false", "enum": ["true", "false"], "description": "config_method=cloud-init only: \"true\" enables SSH password login (cloud-init ssh_pwauth) and root login — for labs whose exercises log in or bootstrap clients with the root password"},
                     {"name": "lab_name", "required": False, "type": "string", "description": "Human-readable lab name shown in log output"},
                     {"name": "lab_description", "required": False, "type": "string", "description": "One line saying what this lab is for, shown where a lab is listed (the lab-builder's example and saved-lab lists)"},
@@ -143,6 +144,7 @@ def base_lab_schema():
                     {"name": "open_ports", "required": False, "type": "array", "description": "Overrides common.open_ports for this node only"},
                     {"name": "aws_open_ports", "required": False, "type": "array", "description": "Overrides common.aws_open_ports for this node only"},
                     {"name": "aws_nested_virtualization", "required": False, "type": "string", "enum": ["true", "false"], "description": "Overrides common.aws_nested_virtualization for this node only"},
+                    {"name": "static_ip", "required": False, "type": "string", "enum": ["true", "false"], "description": "Overrides common.static_ip for this node only"},
                     {"name": "SOURCE_SHA256", "required": False, "type": "string", "description": "Overrides common.SOURCE_SHA256 for this node — checksum value, URL, or local file path"},
                     {"name": "config_method", "required": False, "type": "string",
                      "enum": [{"value": "", "label": "(default) Ignition+Combustion"}, "cloud-init", "virt_customize", "install_iso"],

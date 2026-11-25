@@ -158,8 +158,12 @@ with mock.patch.object(backends.subprocess, "run", return_value=_describe_none):
 # ── delete_vm(): idempotent when the instance is already gone ─────────────
 with mock.patch.object(backends.subprocess, "run", return_value=_describe_none) as m_run:
     backend.delete_vm("vm1")  # must not raise/die
-    check("delete_vm() only calls DescribeInstances (no DeleteInstance) when nothing exists",
-          m_run.call_count == 1)
+    check("delete_vm() deletes nothing when nothing exists (it looks for a leftover EIP first, then for the "
+          "instance)",
+          not any("DeleteInstance" in c[0][0] for c in m_run.call_args_list))
+    check("delete_vm() looks for this VM's EIP even when the instance is already gone, since the address "
+          "outlives it and is billed on its own",
+          any("DescribeEipAddresses" in c[0][0] for c in m_run.call_args_list))
 
 
 # ── create_vm(): real command construction ─────────────────────────────────
@@ -232,6 +236,59 @@ check("_pick_instance_type() does NOT fall back to the built-in INSTANCE_TYPES o
 # ── host_resources(): a large constant, not a real capacity query ─────────
 check("host_resources() returns a (cpu, mem_mb, disk_mb) tuple that never reads as 'no capacity'",
       backend.host_resources() == (9999, 999999, 999999))
+
+
+# ── ensure_stable_address() / release_stable_address(): the EIP path ───────
+# A pay-as-you-go instance stopped in economical mode loses its system-assigned address; an EIP survives that.
+_EIP_INSTANCE = {"Instances": {"Instance": [{"InstanceId": "i-abc"}]}}
+
+
+def _fake_run_eip(eips, calls):
+    def _run(args, **kwargs):
+        calls.append(args)
+        if "DescribeInstances" in args:
+            return _cp(0, stdout=json.dumps(_EIP_INSTANCE))
+        if "DescribeEipAddresses" in args:
+            return _cp(0, stdout=json.dumps({"EipAddresses": {"EipAddress": eips}}))
+        if "AllocateEipAddress" in args:
+            return _cp(0, stdout=json.dumps({"AllocationId": "eip-1", "EipAddress": "198.51.100.8"}))
+        return _cp(0, stdout="{}")
+    return _run
+
+
+b_eip = backends.AlibabaBackend("keyid", "keysecret", "cn-hangzhou", "sg-1", "vsw-1")
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip([], eip_calls)):
+    eip_address = b_eip.ensure_stable_address("vm1")
+allocate_call = next((c for c in eip_calls if "AllocateEipAddress" in c), [])
+associate_call = next((c for c in eip_calls if "AssociateEipAddress" in c), [])
+check("ensure_stable_address() allocates the EIP under the VM's own name, so a later run finds that same one",
+      "--Name" in allocate_call and "vm1" in allocate_call)
+check("ensure_stable_address() reaches the EIP APIs through the vpc product, not ecs",
+      allocate_call[:2] == ["aliyun", "vpc"])
+check("ensure_stable_address() binds the EIP to the instance", "i-abc" in associate_call)
+check("ensure_stable_address() returns the EIP", eip_address == "198.51.100.8")
+
+eip_calls = []
+_MINE = [{"AllocationId": "eip-1", "IpAddress": "198.51.100.8", "Name": "vm1", "InstanceId": "i-abc"}]
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    eip_address = b_eip.ensure_stable_address("vm1")
+check("ensure_stable_address() is idempotent: an EIP already bound to this instance is returned as it is",
+      eip_address == "198.51.100.8" and not any("AllocateEipAddress" in c for c in eip_calls))
+
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    b_eip.release_stable_address("vm1")
+check("release_stable_address() unbinds the EIP before releasing it",
+      any("UnassociateEipAddress" in c for c in eip_calls))
+check("release_stable_address() releases the EIP, which is billed for as long as it is allocated",
+      any("ReleaseEipAddress" in c and "eip-1" in c for c in eip_calls))
+
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    b_eip.delete_vm("vm1")
+check("delete_vm() releases this VM's EIP as well as deleting it",
+      any("ReleaseEipAddress" in c for c in eip_calls) and any("DeleteInstance" in c for c in eip_calls))
 
 
 if failures:

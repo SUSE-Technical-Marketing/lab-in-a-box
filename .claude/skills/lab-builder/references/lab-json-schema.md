@@ -147,3 +147,13 @@ nodes often can't reach it directly. An `aws_open_ports` field (or the equivalen
 another backend) controls what's exposed through the security group — opening a port to
 the world is a live, user-facing action; don't do it without the user's go-ahead (see
 `conventions.md`).
+
+A cloud node's public address is not stable: a provider that releases it when the instance
+stops hands back a different one on start, which leaves the lab's DNS records pointing at an
+address that answers nothing. `static_ip: "true"`, in `common` or on one node, reserves it
+with the provider (AWS Elastic IP, GCP reserved address, Alibaba EIP, Scaleway flexible IP;
+Hetzner/UpCloud/OVHcloud hold an instance's address anyway, Exoscale cannot). It costs money
+while the VM is stopped and AWS allows 5 Elastic IPs per region by default, so set it on the
+nodes whose address other things point at, not on every node of a large lab. When an address
+moved anyway, `reconcile_lab.py <lab.json>` registers the lab again; every command that acts
+on an existing lab already does that first (`libs/reconcile.py`).

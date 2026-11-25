@@ -366,10 +366,16 @@ def forget_node(hub_host, node_host):
 
 
 
-def register_dns_server(hub_host, site_name, dns_ip, mydomain=""):
+def register_dns_server(hub_host, site_name, dns_ip, mydomain="", private_ip=""):
     """
     Record, on the hub, which DNS server serves `site_name` and which zone it is a master of. Idempotent upsert of
-    one "site address domain" line.
+    one "site address domain [private address]" line.
+
+    Both of the server's addresses are recorded. A reader prefers the private one, so the records of one site are
+    written into another site's server across the overlay rather than over the internet, and falls back to the
+    public one where the private one cannot be reached — an automation node whose own lab has no site of its own is
+    not a peer of the hub and has no route to another site's subnet (see _preferred_dns_address()). A line written
+    before the private address was recorded has three fields and still reads correctly.
 
     Every DNS server in this project is a master of the same zone and records reach them by being written to each
     one's zone file (libs/services.py's add_to_dns, through its remote_dns_servers list), so a site's nodes become
@@ -384,9 +390,36 @@ def register_dns_server(hub_host, site_name, dns_ip, mydomain=""):
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
     kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
-    kept.append(" ".join(part for part in (site_name, dns_ip, mydomain) if part))
+    # Positional, so the private address can only follow a domain: a site registered without one keeps three
+    # fields and is read as having no private address.
+    fields = (site_name, dns_ip, mydomain, private_ip if mydomain else "")
+    kept.append(" ".join(part for part in fields if part))
     ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
             input_text="\n".join(kept) + "\n")
+
+
+# The result of probing a site DNS server's private address, by address, so a run with many nodes probes each
+# server once rather than once per node. A failure is cached too: a route that is not there does not appear
+# mid-run.
+_private_dns_reachable = {}
+
+
+def _preferred_dns_address(site_name, public_ip, private_ip):
+    """
+    Which of a site's two recorded DNS server addresses to write its records through: the private one when this
+    machine can reach it, keeping the traffic on the overlay, and the public one otherwise.
+
+    Reachability is SSH answering, because writing a record IS an SSH call (libs/services.py's add_to_dns). It is
+    probed once per address per run.
+    """
+    if not private_ip or private_ip == public_ip:
+        return public_ip
+    if private_ip not in _private_dns_reachable:
+        _private_dns_reachable[private_ip] = ssh_run(private_ip, "true", check=False).returncode == 0
+        if not _private_dns_reachable[private_ip]:
+            log("- site '{}': its DNS server's private address {} is not reachable from here, so its records go "
+                "to {} instead".format(site_name, private_ip, public_ip))
+    return private_ip if _private_dns_reachable[private_ip] else public_ip
 
 
 def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
@@ -409,6 +442,7 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
             continue
         site, dns_ip = parts[0], parts[1]
         domain = parts[2] if len(parts) > 2 else ""
+        private_ip = parts[3] if len(parts) > 3 else ""
         if domain and mydomain and domain != mydomain:
             log("- site '{}' serves domain '{}', not '{}': its DNS server is left out of this lab's "
                 "records".format(site, domain, mydomain))
@@ -416,7 +450,7 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
         if not domain:
             warn("- site '{}' registered its DNS server before the domain was recorded: including it for "
                  "'{}', which is wrong if it serves another lab".format(site, mydomain or "this lab"))
-        out.append((site, dns_ip))
+        out.append((site, _preferred_dns_address(site, dns_ip, private_ip)))
     return out
 
 
@@ -599,6 +633,11 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
             hub_public_ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
                                                root_ssh_key, open_ports=["{}/udp".format(wg_port)])
 
+        # The hub's address is the Endpoint in every spoke's WireGuard config, so a hub that comes back from a
+        # stop on a different address drops every site's tunnel until each config is rewritten. It is reserved
+        # whatever any lab definition says (backends.ensure_infra_address()).
+        hub_public_ip = backends.ensure_infra_address(backend, vm_name, "overlay hub VM") or hub_public_ip
+
         hub_overlay_ip, hub_pubkey = ensure_overlay_hub_ready(hub_public_ip, wg_port=wg_port,
                                                               overlay_cidr=overlay_cidr)
     return hub_public_ip, hub_overlay_ip, hub_pubkey
@@ -629,9 +668,10 @@ def ensure_site_gateway_vm(backend, backend_name, iso_image, lab_setup_path, roo
                 die("site gateway VM '{}' exists on backend '{}' but reported no IP — check it "
                     "manually before retrying".format(vm_name, backend_name))
             log("- Reusing existing site gateway VM \"{}\" ({})".format(vm_name, ip))
-            return ip
+            return backends.ensure_infra_address(backend, vm_name, "site gateway VM") or ip
 
-        return _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
+        ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
+        return backends.ensure_infra_address(backend, vm_name, "site gateway VM") or ip
 
 
 def ensure_overlay_site_gateway(site_name, gateway_host, hub_host, hub_pubkey, hub_wg_port,
