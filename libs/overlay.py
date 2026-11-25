@@ -369,7 +369,14 @@ def forget_node(hub_host, node_host):
 def register_dns_server(hub_host, site_name, dns_ip, mydomain="", private_ip=""):
     """
     Record, on the hub, which DNS server serves `site_name` and which zone it is a master of. Idempotent upsert of
-    one "site address domain [private address]" line.
+    one "site address domain [private address]" line per (site, domain).
+
+    One line per pair, not per site: a cloud account's DNS VM is shared by every lab on that account and holds one
+    zone per lab (backends.ensure_cloud_dns_vm()), so two labs there state two true things about one server. Keyed
+    on the site alone, the second one to run replaced the first's line, and the first lab's next run then found its
+    own site registered for another domain, left that server out, and silently stopped writing its records to the
+    very server already holding its zone. A multi-site lab lost cross-site resolution that way; a single-site one
+    did not, because its own site is excluded from the lookup anyway.
 
     Both of the server's addresses are recorded. A reader prefers the private one, so the records of one site are
     written into another site's server across the overlay rather than over the internet, and falls back to the
@@ -389,7 +396,20 @@ def register_dns_server(hub_host, site_name, dns_ip, mydomain="", private_ip="")
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
-    kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
+    kept = []
+    for line in existing.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] != site_name:
+            kept.append(line)
+            continue
+        # This site's own lines. The one for this domain is what is being rewritten, and one from before the
+        # domain was recorded cannot be told apart from it, so it goes too rather than lingering and being read
+        # as every other lab's server for ever (see list_dns_servers()).
+        domain = parts[2] if len(parts) > 2 else ""
+        if domain and domain != mydomain:
+            kept.append(line)
     # Positional, so the private address can only follow a domain: a site registered without one keeps three
     # fields and is read as having no private address.
     fields = (site_name, dns_ip, mydomain, private_ip if mydomain else "")
@@ -428,30 +448,99 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
     registered one, excluding `exclude_site` (the caller's own, whose server the local write already reached) and
     excluding any registered for a domain other than `mydomain`.
 
+    A site holds one line per domain its server is a master of, so one of them is chosen: the line naming
+    `mydomain`, else a line naming no domain at all. One entry per site is returned either way.
+
     A line with no domain predates that field. It is included rather than dropped, because excluding it would stop
-    an existing overlay resolving across sites until every site had run again, and register_dns_server() rewrites
-    its own line on each run, so such a line disappears as each site is next used.
+    an existing overlay resolving across sites until every site had run again, and register_dns_server() replaces
+    such a line as each site is next used.
     """
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     raw = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
-    out = []
+    # Grouped in the order the file lists each site, so the result does not depend on how a dict happens to order
+    # its keys, and the first line of an equally good pair wins.
+    order, by_site = [], {}
     for line in raw.splitlines():
         parts = line.split()
         if len(parts) < 2 or parts[0] == exclude_site:
             continue
-        site, dns_ip = parts[0], parts[1]
-        domain = parts[2] if len(parts) > 2 else ""
-        private_ip = parts[3] if len(parts) > 3 else ""
-        if domain and mydomain and domain != mydomain:
-            log("- site '{}' serves domain '{}', not '{}': its DNS server is left out of this lab's "
-                "records".format(site, domain, mydomain))
+        if parts[0] not in by_site:
+            order.append(parts[0])
+        by_site.setdefault(parts[0], []).append(parts)
+    out = []
+    for site in order:
+        lines = by_site[site]
+        # A line naming this lab's domain beats one naming none, so a site that carries both is written through
+        # the server its own domain is recorded against.
+        matching = [p for p in lines if len(p) > 2 and p[2] == mydomain] if mydomain else []
+        legacy = [p for p in lines if len(p) < 3]
+        chosen = (matching or legacy or [None])[0]
+        if chosen is None:
+            log("- site '{}' serves domain(s) {}, not '{}': its DNS server is left out of this lab's "
+                "records".format(site, ", ".join(sorted({p[2] for p in lines if len(p) > 2})), mydomain))
             continue
-        if not domain:
+        if len(chosen) < 3:
             warn("- site '{}' registered its DNS server before the domain was recorded: including it for "
                  "'{}', which is wrong if it serves another lab".format(site, mydomain or "this lab"))
-        out.append((site, _preferred_dns_address(site, dns_ip, private_ip)))
+        out.append((site, _preferred_dns_address(site, chosen[1], chosen[3] if len(chosen) > 3 else "")))
     return out
+
+
+def existing_hub_host(config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
+    """
+    The overlay hub's address when a hub already exists, and "" otherwise. Creates nothing.
+
+    ensure_overlay_hub() is the provisioning path and builds the hub when it is missing, which is exactly wrong for
+    a teardown: destroying a lab must not bring an overlay hub into being. This looks the hub VM up in the account
+    OVERLAY_HUB_ACCOUNT names and answers "" for every reason a teardown should simply skip its overlay cleanup:
+    no hub account configured, no hub VM, or no address on it.
+    """
+    account = (config or {}).get("OVERLAY_HUB_ACCOUNT")
+    if not account:
+        return ""
+    try:
+        hub_backend, hub_backend_name = backends.get_backend_for_account(
+            account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+        vm_name = hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
+        if not hub_backend.vm_exists(vm_name):
+            return ""
+        return hub_backend.get_ip(vm_name) or ""
+    except (SystemExit, RuntimeError, OSError) as error:
+        warn("- The overlay hub in account '{}' could not be looked up, so this lab's overlay registrations are "
+             "left as they are: {}".format(account, error))
+        return ""
+
+
+def forget_dns_server(hub_host, site_name, mydomain):
+    """
+    Drop the (`site_name`, `mydomain`) line from the hub's DNS registry, for a lab that has been destroyed.
+    Returns whether a line was removed.
+
+    Keyed per (site, domain), a line is no longer replaced by the next lab to run on that site, so a destroyed
+    lab's line would stay for ever and have every reconciliation try to reach that server for a zone nobody holds.
+    forget_site() still removes every line of a site being retired, which is a different thing: that site's server
+    is going away, not one lab's zone on it.
+    """
+    if not mydomain:
+        return False
+    raw = ssh_output(hub_host, "cat {} 2>/dev/null".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    kept, removed = [], False
+    for line in raw.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == site_name and len(parts) > 2 and parts[2] == mydomain:
+            removed = True
+            continue
+        kept.append(line)
+    if not removed:
+        return False
+    ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
+            input_text=("\n".join(kept) + "\n") if kept else "")
+    log("- Site '{}' no longer serves '{}' on the overlay hub: that lab's line was removed".format(
+        site_name, mydomain))
+    return True
 
 
 def dns_servers(hub_host, mydomain):

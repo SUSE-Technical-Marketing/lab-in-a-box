@@ -124,7 +124,7 @@ Three plain text files on the WireGuard hub, under `/etc/wireguard/`, rewritten 
 |---|---|---|
 | `overlay_sites` | which site owns which subnet | site |
 | `overlay_nodes` | which node sits behind which site gateway | node |
-| `overlay_dns` | `site  address  domain  private-address` | **site** |
+| `overlay_dns` | `site  address  domain  private-address` | **(site, domain)** |
 
 And one on the automation node, which is not part of the overlay:
 
@@ -173,23 +173,29 @@ tunnel. That is why gateways reserve their addresses rather than relying on repa
 A provider that cannot be asked reports `unknown`, never `gone`: an expired credential must never be read as
 "somebody deleted this lab".
 
+## Why `overlay_dns` is keyed on (site, domain)
+
+One line per **pair**, not per site. A cloud account's DNS VM is shared by every lab on that account and holds one
+zone per lab, so two labs there state two true things about one server. Keyed on the site alone, the second lab to
+run replaced the first's line, and the first lab's next run then found its own site registered for another domain,
+left that server out through the domain filter in `list_dns_servers()`, and silently stopped writing its records to
+the very server already holding its zone. It cost a **multi-site** lab its cross-site resolution; a single-site lab
+was unaffected, because its own site is excluded from that lookup anyway.
+
+One line per pair also means two labs never write the same line, which is why the alternative shape (one line per
+site carrying a list of domains, storing the address once) was rejected: a lab's teardown would have to edit a
+field inside a line another lab owns, which is the same failure one level down.
+
+Consequences to preserve when touching either function:
+
+- `register_dns_server()` replaces only the line for (this site, this domain), and additionally drops this site's
+  own line from before the domain field existed, which cannot be told apart from it and would otherwise be read as
+  every other lab's server for ever.
+- `list_dns_servers()` returns **one entry per site**: the line naming `mydomain`, else a line naming no domain.
+- `forget_dns_server()` removes exactly one lab's line, called by `destroy_lab.py`. `forget_site()` still removes
+  every line of a site being retired, which is a different thing: there the server itself is going away.
+
 ## Known gaps
-
-**`overlay_dns` is keyed on the site alone.** `register_dns_server()` upserts on `line.split()[:1] != [site_name]`,
-so the file holds one line per site carrying one domain. One cloud DNS VM serves several labs' zones by design, so
-two labs on one account produce two true statements about one server and only one fits. Reproduced:
-
-```
-after lab A (mydemo.lab, home + aws-tmm):  aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53
-after lab B (mydemoaws.lab, same account): aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53
-lab A's next run, from home, for mydemo.lab:
-  LOG: site 'aws-tmm' serves domain 'mydemoaws.lab', not 'mydemo.lab': its DNS server is left out
-  masters lab A will write its home nodes into: []
-```
-
-It bites a **multi-site** lab only: a pure-cloud lab's own site is excluded from that lookup anyway. The fix is to
-key the upsert on (site, domain), one line per pair, which is what the rest of the code already assumes. It
-degrades through `log()` rather than `warn()`, so it currently reads as routine.
 
 **The registry should hold names, not addresses.** `overlay_dns` stores the DNS server's two addresses, which is
 state that goes stale. Storing its **name** instead would be immune, and it resolves locally without asking

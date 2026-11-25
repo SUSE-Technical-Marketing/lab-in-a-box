@@ -823,6 +823,109 @@ check("a line written before the private address was recorded is still read corr
       overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("home", "192.168.88.73")])
 
 
+# ── one line per (site, domain), because one DNS server holds several labs' zones ──
+# A cloud account's DNS VM is shared by every lab there and holds one zone per lab
+# (backends.ensure_cloud_dns_vm()), so two labs state two true things about one server. Keyed on the site alone,
+# the second to run replaced the first's line, and the first lab's next run then found its own site registered
+# for another domain, left that server out, and stopped writing its records to the very server holding its zone.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemoaws.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a second lab on the same account adds its own line instead of replacing the first lab's",
+      written and sorted(written[-1].split("\n")) == sorted([
+          "", "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53", "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53"]))
+
+reset()
+overlay._private_dns_reachable.clear()
+_TWO_LABS = ("aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n"
+             "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53\n")
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout=_TWO_LABS)}
+check("each lab is then written through that one server, which is what was silently lost before",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")]
+      and overlay.list_dns_servers("hub", mydomain="mydemoaws.lab") == [("aws-tmm", "10.0.0.53")])
+check("...and a site is returned once, not once per line it holds",
+      len(overlay.list_dns_servers("hub", mydomain="mydemo.lab")) == 1)
+
+reset()
+overlay._private_dns_reachable.clear()
+_logged = []
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout=_TWO_LABS)}
+with mock.patch.object(overlay, "log", side_effect=lambda m: _logged.append(m)):
+    other = overlay.list_dns_servers("hub", mydomain="third.lab")
+check("a site serving no zone of this lab is still left out", other == [])
+check("...and the message names every domain it does serve, so the reason is readable",
+      _logged and "mydemo.lab" in _logged[-1] and "mydemoaws.lab" in _logged[-1])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9\naws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+check("a line naming this lab's domain beats a legacy line naming none, so a site carrying both is written "
+      "through the server its own domain is recorded against",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")])
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9\naws-tmm 203.0.113.9 other.lab\n")}
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("registering a site drops its own line from before the domain was recorded, which cannot be told apart "
+      "from this one and would otherwise be read as every other lab's server for ever",
+      written and "aws-tmm 203.0.113.9\n" not in written[-1]
+      and "aws-tmm 203.0.113.9 other.lab" in written[-1]
+      and "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53" in written[-1])
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\nhome 192.168.88.73 mydemo.lab\n")}
+overlay.register_dns_server("hub", "aws-tmm", "198.51.100.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("re-registering the same site and domain replaces that one line and leaves another site's alone",
+      written and "aws-tmm 198.51.100.9 mydemo.lab 10.0.0.53" in written[-1]
+      and "203.0.113.9" not in written[-1] and "home 192.168.88.73 mydemo.lab" in written[-1])
+
+# ── a destroyed lab takes its own line off, and only its own ───────────────
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null": FakeResult(stdout=_TWO_LABS)}
+removed = overlay.forget_dns_server("hub", "aws-tmm", "mydemo.lab")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("destroying a lab removes its own (site, domain) line", removed is True)
+check("...and leaves the other lab's line on the same server alone",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null": FakeResult(stdout=_TWO_LABS)}
+check("a lab that has no line there changes nothing, which is every lab destroyed before this existed",
+      overlay.forget_dns_server("hub", "aws-tmm", "never-registered.lab") is False
+      and not [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd])
+check("a lab with no domain removes nothing rather than guessing at a line",
+      overlay.forget_dns_server("hub", "aws-tmm", "") is False)
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.forget_dns_server("hub", "aws-tmm", "mydemo.lab")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("removing the last line empties the file instead of writing a blank one named as a site",
+      written and written[-1] == "")
+
+# The hub is looked up, never created: a teardown that brought an overlay hub into being would be absurd.
+destroy_lab_source = (_REPO / "scripts" / "destroy_lab.py").read_text()
+check("destroy_lab.py takes this lab's DNS registrations off the hub",
+      "overlay.forget_dns_server(hub_host, site_name, mydomain)" in destroy_lab_source)
+check("...finding the hub without creating one",
+      "overlay.existing_hub_host(" in destroy_lab_source
+      and "ensure_overlay_hub" not in destroy_lab_source)
+check("...one (site, domain) pair per node, since a lab's nodes can sit on different sites and its kclusters "
+      "can name different domains",
+      "pairs.add((overlay.site_name_for(backend_name, account), mydomain))" in destroy_lab_source)
+
+check("existing_hub_host() answers \"\" with no hub account configured, which is every lab with no overlay",
+      overlay.existing_hub_host({}) == "")
+
+
 if failures:
     print("{} check(s) FAILED:".format(len(failures)))
     for f in failures:

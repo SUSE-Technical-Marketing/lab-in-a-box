@@ -42,7 +42,41 @@ import lab_creation  # noqa: E402
 import lab_examples  # noqa: E402
 import backends  # noqa: E402
 import lab_registry  # noqa: E402
+import overlay  # noqa: E402
+from lab_creation import load_vm_vars  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
+
+
+def forget_overlay_dns(definition, config, defaults):
+    """
+    Take this lab's lines off the overlay hub's DNS registry, one per (site, domain) the lab used.
+
+    The registry holds one line per lab per site (overlay.register_dns_server()), so a destroyed lab's line is no
+    longer replaced by the next lab to run there: left behind, it would have every later reconciliation try to
+    reach that server for a zone nobody holds. Does nothing for a lab with no overlay, and nothing at all when the
+    hub cannot be found without creating one (overlay.existing_hub_host()).
+    """
+    env = {}
+    env.update(defaults)
+    env.update(config)
+    if str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() not in ("1", "true", "yes"):
+        return
+    hub_host = overlay.existing_hub_host(config, lab_setup_path=defaults.get("LAB_SETUP_PATH"))
+    if not hub_host:
+        return
+    # Per node, because a lab's nodes can sit on different sites and its kclusters can name different domains.
+    pairs = set()
+    for vm_name in (definition.get("nodes") or {}):
+        node_env = dict(env)
+        node_env.update(load_vm_vars(definition, vm_name))
+        mydomain = node_env.get("mydomain", "")
+        if not mydomain:
+            continue
+        backend_name = backends.effective_backend_name(definition, config, vm_name)
+        account, _cfg, _cloudtype = backends.resolve_cloud_account(definition, config, vm_name)
+        pairs.add((overlay.site_name_for(backend_name, account), mydomain))
+    for site_name, mydomain in sorted(pairs):
+        overlay.forget_dns_server(hub_host, site_name, mydomain)
 
 
 def destroy_lab(definition, config, defaults, lab_file):
@@ -64,6 +98,7 @@ def destroy_lab(definition, config, defaults, lab_file):
         except RuntimeError as e:
             lab_creation.warn("destroy failed for '{}' (continuing): {}".format(vm_name, e))
     lab_creation._level -= 1
+    forget_overlay_dns(definition, config, defaults)
     # Off the registry once its nodes are gone, so a scheduled run stops walking it and the event log carries the
     # teardown. A node whose destroy failed above is left to the scheduled check, which drops it when the provider
     # agrees it is gone rather than on the strength of this run having tried.
