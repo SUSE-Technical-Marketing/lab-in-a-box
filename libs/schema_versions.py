@@ -45,6 +45,7 @@ CONFIGS = {
     "config:kvm_host.cfg": ("shell", "setup_demo_server/kvm_host.cfg.template"),
     "config:harvester-cluster.json": ("json", "templates/harvester-cluster.json.example"),
     "config:mcp-clients.json": ("json", "templates/mcp-clients.json.example"),
+    "config:lab-registry.json": ("json", "templates/lab-registry.json.example"),
     "config:credentials": ("credentials", "scripts/setup_credentials.py"),
 }
 

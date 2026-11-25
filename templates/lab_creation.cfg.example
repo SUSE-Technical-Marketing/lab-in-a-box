@@ -1,4 +1,4 @@
-# Schema version: 1.4
+# Schema version: 1.5
 #################################
 #### What you should change: ####
 #################################
@@ -192,3 +192,15 @@ mysource='automation.mydemo.lab'
 # and dns_sync.py brings it back into step once it does. A lab's own cloud DNS
 # VM is not listed here: it is created per run and found at its current address.
 #REMOTE_DNS_SERVERS="192.168.88.2 10.0.0.2"
+
+# LAB_REGISTRY_DIR: where this automation node records the labs it has deployed,
+# one <lab>.json per lab (see templates/lab-registry.json.example). setup_lab.py
+# writes an entry, destroy_lab.py removes it, and lab_watch.py reads the
+# directory to know which labs exist at all. Default: /etc/lab_creation/labs.
+#LAB_REGISTRY_DIR=/etc/lab_creation/labs
+
+# LAB_EVENT_LOG: the file every lab action is appended to, one line of
+# "<timestamp> <action> <lab> <fqdn> ...". Actions are created, updated,
+# destroyed, removed and vanished, the last being a node lab_watch.py found
+# deleted outside this tooling. Default: /var/log/lab-in-a-box/labs.log.
+#LAB_EVENT_LOG=/var/log/lab-in-a-box/labs.log

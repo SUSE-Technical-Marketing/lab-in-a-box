@@ -41,6 +41,7 @@ import primary  # noqa: E402
 import lab_creation  # noqa: E402
 import lab_examples  # noqa: E402
 import backends  # noqa: E402
+import lab_registry  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 
 
@@ -63,6 +64,10 @@ def destroy_lab(definition, config, defaults, lab_file):
         except RuntimeError as e:
             lab_creation.warn("destroy failed for '{}' (continuing): {}".format(vm_name, e))
     lab_creation._level -= 1
+    # Off the registry once its nodes are gone, so a scheduled run stops walking it and the event log carries the
+    # teardown. A node whose destroy failed above is left to the scheduled check, which drops it when the provider
+    # agrees it is gone rather than on the strength of this run having tried.
+    lab_registry.forget(lab_file, config)
 
 
 def main():

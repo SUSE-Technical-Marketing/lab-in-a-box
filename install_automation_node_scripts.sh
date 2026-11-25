@@ -160,7 +160,8 @@ done
 
 # Non-addon, non-orchestration tooling.
 _TOOLING="pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py
-setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py upgrade_lab_in_a_box build_man_pages.py"
+setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py upgrade_lab_in_a_box build_man_pages.py
+dns_sync.py reconcile_lab.py lab_watch.py"
 for i in ${_TOOLING}
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"
@@ -196,6 +197,55 @@ rm -f /usr/local/bin/setup_lab.sh /usr/local/bin/setup_vm.sh /usr/local/bin/dest
 # already-deployed copies too, so a VM last deployed before this change
 # doesn't keep carrying dead weight forever.
 rm -f /usr/local/lib/lab_creation/lab_creation.bash /usr/local/lib/lab_creation/k8s_functions.bash /usr/local/lib/lab_creation/primary_functions.bash
+
+# ── scheduled lab check ─────────────────────────────────────────────────────
+# lab_watch.py walks the labs this node has deployed (/etc/lab_creation/labs,
+# written by setup_lab.py) and brings each one's records back in line with what
+# its providers report: a node whose public address changed over a stop/start is
+# registered again, and one deleted outside this tooling comes off the registry.
+# Enabled by default: the drift it repairs happens whether or not anybody is
+# watching, and a lab whose DNS has gone stale looks broken rather than idle.
+# Same systemd-then-cron.d fallback as the hypervisor status refresh above.
+if [[ -x /usr/local/bin/lab_watch.py ]]
+then
+    if [[ -d /run/systemd/system ]]
+    then
+        cat > /etc/systemd/system/lab-watch.service << WATCHEOF
+[Unit]
+Description=Check every deployed lab against what its providers report
+After=network-online.target named.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env ${_python_bin} /usr/local/bin/lab_watch.py --quiet
+WATCHEOF
+        cat > /etc/systemd/system/lab-watch.timer << WATCHEOF
+[Unit]
+Description=Periodic check of every deployed lab
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+# A provider's address is not worth asking about to the second, and every lab on
+# this node is checked in one run, so the runs are spread rather than aligned.
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
+WATCHEOF
+        systemctl daemon-reload
+        systemctl enable --now lab-watch.timer \
+            || echo "warning: lab-watch.timer could not be enabled — run 'lab_watch.py' periodically yourself"
+    elif [[ -d /etc/cron.d ]]
+    then
+        echo "*/15 * * * * root /usr/bin/env ${_python_bin} /usr/local/bin/lab_watch.py --quiet" \
+            > /etc/cron.d/lab-watch
+        echo "  scheduled lab check installed via cron.d (every 15 min)"
+    else
+        echo "  no systemd or cron.d found — run 'lab_watch.py' periodically to keep each lab's DNS current"
+    fi
+fi
 
 # Man pages for the commands installed above, generated from each command's own
 # --help by scripts/build_man_pages.py (see its docstring for why they are

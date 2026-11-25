@@ -446,12 +446,16 @@
   "config:kvm_host.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. This host becoming a KVM hypervisor (bridge/NAT networking, storage, VM-build specifics) -- needed only when setup_kvm_node.py actually prepares a KVM host."}
   ],
+  "config:lab-registry.json": [
+   {"version": "1.0", "breaking": false, "changes": "First version: one file per deployed lab under /etc/lab_creation/labs, holding the lab's name, its definition's path, its DNS zone and its nodes, so a scheduled run knows which labs exist."}
+  ],
   "config:lab_creation.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Add optional CLOUD_DNS_IMAGE: the image the cloud DNS VM boots from."},
    {"version": "1.2", "breaking": false, "changes": "REMOTE_DNS_SERVERS documented: the other DNS servers that are masters of this node's zone, which every record is written into as well."},
    {"version": "1.3", "breaking": false, "changes": "Add optional EXAMPLE_LABS_DIR: the operator's own example labs, listed beside the ones lab-in-a-box ships."},
-   {"version": "1.4", "breaking": false, "changes": "MCP_CLIENTS and MCP_ISSUER_URL: the MCP endpoint's per-client bearer tokens. Both optional, and a read-only endpoint needs neither; enabling MCP_ALLOW_MUTATIONS now requires at least one registered client, so a caller that can destroy a lab is identifiable."}
+   {"version": "1.4", "breaking": false, "changes": "MCP_CLIENTS and MCP_ISSUER_URL: the MCP endpoint's per-client bearer tokens. Both optional, and a read-only endpoint needs neither; enabling MCP_ALLOW_MUTATIONS now requires at least one registered client, so a caller that can destroy a lab is identifiable."},
+   {"version": "1.5", "breaking": false, "changes": "LAB_REGISTRY_DIR and LAB_EVENT_LOG: where this automation node records the labs it has deployed, and the log of every action taken on one."}
   ],
   "config:lab_creation.defaults": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
