@@ -631,14 +631,30 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
                 warn("nodes.{}: a VM with this name already exists on KVM host '{}' "
                      "(will be destroyed and recreated)".format(node, node_host))
 
-        # IP reachability (informational). Not for a cloud node: its address comes from the provider at create
-        # time, so any address in the JSON is not the one this node will have.
+        # An address the lab states itself is held against the same things ipalloc.allocate() rules out for an
+        # address it picks. The allocator refuses them outright; an address named by hand used to be trusted on the
+        # grounds that the lab knows better, which is how two labs come to claim one address and the second one
+        # takes the first one's name down with it. Not for a cloud node: its address comes from the provider at
+        # create time, so any address in the JSON is not the one this node will have.
         if host_checks and not is_cloud_node and not _empty(myip):
-            ping = subprocess.run(["ping", "-c1", "-W1", str(myip)],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if ping.returncode == 0:
-                warn("nodes.{}: IP {} is currently responding to ping — "
-                     "something may already be using it".format(node, myip))
+            import ipalloc
+            myip_s = str(myip)
+            mydomain_s = str(common.get("mydomain") or "")
+            # What the lab DNS already holds for THIS node. A rerun over an existing lab finds every node at its
+            # own address, answering its own ping, which is not a clash with anything.
+            own = ipalloc.dns_address(node, mydomain_s) if mydomain_s else ""
+            holder = "" if myip_s == own else ipalloc.dns_name_at(myip_s, mydomain_s)
+            if myip_s in ipalloc.local_ips():
+                err("nodes.{}: IP {} is this automation node's own address — the node would take the address "
+                    "every other node reaches DNS and the provisioning files on".format(node, myip_s))
+            elif holder:
+                err("nodes.{}: IP {} already has a DNS record under the name '{}' in '{}' — creating this node "
+                    "would point that name at the wrong host. Give this node another address, or remove the "
+                    "other record (destroy_vm.py, or dns_sync.py --prune)".format(
+                        node, myip_s, holder, mydomain_s))
+            elif myip_s != own and ipalloc.answers_ping(myip_s):
+                warn("nodes.{}: IP {} is currently responding to ping — something may already be using it".format(
+                    node, myip_s))
 
     # ── 4. kcluster checks ─────────────────────────────────────────────────────
     if target_node:

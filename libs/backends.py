@@ -5109,6 +5109,22 @@ def start_if_stopped(backend, backend_name: str, vm_name: str, label: str) -> bo
     return True
 
 
+def _register_dns_vm_record(backend, dns_vm_name: str, ip: str, mydomain: str, site: str) -> None:
+    """
+    Give the cloud DNS VM its own A record in the zone it serves: its public address in the external view and its
+    private one in its own site's view, so a client inside that site reaches it over the private network.
+
+    It is otherwise the one host of a cloud lab that nothing can reach by name, which leaves every message naming
+    it, and anyone trying to reach it by hand, with an address to look up through the provider's own tooling. No
+    PTR record: it is not on the lab's reverse network.
+    """
+    if not mydomain:
+        return
+    services.DNSService().add_to_dns(
+        "{}.{}".format(dns_vm_name, mydomain), ip, mydomain, "", remote_dns_servers=[ip], site=site,
+        private_ip=backend.get_private_ip(dns_vm_name) or "")
+
+
 def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_image, lab_setup_path,
                          preferred_image="", site=""):
     """
@@ -5175,6 +5191,7 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
             if site:
                 services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
                                                       cloud_dns_options(networks))
+                _register_dns_vm_record(backend, dns_vm_name, ip, mydomain, site)
             return ip
         die("cloud DNS VM '{}' exists on backend '{}' but reported no IP — check it manually "
             "before retrying".format(dns_vm_name, backend_name))
@@ -5223,6 +5240,7 @@ def _ensure_cloud_dns_vm(backend, backend_name, root_ssh_key, mydomain, iso_imag
     if site:
         services.DNSService().serve_site_view(ip, site, ["localhost", "localnets"] + networks,
                                               cloud_dns_options(networks))
+        _register_dns_vm_record(backend, dns_vm_name, ip, mydomain, site)
     log("- Cloud DNS VM \"{}{}{}\" ready at {}".format(_RED, dns_vm_name, _RESET, ip))
     return ip
 

@@ -12,6 +12,9 @@ that is never resolved.
     site_file(mydomain, site) / site_of_file(...)         -> a site view's forward zone file, and back
     node_record(short, address) / node_address(text, ..)  -> a node's own A line, and its address in a zone file
     forward_header(mydomain) / reverse_header(...)        -> the lines a new zone file starts with
+    serial(text) / with_serial(text, value)              -> the zone's SOA serial, and the text carrying a new one
+    ttl(text) / with_ttl(text, value)                    -> the zone's $TTL, and the text carrying a new one
+    next_serial(current)                                 -> the serial a write should raise a zone to
     zone_dir(os_id, os_like) / zone_path(file_name, ...)  -> where that family's named reads a zone
     stanza(zone, zone_file)                               -> the named.conf declaration for it
     view_named_conf(...)                                  -> the whole named.conf of a server serving site views
@@ -22,14 +25,26 @@ that is never resolved.
 # Author/s: Raul Mahiques
 # License: GPLv3
 
-from typing import List, Set, Tuple
+import re
+import time
+from typing import Iterable, List, Set, Tuple
 
 __version__ = "__LABVERSION__"
 
-# The serial of a zone this project creates. Every record is appended by rewriting the file and reloading named, so
-# no secondary ever transfers the zone and the serial is never compared: it exists because BIND rejects a zone
-# without one.
-_SERIAL = 1
+# The serial a zone file is created with, before any record is written to it. Every write then raises it
+# (next_serial()), so two masters of the same zone can be compared by serial as well as by records: a master a
+# write could not reach keeps the lower serial and is behind, while a record held by a master whose serial is level
+# with the others is one they have not been written yet rather than one deleted from them.
+_INITIAL_SERIAL = 1
+
+# How long a resolver may cache this zone's answers. A lab on a hypervisor answers at the address its definition
+# gives it, which no restart changes, so a day costs nothing there. A zone holding a cloud node's public address
+# gets CLOUD_TTL instead: that address is released when the instance stops and a different one comes back, and a
+# resolver holding the old answer for a day would outlast every repair made to the zone in between.
+DEFAULT_TTL = 86400
+CLOUD_TTL = 300
+
+_TTL_LINE = re.compile(r"^\$TTL[ \t]+(\d+)", re.MULTILINE)
 
 # Where each distribution family lets named READ a master zone, which is not the same everywhere. Debian and
 # Ubuntu confine named with AppArmor to "/etc/bind/** r" for zones it is the origin of, so a file written anywhere
@@ -102,7 +117,20 @@ def reverse_zone(mynet_reverse: str) -> str:
     return "{}.in-addr.arpa".format(mynet_reverse)
 
 
-def forward_header(mydomain: str, ttl: int = 86400) -> List[str]:
+def ttl(text: str) -> int:
+    """Zone file `text`'s $TTL; 0 when it states none, which leaves every record's own TTL to decide."""
+    found = _TTL_LINE.search(text or "")
+    return int(found.group(1)) if found else 0
+
+
+def with_ttl(text: str, value: int) -> str:
+    """Zone file `text` with its $TTL replaced by `value`. Returned unchanged when it states no $TTL."""
+    if not _TTL_LINE.search(text or ""):
+        return text or ""
+    return _TTL_LINE.sub("$TTL {}".format(int(value)), text, count=1)
+
+
+def forward_header(mydomain: str, ttl: int = DEFAULT_TTL) -> List[str]:
     """
     The lines a new forward zone for `mydomain` starts with: a TTL, an SOA, an NS and that NS's own address. BIND
     refuses to load a zone missing any of the first three, and refuses an NS it cannot resolve inside the zone.
@@ -112,19 +140,93 @@ def forward_header(mydomain: str, ttl: int = 86400) -> List[str]:
     """
     return [
         "$TTL {}".format(ttl),
-        "@ IN SOA ns.{d}. admin.{d}. ( {s} 3600 900 604800 300 )".format(d=mydomain, s=_SERIAL),
+        "@ IN SOA ns.{d}. admin.{d}. ( {s} 3600 900 604800 300 )".format(d=mydomain, s=_INITIAL_SERIAL),
         "@ IN NS ns.{d}.".format(d=mydomain),
         "ns IN A 127.0.0.1",
     ]
 
 
-def reverse_header(mydomain: str, mynet_reverse: str, ttl: int = 86400) -> List[str]:
+def reverse_header(mydomain: str, mynet_reverse: str, ttl: int = DEFAULT_TTL) -> List[str]:
     """The reverse-zone counterpart of forward_header(), whose NS is the forward zone's."""
     return [
         "$TTL {}".format(ttl),
-        "@ IN SOA ns.{d}. admin.{d}. ( {s} 3600 900 604800 300 )".format(d=mydomain, s=_SERIAL),
+        "@ IN SOA ns.{d}. admin.{d}. ( {s} 3600 900 604800 300 )".format(d=mydomain, s=_INITIAL_SERIAL),
         "@ IN NS ns.{d}.".format(d=mydomain),
     ]
+
+
+# Where a zone file keeps its SOA serial. Two layouts exist: forward_header() writes the whole SOA on one line,
+# so the serial is the first number after its "(", while the bootstrap that builds an automation node
+# (setup_demo_server/automation-node-lib.sh) writes a multi-line SOA whose serial is the first number of the line
+# after it. A reader that knows only one of them silently reports no serial for the other.
+_SERIAL_AFTER_PAREN = re.compile(r"(\([ \t]*)(\d+)")
+_SERIAL_ON_OWN_LINE = re.compile(r"^([ \t]*)(\d+)")
+
+
+def _serial_position(lines: List[str]) -> Tuple[int, object]:
+    """
+    Which line of `lines` holds the SOA serial, and the expression matching it there: (-1, None) when the zone has
+    no SOA, or an SOA this does not recognise the shape of.
+    """
+    for index, line in enumerate(lines):
+        body = line.split(";")[0]
+        if "SOA" not in body.split():
+            continue
+        if _SERIAL_AFTER_PAREN.search(body):
+            return index, _SERIAL_AFTER_PAREN
+        for following in range(index + 1, len(lines)):
+            candidate = lines[following].split(";")[0]
+            if not candidate.strip():
+                continue
+            if _SERIAL_ON_OWN_LINE.match(candidate):
+                return following, _SERIAL_ON_OWN_LINE
+            break
+        return -1, None
+    return -1, None
+
+
+def serial(text: str) -> int:
+    """
+    Zone file `text`'s SOA serial; 0 when it has no SOA, or one whose serial this cannot find.
+
+    0 compares as lower than any real serial, which is the right answer for a file with no SOA: BIND refuses to
+    load it at all, so it is as far behind as a master can be.
+    """
+    lines = (text or "").splitlines()
+    index, expression = _serial_position(lines)
+    if index < 0:
+        return 0
+    return int(expression.search(lines[index].split(";")[0]).group(2))
+
+
+def with_serial(text: str, value: int) -> str:
+    """
+    Zone file `text` with its SOA serial replaced by `value`, keeping the layout, the spacing and any comment the
+    line carries. Returned unchanged when there is no serial to replace.
+    """
+    lines = (text or "").splitlines()
+    index, expression = _serial_position(lines)
+    if index < 0:
+        return text or ""
+    body, separator, comment = lines[index].partition(";")
+    lines[index] = expression.sub(
+        lambda match: match.group(1) + str(int(value)), body, count=1) + separator + comment
+    joined = "\n".join(lines)
+    return joined + "\n" if (text or "").endswith("\n") else joined
+
+
+def next_serial(current: Iterable[int] = ()) -> int:
+    """
+    The serial a write should raise a zone to, given the serials its masters hold now: the current time in seconds,
+    or one past the highest existing serial when that is already ahead of the clock.
+
+    Seconds rather than a counter, so the serial of a zone nothing has written for a while still says when it last
+    changed, and so two masters written by the same operation agree without either of them being read first. One
+    past the highest existing serial because a zone created by the automation node's own bootstrap starts at a
+    date-shaped serial far above the clock, and a serial that went backwards would make a master that is current
+    read as behind.
+    """
+    return max([int(time.time())] + [int(value) + 1 for value in current if value])
 
 
 def local_named_conf(os_id: str = "", os_like: str = "") -> str:
