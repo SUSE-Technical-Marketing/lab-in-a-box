@@ -141,6 +141,35 @@ def check_login(authorization):
     return None
 
 
+def _credentials():
+    """
+    The credential store as the helper reports it: [{"name", "kind", "type", ...}], names and types only.
+
+    It has to come through the helper. The files are root-only on purpose, so the web process cannot read them
+    itself (see CLAUDE.md's credentials model), and anything here that listed them by reading the directory would
+    find nothing and silently offer no accounts at all.
+    """
+    try:
+        return helper(["credentials-list"]).get("credentials") or []
+    except (OSError, ValueError, RuntimeError):
+        return []
+
+
+def _cloud_accounts():
+    """[(name, cloudtype)] of the cloud accounts, for the wizard's "where should it be built" question."""
+    return [(c.get("name"), c.get("type")) for c in _credentials()
+            if c.get("kind") == "cloud" and c.get("name") and c.get("type")]
+
+
+def _service_accounts():
+    """{kind: [name, ...]} of the service credentials, for a workflow that needs one of a particular kind."""
+    out = {}
+    for credential in _credentials():
+        if credential.get("kind") == "service" and credential.get("name") and credential.get("type"):
+            out.setdefault(credential["type"], []).append(credential["name"])
+    return {kind: sorted(names) for kind, names in out.items()}
+
+
 def helper(args, stdin=None):
     """Run lab-builder-helper with `args` (JSON `stdin` if given); returns its answer.
     Raises ValueError with the helper's message when it refuses."""
@@ -180,7 +209,8 @@ def dispatch(action, method, params, data):
     # The step-by-step builder. Behind the login like everything else here, because its options name the
     # credential accounts this installation holds, and because building a lab is an admin act anyway.
     if action == "wizard" and method == "GET":
-        return {"workflows": discovery.wizard_workflows(), "network": discovery.lab_network()}
+        return {"workflows": discovery.wizard_workflows(service_accounts=_service_accounts()),
+                "network": discovery.lab_network()}
     if action == "wizard-steps" and method == "GET":
         # The answers so far ride along as JSON, because a GET is what the browser reads steps with and a later
         # question can depend on an earlier one. Anything unparseable is treated as no answers at all.
@@ -188,9 +218,13 @@ def dispatch(action, method, params, data):
             answers = json.loads(one("answers") or "{}")
         except ValueError:
             answers = {}
-        return discovery.wizard_steps(one("name"), answers if isinstance(answers, dict) else {})
+        return discovery.wizard_steps(one("name"), answers if isinstance(answers, dict) else {},
+                                      cloud_accounts=_cloud_accounts(),
+                                      service_accounts=_service_accounts())
     if action == "wizard-build" and method == "POST":
-        return discovery.wizard_build(data.get("workflow", ""), data.get("answers", {}))
+        return discovery.wizard_build(data.get("workflow", ""), data.get("answers", {}),
+                                      cloud_accounts=_cloud_accounts(),
+                                      service_accounts=_service_accounts())
 
     if action == "labs" and method == "GET":
         return {"labs": list_labs()}

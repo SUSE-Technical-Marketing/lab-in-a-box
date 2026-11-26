@@ -557,10 +557,16 @@ def _image_names():
     return names
 
 
-def wizard_workflows():
-    """The workflows the step-by-step builder offers, each with whatever stands in its way on this installation."""
+def wizard_workflows(service_accounts=None):
+    """
+    The workflows the step-by-step builder offers, each with whatever stands in its way on this installation.
+
+    `service_accounts` comes from the caller because the credential files are root-only: the web process reads
+    them through lab-builder-helper (webui/lib/admin.py) and passes the names in. Reading them here is the
+    fallback for a caller that runs as root itself.
+    """
     wizard = _wizard()
-    accounts = service_accounts()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
     out = []
     for workflow in wizard.workflows():
         workflow["prerequisites"] = wizard.prerequisites(workflow["name"], accounts)
@@ -568,30 +574,34 @@ def wizard_workflows():
     return out
 
 
-def wizard_steps(workflow, answers=None):
+def wizard_steps(workflow, answers=None, cloud_accounts=None, service_accounts=None):
     """
     `workflow`'s questions, with every option filled in from what this installation has, and narrowed by what has
     been answered so far: a later question can depend on an earlier one, so a caller re-reads these after each
     answer.
     """
     wizard = _wizard()
-    accounts = service_accounts()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
+    clouds = cloud_accounts if cloud_accounts is not None else globals()["cloud_accounts"]()
     return {
         "workflow": workflow,
         "prerequisites": wizard.prerequisites(workflow, accounts),
-        "steps": wizard.steps(workflow, catalogue=catalogue(), accounts=cloud_accounts(),
+        "steps": wizard.steps(workflow, catalogue=catalogue(), accounts=clouds,
                               images=_image_names(), addable=addable_addons(),
                               service_accounts=accounts, answers=answers or {}),
     }
 
 
-def wizard_build(workflow, answers):
-    """The lab definition these answers describe, ready for the canvas and for Validate."""
+def wizard_build(workflow, answers, cloud_accounts=None, service_accounts=None):
+    """
+    The lab definition these answers describe, ready for the canvas and for Validate. The accounts come from the
+    caller for the same reason wizard_steps()' do.
+    """
     wizard = _wizard()
-    accounts = service_accounts()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
+    clouds = cloud_accounts if cloud_accounts is not None else globals()["cloud_accounts"]()
     return {"config": wizard.build(workflow, answers or {}, network=lab_network(), catalogue=catalogue(),
-                                   accounts=cloud_accounts(),
-                                   images=_image_names(),
+                                   accounts=clouds, images=_image_names(),
                                    addable=addable_addons(), service_accounts=accounts)}
 
 

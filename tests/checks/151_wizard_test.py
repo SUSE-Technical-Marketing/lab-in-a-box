@@ -226,6 +226,28 @@ import admin as webui_admin  # noqa: E402
 check("the three wizard actions are behind the login, like every other action that builds a lab",
       {"wizard", "wizard-steps", "wizard-build"} <= webui_admin.ACTIONS)
 
+# The credential files are root-only, so the web process cannot list them itself: the accounts have to come
+# through lab-builder-helper. Reading the directory instead found nothing and offered no cloud account at all,
+# on an installation that had two.
+webui_admin.helper = lambda args, stdin=None: {"credentials": [
+    {"name": "aws-tmm", "kind": "cloud", "type": "aws"},
+    {"name": "gcp-tmm", "kind": "cloud", "type": "gcp"},
+    {"name": "scc-tmm", "kind": "service", "type": "scc"},
+]}
+check("the cloud accounts the helper reports are the ones offered as a backend",
+      [o["value"] for o in webui_admin.dispatch("wizard-steps", "GET", {"name": ["vm"]}, {})["steps"][1]["options"]]
+      == ["libvirt", "account:aws-tmm", "account:gcp-tmm"])
+check("a service credential it reports satisfies the workflow that needs one",
+      webui_admin.dispatch("wizard", "GET", {}, {})["workflows"][1]["prerequisites"] == [])
+check("...and a build uses them too, so the account chosen in the form is one the lab can name",
+      webui_admin.dispatch("wizard-build", "POST", {}, {"workflow": "vm", "answers": {
+          "name": "cloudy", "backend": "account:aws-tmm", "count": 1}})["config"]["common"]["cloud_account"]
+      == "aws-tmm")
+webui_admin.helper = lambda args, stdin=None: (_ for _ in ()).throw(OSError("no helper here"))
+check("a helper that cannot be reached leaves the form working, with this hypervisor alone",
+      [o["value"] for o in webui_admin.dispatch("wizard-steps", "GET", {"name": ["vm"]}, {})["steps"][1]["options"]]
+      == ["libvirt"])
+
 answered = webui_admin.dispatch("wizard-steps", "GET",
                                 {"name": ["virtualization"], "answers": ['{"product": "kvm"}']}, {})
 check("the answers so far reach the server, which decides what follows from them",
