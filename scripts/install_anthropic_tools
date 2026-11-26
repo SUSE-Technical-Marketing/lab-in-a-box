@@ -88,6 +88,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
 import primary  # noqa: E402
+from nodejs import ensure_node, first_available, npm_command  # noqa: E402,F401
 from lab_creation import (die, install_packages, package_available, package_manager, require_ssh,  # noqa: E402
                           ssh_run)
 
@@ -110,12 +111,6 @@ ENV_COMPONENTS = ("agent_sdk", "api_sdk", "ant_cli")
 PIP_PACKAGES = {
     "zypper": (["python3-pip"],), "transactional-update": (["python3-pip"],), "dnf": (["python3-pip"],),
     "yum": (["python3-pip"],), "apt-get": (["python3-pip"],), "apk": (["py3-pip"],),
-}
-NODE_PACKAGES = {
-    "zypper": (["nodejs-default", "npm-default"], ["nodejs22", "npm22"], ["nodejs20", "npm20"]),
-    "transactional-update": (["nodejs-default", "npm-default"], ["nodejs22", "npm22"], ["nodejs20", "npm20"]),
-    "dnf": (["nodejs", "npm"],), "yum": (["nodejs", "npm"],), "apt-get": (["nodejs", "npm"],),
-    "apk": (["nodejs", "npm"],),
 }
 GO_PACKAGES = {
     "zypper": (["go"],), "transactional-update": (["go"],), "dnf": (["golang"],), "yum": (["golang"],),
@@ -285,14 +280,6 @@ def pip_command(package: str) -> str:
             "python3 -m pip install --user --break-system-packages {0}".format(quoted))
 
 
-def npm_command(user: str, package: str) -> str:
-    """The command that installs `package` globally, under the running user's own prefix when that is not root."""
-    install = "npm install -g {}".format(shlex.quote(package))
-    if user == "root":
-        return install
-    return 'npm config set prefix "$HOME/.local" && {}'.format(install)
-
-
 def go_command(package: str = ANT_PACKAGE) -> str:
     """The command that builds `package` into the running user's Go bin directory."""
     return "go install {}".format(shlex.quote(package))
@@ -348,15 +335,6 @@ def settings_payload(cfg: dict, env: dict = None) -> dict:
 
 # ── Node-side steps ──────────────────────────────────────────────────────────
 
-def first_available(host: str, candidates, manager: str) -> list:
-    """The first package set of `candidates` this node's repositories carry, or the last as the error to report."""
-    sets = candidates or ([],)
-    for packages in sets:
-        if all(package_available(host, pkg, manager=manager) for pkg in packages):
-            return packages
-    return list(sets[-1])
-
-
 def ensure_prerequisites(host: str, comps: list, install_method: str, manager: str) -> None:
     """Install what the selected components need from the node's own repositories, each package named as it names it."""
     if "claude_code" in comps and install_method == "native":
@@ -364,7 +342,7 @@ def ensure_prerequisites(host: str, comps: list, install_method: str, manager: s
             install_packages(host, ["curl"], manager=manager)
     if "agent_sdk" in comps or "api_sdk" in comps:
         install_packages(host, first_available(host, PIP_PACKAGES.get(manager), manager), manager=manager)
-        install_packages(host, first_available(host, NODE_PACKAGES.get(manager), manager), manager=manager)
+        ensure_node(host, manager)
     if "ant_cli" in comps:
         install_packages(host, first_available(host, GO_PACKAGES.get(manager), manager), manager=manager)
 

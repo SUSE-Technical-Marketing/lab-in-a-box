@@ -34,6 +34,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 
 import apps  # noqa: E402
 import primary  # noqa: E402
+import reconcile  # noqa: E402
 from addon_common import CHECK_OK, CHECK_UNSUPPORTED  # noqa: E402
 from lab_creation import _GREEN, _RED, _YELLOW, _RESET, die  # noqa: E402
 
@@ -77,6 +78,27 @@ def run_one(addon, lab_file, vm_name, clu_name):
     return r.returncode, r.stdout or ""
 
 
+def reconcile_addresses(definition) -> None:
+    """
+    Bring the lab's records in line with what its providers report, before any add-on check runs.
+
+    Every check below reaches its target by name over SSH, so a cloud node that came back from a restart on a
+    different address would fail its check for a reason that has nothing to do with the add-on. This is the same
+    work setup_lab.py does on every run (libs/reconcile.py).
+
+    Never fatal: a reconcile that cannot run says so and leaves the checks to report what they find.
+    """
+    try:
+        from setup_vm import refresh_kept_node_dns    # imported here: it pulls in the whole provisioning path
+        moved = reconcile.reconcile(definition, primary.load_config(), refresh_node=refresh_kept_node_dns)
+    except (SystemExit, RuntimeError, OSError, ImportError) as e:
+        print("  addresses not reconciled ({}): a check that fails on an unreachable node may be stale "
+              "records rather than the add-on".format(e))
+        return
+    for vm_name in sorted(moved):
+        print("  {}[ADDR]{} {:<22} {}".format(_YELLOW, _RESET, vm_name, moved[vm_name]))
+
+
 def main():
     args = sys.argv[1:]
     if primary.wants_help(args) or not args:
@@ -105,6 +127,8 @@ def main():
     if not todo:
         print("This lab has no add-ons to check.")
         return 0
+
+    reconcile_addresses(definition)
 
     print("── Checking {} add-on placement(s) of '{}' ──".format(len(todo), lab_file))
     matched, mismatched, unsupported, missing = [], [], [], []

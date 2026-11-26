@@ -147,6 +147,14 @@ import api as webui_api  # noqa: E402
 st, body = webui_api.dispatch("credential-types", "GET", {}, b"", user=None, https=False)
 check("api: credential-types answers without a user and without HTTPS", st == 200 and sorted(body) == ["cloud", "service"])
 
+# ── the catalogue carries the capability fields its filter is read from ────
+cat = discovery.catalogue()
+check("an add-on item carries what it needs and supplies, not only where it runs",
+      any(it["name"] == "install_longhorn" and "storageclass" in it["provides_cluster"] for it in cat))
+check("...and whether it implements --check",
+      any(it["name"] == "install_longhorn" and it["check"] is True for it in cat))
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

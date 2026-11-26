@@ -35,7 +35,7 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 // their *effective* default instead of the schema's hardcoded one. Reset on
 // every fresh schema load (selectBase/selectComponent).
 const state = {
-  components: [], lab: {}, commonDefaults: {}, credTypes: {},
+  components: [], facets: [], lab: {}, commonDefaults: {}, credTypes: {},
   // block model behind the canvas (see compileLab); state.lab is compiled from it
   // extra: top-level lab keys the canvas does not model, kept as they are
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
@@ -166,7 +166,7 @@ const HTTPS_ONLY = "You must connect via HTTPS to use this UI";
 function serverLock() {
   if (window.LAB_STATIC) return "Available on the lab-builder of your automation node";
   if (location.protocol !== "https:") return HTTPS_ONLY;
-  if (state.auth && !state.auth.login_configured) return "Add a login first: run lab-builder-passwd <user> on the automation node";
+  if (state.auth && !state.auth.login_configured) return "Set up access first: run lab-builder-passwd <user> on the automation node, or configure single sign-on and list the identity in /etc/lab-builder/authorized";
   return "";
 }
 
@@ -174,9 +174,41 @@ function serverLock() {
 async function loadComponents() {
   const data = await apiGet("components");
   state.components = data.components.filter((c) => (c.kind || "addon") === "addon");
+  state.facets = data.facets || [];
   $("#countNum").textContent = state.components.length;
   $("#srcNote").textContent = `read from ${data.scripts_dir}`;
+  renderFacetFilter();
   renderPalette($("#filter").value || "");
+}
+
+// The filter beside the text box. Each option is a fact read off the add-ons' own capabilities — how it
+// installs, what it needs of a cluster, what it supplies, whether it can be checked — which webui/lib/discovery.py
+// derives, so nothing has to be kept in step by hand. It is narrowed to the facets this installation's own
+// add-ons actually carry, so it never offers one that would show nothing, and a selection survives a reload of the
+// catalogue when it is still on offer.
+function renderFacetFilter() {
+  const sel = $("#facetFilter");
+  if (!sel) return;
+  const present = new Set();
+  state.components.forEach((c) => (c.facets || []).forEach((x) => present.add(x)));
+  const keep = state.facets.filter((x) => present.has(x.name));
+  const chosen = sel.value;
+  sel.innerHTML = "";
+  const all = el("option", "", "Everything");
+  all.value = "";
+  sel.appendChild(all);
+  keep.forEach((x) => {
+    const o = el("option", "", x.title);
+    o.value = x.name;
+    sel.appendChild(o);
+  });
+  sel.value = keep.some((x) => x.name === chosen) ? chosen : "";
+}
+
+// The facet selected in that dropdown, "" for everything.
+function selectedFacet() {
+  const sel = $("#facetFilter");
+  return (sel && sel.value) || "";
 }
 
 // What a palette entry creates when it is dropped on the lab. Add-ons are
@@ -264,7 +296,8 @@ function renderPalette(filter) {
   const root = $("#palette");
   root.innerHTML = "";
   const f = (filter || "").toLowerCase();
-  if (!f) {
+  const facet = selectedFacet();
+  if (!f && !facet) {
     const g = el("div", "pal-group");
     g.appendChild(el("h3", "pal-title", "Lab"));
     const grid = el("div", "pal-grid");
@@ -274,7 +307,8 @@ function renderPalette(filter) {
     root.appendChild(g);
   }
   const matches = state.components
-    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f));
+    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f))
+    .filter((c) => !facet || (c.facets || []).includes(facet));
   ADDON_SECTIONS.forEach((s) => {
     const rows = matches
       .filter((c) => addonSection(c.layers || []) === s.key)
@@ -283,13 +317,20 @@ function renderPalette(filter) {
         c.status === "under-construction" ? (c.status_note || "Under construction: may not work") : ""));
     if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
   });
-  const pxe = !f || "pxe tftp dhcp boot service".includes(f);
+  // pxe is the one base-schema section in this palette, and it is itself a lab-wide service, so a facet narrows
+  // it away unless that is the facet asked for.
+  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && (!facet || facet === "lab-service");
   if (pxe) {
     root.appendChild(paletteSection("Infrastructure", "Lab-wide services on the automation node",
       [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation node", "", [],
         "Drop on Common settings")]));
   }
-  if (f && !matches.length && !pxe) root.appendChild(el("p", "pal-hint", `No add-on matches “${filter}”.`));
+  if ((f || facet) && !matches.length && !pxe) {
+    const named = $("#facetFilter") && $("#facetFilter").selectedOptions[0];
+    const where = facet ? ` under “${named ? named.textContent : facet}”` : "";
+    root.appendChild(el("p", "pal-hint", f ? `No add-on matches “${filter}”${where}.`
+      : `No add-on${where}.`));
+  }
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
@@ -2437,6 +2478,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (restoreBtn) restoreBtn.addEventListener("click", restoreDraft);
 
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
+  $("#facetFilter").addEventListener("change", () => renderPalette($("#filter").value || ""));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

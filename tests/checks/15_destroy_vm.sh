@@ -1,8 +1,9 @@
 #!/bin/bash
-# Tests-paths: scripts/destroy_vm.py
+# Tests-paths: scripts/destroy_vm.py libs/overlay.py
 # Mocked unit tests for scripts/destroy_vm.py — single-VM
-# teardown orchestration. Every lab_creation
-# call is monkeypatched. Independent container — see tests/run_tests.sh.
+# teardown orchestration: the DNS removal, its ordering against the delete, and
+# the node's removal from the overlay hub's node registry. Every lab_creation
+# and overlay call is monkeypatched. Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
 

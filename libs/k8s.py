@@ -412,7 +412,7 @@ class RKE2Distro(K8sDistro):
             return token, rancher1_ip
 
 
-class KubeadmDistro(K8sDistro):
+class VanillaDistro(K8sDistro):
     """
     Upstream Kubernetes, installed with kubeadm from the community packages at pkgs.k8s.io. Unlike RKE2 and K3s
     there is no vendor installer script: the node gets the kubelet, kubeadm and kubectl packages of the requested
@@ -423,7 +423,7 @@ class KubeadmDistro(K8sDistro):
     brings its own. clu_pod_cidr overrides the pod network, which each plugin's default manifest expects to match.
     """
 
-    name = "kubeadm"
+    name = "vanilla"
 
     bundled = ()                                                 # upstream Kubernetes brings neither
 
@@ -450,7 +450,7 @@ class KubeadmDistro(K8sDistro):
         """The repository minor for a clu_rel: "1.33", "v1.33" and "v1.33.4+ignored" all give "v1.33"."""
         match = re.search(r"(\d+)\.(\d+)", str(clu_rel or ""))
         if not match:
-            die("clu_type kubeadm needs clu_rel to name a Kubernetes minor, for example \"1.33\" — got "
+            die("clu_type vanilla needs clu_rel to name a Kubernetes minor, for example \"1.33\" — got "
                 "{!r}".format(clu_rel))
         return "v{}.{}".format(match.group(1), match.group(2))
 
@@ -550,8 +550,8 @@ class KubeadmDistro(K8sDistro):
                           "--upload-certs --ignore-preflight-errors=NumCPU".format(
                               shlex.quote(self.pod_cidr(clu_ctx)), shlex.quote(endpoint)))
         self._write_root_kubeconfig(hostname)
-        ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/kubeadm.sh; "
-                          "chmod 0644 /etc/profile.d/kubeadm.sh".format(self.kubeconfig_path()))
+        ssh_run(hostname, "echo 'export KUBECONFIG={}' > /etc/profile.d/vanilla.sh; "
+                          "chmod 0644 /etc/profile.d/vanilla.sh".format(self.kubeconfig_path()))
 
         cni = self.cni(clu_ctx)
         if cni == "none":
@@ -577,7 +577,7 @@ class KubeadmDistro(K8sDistro):
         plane to run pods, so _init() takes the control-plane taint off, and it can only know that in advance.
         """
         clu_ctx = dict(clu_ctx, _node_count=kcluster_node_count(definition, clu_name))
-        super(KubeadmDistro, self).install_cluster(definition, clu_name, clu_ctx)
+        super(VanillaDistro, self).install_cluster(definition, clu_name, clu_ctx)
 
     @staticmethod
     def _node_count(clu_ctx):
@@ -632,7 +632,7 @@ class HarvesterDistro(K8sDistro):
 DISTROS = {
     "harvester": HarvesterDistro,
     "k3s": K3sDistro,
-    "kubeadm": KubeadmDistro,
+    "vanilla": VanillaDistro,
     "rke2": RKE2Distro,
 }
 

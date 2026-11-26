@@ -73,7 +73,7 @@ def setup_nv(hostname, clu_name, mydomain, rancher_shorthn, nv_shorthn=None, clu
     The enforcer talks to the node's container runtime directly, so the chart is told where that socket is. K3s and
     RKE2 keep their own containerd under /run/k3s, which is what the chart's k3s option is for; an upstream
     Kubernetes node uses the system containerd and needs the containerd option instead. Confirmed live on
-    2026-10-17: the k3s path hardcoded here was simply absent on a kubeadm node.
+    2026-10-17: the k3s path hardcoded here was simply absent on a vanilla node.
     """
     fqdn = "{}.{}.{}".format(nv_shorthn or "neuvector", clu_name, mydomain)
     rancher_url = "https://{}.{}.{}".format(rancher_shorthn, clu_name, mydomain)

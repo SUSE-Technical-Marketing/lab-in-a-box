@@ -339,7 +339,14 @@ def discover():
             "targets": caps.get("targets") or [],
             "status": caps.get("status") or "stable",
             "status_note": caps.get("status_note") or "",
+            "requires_cluster": caps.get("requires_cluster") or [],
+            "provides_cluster": caps.get("provides_cluster") or [],
+            "requires_kubernetes": caps.get("requires_kubernetes"),
+            "aux_services": caps.get("aux_services") or [],
+            "check": bool(caps.get("check")),
         })
+    for item in items:
+        item["facets"] = facets_of(item)
     return sorted(items, key=lambda it: it["name"])
 
 
@@ -372,9 +379,49 @@ def example(name):
     return _lib("lab_examples").load(name)
 
 
+# What the catalogue can be filtered by, each one read off an add-on's own capabilities (libs/apps.py's
+# attach_capabilities()) rather than out of a list somebody has to keep: "layers" says how it installs,
+# "requires_cluster"/"provides_cluster" what it needs and supplies, "requires_kubernetes" whether it is tied to a
+# distribution, "aux_services" whether the automation node has to run something for it, and "check" whether it can
+# be verified afterwards. The two kinds that are not add-ons carry the one fact their kind states.
+FACETS = (
+    ("kubernetes", "On a Kubernetes cluster", lambda it: "kubernetes" in (it.get("layers") or [])),
+    ("standalone-container", "A container on a host",
+     lambda it: "standalone-container" in (it.get("layers") or [])),
+    ("os-native", "Installed on the OS", lambda it: "os-native" in (it.get("layers") or [])),
+    ("needs-ingress", "Needs an ingress controller",
+     lambda it: "ingress" in (it.get("requires_cluster") or [])),
+    ("needs-storageclass", "Needs a storage class",
+     lambda it: "storageclass" in (it.get("requires_cluster") or [])),
+    ("provides-ingress", "Provides an ingress controller",
+     lambda it: "ingress" in (it.get("provides_cluster") or [])),
+    ("provides-storageclass", "Provides a storage class",
+     lambda it: "storageclass" in (it.get("provides_cluster") or [])),
+    ("distribution-specific", "Tied to a Kubernetes distribution",
+     lambda it: bool(it.get("requires_kubernetes"))),
+    ("lab-service", "Needs a lab-wide service", lambda it: bool(it.get("aux_services"))),
+    ("checkable", "Can be checked after installing", lambda it: bool(it.get("check"))),
+    ("under-construction", "Under construction", lambda it: it.get("status") == "under-construction"),
+)
+
+
+def facets_of(item):
+    """Which of FACETS this catalogue item satisfies, in FACETS order."""
+    return [name for name, _title, holds in FACETS if holds(item)]
+
+
+def facets():
+    """
+    FACETS as [{"name": ..., "title": ...}], for a filter over catalogue(). Sent with the catalogue rather than
+    worked out in the browser, so the filter offers the same names and the same titles whatever this installation
+    happens to have installed.
+    """
+    return [{"name": name, "title": title} for name, title, _holds in FACETS]
+
+
 def catalogue():
     """
-    Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, status and status_note. kind is
+    Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, facets, status and status_note. kind is
     "addon" (the add-ons of discover()), "infrastructure" (the base schema's optional sections, e.g. pxe) or
     "kcluster" (each Kubernetes cluster type, the kclusters clu_type values).
     """
@@ -384,13 +431,13 @@ def catalogue():
         if name not in CORE_SECTIONS:
             items.append({"name": name, "kind": "infrastructure", "title": sec.get("title") or name,
                           "description": sec.get("description", ""), "field_count": len(sec.get("fields", [])),
-                          "layers": [], "targets": []})
+                          "layers": [], "targets": [], "facets": ["lab-service"]})
     clu_types = [f.get("enum") for f in base["kclusters"].get("fields", []) if f.get("name") == "clu_type"]
     if not clu_types or not clu_types[0]:
         raise ValueError("lab_schema: kclusters has no clu_type enum")
     for name in clu_types[0]:
         items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
-                      "layers": [], "targets": []})
+                      "layers": [], "targets": [], "facets": ["kubernetes"]})
     return items
 
 

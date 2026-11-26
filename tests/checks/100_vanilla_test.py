@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.11
-# clu_type kubeadm: upstream Kubernetes built with kubeadm — see 100_kubeadm.sh.
+# clu_type vanilla: upstream Kubernetes built with kubeadm — see 100_vanilla.sh.
 import sys
 from pathlib import Path
 from unittest import mock
@@ -21,13 +21,13 @@ def check(desc, cond):
         print("FAIL:", desc)
 
 
-distro = k8s.get_distro("kubeadm")
+distro = k8s.get_distro("vanilla")
 
 # ── the cluster type is reachable from a lab ─────────────────────────────────
-check("kubeadm is a cluster type", isinstance(distro, k8s.KubeadmDistro) and distro.name == "kubeadm")
+check("vanilla is a cluster type", isinstance(distro, k8s.VanillaDistro) and distro.name == "vanilla")
 BASE = lab_schema_base.base_lab_schema()
 clu_type = [f for f in BASE["sections"]["kclusters"]["fields"] if f["name"] == "clu_type"][0]
-check("the schema offers it", "kubeadm" in clu_type["enum"])
+check("the schema offers it", "vanilla" in clu_type["enum"])
 # The schema's list and the registry are two halves of the same fact: a lab can only ask for what k8s.py can build.
 check("every cluster type the schema offers is one k8s.py can build",
       sorted(clu_type["enum"]) == sorted(k8s.DISTROS))
@@ -139,6 +139,8 @@ check("the cluster is initialised with the pod network and a control-plane endpo
 check("certificates are uploaded, so another control-plane node can join", "--upload-certs" in text)
 check("the network plugin is applied", "kube-flannel.yml" in text)
 check("the admin kubeconfig is put where a plain kubectl finds it", "/root/.kube/config" in text)
+check("/etc/profile.d/vanilla.sh exports KUBECONFIG, so kubectl and helm work in any root shell",
+      "export KUBECONFIG=/etc/kubernetes/admin.conf" in text and "/etc/profile.d/vanilla.sh" in text)
 check("the join command and the certificate key are handed to the next node",
       token["join"].startswith("kubeadm join") and token["certificate_key"] == "deadbeefcafe" and first == "n1")
 check("a three-node cluster keeps its control-plane taint",
@@ -256,17 +258,17 @@ for path in sorted(Path(_REPO / "scripts").glob("install_*")):
           bool(DISTRO_SPECIFIC.search(source)))
 
 check("most add-ons run on any Kubernetes distribution", len(any_k8s) > 50)
-check("an add-on that names no distribution is placed on a kubeadm cluster",
+check("an add-on that names no distribution is placed on a vanilla cluster",
       apps.requirement_issue(dict(apps.DEFAULT_PLUGIN, name="x", requires_kubernetes=None),
-                             "container", clu_type="kubeadm") is None)
+                             "container", clu_type="vanilla") is None)
 check("the default for an add-on that prints no capabilities is any distribution",
       apps.DEFAULT_PLUGIN["requires_kubernetes"] is None)
 check("one that names distributions is still refused on the others",
       apps.requirement_issue(dict(apps.DEFAULT_PLUGIN, name="x", requires_kubernetes=["rke2", "k3s"]),
-                             "container", clu_type="kubeadm") is not None)
+                             "container", clu_type="vanilla") is not None)
 
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)
-print("all kubeadm checks passed")
+print("all vanilla checks passed")

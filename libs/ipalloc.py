@@ -35,6 +35,15 @@ from pathlib import Path
 
 NAMED_ZONE_DIR = Path("/var/lib/named")
 
+
+def _zone_dir(zone_dir=None) -> Path:
+    """Where to read a zone from: `zone_dir` when a caller names one, else NAMED_ZONE_DIR as it is now.
+
+    Read through this rather than as a default argument, which Python binds once at definition time: NAMED_ZONE_DIR
+    could then never be pointed anywhere else after import.
+    """
+    return Path(zone_dir) if zone_dir else NAMED_ZONE_DIR
+
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
@@ -67,14 +76,14 @@ def definition_ips(definition):
     return {ip for ip in used if _IPV4.fullmatch(ip)}
 
 
-def dns_ips(mydomain, zone_dir=NAMED_ZONE_DIR):
+def dns_ips(mydomain, zone_dir=None):
     """
     Every address the lab DNS has a record for, read from the forward zone of `mydomain`. This is the ledger: the
     record is written before a VM is created, so an address in the zone is taken even when nothing answers on it.
     """
     if not mydomain:
         return set()
-    zone = Path(zone_dir) / "{}.lan".format(mydomain)
+    zone = _zone_dir(zone_dir) / "{}.lan".format(mydomain)
     try:
         text = zone.read_text(errors="replace")
     except OSError:
@@ -92,7 +101,7 @@ def ips_in_text(text):
     return set(_IPV4.findall(text or ""))
 
 
-def dns_address(vm_name, mydomain, zone_dir=NAMED_ZONE_DIR):
+def dns_address(vm_name, mydomain, zone_dir=None):
     """
     The address the lab DNS holds for `vm_name`, or "". Read from the forward zone of `mydomain`, falling back to
     whatever the resolver answers. This is how an address the lab definition never wrote down is recovered: it was
@@ -100,7 +109,7 @@ def dns_address(vm_name, mydomain, zone_dir=NAMED_ZONE_DIR):
     """
     short = str(vm_name or "").split(".")[0]
     if short and mydomain:
-        zone = Path(zone_dir) / "{}.lan".format(mydomain)
+        zone = _zone_dir(zone_dir) / "{}.lan".format(mydomain)
         try:
             for line in zone.read_text(errors="replace").splitlines():
                 fields = line.split()
@@ -112,6 +121,28 @@ def dns_address(vm_name, mydomain, zone_dir=NAMED_ZONE_DIR):
         return socket.gethostbyname(vm_name)
     except OSError:
         return ""
+
+
+def dns_name_at(address, mydomain, zone_dir=None):
+    """
+    The name the lab DNS already holds `address` under in the forward zone of `mydomain`, or "".
+
+    dns_ips() answers whether an address is taken; this answers by whom, which is what a validator needs to say to
+    whoever has to resolve the clash. A service record counts: a name pointing at an address is a name that stops
+    resolving when something else takes it.
+    """
+    address = str(address or "").strip()
+    if not address or not mydomain:
+        return ""
+    try:
+        text = (_zone_dir(zone_dir) / "{}.lan".format(mydomain)).read_text(errors="replace")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        fields = line.split(";")[0].split()
+        if len(fields) >= 4 and fields[-2] == "A" and fields[-1] == address:
+            return fields[0]
+    return ""
 
 
 def local_ips():
@@ -147,7 +178,7 @@ def candidates(vm_name, network):
     return [str(ip) for ip in hosts[start:] + hosts[:start]]
 
 
-def allocate(vm_name, definition, used=(), mydomain="", probe=True, zone_dir=NAMED_ZONE_DIR):
+def allocate(vm_name, definition, used=(), mydomain="", probe=True, zone_dir=None):
     """
     The address `vm_name` should have, or None when the lab's own network cannot be worked out or every address in it
     is taken.

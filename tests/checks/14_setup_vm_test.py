@@ -193,7 +193,7 @@ class _FakeCloudBackend(_FakeBackend):
     def __init__(self, account):
         self.account = account
 
-    def get_subnet_cidr(self):
+    def get_subnet_cidr(self, vm_name=""):
         return "172.31.16.0/20"
 
     def get_private_ip(self, vm_name):

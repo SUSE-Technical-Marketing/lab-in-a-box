@@ -24,6 +24,9 @@
   "addon:anthropic_tools": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:antseed": [
+   {"version": "1.0", "breaking": false, "changes": "Antseed on a node: the CLI, the buyer proxy or the seller provider, the desktop app, and the applications pointed at the proxy"}
+  ],
   "addon:apertus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."},
@@ -40,6 +43,9 @@
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."},
    {"version": "2.0", "breaking": true, "changes": "The chart comes from the SUSE Application Collection unless argocd_source says otherwise, with argocd_appcollection_user/password/account for the account it needs. Breaking: a lab that relied on the upstream chart by saying nothing now needs argocd_source \"upstream\", which the migration writes.", "migration": "argocd_2_0"}
+  ],
+  "addon:betterleaks": [
+   {"version": "1.0", "breaking": false, "changes": "Betterleaks secret scanning in two modes, a podman container and a Kubernetes CronJob, with the command line of whichever major version the lab names"}
   ],
   "addon:cerebras": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
@@ -114,6 +120,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: gitlab_deployment, gitlab_edition, gitlab_hostname, gitlab_http_port, gitlab_https, gitlab_https_port, gitlab_image, gitlab_namespace, gitlab_rel, gitlab_repo_url, gitlab_ssh_port, gitlab_version."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:gitleaks": [
+   {"version": "1.0", "breaking": false, "changes": "Gitleaks secret scanning in two modes: a podman container on a node and a Kubernetes CronJob"}
+  ],
   "addon:gpu_operator": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}
@@ -149,6 +158,9 @@
   ],
   "addon:hyperbolic": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
+  ],
+  "addon:hyperframes": [
+   {"version": "1.0", "breaking": false, "changes": "HyperFrames video rendering on a node, with connectors for Claude Code, the Copilot CLI, the Gemini CLI and the agents upstream gives skills for"}
   ],
   "addon:insecure_app": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
@@ -189,6 +201,9 @@
   ],
   "addon:lab_in_a_box": [
    {"version": "1.0", "breaking": false, "changes": "First version: installs lab-in-a-box itself onto a node over SSH, so a lab can bootstrap another lab-in-a-box host/automation-node from inside a running lab. Non-destructive by default (--fetch-only)."}
+  ],
+  "addon:libretranslate": [
+   {"version": "1.0", "breaking": false, "changes": "LibreTranslate as a podman container on a node, loading the languages the lab selects or all of them"}
   ],
   "addon:linkerd": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -406,6 +421,9 @@
   "addon:vllm": [
    {"version": "1.0", "breaking": false, "changes": "First version: the vLLM serving engine from its upstream chart or the SUSE Application Collection, behind an ingress"}
   ],
+  "addon:voicestudio": [
+   {"version": "1.0", "breaking": false, "changes": "VoiceStudio as a podman container on a node, with its API, web UI and MCP endpoint on one port"}
+  ],
   "addon:voyage": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
@@ -446,14 +464,22 @@
   "config:kvm_host.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First version: split from the old config:lab.cfg. This host becoming a KVM hypervisor (bridge/NAT networking, storage, VM-build specifics) -- needed only when setup_kvm_node.py actually prepares a KVM host."}
   ],
+  "config:lab-registry.json": [
+   {"version": "1.0", "breaking": false, "changes": "First version: one file per deployed lab under /etc/lab_creation/labs, holding the lab's name, its definition's path, its DNS zone and its nodes, so a scheduled run knows which labs exist."}
+  ],
   "config:lab_creation.cfg": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Add optional CLOUD_DNS_IMAGE: the image the cloud DNS VM boots from."},
    {"version": "1.2", "breaking": false, "changes": "REMOTE_DNS_SERVERS documented: the other DNS servers that are masters of this node's zone, which every record is written into as well."},
-   {"version": "1.3", "breaking": false, "changes": "Add optional EXAMPLE_LABS_DIR: the operator's own example labs, listed beside the ones lab-in-a-box ships."}
+   {"version": "1.3", "breaking": false, "changes": "Add optional EXAMPLE_LABS_DIR: the operator's own example labs, listed beside the ones lab-in-a-box ships."},
+   {"version": "1.4", "breaking": false, "changes": "MCP_CLIENTS and MCP_ISSUER_URL: the MCP endpoint's per-client bearer tokens. Both optional, and a read-only endpoint needs neither; enabling MCP_ALLOW_MUTATIONS now requires at least one registered client, so a caller that can destroy a lab is identifiable."},
+   {"version": "1.5", "breaking": false, "changes": "LAB_REGISTRY_DIR and LAB_EVENT_LOG: where this automation node records the labs it has deployed, and the log of every action taken on one."}
   ],
   "config:lab_creation.defaults": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
+  ],
+  "config:mcp-clients.json": [
+   {"version": "1.0", "breaking": false, "changes": "First version: the MCP client registry. Each entry names a client, the SHA-256 of its bearer token, and its scopes (read, or read and write for the mutating tools)."}
   ],
   "lab": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
@@ -468,7 +494,9 @@
    {"version": "2.7", "breaking": false, "changes": "A disabled_nodes section, in the same form as nodes, for nodes that are part of a lab's design but are not deployed: nothing reads it, so a node waiting on an image or a release stays in the file instead of being deleted. SOURCE_IMAGE also accepts a cloud provider's own image ID or a product name (\"slmicro6.1\", \"sles16\", \"ubuntu24.04\", see libs/cloud_images.py), resolved to the provider's current image for the node's architecture at create time."},
    {"version": "3.0", "breaking": true, "changes": "INSTALL_RKE2_TYPE, ISO_IMAGE, ISO_URL, ISO_SHA256 and ISO_SHA256_URL removed from common and nodes: their values move to KUBERNETES_NODE_TYPE, SOURCE_IMAGE (a URL itself, downloaded under the URL's own file name) and SOURCE_SHA256. setup_lab.py, setup_vm.py and setup_automation_node.py now apply a pending migration themselves, warn per change and continue with the migrated sibling file.", "migration": "lab_3_0"},
    {"version": "3.1", "breaking": false, "changes": "ssh_authorized_keys in common and nodes: extra SSH keys (a key, an https URL or a file path; for root or a named user) added to each VM once it is up."},
-   {"version": "3.2", "breaking": false, "changes": "Declare aws_nested_virtualization in common and per node: an AWS-only knob the backend and the Harvester helper already read, and that examples/harvester-aws.json.template already sets, but the schema did not list"}
+   {"version": "3.2", "breaking": false, "changes": "Declare aws_nested_virtualization in common and per node: an AWS-only knob the backend and the Harvester helper already read, and that examples/harvester-aws.json.template already sets, but the schema did not list"},
+   {"version": "4.0", "breaking": true, "changes": "clu_type kubeadm is now clu_type vanilla: the same upstream Kubernetes built with kubeadm, under the name the lab definition and the documentation use for it. A lab naming the old value is migrated.", "migration": "lab_4_0"},
+   {"version": "4.1", "breaking": false, "changes": "Declare static_ip in common and per node: on a cloud backend \"true\" reserves a VM's public address with the provider, so a stop and start hands back the same address instead of a new one that leaves every record of the lab naming an address that answers nothing"}
   ]
  }
 }

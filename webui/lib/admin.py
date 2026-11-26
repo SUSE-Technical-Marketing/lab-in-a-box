@@ -7,15 +7,23 @@ Credentials and lab creation run through lab-builder-helper, as root: directly
 when this process is root, otherwise through `sudo -n` (the sudoers rule that
 install_automation_node_scripts.sh writes allows only that helper).
 
+Authentication says who the caller is; authorized() says whether they may use these actions. The two are the
+same thing only for the local login file, where having an account IS the grant. An identity provider
+authenticates its whole directory, so with SSO in front (see ../apache/lab-builder-sso.conf.example) the
+allowlist is what keeps lab-builder from being open to everyone in that directory.
+
 Configuration (env-overridable):
-  LABBUILDER_HELPER   the helper (/usr/local/sbin/lab-builder-helper)
-  LABBUILDER_USERS    login file, lines "user:<crypt(3) hash>" (/etc/lab-builder/htpasswd)
+  LABBUILDER_HELPER       the helper (/usr/local/sbin/lab-builder-helper)
+  LABBUILDER_USERS        login file, lines "user:<crypt(3) hash>" (/etc/lab-builder/htpasswd)
+  LABBUILDER_AUTHORIZED   allowlist of identities permitted to use these actions
+                          (/etc/lab-builder/authorized); see authorized()
 """
 import base64
 import hmac
 import json
 import os
 import subprocess
+import syslog
 
 import discovery
 
@@ -31,13 +39,79 @@ def users_file():
     return os.environ.get("LABBUILDER_USERS", "/etc/lab-builder/htpasswd")
 
 
+def authorized_file():
+    return os.environ.get("LABBUILDER_AUTHORIZED", "/etc/lab-builder/authorized")
+
+
+def _entries(path):
+    """The non-empty, non-comment lines of `path`, stripped. [] when it cannot be read."""
+    try:
+        with open(path) as f:
+            return [line.strip() for line in f
+                    if line.strip() and not line.strip().startswith("#")]
+    except OSError:
+        return []
+
+
+def has_local_account(user):
+    """True when `user` has a line in the login file, i.e. an account lab-builder-passwd created."""
+    if not user:
+        return False
+    for line in _entries(users_file()):
+        name, sep, _hashed = line.partition(":")
+        if sep and name == user:
+            return True
+    return False
+
+
+def authorized(user):
+    """
+    Whether `user`, already authenticated, may use the actions in ACTIONS.
+
+    The allowlist is authorized_file(), one identity per line, "#" comments, "*" allowing any authenticated
+    identity:
+      - present: `user` must be listed, so an identity provider's whole directory is not admitted with it.
+      - absent:  a local account is authorized, which is the behaviour before any allowlist existed; any other
+                 identity is refused, so configuring SSO and forgetting the allowlist denies rather than admits.
+    """
+    if not user:
+        return False
+    entries = _entries(authorized_file())
+    if entries:
+        return "*" in entries or user in entries
+    return has_local_account(user)
+
+
+def audit(user, action, outcome="ok"):
+    """
+    Record one admin action and who asked for it, to syslog (LOG_AUTH).
+
+    The helper runs as root and sees only that the web process called it, so without this a privileged action has
+    no actor. Failing to write the record never fails the action.
+    """
+    try:
+        syslog.openlog("lab-builder", syslog.LOG_PID, syslog.LOG_AUTH)
+        syslog.syslog(syslog.LOG_NOTICE, "user={} action={} outcome={}".format(user or "-", action, outcome))
+    except OSError:
+        pass
+
+
 def login_configured():
-    """True when the login file holds at least one user."""
+    """
+    True when there is any way to reach the actions in ACTIONS: a local account in the login file, or an
+    allowlist, which is what an identity provider in front of this is granted by.
+
+    The UI asks this to decide whether to offer the server actions at all. A deployment that replaced local
+    logins with SSO has an empty login file by design, so answering only from that file would grey the actions
+    out and tell the operator to create an account they do not need.
+    """
     try:
         with open(users_file()) as f:
-            return any(":" in line and not line.startswith("#") for line in f)
+            if any(":" in line and not line.strip().startswith("#") for line in f):
+                return True
     except OSError:
-        return False
+        pass
+    return bool(_entries(authorized_file()))
 
 
 def _verify(password, hashed):

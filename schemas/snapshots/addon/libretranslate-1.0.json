@@ -1,0 +1,76 @@
+{
+ "fields": {
+  "libretranslate_api_keys": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_char_limit": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_container_name": {
+   "default": "libretranslate",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_data_dir": {
+   "default": "/var/lib/libretranslate",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_disable_web_ui": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_image": {
+   "default": "libretranslate/libretranslate",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_image_tag": {
+   "default": "latest",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_languages": {
+   "default": "en, es",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_listen": {
+   "default": "0.0.0.0",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_port": {
+   "default": "5000",
+   "required": false,
+   "type": "port"
+  },
+  "libretranslate_req_limit": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_threads": {
+   "default": "4",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_update_models": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "libretranslate_wait": {
+   "default": "900",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:libretranslate",
+ "version": "1.0"
+}

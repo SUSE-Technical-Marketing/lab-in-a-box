@@ -251,6 +251,32 @@ check("the preview is asked for whenever a VM has no address of its own",
 check("the preview goes through the API, not a copy of the allocator in the browser",
       '"addresses"' in (_REPO / "webui" / "lib" / "api.py").read_text())
 
+
+# ── an address the lab wrote by hand is held to the same rules ───────────────
+# ipalloc.allocate() rules these out for an address it picks. An address named in the JSON used to be trusted on
+# the grounds that the lab knows better, which is how two labs come to claim one address and the second takes the
+# first one's name down with it.
+with tempfile.TemporaryDirectory() as tmp:
+    Path(tmp, "mydemo.lab.lan").write_text(
+        "$TTL 300\n@ IN SOA ns admin ( 1 )\n"
+        "node9         IN  A       192.168.88.9\n"
+        "rancher\tIN A  192.168.88.9\n"
+        "node10        IN  A       192.168.88.10\n")
+    check("the name holding an address is reported, which is what a clash has to say to whoever resolves it",
+          ipalloc.dns_name_at("192.168.88.10", "mydemo.lab", zone_dir=tmp) == "node10")
+    check("a service record counts too: a name pointing at an address stops resolving when something else takes "
+          "it", ipalloc.dns_name_at("192.168.88.9", "mydemo.lab", zone_dir=tmp) in ("node9", "rancher"))
+    check("a free address is held by nobody",
+          ipalloc.dns_name_at("192.168.88.77", "mydemo.lab", zone_dir=tmp) == "")
+    check("no address, no domain and no zone each answer \"\" rather than failing",
+          ipalloc.dns_name_at("", "mydemo.lab", zone_dir=tmp) == ""
+          and ipalloc.dns_name_at("192.168.88.9", "", zone_dir=tmp) == ""
+          and ipalloc.dns_name_at("192.168.88.9", "absent.lab", zone_dir=tmp) == "")
+
+# The validator that holds a hand-written address to these rules is tested where every other
+# validate_lab_definition() check lives, in 10_lab_creation_core_test.py: it needs that check's
+# LabDefinition fixture and its mocked hypervisor.
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

@@ -1,0 +1,10 @@
+{
+ "fields": {
+  "clients": {},
+  "clients[].name": {},
+  "clients[].scopes": {},
+  "clients[].token_sha256": {}
+ },
+ "schema": "config:mcp-clients.json",
+ "version": "1.0"
+}

@@ -1501,6 +1501,56 @@ check("ensure_centos7_vault_repos: a failure to patch the repos warns (never die
       lc.ensure_centos7_vault_repos("broken.mydemo.lab") is False
       and len(_warned) == 1 and "broken.mydemo.lab" in _warned[0])
 
+# ── a hand-written myip is held to the rules the allocator applies ───────────
+# ipalloc.allocate() rules these out for an address it picks. An address named in the JSON used to be trusted on
+# the grounds that the lab knows better, which is how two labs come to claim one address and the second one takes
+# the first one's name down with it.
+import ipalloc  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+def _preflight_messages(nodes, zone_text, pings=(), local=()):
+    """The ERROR/WARN lines validate_lab_definition() produces for `nodes`, with the lab zone faked to `zone_text`."""
+    issues = []
+    with tempfile.TemporaryDirectory() as zone_dir:
+        Path(zone_dir, "mydemo.lab.lan").write_text(zone_text)
+        definition = _lab_def({"common": dict(base_common, mydomain="mydemo.lab", mygw="192.168.88.1",
+                                              mymask="24", mydns="192.168.88.73"),
+                               "nodes": nodes})
+        lc.subprocess.run = img_check_ok
+        with mock.patch.object(ipalloc, "NAMED_ZONE_DIR", Path(zone_dir)), \
+                mock.patch.object(ipalloc, "local_ips", return_value=set(local)), \
+                mock.patch.object(ipalloc, "answers_ping", side_effect=lambda ip: str(ip) in pings):
+            lc.validate_lab_definition(definition, single_host_cfg, "/iso", "/lab", issues_out=issues)
+    return [str(i) for i in issues]
+
+
+ZONE = ("$TTL 300\n@ IN SOA ns admin ( 1 )\nnode9         IN  A       192.168.88.9\n")
+_NODE = {"mymac": "aa:bb:cc:dd:ee:09", "config_method": "virt_customize"}
+
+taken = _preflight_messages({"n1.mydemo.lab": dict(_NODE, myip="192.168.88.9")}, ZONE)
+check("validate_lab_definition: an address the lab zone holds under another name is refused, not warned about",
+      any("already has a DNS record under the name 'node9'" in m for m in taken))
+check("validate_lab_definition: ...and the refusal says what to do about it",
+      any("dns_sync.py --prune" in m for m in taken))
+
+own = _preflight_messages({"n1.mydemo.lab": dict(_NODE, myip="192.168.88.73")}, ZONE, local={"192.168.88.73"})
+check("validate_lab_definition: this automation node's own address is refused for a node, which would otherwise "
+      "take the address every other node reaches DNS and the provisioning files on",
+      any("this automation node's own address" in m for m in own))
+
+rebuild = _preflight_messages({"node9.mydemo.lab": dict(_NODE, myip="192.168.88.9")}, ZONE,
+                              pings={"192.168.88.9"})
+check("validate_lab_definition: a node at the address the zone already holds for that same node is no clash, so "
+      "a rerun over an existing lab still validates",
+      not any("192.168.88.9" in m for m in rebuild))
+
+stranger = _preflight_messages({"n1.mydemo.lab": dict(_NODE, myip="192.168.88.200")}, ZONE,
+                               pings={"192.168.88.200"})
+check("validate_lab_definition: an address nothing in the zone claims but something answers on stays a warning: "
+      "it may be a machine nobody told us about, and that is not for the preflight to decide",
+      any("responding to ping" in m for m in stranger))
+
 lc.ssh_run = _real_ssh_run
 lc.warn = _real_warn
 

@@ -1,0 +1,153 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Installs Gitleaks, which scans a directory or a git repository's history for committed
+# secrets, in either of two shapes: a podman container on a node, or a Kubernetes CronJob that clones repositories
+# and scans them on a schedule. The plumbing both shapes share is libs/secret_scan.py.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://github.com/gitleaks/gitleaks. The container images are ghcr.io/gitleaks/gitleaks and
+# zricethezav/gitleaks, whose entrypoint is gitleaks itself, so a mode's arguments are the Gitleaks command line.
+# Its exit code is 0 for a clean scan and 1 when it found leaks or hit an error, which is what
+# gitleaks_fail_on_leaks decides what to do with.
+#
+# Schema version: 1.0
+#
+# JSON section: "gitleaks" — Gitleaks secret scanning
+#   gitleaks_mode        : how it runs. "container" runs it with podman on each node that lists this add-on, over
+#                          the directory gitleaks_scan_path names. "kubernetes" installs a CronJob on the kcluster
+#                          that clones gitleaks_repos and scans them. (options: container, kubernetes)
+#                          (default: container)
+#   gitleaks_version     : release version, without the "v" (default: 8.30.1)
+#   gitleaks_image       : container image, whose entrypoint is gitleaks itself (default: ghcr.io/gitleaks/gitleaks)
+#   gitleaks_image_tag   : image tag. Empty uses "v" and gitleaks_version, which is how the images are tagged.
+#
+# container fields
+#   gitleaks_scan_path   : the directory on the node to scan, mounted read-only into the container. Required in
+#                          this mode.
+#   gitleaks_command     : "dir" scans the files as they are on disk, "git" scans a repository's commit history
+#                          with git log -p. (options: dir, git) (default: dir)
+#   gitleaks_report_path : where the report is written on the node, as JSON
+#                          (default: /var/log/gitleaks/gitleaks-report.json)
+#   gitleaks_schedule    : a five-field cron expression. Set, the scan is written to /etc/cron.d/gitleaks and
+#                          repeats; unset, it runs once now. The kubernetes mode's CronJob takes the same
+#                          expression, and defaults to "0 3 * * *" there.
+#
+# kubernetes fields
+#   gitleaks_ns          : Kubernetes namespace (default: gitleaks)
+#   gitleaks_repos       : list of git URLs the CronJob clones (--depth 1) and scans. Public repositories only:
+#                          this add-on configures no credentials, so a private URL fails in the clone step.
+#                          Required in this mode. The report is the job's own output, read with
+#                          "kubectl -n <namespace> logs job/<name>".
+#   gitleaks_git_image   : image of the init container that clones them (default: alpine/git)
+#
+# both modes
+#   gitleaks_config      : path on the node of a Gitleaks configuration file (.gitleaks.toml), mounted into the
+#                          container and passed as --config. Unset, Gitleaks uses the .gitleaks.toml of what it
+#                          scans, else its own default rules.
+#   gitleaks_baseline_path : path of an earlier report whose findings are ignored, passed as --baseline-path. The
+#                          usual way to adopt the tool on a repository that already has findings nobody is going
+#                          to fix today. The path is one inside the container, so it belongs under what is scanned.
+#   gitleaks_redact      : "true" or "false" (default: true). Keeps the secrets themselves out of the report and
+#                          the log, which in a lab are both world-readable.
+#   gitleaks_fail_on_leaks : "true" or "false" (default: false). False reports findings and lets the lab carry on,
+#                          which is what a demo of the tool wants; true makes a scan that found something fail the
+#                          add-on, which is what a lab asserting a repository is clean wants.
+#
+# NOTE: upstream describes Gitleaks as feature complete, with further releases carrying security fixes only, and
+# points at Betterleaks for continued development — see install_betterleaks, which has the same two modes and
+# shares this add-on's plumbing. Nothing here depends on a newer Gitleaks feature.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "gitleaks",
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["standalone-container", "kubernetes"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+import secret_scan  # noqa: E402
+from lab_creation import die  # noqa: E402
+
+
+def arguments(cfg, path, config_path="", report_path=""):
+    """
+    Gitleaks' own command line for one scan: the command, what to scan, and the report, redaction, configuration
+    and baseline the lab asked for. Every path is one the container sees, not one on the node.
+    """
+    args = [str(TOOL.get(cfg, "command", "dir")).strip().lower()]
+    if path:
+        args.append(path)
+    args.append("--no-banner")
+    if secret_scan.truth(TOOL, cfg, "redact", "true"):
+        args.append("--redact")
+    if config_path:
+        args += ["--config", config_path]
+    if cfg.get("gitleaks_baseline_path"):
+        args += ["--baseline-path", str(cfg["gitleaks_baseline_path"])]
+    if report_path:
+        args += ["--report-format", "json", "--report-path", report_path]
+    return args
+
+
+TOOL = secret_scan.Tool(
+    name="gitleaks", display="Gitleaks", image="ghcr.io/gitleaks/gitleaks", version="8.30.1",
+    arguments=arguments, report="/var/log/gitleaks/gitleaks-report.json")
+
+
+def _validate(v):
+    # gitleaks_mode and gitleaks_command are declared with "(options: ...)" in the header above, so the schema's
+    # own enum check already refuses a value outside them; the rest is what every scanner add-on checks.
+    secret_scan.validate(TOOL, v)
+
+
+def _check(chk):
+    secret_scan.check(TOOL, chk)
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    defaults = primary.load_defaults()
+    cfg = definition.get("gitleaks", {}) or {}
+    mode = secret_scan.mode_of(TOOL, cfg)
+    if mode not in secret_scan.MODES:
+        die("gitleaks.gitleaks_mode='{}': must be one of {}".format(
+            cfg.get("gitleaks_mode"), ", ".join(secret_scan.MODES)))
+
+    if mode == "kubernetes":
+        target = k8s.first_server_node(definition)
+        if not target:
+            sys.exit(1)
+        vm_name, _ssh_cmd = target
+        secret_scan.install_cronjob(TOOL, vm_name, cfg, defaults.get(
+            "_templ_addons_loc", "/usr/share/lab_creation/templates/addons/"))
+        return
+
+    # The container mode acts on the nodes that list this add-on, and reads its configuration per node: one lab can
+    # scan a different directory on each of them (libs/k8s.py's addon_node_config()).
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "gitleaks", vm_name=env_vm_name):
+        secret_scan.run_container(TOOL, vm_name, k8s.addon_node_config(definition, "gitleaks", vm_name))
+
+
+if __name__ == "__main__":
+    main()

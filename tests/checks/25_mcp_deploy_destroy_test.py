@@ -18,8 +18,10 @@ sys.path.insert(0, str(_REPO / "mcp"))
 
 
 class _FakeMCPServer:
-    def __init__(self, name):
+    def __init__(self, name, token_verifier=None, auth=None):
         self.tools = {}
+        self.token_verifier = token_verifier
+        self.auth = auth
 
     def tool(self):
         def deco(fn):
@@ -39,14 +41,40 @@ class _FakeTransportSecuritySettings:
         self.enable_dns_rebinding_protection = enable_dns_rebinding_protection
 
 
+# The SDK's auth surface mcp_server.py imports. These tests do not exercise per-client scopes (24_mcp_server does),
+# so get_access_token() answers None: an endpoint that requires no token, which is the read-only deployment.
+class _FakeAccessToken:
+    def __init__(self, token, client_id, scopes, **kw):
+        self.token = token
+        self.client_id = client_id
+        self.scopes = scopes
+
+
+class _FakeAuthSettings:
+    def __init__(self, issuer_url=None, required_scopes=None, **kw):
+        self.issuer_url = issuer_url
+        self.required_scopes = required_scopes
+
+
 _fake_fastmcp_mod = types.ModuleType("mcp.server.mcpserver")
 _fake_fastmcp_mod.MCPServer = _FakeMCPServer
 _fake_transport_security_mod = types.ModuleType("mcp.server.transport_security")
 _fake_transport_security_mod.TransportSecuritySettings = _FakeTransportSecuritySettings
+_fake_provider_mod = types.ModuleType("mcp.server.auth.provider")
+_fake_provider_mod.AccessToken = _FakeAccessToken
+_fake_settings_mod = types.ModuleType("mcp.server.auth.settings")
+_fake_settings_mod.AuthSettings = _FakeAuthSettings
+_fake_auth_context_mod = types.ModuleType("mcp.server.auth.middleware.auth_context")
+_fake_auth_context_mod.get_access_token = lambda: None
 sys.modules["mcp"] = types.ModuleType("mcp")
 sys.modules["mcp.server"] = types.ModuleType("mcp.server")
 sys.modules["mcp.server.mcpserver"] = _fake_fastmcp_mod
 sys.modules["mcp.server.transport_security"] = _fake_transport_security_mod
+sys.modules["mcp.server.auth"] = types.ModuleType("mcp.server.auth")
+sys.modules["mcp.server.auth.provider"] = _fake_provider_mod
+sys.modules["mcp.server.auth.settings"] = _fake_settings_mod
+sys.modules["mcp.server.auth.middleware"] = types.ModuleType("mcp.server.auth.middleware")
+sys.modules["mcp.server.auth.middleware.auth_context"] = _fake_auth_context_mod
 
 import mcp_server  # noqa: E402
 

@@ -172,6 +172,8 @@ created = []
 with mock.patch.object(svc, "_zone_declared", side_effect=lambda server, zone: zone in declared), \
         mock.patch.object(svc, "_create_local_zone", side_effect=lambda *a: created.append(a)), \
         mock.patch.object(svc, "_create_remote_zone", side_effect=lambda *a: created.append(a)), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     already = svc.ensure_zone(None, "mydemo.lab")
     check("a zone the server already declares is left alone", already is False and created == [])
@@ -196,6 +198,8 @@ with mock.patch.object(svc, "masters", lambda remote=None: ["dns2.lab"]), \
         mock.patch.object(svc, "validate_zones", lambda *a, **kw: []), \
         mock.patch.object(svc, "zone_records", side_effect=lambda server, f: set(held[server])), \
         mock.patch.object(svc, "_write_records", side_effect=lambda s, f, r: written.append((s, tuple(r)))), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     messages = svc.sync_zone("mydemo.lab", remote_dns_servers=["dns2.lab"])
 
@@ -213,6 +217,8 @@ with mock.patch.object(svc, "masters", lambda remote=None: ["dns2.lab"]), \
         mock.patch.object(svc, "validate_zones", lambda *a, **kw: []), \
         mock.patch.object(svc, "zone_records", side_effect=lambda server, f: set(same[server])), \
         mock.patch.object(svc, "_write_records", side_effect=lambda s, f, r: written.append(s)), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     check("masters that already agree produce no report and no write",
           svc.report_zone("mydemo.lab", remote_dns_servers=["dns2.lab"]) == []
@@ -224,6 +230,7 @@ with mock.patch.object(svc, "masters", lambda remote=None: ["dns2.lab"]), \
         mock.patch.object(svc, "_resolve_families", lambda servers: None), \
         mock.patch.object(svc, "validate_zones", lambda *a, **kw: []), \
         mock.patch.object(svc, "zone_records", side_effect=lambda server, f: set(held[server])), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "_write_records", side_effect=lambda s, f, r: reported.append(s)):
     check("report_zone finds the same differences and writes nothing",
           len(svc.report_zone("mydemo.lab", remote_dns_servers=["dns2.lab"])) == 4 and reported == [])
@@ -238,6 +245,8 @@ with mock.patch.object(svc, "masters", lambda remote=None: ["dns2.lab"]), \
         mock.patch.object(svc, "_dns_remove_record", side_effect=lambda f, r: removed.append((None, r))), \
         mock.patch.object(svc, "_remote_dns_remove_record",
                           side_effect=lambda s, f, r: removed.append((s, r))), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     pruned = svc.prune_zone("mydemo.lab", remote_dns_servers=["dns2.lab"])
 check("prune removes the record a single master holds alone",
@@ -249,6 +258,8 @@ with mock.patch.object(svc, "masters", lambda remote=None: []), \
         mock.patch.object(svc, "_resolve_families", lambda servers: None), \
         mock.patch.object(svc, "validate_zones", lambda *a, **kw: []), \
         mock.patch.object(svc, "zone_records", side_effect=lambda server, f: {"a IN A 1.1.1.1"}), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     check("with one master there is nothing to prune against, so nothing is removed",
           svc.prune_zone("mydemo.lab", remote_dns_servers=None) == [])
@@ -267,6 +278,8 @@ with mock.patch.object(services, "warn", side_effect=lambda m: warnings.append(m
         mock.patch.object(svc, "_dns_remove_line", lambda *a: None), \
         mock.patch.object(svc, "_dns_remove_service_lines", lambda *a: None), \
         mock.patch.object(svc, "_update_hosts_file", lambda *a: None), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     svc.del_from_dns("node101.mydemo.lab", "192.168.88.101", "mydemo.lab", "", ["up.lab", "down.lab"])
 check("the master a removal never reached is named", any("down.lab" in w for w in warnings))
@@ -337,6 +350,7 @@ reported = []
 with mock.patch.object(services, "warn", side_effect=lambda m: reported.append(m)), \
         mock.patch.object(svc, "validate_zones", lambda *a, **kw: ["'down.lab' cannot load its copy"]), \
         mock.patch.object(svc, "_compare_zone", lambda *a, **kw: []), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "_write_records", lambda *a: (_ for _ in ()).throw(AssertionError("wrote"))):
     returned = svc.report_zone("mydemo.lab")
 check("an unloadable zone is reported even when every record agrees",
@@ -385,6 +399,8 @@ with mock.patch.object(services, "detect_os", side_effect=lambda h: {"id": "debi
         mock.patch.object(svc, "_dns_add_line", lambda *a: None), \
         mock.patch.object(svc, "_dns_remove_ptr_for_octet", lambda *a: None), \
         mock.patch.object(svc, "_update_hosts_file", lambda *a, **kw: None), \
+        mock.patch.object(svc, "bump_serials", lambda servers, files: 0), \
+        mock.patch.object(svc, "zone_serial", lambda server, f: 0), \
         mock.patch.object(svc, "restart_named", lambda **kw: None):
     svc.add_to_dns("node101.mydemo.lab", "192.168.88.101", "mydemo.lab", "88.168.192", ["deb.lab"])
 check("add_to_dns writes to the Debian master's own directory",
@@ -454,6 +470,151 @@ check("dns_zone.has_header: a header's SOA counts, a record named after it does 
 check("dns_zone.with_header keeps every record behind the header",
       dns_zone.with_header("\nsol IN A 192.0.2.1\n", ["$TTL 60", "@ IN SOA x. y. ( 1 2 3 4 5 )"])
       == "$TTL 60\n@ IN SOA x. y. ( 1 2 3 4 5 )\nsol IN A 192.0.2.1\n")
+
+
+# ── declared_zones(): is any lab other than this one still using this server ──
+# A shared DNS server is per cloud account while a lab registry is per automation node, so the server itself is
+# the only thing that can see a lab this node never deployed.
+with mock.patch.object(services.DNSService, "_run_on", return_value=FakeResult(stdout=(
+        'zone "mydemo.lab"\nzone "mydemoaws.lab"\nzone "88.168.192.in-addr.arpa"\n'
+        'zone "localhost"\nzone "127.in-addr.arpa"\n'))):
+    declared = services.DNSService().declared_zones("10.0.0.53")
+check("every zone a server declares as a master is listed",
+      {"mydemo.lab", "mydemoaws.lab", "88.168.192.in-addr.arpa"} <= declared)
+check("BIND's own built-in zones are left out: every distribution's default named.conf declares them and they "
+      "belong to no lab", "localhost" not in declared and "127.in-addr.arpa" not in declared)
+with mock.patch.object(services.DNSService, "_run_on", return_value=FakeResult(returncode=1, stdout="")):
+    check("a server that declares none, or cannot be reached, reads as no zones rather than failing",
+          services.DNSService().declared_zones("10.0.0.53") == set())
+
+
+# ── the serial: what makes "behind" different from "diverged" ────────────────
+# Two SOA layouts exist in the wild: the one forward_header() writes, all on one line, and the multi-line one the
+# bootstrap that builds an automation node writes. A reader that knows only one reports no serial for the other,
+# and a zone with no serial compares as behind every other master for ever.
+ONE_LINE = "\n".join(dns_zone.forward_header("mydemo.lab")) + "\nnode101         IN  A       192.168.88.101\n"
+MULTI_LINE = ("$TTL 86400\n@   IN  SOA     automation.mydemo.lab. root.mydemo.lab. (\n"
+              "        2019011603  ;Serial\n        1m        ;Refresh\n)\n"
+              "        IN  NS      automation.mydemo.lab.\n")
+
+check("the serial of a zone written by forward_header() is read from its one-line SOA",
+      dns_zone.serial(ONE_LINE) == 1)
+check("...and of one written by the automation node's own bootstrap, from the line after its SOA",
+      dns_zone.serial(MULTI_LINE) == 2019011603)
+check("a file with no SOA reads as serial 0, which is behind every real serial: BIND refuses to load it at all, "
+      "so it is as far behind as a master can be",
+      dns_zone.serial("node101         IN  A       192.168.88.101\n") == 0)
+
+bumped_one = dns_zone.with_serial(ONE_LINE, 1764000000)
+bumped_multi = dns_zone.with_serial(MULTI_LINE, 2019011604)
+check("a new serial replaces the old one in the one-line layout", dns_zone.serial(bumped_one) == 1764000000)
+check("...and in the multi-line one, keeping the ;Serial comment that names the field",
+      dns_zone.serial(bumped_multi) == 2019011604 and ";Serial" in bumped_multi)
+check("raising the serial changes no record, so a bump never reads as record drift",
+      dns_zone.records(ONE_LINE) == dns_zone.records(bumped_one)
+      and dns_zone.records(MULTI_LINE) == dns_zone.records(bumped_multi))
+check("a file with no SOA is returned unchanged rather than guessed at",
+      dns_zone.with_serial("node101 IN A 192.168.88.101\n", 5) == "node101 IN A 192.168.88.101\n")
+
+check("the next serial is the clock, so a zone's serial says when it last changed",
+      dns_zone.next_serial([1]) > 1700000000)
+check("...but never goes backwards past a serial already above the clock, which is what the bootstrap's "
+      "date-shaped serial is: a serial that went back would make a current master read as behind",
+      dns_zone.next_serial([2019011603]) == 2019011604)
+
+# ── bump_serials(): one serial for every master an operation reached ─────────
+with mock.patch.object(services.DNSService, "_zone_text",
+                       side_effect=lambda server, f: {None: ONE_LINE, "10.0.0.5": ONE_LINE}.get(server, "")), \
+        mock.patch.object(services.DNSService, "_write_zone_text") as written:
+    value = services.DNSService().bump_serials([None, "10.0.0.5"], ["mydemo.lab.lan"])
+check("bump_serials() raises every master's copy to one serial, so masters it reached agree",
+      value > 1700000000 and written.call_count == 2
+      and {dns_zone.serial(call[0][2]) for call in written.call_args_list} == {value})
+
+with mock.patch.object(services.DNSService, "_zone_text", return_value=""), \
+        mock.patch.object(services.DNSService, "_write_zone_text") as written:
+    check("a zone no master holds is not written to and reports no serial",
+          services.DNSService().bump_serials([None], ["absent.lan"]) == 0 and not written.called)
+
+# A master that did not answer is simply not in the list, which is what masters() does with one: it keeps the
+# serial it had, and that is what makes it visibly behind.
+svc = services.DNSService()
+behind = svc._behind({"mydemo.lab.lan": {None: 1764000002, "10.0.0.5": 1764000001}})
+check("a master whose serial is below the highest is behind on that zone",
+      "10.0.0.5" in behind["mydemo.lab.lan"] and None not in behind["mydemo.lab.lan"])
+check("a zone only one master holds is not behind anything: a serial is a comparison",
+      svc._behind({"mydemo.lab.lan": {None: 1764000002, "10.0.0.5": 0}}) == {})
+check("masters holding the same serial are not behind",
+      svc._behind({"mydemo.lab.lan": {None: 5, "10.0.0.5": 5}}) == {})
+check("a behind master is reported, naming both serials so the report says which way round it is",
+      any("is behind on" in m and "1764000001" in m and "1764000002" in m
+          for m in svc._serial_messages({"mydemo.lab.lan": {None: 1764000002, "10.0.0.5": 1764000001}})))
+
+# The whole point of the serial: what a record held by one master alone means.
+COMPARISON = [("mydemo.lab.lan", "10.0.0.5", set(), {"old         IN  A       192.168.88.9"})]
+stale = svc._difference_messages(COMPARISON, {"mydemo.lab.lan": {None: 1764000002, "10.0.0.5": 1764000001}})
+fresh = svc._difference_messages(COMPARISON, {"mydemo.lab.lan": {None: 1764000002, "10.0.0.5": 1764000002}})
+check("a record held alone by a master that is behind was deleted from the others while it was away, so pruning "
+      "it is the repair", any("pruning it is the repair" in m for m in stale))
+check("...while one held alone by a master level with the others has not been written to them yet, and pruning "
+      "it would destroy it", any("have not been written yet" in m for m in fresh))
+
+# A master brought current by a sync is level with the others, so its serial is raised with theirs: left behind,
+# it would be reported as stale on every later comparison although it now holds every record.
+_catchup = services.DNSService()
+_finished = []
+_held = {None: {"a IN A 1.1.1.1"}, "dns2.lab": set()}
+with mock.patch.object(_catchup, "masters", lambda remote=None: ["dns2.lab"]), \
+        mock.patch.object(_catchup, "_resolve_families", lambda servers: None), \
+        mock.patch.object(_catchup, "validate_zones", lambda *a, **kw: []), \
+        mock.patch.object(_catchup, "zone_serial", lambda server, f: 0), \
+        mock.patch.object(_catchup, "zone_records", side_effect=lambda server, f: set(_held[server])), \
+        mock.patch.object(_catchup, "_write_records", lambda *a: None), \
+        mock.patch.object(_catchup, "_finish_write", side_effect=lambda servers, files: _finished.append(
+            (list(servers), list(files)))):
+    _catchup.sync_zone("mydemo.lab", remote_dns_servers=["dns2.lab"])
+check("a sync ends by raising the serial of exactly the zone files it wrote, on the masters it reached",
+      _finished == [(["dns2.lab"], ["mydemo.lab.lan"])])
+
+# ── the zone TTL: lowered for a zone that holds a moving address ─────────────
+check("a lab zone's default TTL is a day, which costs nothing where an address never moves",
+      dns_zone.DEFAULT_TTL == 86400 and dns_zone.ttl(ONE_LINE) == 86400)
+check("a zone holding a cloud node is capped at five minutes: a resolver keeping the old answer for a day would "
+      "outlast every repair made to the zone in between", dns_zone.CLOUD_TTL == 300)
+check("the TTL is read and replaced on its own line", dns_zone.ttl(dns_zone.with_ttl(ONE_LINE, 300)) == 300)
+check("replacing the TTL leaves the records alone",
+      dns_zone.records(dns_zone.with_ttl(ONE_LINE, 300)) == dns_zone.records(ONE_LINE))
+check("a file stating no TTL is returned unchanged", dns_zone.with_ttl("node1 IN A 1.2.3.4\n", 300)
+      == "node1 IN A 1.2.3.4\n")
+
+with mock.patch.object(services.DNSService, "_zone_text", return_value=ONE_LINE), \
+        mock.patch.object(services.DNSService, "_write_zone_text") as written, \
+        mock.patch.object(services, "log"):
+    lowered = services.DNSService()._lower_ttl(None, "mydemo.lab.lan", dns_zone.CLOUD_TTL)
+check("a zone at a day's TTL is lowered when a cloud node joins it",
+      lowered and dns_zone.ttl(written.call_args[0][2]) == 300)
+with mock.patch.object(services.DNSService, "_zone_text", return_value=dns_zone.with_ttl(ONE_LINE, 300)), \
+        mock.patch.object(services.DNSService, "_write_zone_text") as written:
+    check("a zone already at the shorter TTL is left alone, so this is idempotent",
+          not services.DNSService()._lower_ttl(None, "mydemo.lab.lan", dns_zone.CLOUD_TTL) and not written.called)
+    check("...and the TTL is never raised again: a hypervisor node writing to a zone that also holds a cloud "
+          "node's address must not undo the cap",
+          not services.DNSService()._lower_ttl(None, "mydemo.lab.lan", dns_zone.DEFAULT_TTL))
+with mock.patch.object(services.DNSService, "_zone_text", return_value=ONE_LINE), \
+        mock.patch.object(services.DNSService, "_write_zone_text") as written:
+    check("no TTL asked for means no change, which is what a lab with no cloud node passes",
+          not services.DNSService()._lower_ttl(None, "mydemo.lab.lan", 0) and not written.called)
+
+# ── a zone file is replaced whole, never left half written ──────────────────
+_remote_calls = []
+with mock.patch.object(services.DNSService, "_remote",
+                       side_effect=lambda *a, **kw: _remote_calls.append((a, kw)) or FakeResult()), \
+        mock.patch.object(services.DNSService, "_zone_path", return_value="/var/lib/named/mydemo.lab.lan"):
+    services.DNSService()._write_zone_text("10.0.0.5", "mydemo.lab.lan", ONE_LINE)
+check("a master's zone is written beside itself and moved into place: a write cut short would otherwise leave a "
+      "zone BIND refuses whole, costing every record in it",
+      len(_remote_calls) == 1 and ".new" in _remote_calls[0][0][1] and "mv " in _remote_calls[0][0][1]
+      and _remote_calls[0][1].get("input_text") == ONE_LINE)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

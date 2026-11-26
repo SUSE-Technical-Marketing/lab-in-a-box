@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "_comment": "MCP client registry, /etc/lab-mcp/clients.json (MCP_CLIENTS in lab_creation.cfg overrides the path). Written by lab-mcp-issue-client-cert, read by mcp/mcp_server.py on every call so issuing or revoking a client needs no restart. Root-only, 0600: it holds only the SHA-256 of each client's bearer token, never the token, so it cannot hand anyone a working credential.",
+  "clients": [
+    {
+      "_comment_name": "Identifies this client: the certificate CN it was issued with, and the name MCP_AUDIT_LOG records against every call it makes",
+      "name": "agent-a",
+      "_comment_token_sha256": "Lowercase hex SHA-256 of the client's bearer token, which the client sends as 'Authorization: Bearer <token>'",
+      "token_sha256": "XYZ REPLACE ME",
+      "_comment_scopes": "read = every tool; write = additionally the mutating tools (deploy_lab/rebuild_lab/destroy_lab/destroy_vm), granted only with lab-mcp-issue-client-cert --allow-mutations. MCP_ALLOW_MUTATIONS stays the server-wide switch: both it and this scope have to allow a mutation.",
+      "scopes": [
+        "read"
+      ]
+    }
+  ]
+}

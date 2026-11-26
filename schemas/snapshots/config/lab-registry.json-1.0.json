@@ -1,0 +1,12 @@
+{
+ "fields": {
+  "created": {},
+  "definition": {},
+  "lab": {},
+  "mydomain": {},
+  "nodes": {},
+  "updated": {}
+ },
+ "schema": "config:lab-registry.json",
+ "version": "1.0"
+}

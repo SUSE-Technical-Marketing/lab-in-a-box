@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>一个文件，一条命令。</strong>以声明方式描述虚拟机、Kubernetes 集群（RKE2 或 K3s）和附加组件。<code>setup_lab.py</code> 按依赖顺序构建它们，无需您手动运行 <code>virt-install</code> 或 Ansible。</li>
 <li><strong>家庭实验室或云端，同一份定义。</strong>实验室虚拟机运行在您自己的 KVM 主机、Harvester HCI，或 AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale 上。一个实验室可以跨越多台 KVM 主机，并可通过<a href="#cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</a>组合多个云和站点。</li>
-<li><strong><span data-addon-count>102</span> 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
+<li><strong><span data-addon-count>108</span> 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
 <li><strong>与代码同步的 Web 界面。</strong><a href="#web-ui-lab-builder">lab-builder</a> 根据附加组件自身的架构生成每个表单，因此脚本中新增的字段无需修改前端即可显示在界面中。</li>
 <li><strong>可插拔的预配方式。</strong>SLE Micro 使用 Ignition 和 Combustion，openSUSE 和 Ubuntu 使用 cloud-init，旧镜像使用 <code>virt-customize</code>，也可以从安装程序 ISO 进行自动安装（AutoYaST、Kickstart、Preseed 或 AutoInstall）。</li>
 <li><strong>凭据不放在实验室文件中。</strong>云和服务的凭据可以保存在按账户加密的文件中（使用 Argon2id 派生密钥，再级联使用 AES-256-GCM 和 ChaCha20-Poly1305）。</li>
@@ -473,7 +473,7 @@ footer.site {
 <p>SUSE 自家产品取自 SUSE 的公开镜像追踪服务，其余取自各厂商的 AWS Systems Manager 公开参数或其自有 AWS 账户，绝不使用其他账户也可能匹配的名称搜索。凡不是产品名称的值，包括镜像 ID 和镜像文件名，都原样传递。</p>
 <p>云端实验室还需要节点之间能相互解析。每个云账户有一台小型 DNS 虚拟机提供实验室域名，并将账户网络配置为把该服务器分发给其中的每个实例，于是节点可以按主机名加入其 Kubernetes 集群，无需在客户机内部做任何配置。在 AWS 上这是一个 VPC DHCP 选项集：它作用于整个 VPC，之后启动的实例立即生效，已在运行的实例则在续租 DHCP 时获取。</p>
 <h3 id="kubernetes-setup">Kubernetes 设置</h3>
-<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: kubeadm</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。 <code>clu_ingress</code> 和 <code>clu_storage</code> 指定集群的入口控制器（<code>nginx</code>、<code>traefik</code>）和默认存储类（<code>longhorn</code>、<code>local-path</code>）。未设置时保留发行版自带的组件：RKE2 为 nginx，K3s 为 Traefik 和 local-path，Harvester 两者兼有；对于都不自带的发行版，一旦集群中的附加组件需要，就会安装一个。指定其他值会替换自带组件，<code>none</code> 则不安装任何组件。</p>
+<p>虚拟机启动后，<code>setup_lab.py</code> 根据 JSON 的 <code>kclusters</code> 部分在每个节点上安装 Kubernetes，支持 RKE2 和 K3s。集群就绪后，其附加组件依次运行；虚拟机级附加组件（关联到单个节点而非集群）在该节点预配完成后运行。每个 RKE2 节点和每个 K3s 服务器节点都会获得设置 <code>KUBECONFIG</code> 的 <code>/etc/profile.d/rke2.sh</code> 或 <code>/etc/profile.d/k3s.sh</code>，因此在节点上的任何 root shell（包括 SSH 命令）中都可以使用 <code>kubectl</code> 和 <code>helm</code>。公开 Web 主机名的附加组件（例如 <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>）会在实验室 DNS 中注册该主机名，指向 kcluster 的节点；销毁节点时会删除指向它的记录。 <code>clu_type: vanilla</code> 则用 kubeadm 构建上游 Kubernetes：次版本号取自 <code>clu_rel</code>，网络插件取自 <code>clu_cni</code>（默认 flannel，可选 calico，或 none 以自带插件）。 <code>clu_ingress</code> 和 <code>clu_storage</code> 指定集群的入口控制器（<code>nginx</code>、<code>traefik</code>）和默认存储类（<code>longhorn</code>、<code>local-path</code>）。未设置时保留发行版自带的组件：RKE2 为 nginx，K3s 为 Traefik 和 local-path，Harvester 两者兼有；对于都不自带的发行版，一旦集群中的附加组件需要，就会安装一个。指定其他值会替换自带组件，<code>none</code> 则不安装任何组件。</p>
 <h3 id="multi-host-labs">多主机实验室</h3>
 <p>实验室并不局限于一台虚拟化主机。在自动化虚拟机的 <code>/etc/lab_creation.cfg</code> 中设置 <code>KVM_HOSTS</code>（以空格分隔），即可使用多台虚拟化主机：</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -485,11 +485,11 @@ footer.site {
 <h3 id="cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</h3>
 <p>云上的实验室节点通常根本无法通过网络访问另一个云账户的私有网络或家里的 libvirt 实验室：它们各自是独立隔离的 VPC 或网络。在实验室 JSON 中设置 <code>common.overlay: true</code>，会通过星型 WireGuard 覆盖网络（<code>libs/overlay.py</code>），按真实子网把此实验室的各个站点彼此路由起来：</p>
 <figure class="diagram"><img class="diagram--light" src="media/diagrams/overlay.svg" alt="Cross-cloud WireGuard overlay: site gateways connect to a hub; nodes route through their own gateway" loading="lazy"><img class="diagram--dark" src="media/diagrams/overlay-dark.svg" alt="" aria-hidden="true" loading="lazy"></figure>
-<p>只有每个站点的网关会加入覆盖网络，单个实验室节点从不加入。“站点”指家里的 libvirt 实验室或一个云账户；其网关要么是家庭站点自己的自动化虚拟机（<code>/etc/lab_creation.cfg</code> 中的 <code>mysource</code>），要么是在云账户中自动创建或复用的一台小型专用虚拟机（<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>，与云 DNS 虚拟机命名规则相同）。所有其他节点只会获得一条经由本站点网关、通往其他各站点真实子网的持久本地路由：整个机制就是这样，节点本身不加入 WireGuard。</p>
+<p>只有每个站点的网关会加入覆盖网络，单个实验室节点从不加入。“站点”指家里的 libvirt 实验室或一个云账户；其网关要么是家庭站点自己的自动化虚拟机（<code>/etc/lab_creation.cfg</code> 中的 <code>mysource</code>），要么是在云账户中自动创建或复用的一台小型专用虚拟机（<code>lab-overlay-gw-&lt;backend&gt;[-&lt;account&gt;]</code>，与云 DNS 虚拟机命名规则相同）。所有其他节点只会获得一条经由本站点网关、通往其他各站点真实子网的持久本地路由：整个机制就是这样，节点本身不加入 WireGuard。已存在但处于关机状态的网关虚拟机会被重新启动，而不是被拒绝；并行创建节点（<code>--parallel</code>）时也只会创建一台。</p>
 <p><code>OVERLAY_HUB_ACCOUNT</code>（必填，位于 <code>/etc/lab_creation.cfg</code>）指定网关虚拟机作为中心的云账户，即拥有固定公网 IP、所有其他站点都连接到它的那个站点。<code>OVERLAY_CIDR</code>（默认 <code>10.99.0.0/16</code>）只用于网关在隧道上的地址，不用于路由实际流量；<code>OVERLAY_WG_PORT</code>（默认 <code>51820</code>）是中心的监听端口。加入、退出和路由下发都在 <code>setup_vm.py</code> 中自动完成，无需手动运行其他命令。</p>
 <p><strong>已知限制：</strong>不会修改 DNS（只有当节点名称解析到已路由的子网后，才能通过真实主机名访问它）；之后有新的远程站点加入时，站点中已预配的节点不会被追溯更新路由，只会在各节点自己预配时刷新；AWS 需要禁用站点网关的“源/目标检查”才能转发流量（会自动处理），其他 7 个云后端尚无对应处理。</p>
-<p><strong>已知差距：</strong>AWS 需要关闭站点网关的源/目的检查才能转发流量，这一步是自动完成的，但其余 7 个云后端尚无对应处理。相反，站点中先前已部署的节点在另一个站点后来加入时<em>确实</em>会重新配置路由：中心节点会记录它所路由到的每个节点，并在有站点加入或被撤除时逐一刷新。<code>overlay_ctl.py --hub &lt;host&gt;</code> 可以手动完成同样的事，提供 <code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code> 和 <code>forget &lt;node&gt;</code>。撤除一个站点会把它的网关从中心节点的对等列表中移除，停止路由它的子网，清理站点、地址和节点三份记录，并从其他所有站点的节点上删除该路由；不会触碰任何虚拟机，销毁站点的机器是 <code>destroy_lab.py</code> 的工作。</p>
-<p><strong>跨站点 DNS：</strong>实验室中的每个 DNS 服务器，无论是本自动化节点自己的 BIND，还是各云账号的 DNS 虚拟机，都是同一个区域的主服务器，记录是通过写入其区域文件而到达的。因此，只要把某个节点的记录同时写入其他站点的服务器，它在那些站点就能被解析：每个站点都会把自己的 DNS 服务器登记到中心节点，预配时也会把该节点的记录写入其他所有站点的服务器。仍会留下两类偏差，因为逐条记录的写入只能到达当时在运行的服务器：某站点在其服务器停机期间漏掉的记录，以及此后被销毁的节点的记录（销毁只会到达它自己那次运行所知道的服务器）。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> 通过把每个站点的 DNS 服务器与本节点作比较、而不是覆盖它，来同时修正这两类偏差：只有当本节点驱动所有站点时，它的副本才持有所有站点的记录；若每个站点各有自己的自动化节点，用本节点的副本替换它们的副本，恰恰会删除本节点从未持有过的记录。<code>dns_sync.py &lt;lab.json&gt;</code> 是针对实验室定义所指明的主服务器的同一套比对。两者都会报告每个主服务器缺少哪些记录、以及哪些记录只有它持有，把缺少的记录写入每一个，并且从不删除任何记录，因为只有某一个主服务器持有的记录，既可能是尚未写入其他主服务器，也可能是已从其他主服务器删除。<code>--check</code> 只报告而不写入，<code>--prune</code> 则针对你已在报告中读到的记录作出相反的决定。此外，在写入任何记录之前，每个主服务器都会先成为该区域的主服务器：追加到服务器未声明的区域、或追加到没有 SOA 的文件中的记录，从来都不会被应答，而且无人察觉。 每个主服务器还会通过 <code>named-checkzone</code> 被询问其区域副本能否真正加载：记录比较会忽略区域头部，因此 SOA 损坏或缺失的服务器与其他主服务器看起来完全一致，却什么都不应答。对于不响应 SSH 的服务器，会先重试再跳过，因为云实验室的 DNS 虚拟机在写入第一条记录时往往仍在启动。 每个主服务器的区域都放在其自身 named 被允许读取的目录中：在 Debian 和 Ubuntu 上是 /etc/bind，因为其 AppArmor 配置拒绝其他任何位置；其他发行版则为 /var/lib/named。云实验室的 DNS 虚拟机在首次启动时获得 BIND 及其应答策略，随后像其他任何主服务器一样获得区域，因此创建区域的地方只有一处。</p>
+<p><strong>已知差距：</strong>站点网关要为同站点的其他节点转发流量，而按实例自身地址过滤的云厂商会丢弃这类流量。只有 AWS（源/目的检查）和 Google Cloud（IP 转发）有这种过滤器并提供关闭方式，两者都会自动处理；在 Google Cloud 上，创建网关时和对已存在的网关都会处理。Hetzner Cloud、Alibaba Cloud、Scaleway、UpCloud、Exoscale 和 OVHcloud Public Cloud 都没有公开这类按实例的过滤器，因此无需关闭。节点的私有地址及其站点子网现在在所有云后端上都能取得：云厂商提供时从云厂商读取，否则从客户机自身读取。相反，站点中先前已部署的节点在另一个站点后来加入时<em>确实</em>会重新配置路由：中心节点会记录它所路由到的每个节点，并在有站点加入或被撤除时逐一刷新。<code>overlay_ctl.py --hub &lt;host&gt;</code> 可以手动完成同样的事，提供 <code>list</code>、<code>refresh</code>、<code>retire &lt;site&gt;</code> 和 <code>forget &lt;node&gt;</code>。撤除一个站点会把它的网关从中心节点的对等列表中移除，停止路由它的子网，清理站点、地址和节点三份记录，并从其他所有站点的节点上删除该路由；不会触碰任何虚拟机，销毁站点的机器是 <code>destroy_lab.py</code> 的工作。销毁节点时会从节点记录中删除其所在行，因此中枢不再向已不存在的主机刷新路由。</p>
+<p><strong>跨站点 DNS：</strong>实验室中的每个 DNS 服务器，无论是本自动化节点自己的 BIND，还是各云账号的 DNS 虚拟机，都是同一个区域的主服务器，记录是通过写入其区域文件而到达的。因此，只要把某个节点的记录同时写入其他站点的服务器，它在那些站点就能被解析：每个站点都会把自己的 DNS 服务器登记到中心节点，预配时也会把该节点的记录写入其他所有站点的服务器。仍会留下两类偏差，因为逐条记录的写入只能到达当时在运行的服务器：某站点在其服务器停机期间漏掉的记录，以及此后被销毁的节点的记录（销毁只会到达它自己那次运行所知道的服务器）。<code>overlay_ctl.py --hub &lt;host&gt; dns-sync &lt;domain&gt; [&lt;reverse&gt;]</code> 通过把每个站点的 DNS 服务器与本节点作比较、而不是覆盖它，来同时修正这两类偏差：只有当本节点驱动所有站点时，它的副本才持有所有站点的记录；若每个站点各有自己的自动化节点，用本节点的副本替换它们的副本，恰恰会删除本节点从未持有过的记录。<code>dns_sync.py &lt;lab.json&gt;</code> 是针对实验室定义所指明的主服务器的同一套比对。两者都会报告每个主服务器缺少哪些记录、以及哪些记录只有它持有，把缺少的记录写入每一个，并且从不删除任何记录，因为只有某一个主服务器持有的记录，既可能是尚未写入其他主服务器，也可能是已从其他主服务器删除。<code>--check</code> 只报告而不写入，<code>--prune</code> 则针对你已在报告中读到的记录作出相反的决定。此外，在写入任何记录之前，每个主服务器都会先成为该区域的主服务器：追加到服务器未声明的区域、或追加到没有 SOA 的文件中的记录，从来都不会被应答，而且无人察觉。 每个主服务器还会通过 <code>named-checkzone</code> 被询问其区域副本能否真正加载：记录比较会忽略区域头部，因此 SOA 损坏或缺失的服务器与其他主服务器看起来完全一致，却什么都不应答。对于不响应 SSH 的服务器，会先重试再跳过，因为云实验室的 DNS 虚拟机在写入第一条记录时往往仍在启动。 每个主服务器的区域都放在其自身 named 被允许读取的目录中：在 Debian 和 Ubuntu 上是 /etc/bind，因为其 AppArmor 配置拒绝其他任何位置；其他发行版则为 /var/lib/named。云实验室的 DNS 虚拟机在首次启动时获得 BIND 及其应答策略，随后像其他任何主服务器一样获得区域，因此创建区域的地方只有一处。 每个区域还带有一个真正起作用的 SOA 序列号，每次写入都会在该次写入实际到达的主服务器上递增。写入未能到达的主服务器会保留较低的序列号，这正好区分了仅凭记录比对无法区分的两种情况：序列号落后的主服务器独有的记录，是它不可达期间从其他主服务器上被删除的，因此清除（prune）它才是修复；而与其他主服务器序列号持平的主服务器独有的记录，只是还没有写到其他主服务器上，清除它会把它毁掉。报告会说明每条属于哪一种。</p>
 <h3 id="library-loading-order">库加载顺序</h3>
 <p>每个脚本按以下顺序加载配置：</p>
 <ol>
@@ -727,7 +727,7 @@ python3.11 webui/run-local.py            # → http://localhost:8677/
   },
   &quot;kclusters&quot;: {
     &quot;cluster1&quot;: {
-      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
+      &quot;clu_type&quot;:  &quot;rke2&quot;,             // &quot;rke2&quot;, &quot;k3s&quot;, &quot;vanilla&quot; or &quot;harvester&quot;
       &quot;clu_rel&quot;:   &quot;stable&quot;,
       &quot;mydomain&quot;:  &quot;mydemo.lab&quot;,
       &quot;addons&quot;: [&quot;rancher&quot;, &quot;longhorn&quot;]
@@ -773,7 +773,7 @@ common:
 
 kclusters:
   cluster1:
-    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;kubeadm&quot; or &quot;harvester&quot;
+    clu_type: rke2              # &quot;rke2&quot;, &quot;k3s&quot;, &quot;vanilla&quot; or &quot;harvester&quot;
     clu_rel: stable
     mydomain: mydemo.lab
     addons: [rancher, longhorn]
@@ -1035,7 +1035,7 @@ Raspberry Pi OS 尝试）见 <strong><a href="https://github.com/SUSE-Technical-
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>SOURCE_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。</p>
+<p><code>setup_lab.py</code> 会在做任何事情之前自动预检文件：错误的 IP、引用不存在的 <code>kcluster</code>、缺少 <code>SOURCE_IMAGE</code> 等错误会被发现并显示（<code>✗ Preflight FAILED — N error(s)</code>），且不会创建任何内容，而不是在中途失败。没有问题的文件会显示 <code>✓ Preflight passed</code>，然后直接开始构建。 每个值还会按照声明它的 schema 进行检查：不是 IP 地址的 <code>myip</code>、不是数字或低于最小值的 <code>VM_MEM</code>、不属于已声明的 Kubernetes 集群类型的 <code>clu_type</code>。每个插件的 <code>--validate</code> 也会对自己的字段以及按节点的覆盖做同样的检查。 手写的地址同样要遵守分配器为自己选出的地址所适用的规则：实验室的 DNS 已以另一个名称持有的地址，或者属于自动化节点本身的地址，现在是错误而不是警告，因为构建该节点会让一个已有的名称指向错误的主机。仅仅能回应 ping 的地址仍然只是警告；而某个节点请求的正是它自己的 DNS 记录已经给它的地址，这根本不算冲突，所以重建既有实验室依然可以通过校验。</p>
 <p>依次执行：在 DNS 中注册两个节点 → 创建两台虚拟机（复制 QCOW2 镜像、生成 Combustion 文件、启动并等待 SSH）→ 在 <code>node101</code> 上以 server 身份安装 RKE2，然后在 <code>node102</code> 上以 agent 身份安装 → 在集群的管理节点（<code>mgm_node</code>，默认为第一个 server 节点，此处为 <code>node101</code>）上安装 <code>rancher</code> 和 <code>longhorn</code>。带 Rancher 的 2 节点集群通常需要 15–25 分钟，大部分时间用于 RKE2 引导和 Rancher 的 Helm 安装。</p>
 <ol start="3">
 <li><strong>验证 DNS 解析</strong>（在您自己的桌面上，<a href="#step-5--point-your-client-dns-at-the-automation-vm">指向自动化虚拟机的 DNS</a> 之后）：</li>
@@ -1188,6 +1188,14 @@ iptables -L LAB_PORTFWD_FWD -n -v            # matching FORWARD-chain ACCEPT rul
 <td>查看实验环境中各虚拟机的电源状态，或在不销毁的前提下停止并再次启动它们，主要面向云后端上的实验环境，停止后花费更少。停止时先停 agent 再停 server，而实验环境为自己启动的虚拟机（各站点的 DNS 虚拟机和 overlay 虚拟机）会继续运行，因为同一云账户下的所有实验环境都通过它们解析；<code>--with-infra</code> 会连它们一起停掉。启动顺序相反，并会重新登记实验环境的 DNS，因为云厂商会给回另一个公网地址。每个后端都会说明停止对其账单意味着什么，在 Hetzner Cloud 上则毫无影响。</td>
 </tr>
 <tr>
+<td><code>reconcile_lab.py &lt;lab.json&gt;</code></td>
+<td>把实验室的每个云节点按其提供商当前报告的地址重新注册，用于在本项目工具之外被重启的节点。<code>--dry-run</code> 只报告有哪些变化而不做任何改动；<code>--all</code> 注册每个节点，而不仅是地址发生变化的节点。每个作用于已有实验室的命令都已经先做这件事。</td>
+</tr>
+<tr>
+<td><code>lab_watch.py</code></td>
+<td>将这个自动化节点部署过的每个实验室与各提供商当前报告的状态进行核对并恢复一致：地址变化的节点会被重新注册，已不存在的节点会从已部署实验室的登记表中移除，仅处于停止状态的节点只报告而不去启动。通过安装程序启用的定时器，每 15 分钟自动运行一次。<code>--dry-run</code> 只报告不做改动，<code>--list</code> 打印登记表，<code>--lab &lt;名称&gt;</code> 把本次运行限定到一个实验室。</td>
+</tr>
+<tr>
 <td><code>migrate_config.py [--check] &lt;file&gt;</code></td>
 <td>将实验室定义或配置文件更新到当前的模式版本 (<a href="#schema-versions">模式版本与迁移</a>)</td>
 </tr>
@@ -1317,6 +1325,14 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://github.com/rancher/compliance-operator"><code>complianceascode</code></a></td>
 <td>Rancher 合规 Operator：对 RKE2/K3s 集群进行 CIS 基准扫描</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gitleaks/gitleaks"><code>gitleaks</code></a></td>
+<td>Gitleaks 机密扫描：扫描目录的 podman 容器，或扫描仓库的 Kubernetes CronJob</td>
+</tr>
+<tr>
+<td><a href="https://github.com/betterleaks/betterleaks"><code>betterleaks</code></a></td>
+<td>Betterleaks 机密扫描（由 Gitleaks 维护者现在开发的扫描器）：扫描目录的 podman 容器，或扫描仓库的 Kubernetes CronJob</td>
 </tr>
 <tr>
 <td><a href="https://www.keycloak.org/"><code>keycloak</code></a></td>
@@ -1611,6 +1627,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td>在节点上安装 Anthropic 自己的客户端工具：由 <code>anthropic_tools_components</code> 选择的 Claude Code CLI、Claude Agent SDK、Anthropic API SDK 和 <code>ant</code> CLI。<code>anthropic_tools_install_method</code> 为 <code>native</code> 时运行 Anthropic 自己的安装程序，按用户安装并自动更新；<code>package</code> 则从 Anthropic 的仓库在整台机器上安装已签名的 <code>claude-code</code> 软件包。凭据是可选的：通常由使用 CLI 的人自行登录。与上面的 <code>anthropic</code> 插件无关，后者是 API 前面的代理</td>
 </tr>
 <tr>
+<td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
+<td>Antseed：节点上的点对点 AI 推理市场 — 任何工具都可将其作为基础 URL 的买方代理，或卖方端，并包含 Antseed Desktop</td>
+</tr>
+<tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
 <td>OpenAI API 代理（LiteLLM）</td>
 </tr>
@@ -1763,6 +1783,18 @@ build_man_pages.py --installed      # write them again after an upgrade
 <td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
 <td>Home Assistant 家庭自动化平台</td>
 </tr>
+<tr>
+<td><a href="https://github.com/heygen-com/hyperframes"><code>hyperframes</code></a></td>
+<td>HyperFrames：HeyGen 的开源 HTML 转 MP4 视频框架，部署在节点上，并与 Claude Code、Copilot CLI、Gemini CLI、Codex、Cursor 或 OpenCode 连接</td>
+</tr>
+<tr>
+<td><a href="https://github.com/LibreTranslate/LibreTranslate"><code>libretranslate</code></a></td>
+<td>LibreTranslate：自托管翻译 API，可按需加载所选语言或全部 49 种语言</td>
+</tr>
+<tr>
+<td><a href="https://github.com/debpalash/VoiceStudio"><code>voicestudio</code></a></td>
+<td>VoiceStudio：完全本地的语音克隆、配音、听写与转录，API、Web 界面与 MCP 端点共用一个端口</td>
+</tr>
 </tbody>
 </table>
 
@@ -1883,7 +1915,10 @@ setup_credentials.py --encrypt-existing myfile.yaml  # encrypt an already-writte
 </code></pre>
 <p>每种类型一个凭据文件，即可供所有需要该类型的附加组件重复使用（例如一个 <code>scc</code> 文件即可涵盖任意附加组件的 SCC 凭据），与各附加组件 JSON 字段的前缀无关；底层机制请参阅 <code>libs/addon_common.py</code> 的 <code>resolve_credential()</code>/<code>Validator.vreq_or_credential()</code> 以及 <code>libs/primary.py</code> 的 <code>*_service_credential*</code> 函数。</p>
 <p><strong>云后端（Hetzner/AWS/GCP/Alibaba/Scaleway/UpCloud/OVHcloud/Exoscale）与 <code>myip</code>：</strong>在实验室 JSON 中让云后端节点的 <code>myip</code> 保持为空：真实 IP 只有在创建时由提供商分配后才能知道，不能像 libvirt/Harvester 的静态 IP 那样预先决定。<code>setup_vm.py</code> 从 <code>create_vm()</code> 的返回值获取真实 IP，并在节点真正存在<em>之后</em>（而不是之前）将其注册到 DNS（这是在实测 AWSBackend 时发现的真实缺陷，2026-09-06；请参阅 TODO）。<code>mymac</code> 对云后端同样没有意义：请不要设置；它会被忽略，而不是被生成或做冲突检查。</p>
-<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。每个云节点一旦可达、在首次重启之前，就会在客户机内部被指向这台服务器的私有地址：NetworkManager 获得全局 DNS 配置，wicked 获得静态 netconfig 策略，systemd-resolved 获得实验室服务器以及一个按链路忽略云服务商 DHCP 所分发 DNS 服务器的设置。云服务商的网络本身不做改动，因此在每个云上都以相同方式工作。该 DNS 虚拟机以两个视图应答。从私有地址访问它的客户端（该云网络中的节点，或经由覆盖网络路由到该网络的节点）得到的是该网络中实验室节点的私有地址，因此节点之间的流量留在网络内部，而不会经互联网网关出去、再从网络自身防火墙规则不允许的公网地址返回。其他所有客户端得到的公网地址与实验室中其他每台 DNS 服务器给出的相同。被 <code>setup_lab.py --keep</code> 复用的节点会重新写入其记录和 DNS 设置，因此现有实验室在下次运行时就会改用这种方式。该 DNS 虚拟机会递归解析实验室域名之外的一切。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。</p>
+<p><strong>让云节点的地址在重启后保持不变（<code>static_ip</code>）：</strong>在实例停止时释放其自动分配公网地址的提供商，会在启动时给出另一个地址，于是指向该节点的每条记录都指向一个毫无响应的地址。在 <code>common</code> 中或在单个节点上设置 <code>"static_ip": "true"</code>，则改为在提供商处为该节点预留地址：AWS 上是 Elastic IP，GCP 上是把已分配的地址提升为预留地址，阿里云上是 EIP，Scaleway 上则用弹性 IP 取代动态 IP。Hetzner Cloud、UpCloud 和 OVHcloud 在实例的整个生命周期内都保留其地址，因此没有需要预留的东西；Exoscale 只提供需要客户机自行配置的附加地址。在这四者上，该标志会在日志中说明这一点，而不是失败。预留地址在虚拟机停止期间仍会计费，并在虚拟机被销毁时释放。AWS 默认每个区域只允许 5 个 Elastic IP，因此应为其他东西所指向的那些节点预留地址，而不是为大型实验室的每个节点都预留。无论实验室定义怎么写，每个站点的 DNS 虚拟机和覆盖网络中心都会预留自己的地址，因为该账户下的每个实验室都通过前者解析名称、通过后者路由流量。</p>
+<p><strong>当地址仍然变了的时候（<code>reconcile_lab.py</code>）：</strong>每个作用于已有实验室的命令都会先把它的记录与提供商报告的情况对齐 —— <code>setup_lab.py</code>、<code>vm_power.py start</code> 和 <code>check_lab.py</code> —— 这样，从提供商自己的控制台重启的节点，或者崩溃后又回来的节点，都会以它现在的地址重新注册。<code>reconcile_lab.py &lt;lab.json&gt;</code> 单独做同一件事，而 <code>--dry-run</code> 只报告有哪些变化。 含有云节点的区域还会被限制为 300 秒的 TTL，而不是一天：否则在这里修好的记录，对于已经查询过的解析器来说，只要旧答案仍在缓存中就会继续被忽略。</p>
+<p><strong>已部署实验室的登记表与定时检查（<code>lab_watch.py</code>）：</strong>由于每条命令都以定义文件作为参数，项目中没有任何部分知道存在哪些实验室。<code>setup_lab.py</code> 会在构建任何东西之前，把它部署的每个实验室记录为 <code>/etc/lab_creation/labs/&lt;lab&gt;.json</code>，因此中途失败的运行同样被记录在内，而 <code>destroy_lab.py</code> 会再把该条目删除。每个动作都会追加到 <code>/var/log/lab-in-a-box/labs.log</code>，一行写作 <code>&lt;时间戳&gt; &lt;动作&gt; &lt;实验室&gt; &lt;FQDN&gt; ...</code>。<code>lab_watch.py</code> 通过安装程序启用的定时器每 15 分钟遍历该登记表，并向每个节点自己的提供商询问当前状况：地址变化的节点会被重新注册；提供商已不再拥有的节点说明它是在本工具之外被删除的，于是从登记表中移除（记作 <code>vanished</code>，没有节点剩下的实验室会被整体删除）；仅处于停止状态的节点只报告并保持原样，因为启动它是 <code>vm_power.py</code> 有意为之的步骤。完全无法询问的提供商，例如凭据过期或 API 故障，只是什么也不报告，而不会被当作删除来理解。<code>lab_creation.cfg</code> 中的 <code>LAB_REGISTRY_DIR</code> 与 <code>LAB_EVENT_LOG</code> 可移动这两个文件。</p>
+<p><strong>云 DNS 虚拟机：</strong>实验室中任何节点首次使用某个云后端时，<code>setup_vm.py</code> 还会在同一云网络中预配（如果已存在则复用）一台运行 BIND 的小型低成本 DNS 虚拟机 <code>lab-dns-&lt;backend&gt;</code>，例如 <code>lab-dns-aws</code>。它从提供商发布的最新 openSUSE Leap 镜像启动（在 AWS 上取自 SUSE 的公共云镜像列表），没有该镜像的提供商则从实验室自身的镜像启动；支持 Debian/Ubuntu、SUSE 和 Fedora 系列（RHEL、Amazon Linux）镜像。要改为从指定镜像启动，请在云账户（或 <code>lab_creation.cfg</code>）中设置 <code>CLOUD_DNS_IMAGE</code>。之所以需要它，是因为云节点通常根本无法访问 <code>automation.mydemo.lab</code> 的 BIND 服务器（它位于家庭实验室的 NAT/路由器之后，无法从 Internet 访问）；一个真实的多节点云集群需要在同一云网络中拥有自己的 DNS 服务器，节点之间才能相互解析。每个云节点的 DNS 记录会<em>同时</em>注册到这台 DNS 虚拟机和 <code>automation.mydemo.lab</code> 的中央区域中。每个云节点一旦可达、在首次重启之前，就会在客户机内部被指向这台服务器的私有地址：NetworkManager 获得全局 DNS 配置，wicked 获得静态 netconfig 策略，systemd-resolved 获得实验室服务器以及一个按链路忽略云服务商 DHCP 所分发 DNS 服务器的设置。云服务商的网络本身不做改动，因此在每个云上都以相同方式工作。该 DNS 虚拟机以两个视图应答。从私有地址访问它的客户端（该云网络中的节点，或经由覆盖网络路由到该网络的节点）得到的是该网络中实验室节点的私有地址，因此节点之间的流量留在网络内部，而不会经互联网网关出去、再从网络自身防火墙规则不允许的公网地址返回。其他所有客户端得到的公网地址与实验室中其他每台 DNS 服务器给出的相同。被 <code>setup_lab.py --keep</code> 复用的节点会重新写入其记录和 DNS 设置，因此现有实验室在下次运行时就会改用这种方式。该 DNS 虚拟机会递归解析实验室域名之外的一切。请参阅 <code>libs/backends.py</code> 中 <code>ensure_cloud_dns_vm()</code> 的文档字符串。已存在但处于关机状态的 DNS 虚拟机（使用 <code>vm_power.py --with-infra</code> 停止实验环境后的正常状态）会被重新启动，而不是被拒绝。 DNS 虚拟机自身在它所服务的每个区域中也有一条自己的 A 记录：在外部视图中是其公网地址，在本站点视图中是其私网地址。这样，云实验室中唯一无法按名称访问的主机，现在也能像其他主机一样解析。 <code>destroy_lab.py --with-infra</code> 会在没有其他东西仍在使用时，连同该站点的叠加网关一并销毁这台服务器：DNS 由本自动化节点自身提供的站点、另一个已登记实验室也在使用的站点，或仍持有其他实验室区域的服务器，都会被报告并保留，而叠加网络的集中节点始终保持运行。不加该选项时，两者都不会被动。</p>
 <p><strong>云实例规格：</strong>每个云后端都会根据一个小型内置表（每行的“备注”列说明使用哪一个），把 <code>VM_CPU</code>/<code>VM_MEM</code> 映射为提供商满足要求的最小实例类型、服务器类型、套餐或规格；该表从来不是上限。AWS 是例外：它会读取本区域实际提供的实例类型及其按需价格，选出同时满足 <code>VM_CPU</code> 和 <code>VM_MEM</code> 且最便宜的 x86_64 类型，只有在该查询不可用时才使用内置表。有两种覆盖方式，按优先级排列：
 1. <strong><code>cloud_instance_type</code></strong>（在 common 中或按节点设置，节点优先）：实例类型、服务器类型、套餐或规格的确切名称，原样使用，完全不做自动选择。在所有云后端上用法相同，包括 OVHcloud（跳过实时查询规格列表的 API 调用）和 GCP（不创建自定义类型 <code>e2-custom-&lt;cpu&gt;-&lt;mem&gt;</code>；请改为指定真实的预定义类型，如 <code>n2-standard-4</code>）。
 2. <strong><code>*_INSTANCE_TYPES</code>/<code>*_SERVER_TYPES</code>/<code>*_PLANS</code> 配置键</strong>（见下表中各提供商所在行）：完整替换内置表，因此基于 <code>VM_CPU</code>/<code>VM_MEM</code> 的自动选择仍然有效，但改为针对您自己的列表。格式：<code>name:cores:mem_gb,name:cores:mem_gb,...</code>，例如 <code>HETZNER_SERVER_TYPES=cx22:2:4,cx32:4:8,cx42:8:16</code>。它会整体替换而不是合并该表：如需保留内置条目，请重复写出。GCP 和 OVHcloud 没有此键：GCP 直接根据 <code>VM_CPU</code>/<code>VM_MEM</code> 构建真实的自定义机器类型（没有可替换的目录），OVHcloud 则在创建时实时查询其真实的规格列表（见其所在行）。</p>

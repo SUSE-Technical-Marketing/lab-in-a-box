@@ -229,8 +229,14 @@ def power(definition, config, action, vm_names, wait=True, refresh_dns=True, inf
 def _refresh_dns(definition, config, started: list, result: dict) -> None:
     """
     Register each started node of the lab in the lab's DNS again, so the records point at the address the provider
-    has just given it. Only the lab's own nodes: an infrastructure VM is registered by the step that uses it. A
-    failure is reported against that node rather than ending the run, since the VM is up either way.
+    has just given it. Only the lab's own nodes: an infrastructure VM is registered by the step that uses it.
+
+    Every started node, whatever backend it is on and whether or not its address moved: a guest that has just
+    booted may have taken its provider's own resolver from DHCP again even where its address is unchanged.
+    refresh_kept_node_dns() also reserves the node's address when the lab asked for a fixed one
+    (libs/reconcile.py's ensure_node_address()), so starting a lab applies a static_ip added since it was built.
+
+    A failure is reported against that node rather than ending the run, since the VM is up either way.
     """
     nodes = definition.get("nodes") or {}
     to_refresh = [vm for vm in started if vm in nodes]

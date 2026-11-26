@@ -18,6 +18,12 @@ commit, the forever-retry requirement for SMLM). They're kept there instead of i
 here because they apply to *both* halves of this skill and to almost anything else done
 in this repo; violating them is the most common way this kind of task goes wrong.
 
+If the task touches DNS, the WireGuard overlay, a lab's addresses or anything multi-site,
+read `references/dns-architecture.md` first. Several decisions there look like oversights
+until you know the constraint behind them (a zone transfer is a pull, so native BIND
+replication would need the direction that NAT blocks), and it carries the glossary that
+stops "site" and "zone" being read as the same word.
+
 If the task touches any schema's fields — a new addon's own JSON section (Part B), the lab
 definition itself, or a config file's schema — also read `references/schema-versions.md`
 before editing. It's a separate file because it's mandatory and CI-enforced (unlike most of

@@ -10,6 +10,7 @@
 import ipaddress
 import sys
 import tempfile
+import threading
 from unittest import mock
 from pathlib import Path
 
@@ -254,17 +255,31 @@ check("ensure_overlay_hub_ready: configured but down — brings wg0 up without r
 
 # ── ensure_overlay_hub / ensure_site_gateway_vm: reuse vs create (fake backend) ──
 class _FakeBackendReuse:
-    def __init__(self):
+    def __init__(self, state="running"):
         self.account = ""
         self.calls = []
+        self.state = state
 
     def vm_exists(self, vm_name):
         self.calls.append(("vm_exists", vm_name))
         return True
 
+    def vm_state(self, vm_name):
+        self.calls.append(("vm_state", vm_name))
+        return self.state
+
+    def start_vm(self, vm_name):
+        self.calls.append(("start_vm", vm_name))
+        self.state = "running"
+
     def get_ip(self, vm_name):
         self.calls.append(("get_ip", vm_name))
         return "203.0.113.9"
+
+    def ensure_stable_address(self, vm_name):
+        # A backend that reserves nothing answers "": the caller keeps the address the provider gave.
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
 
     def create_vm(self, *a, **kw):
         raise AssertionError("create_vm() must not be called when the VM already exists")
@@ -296,6 +311,9 @@ class _FakeBackendCreate:
         self.calls.append(("vm_exists", vm_name))
         return False
 
+    def vm_state(self, vm_name):
+        raise AssertionError("vm_state() must not be called when the VM does not exist")
+
     def copy_vm_image(self, *a, **kw):
         self.calls.append(("copy_vm_image", a, kw))
 
@@ -305,6 +323,10 @@ class _FakeBackendCreate:
     def create_vm(self, vm_name, cpu, mem, dsk, network, **kwargs):
         self.calls.append(("create_vm", vm_name, cpu, mem, dsk, network, kwargs))
         return "203.0.113.77"
+
+    def ensure_stable_address(self, vm_name):
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
 
 
 reset()
@@ -358,6 +380,114 @@ check("ensure_site_gateway_vm: sizes the gateway from the CLOUD_INFRA_VM_* const
           lab_creation.CLOUD_INFRA_VM_DSK_GIB))
 check("the gateway gets at least 1 GiB, the floor its image needs to decompress a kernel at boot",
       lab_creation.CLOUD_INFRA_VM_MEM_MIB >= 1024)
+
+
+# ── a stopped hub or gateway is started, not reported as broken ──────────────
+# Stopped is the normal state after vm_power.py powered the lab down, and both VMs are shared across labs, so the
+# next run starts them again rather than refusing or replacing them. The address is read AFTER the start, because a
+# provider that released the public address on stop hands back a different one.
+reset()
+scripted["203.0.113.9"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="REUSEDPUB\n"),
+}
+stopped_hub = _FakeBackendReuse(state="stopped")
+overlay.ensure_overlay_hub(stopped_hub, "aws", "ami-xyz", "/tmp/lab-setup", "ssh-ed25519 AAAAfake test@example")
+check("ensure_overlay_hub: a stopped hub is started instead of being refused",
+      ("start_vm", "lab-overlay-gw-aws") in stopped_hub.calls)
+check("ensure_overlay_hub: the hub's address is read only after it was started",
+      stopped_hub.calls.index(("start_vm", "lab-overlay-gw-aws"))
+      < stopped_hub.calls.index(("get_ip", "lab-overlay-gw-aws")))
+
+reset()
+scripted["203.0.113.9"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="REUSEDPUB\n"),
+}
+running_hub = _FakeBackendReuse(state="running")
+overlay.ensure_overlay_hub(running_hub, "aws", "ami-xyz", "/tmp/lab-setup", "ssh-ed25519 AAAAfake test@example")
+check("ensure_overlay_hub: a running hub is left alone, never restarted",
+      not any(c[0] == "start_vm" for c in running_hub.calls))
+
+reset()
+stopped_gw = _FakeBackendReuse(state="shut off")
+gw_ip_stopped = overlay.ensure_site_gateway_vm(stopped_gw, "aws", "ami-xyz", "/tmp/lab-setup",
+                                               "ssh-ed25519 AAAAfake test@example")
+check("ensure_site_gateway_vm: a stopped gateway is started instead of being refused",
+      ("start_vm", "lab-overlay-gw-aws") in stopped_gw.calls)
+check("ensure_site_gateway_vm: a started gateway's address is still returned",
+      gw_ip_stopped == "203.0.113.9")
+check("ensure_site_gateway_vm: the gateway's address is read only after it was started",
+      stopped_gw.calls.index(("start_vm", "lab-overlay-gw-aws"))
+      < stopped_gw.calls.index(("get_ip", "lab-overlay-gw-aws")))
+
+
+# ── a parallel run creates one hub, not one per worker ───────────────────────
+# Both functions look the VM up and then create it, so without the shared lock N workers each find it absent and
+# each create one (the four duplicate DNS instances of 2026-10-30). The hub and the site gateway of one account are
+# the same VM name, so they share the "overlay" lock.
+class _CountingBackend:
+    """Counts create_vm() calls, and reports the VM as existing only once one has been created."""
+
+    def __init__(self):
+        self.account = "race"
+        self.created = []
+        self._lock = threading.Lock()
+
+    def vm_exists(self, vm_name):
+        return bool(self.created)
+
+    def vm_state(self, vm_name):
+        return "running"
+
+    def get_ip(self, vm_name):
+        return "203.0.113.55"
+
+    def ensure_stable_address(self, vm_name):
+        return ""
+
+    def copy_vm_image(self, *a, **kw):
+        pass
+
+    def push_provisioning_files(self, *a, **kw):
+        pass
+
+    def create_vm(self, vm_name, cpu, mem, dsk, network, **kwargs):
+        with self._lock:
+            self.created.append(vm_name)
+        return "203.0.113.55"
+
+
+reset()
+scripted["203.0.113.55"] = {
+    "test -f /etc/wireguard/wg0.conf": FakeResult(returncode=0),
+    "wg show wg0": FakeResult(returncode=0),
+    "cat /etc/wireguard/wg0.pub": FakeResult(returncode=0, stdout="RACEPUB\n"),
+}
+race_backend = _CountingBackend()
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
+    _race_threads = [threading.Thread(
+        target=overlay.ensure_overlay_hub,
+        args=(race_backend, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")) for _ in range(4)]
+    for _t in _race_threads:
+        _t.start()
+    for _t in _race_threads:
+        _t.join()
+check("ensure_overlay_hub: four concurrent calls create exactly one hub VM", len(race_backend.created) == 1)
+
+reset()
+race_gw = _CountingBackend()
+with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overlay, "wait_for_ssh_command", return_value=True):
+    _race_threads = [threading.Thread(
+        target=overlay.ensure_site_gateway_vm,
+        args=(race_gw, "aws", "ami-xyz", tmp, "ssh-ed25519 AAAAfake test@example")) for _ in range(4)]
+    for _t in _race_threads:
+        _t.start()
+    for _t in _race_threads:
+        _t.join()
+check("ensure_site_gateway_vm: four concurrent calls create exactly one gateway VM", len(race_gw.created) == 1)
 
 
 # ── ensure_overlay_site_gateway: full site-join flow, AllowedIPs covers every known site ──
@@ -641,6 +771,212 @@ check("--check and --prune are rejected together, since they ask for opposite th
       "--check and --prune ask for opposite things" in ctl)
 check("the reverse zone can be compared too, so PTR drift is not invisible",
       "mynet_reverse" in ctl)
+
+
+# ── both of a site DNS server's addresses, and which one a record is written through ──
+# A site's records reach another site's server over SSH. Across the overlay that is its PRIVATE address, which
+# never moves and keeps the traffic inside the tunnel; but an automation node whose own lab has no site of its own
+# is not a peer of the hub and has no route to it, so the public address stays recorded as the fallback.
+reset()
+overlay._private_dns_reachable.clear()
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a site's DNS server is recorded with both of its addresses",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53")
+
+reset()
+overlay._private_dns_reachable.clear()
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("the private address is only recorded behind a domain, so a line can always be read by position",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9")
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+check("a record is written through the site's private address when it answers, keeping the traffic on the "
+      "overlay", overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+scripted["10.0.0.53"] = {"true": FakeResult(returncode=1)}
+check("it falls back to the public address when the private one cannot be reached from here, which is the case "
+      "for an automation node that is not itself a site gateway",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "203.0.113.9")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+probes = [cmd for host, cmd, _body in calls if host == "10.0.0.53" and cmd == "true"]
+check("the private address is probed once per run however many nodes ask, not once per node", len(probes) == 1)
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73 mydemo.lab\n")}
+check("a line written before the private address was recorded is still read correctly",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("home", "192.168.88.73")])
+
+
+# ── one line per (site, domain), because one DNS server holds several labs' zones ──
+# A cloud account's DNS VM is shared by every lab there and holds one zone per lab
+# (backends.ensure_cloud_dns_vm()), so two labs state two true things about one server. Keyed on the site alone,
+# the second to run replaced the first's line, and the first lab's next run then found its own site registered
+# for another domain, left that server out, and stopped writing its records to the very server holding its zone.
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemoaws.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("a second lab on the same account adds its own line instead of replacing the first lab's",
+      written and sorted(written[-1].split("\n")) == sorted([
+          "", "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53", "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53"]))
+
+reset()
+overlay._private_dns_reachable.clear()
+_TWO_LABS = ("aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n"
+             "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53\n")
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout=_TWO_LABS)}
+check("each lab is then written through that one server, which is what was silently lost before",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")]
+      and overlay.list_dns_servers("hub", mydomain="mydemoaws.lab") == [("aws-tmm", "10.0.0.53")])
+check("...and a site is returned once, not once per line it holds",
+      len(overlay.list_dns_servers("hub", mydomain="mydemo.lab")) == 1)
+
+reset()
+overlay._private_dns_reachable.clear()
+_logged = []
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout=_TWO_LABS)}
+with mock.patch.object(overlay, "log", side_effect=lambda m: _logged.append(m)):
+    other = overlay.list_dns_servers("hub", mydomain="third.lab")
+check("a site serving no zone of this lab is still left out", other == [])
+check("...and the message names every domain it does serve, so the reason is readable",
+      _logged and "mydemo.lab" in _logged[-1] and "mydemoaws.lab" in _logged[-1])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9\naws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+check("a line naming this lab's domain beats a legacy line naming none, so a site carrying both is written "
+      "through the server its own domain is recorded against",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("aws-tmm", "10.0.0.53")])
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9\naws-tmm 203.0.113.9 other.lab\n")}
+overlay.register_dns_server("hub", "aws-tmm", "203.0.113.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("registering a site drops its own line from before the domain was recorded, which cannot be told apart "
+      "from this one and would otherwise be read as every other lab's server for ever",
+      written and "aws-tmm 203.0.113.9\n" not in written[-1]
+      and "aws-tmm 203.0.113.9 other.lab" in written[-1]
+      and "aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53" in written[-1])
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\nhome 192.168.88.73 mydemo.lab\n")}
+overlay.register_dns_server("hub", "aws-tmm", "198.51.100.9", "mydemo.lab", private_ip="10.0.0.53")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("re-registering the same site and domain replaces that one line and leaves another site's alone",
+      written and "aws-tmm 198.51.100.9 mydemo.lab 10.0.0.53" in written[-1]
+      and "203.0.113.9" not in written[-1] and "home 192.168.88.73 mydemo.lab" in written[-1])
+
+# ── a destroyed lab takes its own line off, and only its own ───────────────
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null": FakeResult(stdout=_TWO_LABS)}
+removed = overlay.forget_dns_server("hub", "aws-tmm", "mydemo.lab")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("destroying a lab removes its own (site, domain) line", removed is True)
+check("...and leaves the other lab's line on the same server alone",
+      written and written[-1].strip() == "aws-tmm 203.0.113.9 mydemoaws.lab 10.0.0.53")
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null": FakeResult(stdout=_TWO_LABS)}
+check("a lab that has no line there changes nothing, which is every lab destroyed before this existed",
+      overlay.forget_dns_server("hub", "aws-tmm", "never-registered.lab") is False
+      and not [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd])
+check("a lab with no domain removes nothing rather than guessing at a line",
+      overlay.forget_dns_server("hub", "aws-tmm", "") is False)
+
+reset()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns 2>/dev/null":
+                   FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+overlay.forget_dns_server("hub", "aws-tmm", "mydemo.lab")
+written = [body for host, cmd, body in calls if body is not None and "overlay_dns" in cmd]
+check("removing the last line empties the file instead of writing a blank one named as a site",
+      written and written[-1] == "")
+
+# The hub is looked up, never created: a teardown that brought an overlay hub into being would be absurd.
+destroy_lab_source = (_REPO / "scripts" / "destroy_lab.py").read_text()
+check("destroy_lab.py takes this lab's DNS registrations off the hub",
+      "overlay.forget_dns_server(hub_host, site_name, mydomain)" in destroy_lab_source)
+check("...finding the hub without creating one",
+      "overlay.existing_hub_host(" in destroy_lab_source
+      and "ensure_overlay_hub" not in destroy_lab_source)
+check("...one (site, domain) pair per site, since a lab's nodes can sit on different sites and its kclusters "
+      "can name different domains, through the same lab_sites() the --with-infra gates use",
+      "for site_name, (_vm_name, _account, zones) in sorted(lab_sites(" in destroy_lab_source
+      and "overlay.forget_dns_server(hub_host, site_name, mydomain)" in destroy_lab_source)
+
+check("existing_hub_host() answers \"\" with no hub account configured, which is every lab with no overlay",
+      overlay.existing_hub_host({}) == "")
+
+
+# ── the server is resolved from this host's own zone, not from what the registry wrote down ──
+# A site name already determines its DNS VM's name, so the registry never had to record it, and the address can
+# come from the zone this host holds a copy of rather than from state written earlier.
+check("a cloud site's DNS VM name is derived from the site",
+      overlay.dns_vm_name_for_site("aws-tmm") == "lab-dns-aws-tmm"
+      and overlay.dns_vm_name_for_site("hetzner-default") == "lab-dns-hetzner")
+check("the libvirt and Harvester site has none: its DNS server is the automation node itself",
+      overlay.dns_vm_name_for_site("home") == "" and overlay.dns_vm_name_for_site("") == "")
+
+with tempfile.TemporaryDirectory() as _zones:
+    Path(_zones, "mydemo.lab.lan").write_text(
+        "$TTL 300\n@ IN SOA ns admin ( 1 )\nlab-dns-aws-tmm         IN  A       198.51.100.9\n")
+    Path(_zones, "mydemo.lab.site-aws-tmm.lan").write_text(
+        "$TTL 300\n@ IN SOA ns admin ( 1 )\nlab-dns-aws-tmm         IN  A       10.0.0.77\n")
+    reset()
+    overlay._private_dns_reachable.clear()
+    scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                       FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_zones)):
+        resolved = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("the zone's own record wins over the address the registry recorded, so a server whose address changed "
+          "is still reached without anything re-registering it", resolved == [("aws-tmm", "10.0.0.77")])
+
+    reset()
+    overlay._private_dns_reachable.clear()
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_zones)), \
+            mock.patch.object(overlay, "ssh_run",
+                              side_effect=lambda host, cmd, **kw: FakeResult(returncode=1)
+                              if host == "10.0.0.77" else FakeResult()), \
+            mock.patch.object(overlay, "ssh_output", return_value="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n"):
+        unreachable = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("...and the public one from the same zone is the fallback when the private one cannot be reached",
+          unreachable == [("aws-tmm", "198.51.100.9")])
+
+with tempfile.TemporaryDirectory() as _empty:
+    reset()
+    overlay._private_dns_reachable.clear()
+    scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                       FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_empty)):
+        first_run = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("before that record exists, and for a reader holding no copy of the zone, the recorded addresses are "
+          "still used: a lookup that cannot fail today must not start failing",
+          first_run == [("aws-tmm", "10.0.0.53")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73 mydemo.lab\n")}
+check("the home site keeps its recorded address, which is mydns and does not move",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("home", "192.168.88.73")])
 
 
 if failures:

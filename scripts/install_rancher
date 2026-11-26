@@ -259,7 +259,7 @@ def finish_bootstrap(hostname, hostname_fqdn, bootstrap_pwd, admin_pwd):
 
     Until someone logs in once, Rancher leaves settings/server-url empty and never finishes bootstrapping, and
     without that URL no ClusterRegistrationToken is ever given a manifest URL, so no cluster can be imported and
-    the lab's Rancher is only usable by hand. Confirmed live on 2026-10-17 while importing a kubeadm cluster: with
+    the lab's Rancher is only usable by hand. Confirmed live on 2026-10-17 while importing a vanilla cluster: with
     server-url empty, the token stays empty forever.
 
     Idempotent: a Rancher that is already bootstrapped refuses the bootstrap password, which is not an error here,
@@ -340,7 +340,7 @@ def import_cluster(hostname, hostname_fqdn, admin_pwd, name, target_node, insecu
     Import the Kubernetes cluster that `target_node`'s kubectl talks to into the Rancher on `hostname`, as `name`.
     Returns Rancher's own cluster id, or "" when it could not be imported.
 
-    The sequence, and why each step is what it is (confirmed live on 2026-10-17 importing a kubeadm cluster):
+    The sequence, and why each step is what it is (confirmed live on 2026-10-17 importing a vanilla cluster):
 
       1. A provisioning.cattle.io/v1 Cluster, which is how a cluster Rancher does not provision is registered. Its
          agentEnvVars carry CATTLE_INSECURE_TLS, because a lab's Rancher serves a self-signed certificate and the

@@ -154,8 +154,13 @@ with mock.patch.object(backends.urllib.request, "urlopen", return_value=_FakeRes
 # ── delete_vm(): idempotent when the server is already gone ────────────────
 with mock.patch.object(backends.urllib.request, "urlopen", return_value=_FakeResponse({"servers": []})) as m_open:
     backend.delete_vm("vm1")  # must not raise/die
-    check("delete_vm() only calls GET (no DELETE) when the server doesn't exist",
-          m_open.call_count == 1)
+    methods = [c[0][0].method for c in m_open.call_args_list]
+    check("delete_vm() sends no DELETE when the server doesn't exist (it looks for a leftover flexible IP "
+          "first, then for the server)",
+          "DELETE" not in methods)
+    check("delete_vm() looks for this VM's flexible IP even when the server is already gone, since the address "
+          "outlives it and is billed on its own",
+          any("/ips" in c[0][0].full_url for c in m_open.call_args_list))
 
 
 # ── create_vm(): real request body shape + the separate cloud-init PATCH ──
@@ -247,6 +252,47 @@ check("_pick_server_type() does NOT fall back to the built-in SERVER_TYPES once 
 # ── host_resources(): a large constant, not a real capacity query ─────────
 check("host_resources() returns a (cpu, mem_mb, disk_mb) tuple that never reads as 'no capacity'",
       backend.host_resources() == (9999, 999999, 999999))
+
+
+# ── ensure_stable_address() / release_stable_address(): the flexible IP path ─
+# A dynamic IP, which is what a server gets when none is given, goes back to Scaleway's pool on power-off.
+def _fake_ip_api(ips, calls):
+    def _open(req, **kwargs):
+        calls.append(req)
+        url, method = req.full_url, req.method
+        if "/servers" in url and method == "GET":
+            return _FakeResponse({"servers": [{"id": "s-1", "state": "running"}]})
+        if url.endswith("/ips") and method == "GET":
+            return _FakeResponse({"ips": ips})
+        if url.endswith("/ips") and method == "POST":
+            return _FakeResponse({"ip": {"id": "ip-1", "address": "198.51.100.12"}})
+        return _FakeResponse({})
+    return _open
+
+
+ip_calls = []
+with mock.patch.object(backends.urllib.request, "urlopen", side_effect=_fake_ip_api([], ip_calls)):
+    flexible = backend.ensure_stable_address("vm1")
+created = next((r for r in ip_calls if r.full_url.endswith("/ips") and r.method == "POST"), None)
+attached = next((r for r in ip_calls if "/ips/ip-1" in r.full_url and r.method == "PATCH"), None)
+check("ensure_stable_address() creates a flexible IP tagged with the VM's own name, so a later run finds that "
+      "same one", created is not None and b"vm1" in created.data)
+check("ensure_stable_address() attaches it to the server", attached is not None and b"s-1" in attached.data)
+check("ensure_stable_address() returns the flexible IP", flexible == "198.51.100.12")
+
+ip_calls = []
+_MINE = [{"id": "ip-1", "address": "198.51.100.12", "tags": ["vm1"], "server": {"id": "s-1"}}]
+with mock.patch.object(backends.urllib.request, "urlopen", side_effect=_fake_ip_api(_MINE, ip_calls)):
+    flexible = backend.ensure_stable_address("vm1")
+check("ensure_stable_address() is idempotent: an address already on this server is returned as it is",
+      flexible == "198.51.100.12"
+      and not any(r.full_url.endswith("/ips") and r.method == "POST" for r in ip_calls))
+
+ip_calls = []
+with mock.patch.object(backends.urllib.request, "urlopen", side_effect=_fake_ip_api(_MINE, ip_calls)):
+    backend.release_stable_address("vm1")
+check("release_stable_address() deletes the flexible IP, which is billed while the account holds it",
+      any("/ips/ip-1" in r.full_url and r.method == "DELETE" for r in ip_calls))
 
 
 if failures:

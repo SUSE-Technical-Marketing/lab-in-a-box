@@ -167,7 +167,11 @@ with mock.patch.object(backends.subprocess, "run", return_value=_cp(0, stdout=js
 # ── delete_vm(): idempotent when the instance is already gone ─────────────
 with mock.patch.object(backends.subprocess, "run", return_value=_cp(0, stdout=json.dumps([]))) as m_run:
     backend.delete_vm("vm1")  # must not raise/die
-    check("delete_vm() only calls the list check (no delete) when nothing exists", m_run.call_count == 1)
+    check("delete_vm() deletes no instance when nothing exists (it releases this VM's reserved address first)",
+          not any(c[0][0][1:4] == ["compute", "instances", "delete"] for c in m_run.call_args_list))
+    check("delete_vm() releases this VM's reserved address even when the instance is already gone, since a "
+          "reserved address no instance uses is still billed",
+          any(c[0][0][1:4] == ["compute", "addresses", "delete"] for c in m_run.call_args_list))
 
 
 # ── create_vm(): real command construction, incl. the metadata-from-file path ─
@@ -234,6 +238,63 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 # ── host_resources(): a large constant, not a real capacity query ─────────
 check("host_resources() returns a (cpu, mem_mb, disk_mb) tuple that never reads as 'no capacity'",
       backend.host_resources() == (9999, 999999, 999999))
+
+
+# ── ensure_stable_address() / release_stable_address(): promote in place ────
+# Compute Engine can reserve the very address an instance already answers on, so nothing that already resolves
+# to it changes. Only when a reservation exists holding some OTHER address does the instance have to be moved.
+def _fake_run_addr(describe, calls, instance=None):
+    def _run(args, **kwargs):
+        calls.append(args)
+        if "addresses" in args and "describe" in args:
+            return _cp(1, stderr="was not found") if describe is None else _cp(0, stdout=json.dumps(describe))
+        if "instances" in args and "list" in args:
+            return _cp(0, stdout=json.dumps([instance] if instance else []))
+        return _cp(0, stdout="{}")
+    return _run
+
+
+addr_calls = []
+b_addr = backends.GCPBackend("labproj", "us-central1-a")
+_INSTANCE = {"networkInterfaces": [{"accessConfigs": [{"name": "External NAT", "natIP": "203.0.113.5"}]}]}
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_addr(None, addr_calls, _INSTANCE)):
+    addr = b_addr.ensure_stable_address("vm1")
+create_call = next((c for c in addr_calls if "addresses" in c and "create" in c), [])
+check("ensure_stable_address() reserves the address the instance already answers on, rather than a new one",
+      "--addresses" in create_call and "203.0.113.5" in create_call)
+check("ensure_stable_address() reserves it in the region the zone belongs to",
+      "--region" in create_call and "us-central1" in create_call)
+check("ensure_stable_address() returns that same address, so nothing resolving to it has to change",
+      addr == "203.0.113.5")
+check("ensure_stable_address() leaves the instance's access config alone when the address does not change",
+      not any("add-access-config" in c for c in addr_calls))
+
+addr_calls = []
+with mock.patch.object(backends.subprocess, "run",
+                       side_effect=_fake_run_addr({"address": "203.0.113.5"}, addr_calls, _INSTANCE)):
+    addr = b_addr.ensure_stable_address("vm1")
+check("ensure_stable_address() is idempotent: an existing reservation holding the instance's own address is "
+      "returned without creating another", addr == "203.0.113.5"
+      and not any("addresses" in c and "create" in c for c in addr_calls))
+
+addr_calls = []
+with mock.patch.object(backends.subprocess, "run",
+                       side_effect=_fake_run_addr({"address": "198.51.100.9"}, addr_calls, _INSTANCE)):
+    addr = b_addr.ensure_stable_address("vm1")
+add_call = next((c for c in addr_calls if "add-access-config" in c), [])
+check("ensure_stable_address() moves the instance onto a reservation that holds another address, which needs "
+      "its access config replaced", any("delete-access-config" in c for c in addr_calls)
+      and "--address" in add_call and "198.51.100.9" in add_call)
+check("ensure_stable_address() reuses the access config's own name rather than assuming one",
+      "External NAT" in add_call)
+check("ensure_stable_address() returns the reserved address it moved the instance onto", addr == "198.51.100.9")
+
+addr_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_addr(None, addr_calls, _INSTANCE)):
+    b_addr.release_stable_address("vm1")
+check("release_stable_address() deletes the reserved address, which is billed while it is held",
+      any(c[1:4] == ("compute", "addresses", "delete") or list(c[1:4]) == ["compute", "addresses", "delete"]
+          for c in [tuple(x) for x in addr_calls]))
 
 
 if failures:

@@ -1,0 +1,71 @@
+# lab-builder — single sign-on for the web UI (EXAMPLE, not installed active).
+#
+# The installer copies this to /etc/lab-builder/lab-builder-sso.conf.example and activates NOTHING. To use it,
+# fill in your provider's values and install ONE of the two blocks below as a real Apache config, replacing the
+# AuthType Basic block in lab-builder.conf's <Location /lab-builder/admin>:
+#
+#   /etc/apache2/vhosts.d/lab-builder-sso.conf   (SLES/openSUSE)
+#   /etc/httpd/conf.d/lab-builder-sso.conf       (RHEL family)
+#
+# Why this is only a config change: the CGI never authenticates anyone. Apache authenticates and sets REMOTE_USER;
+# webui/cgi-bin/labbuilder.py passes it to api.dispatch(user=...). Any Apache module that sets REMOTE_USER works,
+# which is what makes OIDC and SAML the same amount of work here.
+#
+# AUTHORIZATION IS SEPARATE, AND REQUIRED. An identity provider authenticates its whole directory, so
+# "Require valid-user" below means "anyone the IdP knows". The grant is /etc/lab-builder/authorized, one identity
+# per line, read by admin.authorized(). Until that file lists an identity, every identity that is not a local
+# lab-builder-passwd account is refused — SSO cannot accidentally open the UI to a directory.
+#
+# The identity in that file must match what the module puts in REMOTE_USER: for OIDC that is the claim named by
+# OIDCRemoteUserClaim (below: "email"), for SAML the attribute named by MellonUser.
+#
+# Keep HTTPS. Both modules and the API refuse to work without it.
+
+# ── Option A: OpenID Connect (SUSE ID, Keycloak, Entra ID, Okta, any OIDC provider) ──
+# Needs mod_auth_openidc (SLES/openSUSE: apache2-mod_auth_openidc; RHEL: mod_auth_openidc).
+#
+# The client secret and the crypto passphrase must NOT live in this file: Apache config is world-readable on most
+# distributions. Put them in a root-only include (chmod 600, root:root) and reference it:
+#
+#   /etc/lab-builder/oidc-secret.conf   ->   OIDCClientSecret <secret>
+#                                            OIDCCryptoPassphrase <random string>
+#
+#<IfModule mod_auth_openidc.c>
+#    OIDCProviderMetadataURL https://YOUR-IDP/.well-known/openid-configuration
+#    OIDCClientID            lab-builder
+#    OIDCRedirectURI         https://YOUR-AUTOMATION-NODE/lab-builder/admin/redirect_uri
+#    OIDCScope               "openid email profile"
+#    # What lands in REMOTE_USER, and therefore what /etc/lab-builder/authorized must list.
+#    OIDCRemoteUserClaim     email
+#    # Secrets, root-only (see above). Apache reads this as root before dropping privileges.
+#    Include /etc/lab-builder/oidc-secret.conf
+#
+#    <Location /lab-builder/admin>
+#        AuthType openid-connect
+#        Require valid-user
+#    </Location>
+#</IfModule>
+
+# ── Option B: SAML 2.0 ──
+# Needs mod_auth_mellon (SLES/openSUSE: apache2-mod_auth_mellon; RHEL: mod_auth_mellon).
+#
+# Create the service-provider metadata and keys first, root-only, for example with mellon_create_metadata.sh:
+#
+#   mellon_create_metadata.sh https://YOUR-AUTOMATION-NODE/lab-builder/admin \
+#                             https://YOUR-AUTOMATION-NODE/lab-builder/admin/mellon
+#   install -o root -g root -m 600 *.key  /etc/lab-builder/mellon/
+#   install -o root -g root -m 644 *.cert *.xml /etc/lab-builder/mellon/
+#
+#<IfModule mod_auth_mellon.c>
+#    <Location /lab-builder/admin>
+#        MellonEnable auth
+#        MellonSPPrivateKeyFile  /etc/lab-builder/mellon/sp.key
+#        MellonSPCertFile        /etc/lab-builder/mellon/sp.cert
+#        MellonSPMetadataFile    /etc/lab-builder/mellon/sp-metadata.xml
+#        MellonIdPMetadataFile   /etc/lab-builder/mellon/idp-metadata.xml
+#        MellonEndpointPath      /lab-builder/admin/mellon
+#        # What lands in REMOTE_USER, and therefore what /etc/lab-builder/authorized must list.
+#        MellonUser              NAME_ID
+#        Require valid-user
+#    </Location>
+#</IfModule>
