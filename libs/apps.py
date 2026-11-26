@@ -121,6 +121,7 @@ _TAGS_BY_ADDON = {
     "apertus": ("ai",),
     "appcollection": ("devops",),
     "argocd": ("devops",),
+    "betterleaks": ("security", "devops"),
     "cerebras": ("ai",),
     "client_registration": ("linux-management",),
     "codellama": ("ai",),
