@@ -243,7 +243,7 @@ check("a node that lost ffmpeg is a difference, since a render would fail on it"
 check("it installs on the node's own OS, not on a cluster", hf.PLUGIN["layers"] == ["os-native"])
 check("it is not a Kubernetes add-on", set(hf.PLUGIN["targets"]) == {"vm", "baremetal"})
 check("it implements --check", hf.PLUGIN["check"] is True)
-check("it is classified as AI tooling for developers", apps.tags_for("hyperframes") == ["ai", "apps"])
+check("it needs nothing of a cluster, being an OS-native install", hf.PLUGIN["requires_cluster"] == [] and hf.PLUGIN["requires_kubernetes"] is None)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

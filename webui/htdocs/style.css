@@ -100,8 +100,8 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   width:112px;padding:.35rem .55rem;border:1px solid var(--line);border-radius:7px;
   background:var(--field-bg);color:var(--ink);font-size:.85rem;
 }
-/* category filter, filled from the API's tag vocabulary (libs/apps.py's TAGS) */
-.tag-filter{
+/* the filter beside the search box, filled from the facets webui/lib/discovery.py derives */
+.facet-filter{
   max-width:118px;padding:.3rem .35rem;border:1px solid var(--line);border-radius:7px;
   background:var(--field-bg);color:var(--ink);font-size:.8rem;
 }

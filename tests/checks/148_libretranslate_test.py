@@ -194,7 +194,7 @@ check("a container that is not running is reported, and nothing else is asked",
 # ── the plugin the registry reads ───────────────────────────────────────
 check("it is a container on a node", lt.PLUGIN["layers"] == ["standalone-container"])
 check("it implements --check", lt.PLUGIN["check"] is True)
-check("it is classified as AI tooling", apps.tags_for("libretranslate") == ["ai", "apps"])
+check("it needs nothing of a cluster", lt.PLUGIN["requires_cluster"] == [] and lt.PLUGIN["aux_services"] == [])
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

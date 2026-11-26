@@ -219,7 +219,7 @@ check("a container that runs but answers nothing is a difference",
 check("it is a container on a node, not a Kubernetes workload",
       vs.PLUGIN["layers"] == ["standalone-container"] and set(vs.PLUGIN["targets"]) == {"vm", "baremetal"})
 check("it implements --check", vs.PLUGIN["check"] is True)
-check("it is classified as AI tooling", apps.tags_for("voicestudio") == ["ai", "apps"])
+check("it needs nothing of a cluster", vs.PLUGIN["requires_cluster"] == [] and vs.PLUGIN["aux_services"] == [])
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

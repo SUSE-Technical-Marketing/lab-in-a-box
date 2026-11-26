@@ -302,7 +302,8 @@ check("it can be attached to a cluster or to a VM",
 check("it needs nothing of the cluster: the CronJob uses no ingress and no storage class",
       gl.PLUGIN["requires_cluster"] == [])
 check("it implements --check", gl.PLUGIN["check"] is True)
-check("it is classified as security tooling", apps.tags_for("gitleaks") == ["security", "devops"])
+check("the catalogue can find it by what it needs and by its check, with no list to maintain",
+      gl.PLUGIN["check"] is True and set(gl.PLUGIN["layers"]) & {"kubernetes", "standalone-container"})
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

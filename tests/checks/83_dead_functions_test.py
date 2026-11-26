@@ -16,7 +16,6 @@ DYNAMIC = {
     ("primary", "validate_definition"): "webui/lib/discovery.py calls it on the module _primary_lib() loads",
     ("cloud_images", "product_names"): "webui/lib/discovery.py calls it on the module _lib() loads",
     ("lab_examples", "load"): "webui/lib/discovery.py calls it on the module _lib() loads",
-    ("apps", "tag_titles"): "webui/lib/discovery.py calls it on the module _apps_lib() loads",
 }
 TEST_HOOKS = {
     ("primary", "clear_passphrase_cache"): "tests reset the cached credential passphrase between cases",

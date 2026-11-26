@@ -33,7 +33,6 @@ Python add-ons get all of this from libs/addon_common.handle_common_args() and a
         "versions": {...},                      # optional version matrix per version field (libs/versions.py)
         "status": "under-construction",         # optional; STATUSES; absent means "stable"
         "status_note": "...",                   # required with "under-construction": what does not work yet
-        "tags": ["security", "devops"],         # optional; names from TAGS. Absent means _TAGS_BY_ADDON decides
     }
 
 An add-on under construction is listed and runs like any other, but announces itself: a warning when it runs, at the lab
@@ -77,171 +76,11 @@ DEFAULT_PLUGIN = {
     "requires_cluster": [],
     "provides_cluster": [],
     "aux_services": [],
-    "tags": [],
 }
 
 STATUS_STABLE = "stable"
 STATUS_UNDER_CONSTRUCTION = "under-construction"
 STATUSES = (STATUS_STABLE, STATUS_UNDER_CONSTRUCTION)
-
-# ── what an add-on provides, for filtering a catalogue of more than a hundred ──
-# A tag says what an add-on IS. Where it runs is already answered by "targets" and "layers", and what it needs by
-# "requires_cluster", so a tag answers the only question those cannot: which of these do I want to look at. The
-# vocabulary is closed, so a filter offers a short list rather than one entry per add-on, and it is what the web
-# UI's dropdown is built from.
-TAGS = {
-    "ai": "AI and LLMs",
-    "apps": "Applications",
-    "database": "Databases",
-    "demo": "Demo and test workloads",
-    "devops": "DevOps and CI/CD",
-    "identity": "Identity and directory",
-    "infrastructure": "Lab infrastructure",
-    "kubernetes-platform": "Kubernetes platform",
-    "linux-management": "Linux management",
-    "networking": "Networking",
-    "observability": "Observability",
-    "security": "Security",
-    "storage": "Storage",
-    "virtualization": "Virtualization",
-}
-
-# The tags of an add-on that declares none of its own. One reviewable list rather than a line in each of a hundred
-# scripts, which also means a tag can be renamed in one place and a new add-on is classified without its author
-# having to know the vocabulary. An add-on that disagrees sets its own PLUGIN["tags"], which wins; see tags_for().
-# tests/checks/143_addon_tags.sh refuses a commit where an add-on resolves to no tag, a tag is not in TAGS, or an
-# entry here names an add-on that no longer exists.
-_TAGS_BY_ADDON = {
-    "agones": ("kubernetes-platform", "apps"),
-    "ai21": ("ai",),
-    "ansible_control_node": ("devops",),
-    "ansible_playbook": ("devops",),
-    "anthropic": ("ai",),
-    "anthropic_tools": ("ai", "devops"),
-    "antseed": ("ai", "devops"),
-    "apertus": ("ai",),
-    "appcollection": ("devops",),
-    "argocd": ("devops",),
-    "betterleaks": ("security", "devops"),
-    "cerebras": ("ai",),
-    "client_registration": ("linux-management",),
-    "codellama": ("ai",),
-    "cohere": ("ai",),
-    "colt": ("apps",),
-    "complianceascode": ("security",),
-    "coredns": ("networking", "infrastructure"),
-    "dashscope": ("ai",),
-    "deepinfra": ("ai",),
-    "deepseek": ("ai",),
-    "ds389": ("identity",),
-    "ernie": ("ai",),
-    "fireworks": ("ai",),
-    "fleet": ("devops",),
-    "fluentd": ("observability",),
-    "fluid": ("storage", "kubernetes-platform"),
-    "gemini": ("ai",),
-    "gitlab": ("devops",),
-    "gitleaks": ("security", "devops"),
-    "gpu_operator": ("kubernetes-platform",),
-    "grafana": ("observability",),
-    "groq": ("ai",),
-    "harbor": ("devops",),
-    "harvester": ("virtualization",),
-    "hermes": ("ai",),
-    "home_assistant": ("apps",),
-    "hyperframes": ("ai", "apps"),
-    "huggingface": ("ai",),
-    "hyperbolic": ("ai",),
-    "insecure_app": ("demo", "security"),
-    "istio": ("networking", "kubernetes-platform"),
-    "jenkins": ("devops",),
-    "jina": ("ai",),
-    "kagent": ("ai",),
-    "keycloak": ("identity",),
-    "kimi": ("ai",),
-    "kubectl_apply": ("devops",),
-    "kubewarden": ("security", "kubernetes-platform"),
-    "lab_in_a_box": ("devops",),
-    "libretranslate": ("ai", "apps"),
-    "linkerd": ("networking", "kubernetes-platform"),
-    "local_path": ("storage", "kubernetes-platform"),
-    "longhorn": ("storage", "kubernetes-platform"),
-    "mailman": ("apps",),
-    "mariadb": ("database",),
-    "mcpo": ("ai", "devops"),
-    "mediagoblin": ("apps",),
-    "milvus": ("database", "ai"),
-    "mistral": ("ai",),
-    "nebius": ("ai",),
-    "neuvector": ("security",),
-    "nextcloud": ("apps",),
-    "nginx": ("networking", "kubernetes-platform"),
-    "novita": ("ai",),
-    "nv-demo-helm": ("demo", "security"),
-    "nv_testing": ("demo", "security"),
-    "ollama": ("ai",),
-    "openai": ("ai",),
-    "openldap": ("identity",),
-    "openrouter": ("ai",),
-    "open_saber": ("apps", "demo"),
-    "openshell": ("ai",),
-    "open_webui": ("ai",),
-    "perplexity": ("ai",),
-    "postgresql": ("database",),
-    "prometheus": ("observability",),
-    "qdrant": ("database", "ai"),
-    "qwen": ("ai",),
-    "rancher": ("kubernetes-platform",),
-    "replicate": ("ai",),
-    "rodeo_cli": ("devops", "virtualization"),
-    "run_command": ("devops",),
-    "sambanova": ("ai",),
-    "seafile": ("apps",),
-    "searxng": ("apps",),
-    "skynet_simulator": ("apps", "demo"),
-    "smlm": ("linux-management",),
-    "smlm_proxy": ("linux-management",),
-    "stackpack": ("observability",),
-    "starcoder2": ("ai",),
-    "struts_demo": ("demo", "apps"),
-    "supertux_classic": ("apps", "demo"),
-    "suse_ai": ("ai",),
-    "suse_observability": ("observability",),
-    "together": ("ai",),
-    "traefik": ("networking", "kubernetes-platform"),
-    "trento": ("observability", "linux-management"),
-    "uyuni": ("linux-management",),
-    "vllm": ("ai",),
-    "voicestudio": ("ai", "apps"),
-    "voyage": ("ai",),
-    "weaviate": ("database", "ai"),
-    "wikimusic": ("apps",),
-    "wordpress": ("apps",),
-    "xai": ("ai",),
-    "xfce": ("apps",),
-    "zai": ("ai",),
-}
-
-
-def tags_for(name: Optional[str], plugin_dict: Optional[dict] = None) -> List[str]:
-    """
-    The tags of add-on `name`: its own PLUGIN["tags"] when it declares any, otherwise the central table's entry,
-    otherwise []. Returned as declared, including a tag that is not in TAGS: a catalogue still has to list an
-    add-on whose tag was mistyped, and tests/checks/143_addon_tags.sh is what keeps one from being committed.
-
-    `name` is taken either way round, "longhorn" or "install_longhorn": a PLUGIN says the first and a file scan
-    yields the second, and a lookup that answered only one of them would silently classify nothing.
-    """
-    declared = (plugin_dict or {}).get("tags")
-    key = name or ""
-    if key.startswith("install_"):
-        key = key[len("install_"):]
-    return list(declared or _TAGS_BY_ADDON.get(key, ()))
-
-
-def tag_titles() -> List[Dict[str, str]]:
-    """The tag vocabulary as [{"name": ..., "title": ...}], in TAGS order — what a filter is built from."""
-    return [{"name": name, "title": title} for name, title in TAGS.items()]
 
 
 _cache = {}
@@ -485,7 +324,6 @@ def attach_capabilities(schema_dict, plugin_dict):
         "check": bool(plugin_dict.get("check")),
         "status": plugin_dict.get("status") or STATUS_STABLE,
         "status_note": plugin_dict.get("status_note") or "",
-        "tags": tags_for(plugin_dict.get("name"), plugin_dict),
     }
     return schema_dict
 

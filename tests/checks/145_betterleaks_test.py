@@ -166,7 +166,9 @@ check("it declares the two layers it installs as",
       set(bl.PLUGIN["layers"]) == {"standalone-container", "kubernetes"})
 check("it needs nothing of the cluster", bl.PLUGIN["requires_cluster"] == [])
 check("it implements --check", bl.PLUGIN["check"] is True)
-check("it is classified as security tooling", apps.tags_for("betterleaks") == ["security", "devops"])
+check("it offers the same capabilities as install_gitleaks, so the catalogue groups them together",
+      set(bl.PLUGIN["layers"]) == {"standalone-container", "kubernetes"}
+      and bl.PLUGIN["targets"] == ["container", "vm", "baremetal"])
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

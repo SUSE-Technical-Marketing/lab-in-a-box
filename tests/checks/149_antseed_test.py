@@ -295,7 +295,8 @@ check("a CLI that does not answer is the difference that matters most",
 # ── the plugin the registry reads ───────────────────────────────────────
 check("it installs on the node's own OS", an.PLUGIN["layers"] == ["os-native"])
 check("it implements --check", an.PLUGIN["check"] is True)
-check("it is classified as AI tooling", apps.tags_for("antseed") == ["ai", "devops"])
+check("it needs nothing of a cluster, being an OS-native install",
+      an.PLUGIN["requires_cluster"] == [] and an.PLUGIN["requires_kubernetes"] is None)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
