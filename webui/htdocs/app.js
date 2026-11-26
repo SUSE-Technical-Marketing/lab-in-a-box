@@ -2643,6 +2643,69 @@ function labSummary(lab) {
 
 // `example` set (the Examples dialog's Launch) creates that example lab by name, server-side: nothing is saved
 // here, and the server materialises it for the run and removes it afterwards.
+// Which stored credentials a lab actually names: every value in it that matches a credential the server listed.
+// Matching on the listed names rather than on a list of field names here means a cloud_account, an add-on's
+// service account (smlm_scc_account and the like) and anything added later are all found without this knowing
+// which fields those are.
+function labCredentials(lab, listed) {
+  const names = new Set((listed || []).map((c) => c.name));
+  const used = new Set();
+  const walk = (value) => {
+    if (typeof value === "string") {
+      if (names.has(value)) used.add(value);
+    } else if (Array.isArray(value)) {
+      value.forEach(walk);
+    } else if (value && typeof value === "object") {
+      Object.keys(value).forEach((k) => walk(value[k]));
+    }
+  };
+  walk(lab);
+  return (listed || []).filter((c) => used.has(c.name));
+}
+
+// A credential is locked when the whole file is encrypted or any of its fields is: either way the run cannot read
+// it without the passphrase.
+function credentialLocked(credential) {
+  return Boolean(credential.encrypted) || ((credential.encrypted_fields || []).length > 0);
+}
+
+// Ask for the passphrase only where it is needed. The credentials list carries each file's encryption flags, so
+// whether this lab needs one is a fact to read, not a question to put to the operator. A list that cannot be read
+// (no login yet, helper unreachable) falls back to offering the field, since refusing to ask would be the one
+// answer that cannot be corrected later.
+async function setCreatePassphrase(definition) {
+  const row = $("#createPassRow");
+  const field = $("#createPass");
+  const note = $("#createPassNote");
+  const offer = (text) => {
+    row.hidden = false;
+    field.required = false;
+    field.placeholder = "";
+    note.textContent = text;
+  };
+  let listed;
+  try {
+    listed = (await adminCall("credentials")).credentials || [];
+  } catch (e) {
+    offer("Type the passphrase if this lab's credentials are encrypted. It is handed to this one run and to "
+          + "nothing else: never saved, logged or shown again.");
+    return;
+  }
+  if (!definition) {
+    offer("Type the passphrase if this lab's credentials are encrypted. It is handed to this one run and to "
+          + "nothing else: never saved, logged or shown again.");
+    return;
+  }
+  const locked = labCredentials(definition, listed).filter(credentialLocked);
+  row.hidden = !locked.length;
+  field.required = locked.length > 0;
+  if (locked.length) {
+    field.placeholder = "required";
+    note.textContent = "Needed to decrypt " + locked.map((c) => c.name).join(", ")
+      + ". It is handed to this one run and to nothing else: never saved, logged or shown again.";
+  }
+}
+
 async function openCreate(example) {
   if (!example && $("#createBtn").disabled) return;
   state.createExample = example || "";
@@ -2657,7 +2720,20 @@ async function openCreate(example) {
   $("#createPass").value = "";
   $("#createMsg").hidden = true;
   $("#jobStatusLink").hidden = true;
+  $("#createPassRow").hidden = true;
   showDialog("#createDialog");
+
+  // An example is created by name, so its definition is not the one on the canvas: it is read from the public
+  // examples API to see which credentials it names.
+  let definition = state.lab;
+  if (example) {
+    try {
+      definition = await apiGet("example", { name: example });
+    } catch (e) {
+      definition = null;
+    }
+  }
+  await setCreatePassphrase(definition);
 
   // A lab already being created cannot be started again, and the server says so only after the password has been
   // typed and Create pressed. Showing its running job instead is the useful answer to a second Create.

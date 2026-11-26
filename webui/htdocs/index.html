@@ -208,13 +208,16 @@
         file matching its backend.</p>
       <label class="opt-toggle"><input type="checkbox" id="createKeep" checked> Keep VMs that already exist
         (<code>--keep</code>); unticked, they are destroyed and created again</label>
-      <div class="cred-grid">
-        <label class="field"><span class="f-name">Credential passphrase</span>
-          <input type="password" id="createPass" autocomplete="new-password"
-                 placeholder="only if this lab uses encrypted credentials"></label>
+      <!-- Shown only when a credential this lab names is actually encrypted, which app.js works out from the
+           credentials list (names and flags, never values); hidden when none of them is. -->
+      <div id="createPassRow" hidden>
+        <div class="cred-grid">
+          <label class="field"><span class="f-name">Credential passphrase</span>
+            <input type="password" id="createPass" autocomplete="new-password"></label>
+        </div>
+        <p class="form-desc" id="createPassNote">The passphrase is handed to this one run, to decrypt its
+          credential files, and to nothing else: it is never saved, logged or shown again.</p>
       </div>
-      <p class="form-desc">The passphrase is handed to this one run, to decrypt its credential files, and to nothing
-        else: it is never saved, logged or shown again.</p>
     </div>
     <p id="createMsg" class="issue err dialog-msg" role="alert" hidden></p>
     <div id="createJob" class="dialog-body" hidden>

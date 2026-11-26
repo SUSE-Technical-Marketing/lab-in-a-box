@@ -691,13 +691,102 @@ async function urlParamChecks() {
   });
 }
 
-Promise.all([urlParamChecks(), credentialChecks]).then(() => {
+// $() resolves through document.querySelector, so a check that drives real UI code needs one. Each selector
+// gets its own element, remembered, with the <dialog> methods app.js calls on them.
+function stubNodes() {
+  const nodes = {};
+  sandbox.document.querySelector = (sel) => {
+    if (!nodes[sel]) {
+      const node = makeElement("div");
+      node.open = false;
+      node.hidden = false;
+      node.required = false;
+      node.placeholder = "";
+      node.showModal = () => { node.open = true; };
+      node.close = () => { node.open = false; };
+      nodes[sel] = node;
+    }
+    return nodes[sel];
+  };
+  return nodes;
+}
+
+// -- Simplify opens the dialog, and only when the server answered ----------
+// The button went dead once because openWizard() called a helper that does not exist: nothing throws at parse
+// time, node --check passes, and the click does nothing. So this runs the real click through the real helpers.
+const wizardChecks = async () => {
+  const nodes = stubNodes();
+  const answer = { workflows: [{ name: "vm", title: "VMs", description: "plain virtual machines" }] };
+  let asked = "";
+  sandbox.fetch = async (url) => {
+    asked = String(url);
+    return { ok: true, status: 200, json: async () => answer };
+  };
+  await sandbox.openWizard();
+  check("Simplify opens the step-by-step dialog", nodes["#wizardPanel"].open === true);
+  check("...having asked the public API for the workflows, so no login is demanded",
+        asked.startsWith("api?") && asked.includes("action=wizard"));
+  check("...and rendered them into the panel", nodes["#wizardBody"].childNodes.length > 0);
+  sandbox.closeWizard();
+  check("closing it leaves the dialog shut", nodes["#wizardPanel"].open === false);
+
+  sandbox.fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: "nope" }) });
+  await sandbox.openWizard();
+  check("a server that refuses leaves the dialog shut rather than opening an empty one",
+        nodes["#wizardPanel"].open === false);
+};
+
+// -- the Create dialog asks for a passphrase only where one is needed -------
+// "only if this lab uses encrypted credentials" put the question to the operator; the credentials list already
+// carries each file's encryption flags, so it is a fact to read instead.
+const passphraseChecks = async () => {
+  const nodes = stubNodes();
+  const listed = {
+    credentials: [
+      { name: "aws-plain", kind: "cloud", type: "aws", encrypted: false, encrypted_fields: [] },
+      { name: "aws-locked", kind: "cloud", type: "aws", encrypted: true, encrypted_fields: [] },
+      { name: "scc-partly", kind: "service", type: "scc", encrypted: false, encrypted_fields: ["regcode"] },
+    ],
+  };
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => listed });
+
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-plain" } });
+  check("a lab whose credential is plaintext is not asked for a passphrase at all",
+        nodes["#createPassRow"].hidden === true);
+
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-locked" } });
+  check("a lab naming an encrypted credential is asked, and told which one",
+        nodes["#createPassRow"].hidden === false && nodes["#createPass"].required === true
+        && nodes["#createPassNote"].textContent.includes("aws-locked"));
+
+  await sandbox.setCreatePassphrase({ common: {}, smlm: { smlm_scc_account: "scc-partly" } });
+  check("a per-field encrypted credential counts, wherever in the lab it is named",
+        nodes["#createPassRow"].hidden === false
+        && nodes["#createPassNote"].textContent.includes("scc-partly"));
+
+  await sandbox.setCreatePassphrase({ common: { mydomain: "aws-plain.lab" }, nodes: { "n1": { myip: "10.0.0.1" } } });
+  check("a lab naming no credential at all is not asked either",
+        nodes["#createPassRow"].hidden === true);
+
+  sandbox.fetch = async () => ({ ok: false, status: 401, json: async () => ({ error: "log in" }) });
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-locked" } });
+  check("a credentials list that cannot be read offers the field rather than deciding for the run",
+        nodes["#createPassRow"].hidden === false && nodes["#createPass"].required === false);
+};
+
+// One stubbed document between them, so they take turns rather than overwrite each other's elements.
+const domChecks = (async () => {
+  await wizardChecks();
+  await passphraseChecks();
+})();
+
+Promise.all([urlParamChecks(), credentialChecks, domChecks]).then(() => {
   if (failures) {
     console.error(failures + " check(s) failed");
     process.exit(1);
   }
   console.log("all app.js smoke checks passed");
 }, (e) => {
-  console.error("FAIL: the ?addons=/?lab= checks threw: " + e.message);
+  console.error("FAIL: an async check threw: " + e.message);
   process.exit(1);
 });
