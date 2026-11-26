@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>Eine Datei, ein Befehl.</strong> Beschreiben Sie VMs, Kubernetes-Cluster (RKE2 oder K3s) und Add-ons deklarativ. <code>setup_lab.py</code> baut sie in Abhängigkeitsreihenfolge auf, ohne dass Sie <code>virt-install</code> oder Ansible von Hand ausführen müssen.</li>
 <li><strong>Home-Lab oder Cloud, dieselbe Definition.</strong> Lab-VMs laufen auf KVM-Hosts, die Ihnen gehören, auf Harvester HCI oder auf AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud oder Exoscale. Labs können sich über mehrere KVM-Hosts erstrecken, und ein einzelnes Lab kann über ein <a href="#cross-cloud-wireguard-overlay">Cross-Cloud-WireGuard-Overlay</a> Clouds und Standorte kombinieren.</li>
-<li><strong><span data-addon-count>107</span> vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
+<li><strong><span data-addon-count>108</span> vorgefertigte Add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud und weitere, dazu bewusst verwundbare Demo-Anwendungen für Security-Schulungen.</li>
 <li><strong>Eine Web-UI, die dem Code folgt.</strong> <a href="#web-ui-lab-builder">lab-builder</a> rendert jedes Formular aus dem eigenen Schema des Add-ons. Ein neues Feld in einem Skript erscheint deshalb in der UI, ohne dass am Frontend etwas geändert werden muss.</li>
 <li><strong>Austauschbare Bereitstellung.</strong> Ignition und Combustion für SLE Micro, cloud-init für openSUSE und Ubuntu, <code>virt-customize</code> für ältere Images oder eine skriptgesteuerte Installation von einem Installations-ISO (AutoYaST, Kickstart, Preseed oder AutoInstall).</li>
 <li><strong>Zugangsdaten außerhalb der Lab-Datei.</strong> Cloud- und Service-Zugangsdaten können in verschlüsselten Dateien pro Konto liegen (Schlüsselableitung mit Argon2id, danach AES-256-GCM und ChaCha20-Poly1305 hintereinandergeschaltet).</li>
@@ -1537,6 +1537,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
 <td>Installiert Anthropics eigene Client-Werkzeuge auf dem Knoten: die Claude-Code-CLI, das Claude Agent SDK, das SDK der Anthropic-API und die <code>ant</code>-CLI, ausgewählt über <code>anthropic_tools_components</code>. <code>anthropic_tools_install_method</code> <code>native</code> führt Anthropics eigenes Installationsprogramm aus, pro Benutzer und mit automatischer Aktualisierung; <code>package</code> installiert das signierte Paket <code>claude-code</code> systemweit aus Anthropics Repository. Zugangsdaten sind optional: normalerweise meldet sich an, wer die CLI benutzt. Ohne Bezug zum Addon <code>anthropic</code> darüber, das ein Proxy vor der API ist</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
+<td>Antseed: ein Peer-to-Peer-Marktplatz für KI-Inferenz auf einem Knoten — der Buyer-Proxy, den jedes Werkzeug als Basis-URL nutzen kann, oder die Seller-Seite, dazu Antseed Desktop</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>

@@ -118,6 +118,7 @@ _TAGS_BY_ADDON = {
     "ansible_playbook": ("devops",),
     "anthropic": ("ai",),
     "anthropic_tools": ("ai", "devops"),
+    "antseed": ("ai", "devops"),
     "apertus": ("ai",),
     "appcollection": ("devops",),
     "argocd": ("devops",),

@@ -24,6 +24,9 @@
   "addon:anthropic_tools": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],
+  "addon:antseed": [
+   {"version": "1.0", "breaking": false, "changes": "Antseed on a node: the CLI, the buyer proxy or the seller provider, the desktop app, and the applications pointed at the proxy"}
+  ],
   "addon:apertus": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: apertus_tag."},

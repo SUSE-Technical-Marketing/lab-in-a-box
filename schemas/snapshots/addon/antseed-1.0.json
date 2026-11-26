@@ -1,0 +1,76 @@
+{
+ "fields": {
+  "antseed_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_apps": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_desktop": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_desktop_url": {
+   "default": "https://github.com/Antseed/antseed/releases/download",
+   "required": false,
+   "type": "url"
+  },
+  "antseed_desktop_version": {
+   "default": "0.2.95",
+   "required": false,
+   "type": "version"
+  },
+  "antseed_env": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_identity_hex": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_passphrase": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_proxy_port": {
+   "default": "8377",
+   "required": false,
+   "type": "port"
+  },
+  "antseed_role": {
+   "default": "buyer",
+   "enum": [
+    "buyer",
+    "seller",
+    "both"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "antseed_start": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_user": {
+   "default": "root",
+   "required": false,
+   "type": "string"
+  },
+  "antseed_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:antseed",
+ "version": "1.0"
+}

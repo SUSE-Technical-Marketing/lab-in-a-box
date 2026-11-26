@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong><span data-addon-count>107</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong><span data-addon-count>108</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -1628,6 +1628,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
 <td>Anthropic のクライアントツールをノードに導入します。<code>anthropic_tools_components</code> で選ぶ Claude Code CLI、Claude Agent SDK、Anthropic API SDK、<code>ant</code> CLI です。<code>anthropic_tools_install_method</code> が <code>native</code> なら Anthropic 自身のインストーラーをユーザーごとに実行し、自動更新されます。<code>package</code> は署名付きパッケージ <code>claude-code</code> を Anthropic のリポジトリからシステム全体に導入します。資格情報は任意で、通常は CLI を使う本人がログインします。上の <code>anthropic</code> アドオンとは無関係で、あちらは API の前段に置くプロキシです</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
+<td>Antseed: ノード上の P2P な AI 推論マーケットプレイス。任意のツールがベース URL として使える購入側プロキシ、または販売側。Antseed Desktop も含みます</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>

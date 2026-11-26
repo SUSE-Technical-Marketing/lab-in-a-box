@@ -3,7 +3,7 @@
 <ul>
 <li><strong>一个文件，一条命令。</strong>以声明方式描述虚拟机、Kubernetes 集群（RKE2 或 K3s）和附加组件。<code>setup_lab.py</code> 按依赖顺序构建它们，无需您手动运行 <code>virt-install</code> 或 Ansible。</li>
 <li><strong>家庭实验室或云端，同一份定义。</strong>实验室虚拟机运行在您自己的 KVM 主机、Harvester HCI，或 AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale 上。一个实验室可以跨越多台 KVM 主机，并可通过<a href="#cross-cloud-wireguard-overlay">跨云 WireGuard 覆盖网络</a>组合多个云和站点。</li>
-<li><strong><span data-addon-count>107</span> 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
+<li><strong><span data-addon-count>108</span> 个现成的附加组件。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud 等，另有用于安全培训的故意存在漏洞的演示应用。</li>
 <li><strong>与代码同步的 Web 界面。</strong><a href="#web-ui-lab-builder">lab-builder</a> 根据附加组件自身的架构生成每个表单，因此脚本中新增的字段无需修改前端即可显示在界面中。</li>
 <li><strong>可插拔的预配方式。</strong>SLE Micro 使用 Ignition 和 Combustion，openSUSE 和 Ubuntu 使用 cloud-init，旧镜像使用 <code>virt-customize</code>，也可以从安装程序 ISO 进行自动安装（AutoYaST、Kickstart、Preseed 或 AutoInstall）。</li>
 <li><strong>凭据不放在实验室文件中。</strong>云和服务的凭据可以保存在按账户加密的文件中（使用 Argon2id 派生密钥，再级联使用 AES-256-GCM 和 ChaCha20-Poly1305）。</li>
@@ -1446,6 +1446,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://www.anthropic.com/claude-code"><code>anthropic_tools</code></a></td>
 <td>在节点上安装 Anthropic 自己的客户端工具：由 <code>anthropic_tools_components</code> 选择的 Claude Code CLI、Claude Agent SDK、Anthropic API SDK 和 <code>ant</code> CLI。<code>anthropic_tools_install_method</code> 为 <code>native</code> 时运行 Anthropic 自己的安装程序，按用户安装并自动更新；<code>package</code> 则从 Anthropic 的仓库在整台机器上安装已签名的 <code>claude-code</code> 软件包。凭据是可选的：通常由使用 CLI 的人自行登录。与上面的 <code>anthropic</code> 插件无关，后者是 API 前面的代理</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
+<td>Antseed：节点上的点对点 AI 推理市场 — 任何工具都可将其作为基础 URL 的买方代理，或卖方端，并包含 Antseed Desktop</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>
