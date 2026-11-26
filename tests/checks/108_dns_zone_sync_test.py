@@ -472,6 +472,22 @@ check("dns_zone.with_header keeps every record behind the header",
       == "$TTL 60\n@ IN SOA x. y. ( 1 2 3 4 5 )\nsol IN A 192.0.2.1\n")
 
 
+# ── declared_zones(): is any lab other than this one still using this server ──
+# A shared DNS server is per cloud account while a lab registry is per automation node, so the server itself is
+# the only thing that can see a lab this node never deployed.
+with mock.patch.object(services.DNSService, "_run_on", return_value=FakeResult(stdout=(
+        'zone "mydemo.lab"\nzone "mydemoaws.lab"\nzone "88.168.192.in-addr.arpa"\n'
+        'zone "localhost"\nzone "127.in-addr.arpa"\n'))):
+    declared = services.DNSService().declared_zones("10.0.0.53")
+check("every zone a server declares as a master is listed",
+      {"mydemo.lab", "mydemoaws.lab", "88.168.192.in-addr.arpa"} <= declared)
+check("BIND's own built-in zones are left out: every distribution's default named.conf declares them and they "
+      "belong to no lab", "localhost" not in declared and "127.in-addr.arpa" not in declared)
+with mock.patch.object(services.DNSService, "_run_on", return_value=FakeResult(returncode=1, stdout="")):
+    check("a server that declares none, or cannot be reached, reads as no zones rather than failing",
+          services.DNSService().declared_zones("10.0.0.53") == set())
+
+
 # ── the serial: what makes "behind" different from "diverged" ────────────────
 # Two SOA layouts exist in the wild: the one forward_header() writes, all on one line, and the multi-line one the
 # bootstrap that builds an automation node writes. A reader that knows only one reports no serial for the other,

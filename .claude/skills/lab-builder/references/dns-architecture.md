@@ -213,6 +213,43 @@ The lesson generalises. What this file holds that is **derivable** should be der
 site, its address from the zone. What it holds that is genuinely **state** has to stay recorded: which sites exist
 at all, and which zones each serves.
 
+## The shared VMs' lifecycle
+
+`ensure_cloud_dns_vm()` has always created the DNS VM when absent, reused it when present and started it when
+stopped, so "one server per account, shared by every lab there" needs nothing further on the way up.
+
+On the way down, `destroy_lab.py --with-infra` destroys a site's DNS VM and its overlay gateway, behind three
+gates that each report and keep rather than destroy:
+
+1. **The site's DNS server is this automation node itself** (`ipalloc.local_ips()`), so there is no VM of its own
+   to destroy. That is every libvirt and Harvester site, and a cloud lab whose automation node serves its own DNS.
+2. **Another recorded lab's nodes sit on the same site** (`libs/lab_registry.py`, reading each other lab's
+   definition rather than a recorded copy of its sites).
+3. **The DNS server still declares a zone that is not this lab's** (`DNSService.declared_zones()`). This is the
+   only gate that can see a lab this automation node never deployed, because the server is per cloud **account**
+   while a registry is per automation **node**. The gateway has no equivalent and rests on gates 1 and 2.
+
+Two things that are easy to get wrong here:
+
+- Destroy only through `backend.delete_vm()`. It is the only caller of `release_stable_address()`, and these VMs
+  reserve their addresses unconditionally, billed whether or not anything uses them, so any other path leaks one
+  per account per provider.
+- `hub_vm_name()` names a site's gateway **and** the hub itself, which differ only by the account they live in. A
+  site that is the `OVERLAY_HUB_ACCOUNT`'s own keeps its gateway: the hub serves every account rather than this
+  lab's site, and retiring it is `overlay_ctl.py`'s business.
+
+Refcounting the registry alone would not do. It is per automation node, so two nodes sharing one cloud account
+would each count only their own labs, and the first to reach zero would destroy a server the other's labs resolve
+through. Gate 3 is what closes that, and it needs no new backend primitive.
+
+## Known gaps
+
+**A destroyed node keeps its line in the hub's node registry.** `overlay.forget_node()` exists but is only ever
+called by hand from `overlay_ctl.py`; `destroy_vm.py` does not call it. So `refresh_routes()` keeps SSHing to
+nodes that no longer exist, which is what its "unreachable" count is mostly made of. The fix is for `destroy_vm.py`
+to call `forget_node()` with `overlay.existing_hub_host()`, cached per process so a lab teardown does not look the
+hub up once per node.
+
 ## Considered and deferred: delegation plus native replication
 
 Give each site its own subdomain, `aws.mydemo.lab`, served by that site's own server as primary for that subdomain

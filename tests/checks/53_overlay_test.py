@@ -918,9 +918,10 @@ check("destroy_lab.py takes this lab's DNS registrations off the hub",
 check("...finding the hub without creating one",
       "overlay.existing_hub_host(" in destroy_lab_source
       and "ensure_overlay_hub" not in destroy_lab_source)
-check("...one (site, domain) pair per node, since a lab's nodes can sit on different sites and its kclusters "
-      "can name different domains",
-      "pairs.add((overlay.site_name_for(backend_name, account), mydomain))" in destroy_lab_source)
+check("...one (site, domain) pair per site, since a lab's nodes can sit on different sites and its kclusters "
+      "can name different domains, through the same lab_sites() the --with-infra gates use",
+      "for site_name, (_vm_name, _account, zones) in sorted(lab_sites(" in destroy_lab_source
+      and "overlay.forget_dns_server(hub_host, site_name, mydomain)" in destroy_lab_source)
 
 check("existing_hub_host() answers \"\" with no hub account configured, which is every lab with no overlay",
       overlay.existing_hub_host({}) == "")

@@ -273,6 +273,28 @@ class DNSService(AuxService):
             "when an instance restarts".format(server or "this host", file_name, value, current))
         return True
 
+    def declared_zones(self, server) -> set:
+        """
+        Every zone `server` (None for this host) declares as a master, read from the same files _zone_declared()
+        greps. Empty when it declares none, or cannot be reached.
+
+        This is how a shared DNS server answers "is any lab other than this one still using me". It is
+        authoritative in a way no local record can be: the server is per cloud account, while a lab registry is per
+        automation node, so a second automation node's labs are invisible to everything except the server itself.
+        """
+        files = "/etc/named.conf /etc/named.lab.conf /etc/named.lab-site.conf /etc/bind/named.conf.local"
+        command = "grep -ho 'zone \"[^\"]*\"' {} 2>/dev/null".format(files)
+        result = self._run_on(server, command)
+        found = set()
+        for line in (result.stdout or "").splitlines():
+            name = line.split('"')[1] if '"' in line else ""
+            # BIND's own built-in zones are declared by every distribution's default named.conf and belong to no
+            # lab, so they never count as another lab still needing this server.
+            if name and name not in ("localhost", "localhost.localdomain", ".", "0.in-addr.arpa",
+                                     "127.in-addr.arpa", "255.in-addr.arpa", "1.0.0.127.in-addr.arpa"):
+                found.add(name)
+        return found
+
     def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "", sites=(), zone_ttl: int = 0) -> bool:
         """
         Make `server` (None for this host) a master of `mydomain`, and of its reverse zone when `mynet_reverse` is
