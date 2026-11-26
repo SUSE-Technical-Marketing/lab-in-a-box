@@ -685,7 +685,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web UI（lab-builder）</h2>
-<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。 Lab パネルの <strong>Simplify</strong> は代わりに 4〜5 個の質問をして、その答えからラボを組み立てます。どこに作るかは必ず尋ね、アドレスは一切尋ねず、各ノードは搭載する製品自身のドキュメントに基づいて見積もられます (<a href="webui.html#simplify--the-step-by-step-builder">Simplify</a> を参照)。</p>
+<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。 Lab パネルの <strong>Simplify</strong> は代わりに 4〜5 個の質問をして、その答えからラボを組み立てます。どこに作るかは必ず尋ね、アドレスは一切尋ねず、各ノードは搭載する製品自身のドキュメントに基づいて見積もられます。ログインは不要で、ワークフローの一つはサンプルラボから始まります (<a href="webui.html#simplify--the-step-by-step-builder">Simplify</a> を参照)。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
