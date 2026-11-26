@@ -81,7 +81,7 @@ check("print_schema with no plugin passed still succeeds, capabilities are empty
       rc == 0 and json.loads(out).get("capabilities") == {
           "targets": [], "layers": [], "requires_kubernetes": None, "requires_cluster": [],
           "provides_cluster": [], "aux_services": [], "versions": {},
-          "check": False, "status": "stable", "status_note": "",
+          "check": False, "status": "stable", "status_note": "", "tags": [],
       })
 
 

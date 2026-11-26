@@ -339,6 +339,8 @@ def discover():
             "targets": caps.get("targets") or [],
             "status": caps.get("status") or "stable",
             "status_note": caps.get("status_note") or "",
+            # An add-on whose script is too old to print tags still gets the central table's (libs/apps.py).
+            "tags": caps.get("tags") or apps.tags_for(name, caps),
         })
     return sorted(items, key=lambda it: it["name"])
 
@@ -372,9 +374,18 @@ def example(name):
     return _lib("lab_examples").load(name)
 
 
+def tags():
+    """
+    The tag vocabulary as [{"name": ..., "title": ...}] (libs/apps.py's TAGS), for a filter over catalogue().
+    Sent with the catalogue rather than derived from it in the browser, so the filter offers the same names and
+    the same titles whatever this installation happens to have installed.
+    """
+    return _apps_lib().tag_titles()
+
+
 def catalogue():
     """
-    Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, status and status_note. kind is
+    Everything a lab can use, as items with name, kind, title, description, field_count, layers, targets, tags, status and status_note. kind is
     "addon" (the add-ons of discover()), "infrastructure" (the base schema's optional sections, e.g. pxe) or
     "kcluster" (each Kubernetes cluster type, the kclusters clu_type values).
     """
@@ -384,13 +395,13 @@ def catalogue():
         if name not in CORE_SECTIONS:
             items.append({"name": name, "kind": "infrastructure", "title": sec.get("title") or name,
                           "description": sec.get("description", ""), "field_count": len(sec.get("fields", [])),
-                          "layers": [], "targets": []})
+                          "layers": [], "targets": [], "tags": ["infrastructure"]})
     clu_types = [f.get("enum") for f in base["kclusters"].get("fields", []) if f.get("name") == "clu_type"]
     if not clu_types or not clu_types[0]:
         raise ValueError("lab_schema: kclusters has no clu_type enum")
     for name in clu_types[0]:
         items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
-                      "layers": [], "targets": []})
+                      "layers": [], "targets": [], "tags": ["kubernetes-platform"]})
     return items
 
 

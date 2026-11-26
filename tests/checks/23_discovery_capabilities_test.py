@@ -147,6 +147,24 @@ import api as webui_api  # noqa: E402
 st, body = webui_api.dispatch("credential-types", "GET", {}, b"", user=None, https=False)
 check("api: credential-types answers without a user and without HTTPS", st == 200 and sorted(body) == ["cloud", "service"])
 
+# ── the catalogue carries a category for everything it offers ──────────────
+cat = discovery.catalogue()
+check("every catalogue item has tags, so a filter never hides one by accident",
+      cat and all(it.get("tags") for it in cat))
+check("an add-on's tags are its own (libs/apps.py), not the kind's",
+      any(it["name"] == "install_longhorn" and "storage" in it["tags"] for it in cat))
+check("an optional base-schema section reads as lab infrastructure",
+      all("infrastructure" in it["tags"] for it in cat if it["kind"] == "infrastructure"))
+check("a Kubernetes distribution reads as the Kubernetes platform",
+      all("kubernetes-platform" in it["tags"] for it in cat if it["kind"] == "kcluster"))
+
+st, body = webui_api.dispatch("components", "GET", {}, b"", user=None, https=False)
+check("api: components sends the tag vocabulary beside the items",
+      st == 200 and [t["name"] for t in body["tags"]] == list(discovery._apps_lib().TAGS))
+check("api: every component it sends carries its tags",
+      all(c.get("tags") for c in body["components"]))
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

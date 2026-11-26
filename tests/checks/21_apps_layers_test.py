@@ -95,7 +95,7 @@ check("attach_capabilities's capabilities dict has every field",
           "targets": ["container"], "layers": ["kubernetes"],
           "requires_kubernetes": ["rke2", "k3s"], "requires_cluster": [], "provides_cluster": [],
           "aux_services": ["pxe"], "versions": {},
-          "check": False, "status": "stable", "status_note": "",
+          "check": False, "status": "stable", "status_note": "", "tags": [],
       })
 
 schema2 = {}
@@ -104,7 +104,7 @@ check("attach_capabilities on an empty plugin dict fills in empty/None defaults,
       schema2["capabilities"] == {
           "targets": [], "layers": [], "requires_kubernetes": None, "requires_cluster": [],
           "provides_cluster": [], "aux_services": [], "versions": {},
-          "check": False, "status": "stable", "status_note": "",
+          "check": False, "status": "stable", "status_note": "", "tags": [],
       })
 
 

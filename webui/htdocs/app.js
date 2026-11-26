@@ -35,7 +35,7 @@ const isField = (o) => o && typeof o === "object" && !Array.isArray(o) &&
 // their *effective* default instead of the schema's hardcoded one. Reset on
 // every fresh schema load (selectBase/selectComponent).
 const state = {
-  components: [], lab: {}, commonDefaults: {}, credTypes: {},
+  components: [], tags: [], lab: {}, commonDefaults: {}, credTypes: {},
   // block model behind the canvas (see compileLab); state.lab is compiled from it
   // extra: top-level lab keys the canvas does not model, kept as they are
   model: { common: {}, items: [], addonCfg: {}, extra: {}, seq: 0 },
@@ -174,9 +174,39 @@ function serverLock() {
 async function loadComponents() {
   const data = await apiGet("components");
   state.components = data.components.filter((c) => (c.kind || "addon") === "addon");
+  state.tags = data.tags || [];
   $("#countNum").textContent = state.components.length;
   $("#srcNote").textContent = `read from ${data.scripts_dir}`;
+  renderTagFilter();
   renderPalette($("#filter").value || "");
+}
+
+// The category dropdown beside the text filter. Its vocabulary comes from the API (libs/apps.py's TAGS, which is
+// also what classifies the add-ons), narrowed to the categories this installation's own add-ons carry so it never
+// offers one that would show nothing. A selection survives a reload of the catalogue when it is still on offer.
+function renderTagFilter() {
+  const sel = $("#tagFilter");
+  if (!sel) return;
+  const present = new Set();
+  state.components.forEach((c) => (c.tags || []).forEach((x) => present.add(x)));
+  const keep = state.tags.filter((x) => present.has(x.name));
+  const chosen = sel.value;
+  sel.innerHTML = "";
+  const all = el("option", "", "All categories");
+  all.value = "";
+  sel.appendChild(all);
+  keep.forEach((x) => {
+    const o = el("option", "", x.title);
+    o.value = x.name;
+    sel.appendChild(o);
+  });
+  sel.value = keep.some((x) => x.name === chosen) ? chosen : "";
+}
+
+// The category selected in that dropdown, "" for all of them.
+function selectedTag() {
+  const sel = $("#tagFilter");
+  return (sel && sel.value) || "";
 }
 
 // What a palette entry creates when it is dropped on the lab. Add-ons are
@@ -264,7 +294,8 @@ function renderPalette(filter) {
   const root = $("#palette");
   root.innerHTML = "";
   const f = (filter || "").toLowerCase();
-  if (!f) {
+  const tag = selectedTag();
+  if (!f && !tag) {
     const g = el("div", "pal-group");
     g.appendChild(el("h3", "pal-title", "Lab"));
     const grid = el("div", "pal-grid");
@@ -274,7 +305,8 @@ function renderPalette(filter) {
     root.appendChild(g);
   }
   const matches = state.components
-    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f));
+    .filter((c) => !f || c.title.toLowerCase().includes(f) || (c.description || "").toLowerCase().includes(f))
+    .filter((c) => !tag || (c.tags || []).includes(tag));
   ADDON_SECTIONS.forEach((s) => {
     const rows = matches
       .filter((c) => addonSection(c.layers || []) === s.key)
@@ -283,13 +315,20 @@ function renderPalette(filter) {
         c.status === "under-construction" ? (c.status_note || "Under construction: may not work") : ""));
     if (rows.length) root.appendChild(paletteSection(s.title, s.hint, rows));
   });
-  const pxe = !f || "pxe tftp dhcp boot service".includes(f);
+  // pxe is the one base-schema section in this palette; it is lab infrastructure, so a category narrows it away
+  // unless that is the category asked for.
+  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && (!tag || tag === "infrastructure");
   if (pxe) {
     root.appendChild(paletteSection("Infrastructure", "Lab-wide services on the automation node",
       [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation node", "", [],
         "Drop on Common settings")]));
   }
-  if (f && !matches.length && !pxe) root.appendChild(el("p", "pal-hint", `No add-on matches “${filter}”.`));
+  if ((f || tag) && !matches.length && !pxe) {
+    const named = $("#tagFilter") && $("#tagFilter").selectedOptions[0];
+    const where = tag ? ` in ${named ? named.textContent : tag}` : "";
+    root.appendChild(el("p", "pal-hint", f ? `No add-on matches “${filter}”${where}.`
+      : `No add-on${where}.`));
+  }
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
@@ -2437,6 +2476,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (restoreBtn) restoreBtn.addEventListener("click", restoreDraft);
 
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
+  $("#tagFilter").addEventListener("change", () => renderPalette($("#filter").value || ""));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

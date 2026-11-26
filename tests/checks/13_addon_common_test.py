@@ -233,8 +233,8 @@ code, out = _dispatch(["--schema"])
 check("handle_common_args --schema: defaults format to json when omitted", code == 0)
 
 code, out = _dispatch(["--capabilities"], plugin={"name": "mariadb", "targets": ["container"]})
-check("handle_common_args --capabilities: exits 0 printing the plugin as JSON",
-      code == 0 and json.loads(out) == {"name": "mariadb", "targets": ["container"]})
+check("handle_common_args --capabilities: exits 0 printing the plugin as JSON, with its tags resolved",
+      code == 0 and json.loads(out) == {"name": "mariadb", "targets": ["container"], "tags": ["database"]})
 code, out = _dispatch(["--capabilities"])
 check("handle_common_args --capabilities: prints {} when no plugin is passed",
       code == 0 and json.loads(out) == {})

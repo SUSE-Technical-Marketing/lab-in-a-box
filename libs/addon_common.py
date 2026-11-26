@@ -539,7 +539,12 @@ def handle_common_args(script_path, version, validate_fn=None, usage=None, plugi
         sys.exit(print_schema(script_path, fmt, plugin=plugin))
 
     if argv and argv[0] == "--capabilities":
-        print(json.dumps(plugin or {}, indent=2))
+        # The tags are resolved rather than printed as declared, so this answers the same thing --schema json's
+        # capabilities object does for an add-on that leaves its classification to apps._TAGS_BY_ADDON.
+        caps = dict(plugin or {})
+        if caps:
+            caps["tags"] = apps.tags_for(caps.get("name") or Path(script_path).stem[8:], caps)
+        print(json.dumps(caps, indent=2))
         sys.exit(0)
 
     if status:

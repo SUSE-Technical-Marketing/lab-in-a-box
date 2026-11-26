@@ -69,6 +69,7 @@ def dispatch(action, method, params, body, user=None, https=False):
             return 200, {
                 "count": len(comps),
                 "components": comps,
+                "tags": discovery.tags(),
                 "scripts_dir": discovery.scripts_dir(),
                 "libs_dir": discovery.libs_dir(),
             }

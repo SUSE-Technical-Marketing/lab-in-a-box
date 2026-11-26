@@ -31,7 +31,11 @@ picks it up automatically — there is <strong>no per-component code in the UI</
   <strong>Kubernetes cluster add-ons</strong> (kubernetes layer only), <strong>VM add-ons</strong>
   (standalone-container and/or os-native layers only), <strong>Kubernetes cluster or VM add-ons</strong> (both), and
   <strong>Infrastructure</strong> (lab-wide services on the automation node, e.g. pxe). A layer badge is shown
-  only when the section heading does not already state it.</li>
+  only when the section heading does not already state it. The search box narrows the palette by name and
+  description, and the dropdown beside it narrows it by category (<code>security</code>, <code>ai</code>,
+  <code>observability</code> and so on, from the add-ons' own tags): with more than a hundred add-ons, finding
+  the three that do what you want matters more than scrolling past the rest. It offers only the categories this
+  installation's add-ons actually carry.</li>
 <li>The <strong>Lab</strong> canvas: drag blocks in, double-click one to edit it with a form generated from its
   schema (required fields flagged, defaults as placeholders, passwords masked).</li>
 <li>The <strong>lab.json</strong> panel shows the lab as JSON (editable) or as a diagram, lists what is wrong with
