@@ -1,0 +1,36 @@
+{
+ "fields": {
+  "hyperframes_agents": {
+   "default": "claude-code",
+   "required": false,
+   "type": "string"
+  },
+  "hyperframes_install_ffmpeg": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "hyperframes_project": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "hyperframes_skills": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "hyperframes_user": {
+   "default": "root",
+   "required": false,
+   "type": "string"
+  },
+  "hyperframes_version": {
+   "default": "",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:hyperframes",
+ "version": "1.0"
+}

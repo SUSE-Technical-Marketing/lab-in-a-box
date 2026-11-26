@@ -156,6 +156,9 @@
   "addon:hyperbolic": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
+  "addon:hyperframes": [
+   {"version": "1.0", "breaking": false, "changes": "HyperFrames video rendering on a node, with connectors for Claude Code, the Copilot CLI, the Gemini CLI and the agents upstream gives skills for"}
+  ],
   "addon:insecure_app": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."}
   ],

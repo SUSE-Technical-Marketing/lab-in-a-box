@@ -3,7 +3,7 @@
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong><span data-addon-count>104</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong><span data-addon-count>105</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -1602,6 +1602,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://www.home-assistant.io/"><code>home_assistant</code></a></td>
 <td>Home Assistant ホームオートメーションプラットフォーム</td>
+</tr>
+<tr>
+<td><a href="https://github.com/heygen-com/hyperframes"><code>hyperframes</code></a></td>
+<td>HyperFrames: HeyGen のオープンソース HTML→MP4 動画フレームワークをノードに導入し、Claude Code、Copilot CLI、Gemini CLI、Codex、Cursor、OpenCode と接続します</td>
 </tr>
 </tbody>
 </table>

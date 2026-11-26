@@ -148,6 +148,7 @@ _TAGS_BY_ADDON = {
     "harvester": ("virtualization",),
     "hermes": ("ai",),
     "home_assistant": ("apps",),
+    "hyperframes": ("ai", "apps"),
     "huggingface": ("ai",),
     "hyperbolic": ("ai",),
     "insecure_app": ("demo", "security"),
