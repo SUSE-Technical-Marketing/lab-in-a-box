@@ -398,3 +398,24 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   overflow: hidden;
 }
 .example-row .btn { flex: none; align-self: center; }
+
+/* the step-by-step builder (Simplify), which replaces the canvas while it is open */
+body.wizard-on .catalogue, body.wizard-on .canvas-area { display: none }
+.wizard-area { display: flex; flex-direction: column; min-height: 24rem }
+.wizard-body { padding: 1rem; overflow-y: auto; flex: 1 }
+.wizard-actions { display: flex; gap: .5rem; padding: .6rem 1rem; border-top: 1px solid var(--line) }
+.wizard-q { font-weight: 640; font-size: 1.05rem; margin: 0 0 .2rem }
+.wizard-help { color: var(--muted); font-size: .85rem; margin: 0 0 .8rem }
+.wizard-choice { display: flex; flex-direction: column; gap: .4rem }
+.wizard-choice label { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .6rem;
+  border: 1px solid var(--line); border-radius: 8px; cursor: pointer }
+.wizard-choice label:hover { background: var(--code) }
+.wizard-choice .opt-help { color: var(--muted); font-size: .8rem; display: block }
+.wizard-area input[type="text"], .wizard-area input[type="number"] {
+  padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--field-bg); color: var(--ink); min-width: 14rem }
+.wizard-steps { color: var(--muted); font-size: .8rem; margin: 0 0 .8rem }
+.wizard-summary { margin: 0; font-size: .9rem }
+.wizard-summary dt { font-weight: 640; margin-top: .5rem }
+.wizard-summary dd { margin: 0 0 0 1rem; color: var(--muted) }
+.wizard-blocked { border: 1px solid var(--warn, #c77); border-radius: 8px; padding: .6rem .8rem; margin: 0 0 .8rem }

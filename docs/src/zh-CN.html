@@ -498,7 +498,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web 界面（lab-builder）</h2>
-<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。 标记为开发中的附加组件（其 <code>PLUGIN</code> 中的 <code>status</code>，参见<a href="addons.html">附加组件指南</a>）带有“under construction”徽章；将鼠标悬停在徽章上可查看尚未正常工作的部分。它仍可被添加和运行，并会显示警告。</p>
+<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。 标记为开发中的附加组件（其 <code>PLUGIN</code> 中的 <code>status</code>，参见<a href="addons.html">附加组件指南</a>）带有“under construction”徽章；将鼠标悬停在徽章上可查看尚未正常工作的部分。它仍可被添加和运行，并会显示警告。 Lab 面板上的 <strong>Simplify</strong> 改为提出四到五个问题，并据此构建实验室：构建位置始终会询问，地址则从不询问，每个节点按其所运行产品自身文档的要求来配置规格（参见 <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>）。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>

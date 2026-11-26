@@ -28,7 +28,8 @@ import syslog
 import discovery
 
 ACTIONS = {"labs", "lab", "save", "credentials", "credentials-add", "credentials-encrypt",
-           "credentials-delete", "create", "validate-credentials", "job", "jobs", "power"}
+           "credentials-delete", "create", "validate-credentials", "job", "jobs", "power",
+           "wizard", "wizard-steps", "wizard-build"}
 
 
 def helper_path():
@@ -176,6 +177,21 @@ def dispatch(action, method, params, data):
     """Carry out login action `action`; returns the JSON answer. `params` is the
     parsed query string, `data` the parsed POST body."""
     one = lambda k: (params.get(k) or [""])[0]
+    # The step-by-step builder. Behind the login like everything else here, because its options name the
+    # credential accounts this installation holds, and because building a lab is an admin act anyway.
+    if action == "wizard" and method == "GET":
+        return {"workflows": discovery.wizard_workflows(), "network": discovery.lab_network()}
+    if action == "wizard-steps" and method == "GET":
+        # The answers so far ride along as JSON, because a GET is what the browser reads steps with and a later
+        # question can depend on an earlier one. Anything unparseable is treated as no answers at all.
+        try:
+            answers = json.loads(one("answers") or "{}")
+        except ValueError:
+            answers = {}
+        return discovery.wizard_steps(one("name"), answers if isinstance(answers, dict) else {})
+    if action == "wizard-build" and method == "POST":
+        return discovery.wizard_build(data.get("workflow", ""), data.get("answers", {}))
+
     if action == "labs" and method == "GET":
         return {"labs": list_labs()}
     if action == "lab" and method == "GET":

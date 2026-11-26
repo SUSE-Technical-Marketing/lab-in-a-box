@@ -333,6 +333,237 @@ function renderPalette(filter) {
   }
 }
 
+// ---- the step-by-step builder (Simplify) ------------------------------------
+// Four questions and the server works the rest out: webui/lib/wizard.py holds the questions and builds the
+// definition, so what is here is the form and nothing else. Every answer is sent back for the next step, because
+// a later question can depend on an earlier one (choosing SUSE Virtualization narrows the backends and drops the
+// add-on question), and the finished definition goes onto the canvas through loadLab() — the same path an
+// example or an opened file takes, so Validate, Save and Create lab all work on it unchanged.
+const wiz = { open: false, workflows: [], workflow: "", steps: [], answers: {}, index: 0, config: null };
+
+async function openWizard() {
+  wiz.open = true;
+  document.body.classList.add("wizard-on");
+  $("#wizardPanel").hidden = false;
+  wiz.workflow = "";
+  wiz.answers = {};
+  wiz.index = 0;
+  wiz.config = null;
+  try {
+    const data = await adminCall("wizard");
+    wiz.workflows = data.workflows || [];
+  } catch (e) {
+    wiz.workflows = [];
+    toastError(e.message);
+  }
+  renderWizard();
+}
+
+function closeWizard() {
+  wiz.open = false;
+  document.body.classList.remove("wizard-on");
+  $("#wizardPanel").hidden = true;
+}
+
+function wizardButtons({ back = false, next = false, open = false, create = false }) {
+  $("#wizardBack").hidden = !back;
+  $("#wizardNext").hidden = !next;
+  $("#wizardOpen").hidden = !open;
+  $("#wizardCreate").hidden = !create;
+}
+
+function renderWizard() {
+  const body = $("#wizardBody");
+  body.innerHTML = "";
+  if (!wiz.workflow) return renderWizardWorkflows(body);
+  if (wiz.index >= wiz.steps.length) return renderWizardSummary(body);
+  return renderWizardStep(body, wiz.steps[wiz.index]);
+}
+
+function renderWizardWorkflows(body) {
+  $("#wizardWhere").textContent = "";
+  wizardButtons({});
+  body.appendChild(el("p", "wizard-q", "What kind of lab?"));
+  body.appendChild(el("p", "wizard-help",
+    "Each one asks a few questions. Nothing is created until you say so."));
+  const list = el("div", "wizard-choice");
+  (wiz.workflows || []).forEach((workflow) => {
+    const label = el("label");
+    const button = el("input");
+    button.type = "radio";
+    button.name = "wizard-workflow";
+    button.addEventListener("change", () => startWizardWorkflow(workflow.name));
+    label.appendChild(button);
+    const text = el("span");
+    text.appendChild(el("strong", "", workflow.title));
+    text.appendChild(el("span", "opt-help", workflow.description));
+    (workflow.prerequisites || []).forEach((p) => {
+      text.appendChild(el("span", "opt-help", "Needs " + p.what + ": " + p.fix));
+    });
+    label.appendChild(text);
+    list.appendChild(label);
+  });
+  body.appendChild(list);
+  if (!(wiz.workflows || []).length) {
+    body.appendChild(el("p", "wizard-help", "The server offered no workflows — log in and try again."));
+  }
+}
+
+async function startWizardWorkflow(name) {
+  wiz.workflow = name;
+  wiz.answers = {};
+  wiz.index = 0;
+  await loadWizardSteps();
+  renderWizard();
+}
+
+async function loadWizardSteps() {
+  // Re-read on every answer: the server decides which questions follow from what has been answered so far.
+  try {
+    const data = await adminCall("wizard-steps", undefined, { name: wiz.workflow, answers: JSON.stringify(wiz.answers) });
+    wiz.steps = data.steps || [];
+    wiz.prerequisites = data.prerequisites || [];
+  } catch (e) {
+    wiz.steps = [];
+    toastError(e.message);
+  }
+}
+
+function renderWizardStep(body, step) {
+  $("#wizardWhere").textContent = `Step ${wiz.index + 1} of ${wiz.steps.length}`;
+  wizardButtons({ back: true, next: true });
+  (wiz.prerequisites || []).forEach((p) => {
+    const warn = el("div", "wizard-blocked");
+    warn.appendChild(el("strong", "", "This needs " + p.what + "."));
+    warn.appendChild(el("div", "opt-help", p.why + " " + p.fix));
+    body.appendChild(warn);
+  });
+  body.appendChild(el("p", "wizard-q", step.title));
+  if (step.help) body.appendChild(el("p", "wizard-help", step.help));
+  const value = wiz.answers[step.name] !== undefined ? wiz.answers[step.name] : step.default;
+
+  if (step.kind === "choice" || step.kind === "multi") {
+    const list = el("div", "wizard-choice");
+    (step.options || []).forEach((option) => {
+      const label = el("label");
+      const input = el("input");
+      input.type = step.kind === "multi" ? "checkbox" : "radio";
+      input.name = "wizard-" + step.name;
+      input.value = option.value;
+      input.checked = step.kind === "multi"
+        ? (value || []).indexOf(option.value) !== -1
+        : String(value) === String(option.value);
+      input.addEventListener("change", () => {
+        if (step.kind === "multi") {
+          const chosen = Array.from(list.querySelectorAll("input")).filter((i) => i.checked).map((i) => i.value);
+          wiz.answers[step.name] = chosen;
+        } else {
+          wiz.answers[step.name] = option.value;
+        }
+      });
+      label.appendChild(input);
+      const text = el("span");
+      text.appendChild(el("strong", "", option.label));
+      if (option.help) text.appendChild(el("span", "opt-help", option.help));
+      label.appendChild(text);
+      list.appendChild(label);
+    });
+    body.appendChild(list);
+    if (!(step.options || []).length) {
+      body.appendChild(el("p", "wizard-help", "Nothing to choose from on this installation."));
+    }
+    if (step.kind === "multi" && wiz.answers[step.name] === undefined) wiz.answers[step.name] = value || [];
+    if (step.kind === "choice" && wiz.answers[step.name] === undefined) wiz.answers[step.name] = value;
+    return;
+  }
+
+  const input = el("input");
+  input.type = step.kind === "count" ? "number" : "text";
+  if (step.kind === "count") {
+    input.min = step.min;
+    input.max = step.max;
+  }
+  input.value = value === undefined || value === null ? "" : value;
+  wiz.answers[step.name] = input.value;
+  input.addEventListener("input", () => { wiz.answers[step.name] = input.value; });
+  body.appendChild(input);
+}
+
+async function wizardStepBack() {
+  if (wiz.index === 0) {
+    wiz.workflow = "";
+    renderWizard();
+    return;
+  }
+  wiz.index -= 1;
+  await loadWizardSteps();
+  renderWizard();
+}
+
+async function wizardStepNext() {
+  wiz.index += 1;
+  // The answer just given may change what follows, so the steps are read again before the next one is shown.
+  await loadWizardSteps();
+  if (wiz.index >= wiz.steps.length) await buildWizardLab();
+  renderWizard();
+}
+
+async function buildWizardLab() {
+  try {
+    const data = await adminCall("wizard-build", { workflow: wiz.workflow, answers: wiz.answers });
+    wiz.config = data.config || null;
+  } catch (e) {
+    wiz.config = null;
+    toastError(e.message);
+  }
+}
+
+function renderWizardSummary(body) {
+  $("#wizardWhere").textContent = "Ready";
+  wizardButtons({ back: true, open: !!wiz.config, create: !!wiz.config });
+  if (!wiz.config) {
+    body.appendChild(el("p", "wizard-help", "The server could not build this lab. Go back and change an answer."));
+    return;
+  }
+  const nodes = Object.keys(wiz.config.nodes || {});
+  const common = wiz.config.common || {};
+  body.appendChild(el("p", "wizard-q", "This is what it will build"));
+  const list = el("dl", "wizard-summary");
+  const rows = [
+    ["Nodes", nodes.length ? nodes.join(", ") : "none"],
+    ["Zone", common.mydomain || "—"],
+    ["Where", common.cloud_account ? "cloud account " + common.cloud_account : (common.backend || "libvirt")],
+    ["Each node", `${common.VM_CPU} vCPU · ${common.VM_MEM} MiB · ${common.VM_DSK} GiB, and more where a node needs it`],
+    ["Addresses", common.mygw ? "allocated from " + common.mygw + "/" + common.mymask : "assigned by the provider"],
+  ];
+  Object.keys(wiz.config.kclusters || {}).forEach((name) => {
+    const clu = wiz.config.kclusters[name];
+    rows.push(["Cluster " + name, clu.clu_type + (clu.addons && clu.addons.length ? " with " + clu.addons.join(", ") : "")]);
+  });
+  rows.forEach(([key, text]) => {
+    list.appendChild(el("dt", "", key));
+    list.appendChild(el("dd", "", text));
+  });
+  body.appendChild(list);
+}
+
+function wizardToCanvas() {
+  if (!wiz.config) return;
+  const name = (wiz.answers.name || "lab").toString();
+  $("#labName").value = name;
+  loadLab(wiz.config);
+  closeWizard();
+  toast("On the canvas: every field can be changed before you create it");
+}
+
+async function wizardCreate() {
+  if (!wiz.config) return;
+  // Straight into the canvas's own Create lab, which saves the definition, asks for the passphrase it needs and
+  // follows the job: one path, whichever way the lab was written.
+  wizardToCanvas();
+  await openCreate();
+}
+
 // ---- hypervisor status panel (read-only) ------------------------------------
 // Populated from the "status" action, which just reads a cached JSON
 // snapshot (webui/lib/discovery.py's status()) — the CGI never queries the
@@ -2479,6 +2710,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
   $("#facetFilter").addEventListener("change", () => renderPalette($("#filter").value || ""));
+  if ($("#simplifyBtn")) $("#simplifyBtn").addEventListener("click", openWizard);
+  if ($("#wizardClose")) $("#wizardClose").addEventListener("click", closeWizard);
+  if ($("#wizardBack")) $("#wizardBack").addEventListener("click", wizardStepBack);
+  if ($("#wizardNext")) $("#wizardNext").addEventListener("click", wizardStepNext);
+  if ($("#wizardOpen")) $("#wizardOpen").addEventListener("click", wizardToCanvas);
+  if ($("#wizardCreate")) $("#wizardCreate").addEventListener("click", wizardCreate);
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

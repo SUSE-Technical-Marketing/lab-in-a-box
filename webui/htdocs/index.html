@@ -61,8 +61,26 @@
       <div class="panel-head">
         <h2>Lab</h2>
         <span class="canvas-hint">Drag blocks in · double-click to edit · Delete removes</span>
+        <button id="simplifyBtn" class="btn" title="Answer a few questions instead, and let the server work the rest out">Simplify</button>
       </div>
       <div id="canvas" class="canvas"></div>
+    </section>
+
+    <!-- the step-by-step builder: four questions and the server works the rest out (webui/lib/wizard.py) -->
+    <section class="panel wizard-area" id="wizardPanel" aria-label="Step-by-step lab builder" hidden>
+      <div class="panel-head">
+        <h2>Simplified</h2>
+        <span class="canvas-hint" id="wizardWhere"></span>
+        <button id="wizardClose" class="btn" title="Back to the full canvas">Full canvas</button>
+      </div>
+      <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
+      <div class="wizard-actions">
+        <button id="wizardBack" class="btn" hidden>Back</button>
+        <button id="wizardNext" class="btn primary" hidden>Next</button>
+        <button id="wizardOpen" class="btn" hidden title="Put this lab on the canvas, where every field can be changed">Open in the canvas</button>
+        <button id="wizardCreate" class="btn primary" hidden title="Create this lab now">Create lab</button>
+      </div>
+      <p class="hint" id="wizardHint">Every answer has a default worked out from this installation: the images its hypervisors report, the credentials it holds, and what each product's own documentation asks for.</p>
     </section>
 
     <!-- assembled lab -->

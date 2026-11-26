@@ -498,7 +498,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
-<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير.</p>
+<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير. و<strong>Simplify</strong> في لوحة Lab يطرح بدلًا من ذلك أربعة أو خمسة أسئلة ويبني المختبر منها: مكان البناء يُسأل عنه دائمًا، والعناوين لا يُسأل عنها أبدًا، وكل عقدة تُحدَّد مواردها وفق ما توثّقه منتجاتها نفسها (انظر <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>).</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>

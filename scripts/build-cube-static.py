@@ -35,7 +35,8 @@ import api  # noqa: E402
 
 HIDE_SERVER_CONTROLS = """
   <style>
-    #statusPanel, #refreshImagesBtn, #editorImages, #validateBtn, #saveBtn, #savedBtn, #createBtn { display: none !important; }
+    #statusPanel, #refreshImagesBtn, #editorImages, #validateBtn, #saveBtn, #savedBtn, #createBtn,
+    #simplifyBtn { display: none !important; }
   </style>
 """
 

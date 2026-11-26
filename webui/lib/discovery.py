@@ -24,6 +24,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import os
 import re
 import sys
@@ -339,6 +340,13 @@ def discover():
             "targets": caps.get("targets") or [],
             "status": caps.get("status") or "stable",
             "status_note": caps.get("status_note") or "",
+            # What an add-on cannot be added without: a field its own schema requires, and a field naming a
+            # credential account, which its --validate refuses to go without even though the schema does not
+            # mark it required (addon_common.Validator's vreq_or_credential). The step-by-step builder offers
+            # neither, since it has no way to fill either in.
+            "required_fields": [f["name"] for f in (sc.get("fields") or []) if f.get("required")],
+            "credential_fields": [f["name"] for f in (sc.get("fields") or [])
+                                  if str(f.get("name", "")).endswith("_account")],
             "requires_cluster": caps.get("requires_cluster") or [],
             "provides_cluster": caps.get("provides_cluster") or [],
             "requires_kubernetes": caps.get("requires_kubernetes"),
@@ -439,6 +447,152 @@ def catalogue():
         items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
                       "layers": [], "targets": [], "facets": ["kubernetes"]})
     return items
+
+
+# ── the step-by-step builder ────────────────────────────────────────────────
+# webui/lib/wizard.py holds the questions and builds the definition; everything installation-specific it needs
+# is gathered here, because this is the module that already knows where the add-ons, the credentials and the
+# hypervisor snapshot live.
+
+
+def addable_addons():
+    """
+    The add-ons that can go into a lab with no configuration of their own, by name, asked of each add-on's own
+    --validate and cached (apps.accepts_blank_config()). Roughly half of them: the rest want a credential, a
+    required field or a choice only an operator can make. None when this installation's library cannot answer.
+    """
+    apps = _apps_lib()
+    if not hasattr(apps, "accepts_blank_config"):
+        # A deployed library older than this web UI: say nothing rather than fail, and the wizard falls back to
+        # what an add-on's schema already shows about its required fields.
+        return None
+    files = {}
+    for d in addon_dirs():
+        for name, path in apps.addon_files(d).items():
+            files.setdefault(name, path)
+    answers = apps.accepts_blank_config(list(files.values()))
+    return {name[len("install_"):] for name, path in files.items()
+            if answers.get(os.path.realpath(path))}
+
+
+def cloud_accounts():
+    """[(name, cloudtype)] of the cloud accounts the credential store holds. Nothing is decrypted or read."""
+    return list(_primary_lib().list_cloud_accounts())
+
+
+def service_accounts():
+    """{kind: [name, ...]} of the service credentials the store holds. Names only, nothing decrypted."""
+    out = {}
+    for name, kind in _primary_lib().list_service_credentials():
+        out.setdefault(kind, []).append(name)
+    return {kind: sorted(names) for kind, names in out.items()}
+
+
+def lab_network():
+    """
+    The subnet a generated lab's nodes live on: this automation node's own. A lab's nodes share the network with
+    the automation node that serves their DNS, so its gateway, prefix and resolver are the lab's, and the run
+    then allocates each address from it (libs/ipalloc.py).
+
+    {} when it cannot be read — no default route, no address, no `ip` command — and the generated lab then names
+    no network, which its own preflight reports rather than this guessing one.
+
+    Read here with `ip -j` rather than through libs/host_network.py, whose current_settings() is the same answer
+    but needs Python 3.7: this module is imported by the CGI under the host's own python3, which can be 3.6.
+    """
+    try:
+        routes = _ip_json("-4", "route", "show", "default")
+        route = next((r for r in routes if r.get("gateway") and r.get("dev")), None)
+        if not route:
+            return {}
+        addrs = _ip_json("-4", "addr", "show", "dev", route["dev"])
+        info = [a for a in (addrs[0].get("addr_info") or [])
+                if a.get("family") == "inet" and a.get("scope") == "global"]
+        if not info:
+            return {}
+        return {"mygw": route["gateway"], "mymask": str(info[0]["prefixlen"]),
+                "mydns": _resolver() or route["gateway"]}
+    except (OSError, ValueError, IndexError, KeyError, TypeError, subprocess.SubprocessError):
+        return {}
+
+
+def _ip_json(*args):
+    """`ip -j <args>` as parsed JSON, or [] when there is no such command or it says nothing."""
+    out = subprocess.run(["ip", "-j"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return json.loads(out.stdout.decode("utf-8") or "[]")
+
+
+def _resolver():
+    """The first nameserver of /etc/resolv.conf, which on an automation node is its own BIND, or ""."""
+    try:
+        with open("/etc/resolv.conf") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) > 1 and parts[0] == "nameserver":
+                    return parts[1]
+    except OSError:
+        pass
+    return ""
+
+
+def _wizard():
+    """
+    webui/lib/wizard.py, which sits beside this file rather than in libs/: it is a web-UI concern. Loading
+    libs/sizing.py first is what puts libs_dir() on the path, which is where the wizard's own import of it
+    resolves — the same reason every other library here goes through _lib().
+    """
+    _lib("sizing")
+    import wizard
+    return wizard
+
+
+def _image_names():
+    """The source images the hypervisor snapshot reports, by name. Its entries are strings on some versions of
+    the snapshot and objects on others, so both are read."""
+    names = []
+    for image in status().get("images") or []:
+        name = image if isinstance(image, str) else (image or {}).get("name") or ""
+        if name:
+            names.append(str(name))
+    return names
+
+
+def wizard_workflows():
+    """The workflows the step-by-step builder offers, each with whatever stands in its way on this installation."""
+    wizard = _wizard()
+    accounts = service_accounts()
+    out = []
+    for workflow in wizard.workflows():
+        workflow["prerequisites"] = wizard.prerequisites(workflow["name"], accounts)
+        out.append(workflow)
+    return out
+
+
+def wizard_steps(workflow, answers=None):
+    """
+    `workflow`'s questions, with every option filled in from what this installation has, and narrowed by what has
+    been answered so far: a later question can depend on an earlier one, so a caller re-reads these after each
+    answer.
+    """
+    wizard = _wizard()
+    accounts = service_accounts()
+    return {
+        "workflow": workflow,
+        "prerequisites": wizard.prerequisites(workflow, accounts),
+        "steps": wizard.steps(workflow, catalogue=catalogue(), accounts=cloud_accounts(),
+                              images=_image_names(), addable=addable_addons(),
+                              service_accounts=accounts, answers=answers or {}),
+    }
+
+
+def wizard_build(workflow, answers):
+    """The lab definition these answers describe, ready for the canvas and for Validate."""
+    wizard = _wizard()
+    accounts = service_accounts()
+    return {"config": wizard.build(workflow, answers or {}, network=lab_network(), catalogue=catalogue(),
+                                   accounts=cloud_accounts(),
+                                   images=_image_names(),
+                                   addable=addable_addons(), service_accounts=accounts)}
 
 
 _lab_creation = None
