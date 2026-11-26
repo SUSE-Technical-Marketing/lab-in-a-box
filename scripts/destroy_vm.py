@@ -23,10 +23,27 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
         sys.path.insert(0, _candidate)
 
 import ipalloc  # noqa: E402
+import overlay  # noqa: E402
 import primary  # noqa: E402
 from lab_creation import load_vm_vars, del_from_dns, warn, log  # noqa: E402
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
+
+
+_HUB_HOST = None
+
+
+def _overlay_hub_host(config, defaults):
+    """The overlay hub's address, or "" when there is no hub to talk to. Looked up once per process.
+
+    A whole-lab teardown calls destroy_vm() once per node and every one of them asks the same question of the
+    same account, where the answer cannot change: the lookup resolves a backend and makes two provider calls
+    (overlay.existing_hub_host()), so a twenty-node lab would spend forty of them on one unchanging address.
+    """
+    global _HUB_HOST
+    if _HUB_HOST is None:
+        _HUB_HOST = overlay.existing_hub_host(config, lab_setup_path=defaults.get("LAB_SETUP_PATH"))
+    return _HUB_HOST
 
 
 def destroy_vm(definition, config, defaults, vm_name):
@@ -90,12 +107,17 @@ def destroy_vm(definition, config, defaults, vm_name):
     else:
         warn("- No myip known for \"{}\" — skipping DNS cleanup".format(vm_name))
 
-    # No cross-cloud WireGuard overlay cleanup needed here — individual lab
-    # nodes are never themselves WireGuard peers (see libs/overlay.py's
-    # module docstring): only each site's shared,
-    # persistent gateway is, and destroying one ordinary node never touches
-    # that. The route this node had (if overlay was enabled) is irrelevant
-    # once the node itself is gone.
+    # Cross-cloud WireGuard overlay (see libs/overlay.py). No peer entry is removed: an ordinary lab node is
+    # never itself a WireGuard peer, only its site's shared gateway is, and the route this node held goes with
+    # the node. Its line in the hub's node registry does have to go. setup_vm.py's overlay.register_node() put
+    # it there so that a node could be told about a site that joined after it was built; left behind, every
+    # later overlay.refresh_routes() keeps opening an SSH connection to a host that no longer exists, for as
+    # long as the hub lives. Best effort, like the DNS removal above: no hub, or an unreachable one, is skipped.
+    if str(env.get("overlay") or env.get("OVERLAY_ENABLED") or "").strip().lower() in ("1", "true", "yes"):
+        hub_host = _overlay_hub_host(config, defaults)
+        if hub_host:
+            overlay.forget_node(hub_host, vm_name)
+
     backend.delete_vm(vm_name)
     print('#\t\tVM "{}" destroyed\n'.format(vm_name))
 

@@ -126,6 +126,12 @@ Three plain text files on the WireGuard hub, under `/etc/wireguard/`, rewritten 
 | `overlay_nodes` | which node sits behind which site gateway | node |
 | `overlay_dns` | `site  address  domain  private-address` | **(site, domain)** |
 
+Each line is taken off by whatever put it there. `destroy_vm.py` removes a node's line from `overlay_nodes`,
+`destroy_lab.py` removes this lab's own line from `overlay_dns`, and `overlay_ctl.py retire-site` removes a whole
+site from all three. A line left behind is not inert: `refresh_routes()` opens an SSH connection to every node in
+`overlay_nodes` each time a site joins or is retired, so one destroyed node still listed costs a connection
+timeout on every later run, for as long as the hub lives.
+
 And one on the automation node, which is not part of the overlay:
 
 | Path | Holds |
@@ -227,7 +233,9 @@ gates that each report and keep rather than destroy:
    definition rather than a recorded copy of its sites).
 3. **The DNS server still declares a zone that is not this lab's** (`DNSService.declared_zones()`). This is the
    only gate that can see a lab this automation node never deployed, because the server is per cloud **account**
-   while a registry is per automation **node**. The gateway has no equivalent and rests on gates 1 and 2.
+   while a registry is per automation **node**. The gateway has no equivalent and rests on gates 1 and 2;
+   `overlay_nodes` could become one now that a destroyed node is taken off it, which it was not when these gates
+   were written.
 
 Two things that are easy to get wrong here:
 
@@ -241,14 +249,6 @@ Two things that are easy to get wrong here:
 Refcounting the registry alone would not do. It is per automation node, so two nodes sharing one cloud account
 would each count only their own labs, and the first to reach zero would destroy a server the other's labs resolve
 through. Gate 3 is what closes that, and it needs no new backend primitive.
-
-## Known gaps
-
-**A destroyed node keeps its line in the hub's node registry.** `overlay.forget_node()` exists but is only ever
-called by hand from `overlay_ctl.py`; `destroy_vm.py` does not call it. So `refresh_routes()` keeps SSHing to
-nodes that no longer exist, which is what its "unreachable" count is mostly made of. The fix is for `destroy_vm.py`
-to call `forget_node()` with `overlay.existing_hub_host()`, cached per process so a lab teardown does not look the
-hub up once per node.
 
 ## Considered and deferred: delegation plus native replication
 
