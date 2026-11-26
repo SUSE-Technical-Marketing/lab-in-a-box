@@ -733,6 +733,40 @@ def validate_lab_definition(definition, config, iso_loc, lab_setup_path, target_
             for w in _addon_version_issues(definition, addon_entry, [node]):
                 warn("nodes.{}: addon '{}' {}".format(node, addon, w))
 
+    # ── 4c. The documented hardware minimums of what each node runs (libs/sizing.py) ──
+    # A warning, never an error: a lab is free to run a product on less than its own documentation asks for, and
+    # plenty of demo labs do. Nothing else in this preflight would say so, though, and the failure it leads to
+    # arrives much later as a pod that will not schedule or a server that is killed for memory.
+    import sizing
+    from apps import addon_entry_name as _addon_name
+    for node in nodes_to_check:
+        node_cfg = nodes.get(node) or {}
+        clu = _jq_or(node_cfg.get("kcluster"))
+        clu_cfg = (kclusters.get(clu) or {}) if not _empty(clu) else {}
+        products = []
+        ctype = _jq_or(clu_cfg.get("clu_type"))
+        # An agent is the one role either Kubernetes distribution documents on its own.
+        if ctype == "k3s" and str(_jq_or(node_cfg.get("INSTALL_RKE2_TYPE")) or "").lower() == "agent":
+            ctype = "k3s-agent"
+        if sizing.known(ctype):
+            products.append(ctype)
+        for entry in list(clu_cfg.get("addons") or []) + list(node_cfg.get("addons") or []):
+            name = _addon_name(entry)
+            if sizing.known(name) and name not in products:
+                products.append(name)
+        if not products:
+            continue
+        wanted = sizing.combined(products)
+        running = ", ".join(title for title, _note, _source in sizing.notes(products))
+        for key, field in sizing.FIELDS:
+            have = str(node_cfg.get(field, common.get(field, "")) or "").strip()
+            if not have.isdigit() or int(have) >= wanted[key]:
+                continue
+            title, source = sizing.binding(products, key)
+            warn("nodes.{}.{} is {} but {} asks for at least {} on a node running {}{}".format(
+                node, field, have, title, wanted[key], running,
+                " — see {}".format(source) if source else ""))
+
     # ── 5. Per-addon field validation — delegate to each install script ───────
     # Each install_* script supports --validate <json> and exits non-zero
     # with [ERROR] lines if its own fields are invalid or missing.
