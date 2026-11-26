@@ -98,6 +98,78 @@ def _token():
     return secrets.token_hex(16)
 
 
+# What to say about each distribution the lab definition accepts. A value missing from here is still offered,
+# labelled with its own name: the list of distributions is the schema's, never this table's (see
+# _distribution_options).
+_DISTRIBUTION_HELP = {
+    "rke2": ("RKE2", "SUSE's own, and the default here. Brings an ingress controller and a storage class."),
+    "k3s": ("K3s", "Lighter, and the smallest cluster this can build. Brings both as well."),
+    "vanilla": ("Upstream Kubernetes", "Built with kubeadm from the community packages, with flannel. It brings "
+                                       "neither an ingress controller nor a storage class, so an add-on that "
+                                       "needs one pulls it in itself."),
+}
+
+# clu_type harvester is an appliance the virtualization workflow builds from an AMI, not a cluster this workflow
+# can put a node or an add-on on, so it is not a distribution to choose here.
+_NOT_A_DISTRIBUTION = ("harvester",)
+
+
+def _cluster_release(distribution):
+    """
+    The clu_rel this distribution needs: upstream Kubernetes installs a named minor, and VanillaDistro.minor()
+    refuses a channel, while the vendor distributions take one.
+    """
+    if distribution == "vanilla":
+        import k8s
+        return k8s.VanillaDistro.DEFAULT_REL
+    return _CLUSTER_RELEASE
+
+
+def _distribution_options():
+    """
+    The Kubernetes distributions on offer, read from the lab definition's own clu_type enum (libs/
+    lab_schema_base.py) so the form can never accept less than the lab format does: a distribution added to the
+    schema is offered here without this file being touched.
+    """
+    import lab_schema_base
+    fields = lab_schema_base.base_lab_schema()["sections"]["kclusters"]["fields"]
+    enum = next((f.get("enum") or [] for f in fields if f.get("name") == "clu_type"), [])
+    options = []
+    for value in enum:
+        if value in _NOT_A_DISTRIBUTION:
+            continue
+        label, help_text = _DISTRIBUTION_HELP.get(value, (value, ""))
+        options.append({"value": value, "label": label, "help": help_text})
+    return options
+
+
+def _example_options(examples):
+    """
+    The example labs on offer, from libs/lab_examples.py's own catalogue (shipped and operator-owned alike), so
+    the form lists whatever this installation has rather than a copy of the repository's examples/ directory.
+    """
+    def how_many(value):
+        """The catalogue counts VMs as a number and lists add-ons by name; either shape is a count here."""
+        if isinstance(value, (list, tuple, dict, set)):
+            return len(value)
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    options = []
+    for item in examples or []:
+        counts = []
+        for key, word in (("nodes", "VM"), ("kclusters", "cluster"), ("addons", "add-on")):
+            total = how_many(item.get(key))
+            if total:
+                counts.append("{} {}{}".format(total, word, "" if total == 1 else "s"))
+        parts = [p for p in [(item.get("description") or "").strip().rstrip("."), ", ".join(counts)] if p]
+        options.append({"value": item["name"], "label": item.get("title") or item["name"],
+                        "help": ". ".join(parts)})
+    return options
+
+
 def _addon_options(catalogue, placement, addable=None):
     """
     The add-ons a workflow may offer: those that can go where this workflow puts them, and that need no
@@ -222,9 +294,7 @@ def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_
     if workflow == "kubernetes":
         return common + [
             {"name": "distribution", "title": "Which Kubernetes distribution?", "kind": "choice",
-             "default": "rke2", "options": [
-                 {"value": "rke2", "label": "RKE2", "help": "SUSE's own, and the default here."},
-                 {"value": "k3s", "label": "K3s", "help": "Lighter, and the smallest cluster this can build."}]},
+             "default": "rke2", "options": _distribution_options()},
             {"name": "servers", "title": "How many server nodes?", "kind": "count",
              "default": 1, "min": 1, "max": 3,
              "help": "One is enough for a lab. Three is what a cluster needs to survive losing one."},
@@ -260,13 +330,14 @@ def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_
         products = []
         if _backend_options(accounts, only_cloudtype="aws"):
             products.append({"value": "harvester", "label": "SUSE Virtualization (Harvester)",
-                             "help": "Its own documentation asks for bare metal; this project builds it on AWS "
-                                     "with nested virtualization, from a Harvester AMI."})
+                             "help": "Harvester installs on bare metal and on KVM; the path built here is an AWS "
+                                     "account with nested virtualization, from a Harvester AMI."})
         products.append({"value": "kvm", "label": "A KVM hypervisor node",
                          "help": "A node prepared to run virtual machines of its own."})
         chosen = [{"name": "product", "title": "Which virtualization?", "kind": "choice",
                    "default": products[0]["value"], "options": products,
-                   "help": "SUSE Virtualization needs an AWS account in the credential store to be offered."}]
+                   "help": "SUSE Virtualization needs an AWS account in the credential store, which is read "
+                           "with a login, to be offered."}]
         counted = [{"name": "nodes", "title": "How many nodes?", "kind": "count", "default": 1, "min": 1,
                     "max": 3,
                     "help": "Harvester needs three for high availability, replicas and live migration."}]
@@ -389,7 +460,8 @@ def build(workflow, answers, network=None, catalogue=(), accounts=(), images=(),
     if workflow == "kubernetes":
         distribution = str(_answer(answers, "distribution", spec))
         cluster = "{}-cluster".format(slug(name))
-        kclusters[cluster] = {"clu_type": distribution, "clu_rel": _CLUSTER_RELEASE, "mydomain": domain,
+        kclusters[cluster] = {"clu_type": distribution, "clu_rel": _cluster_release(distribution),
+                              "mydomain": domain,
                               "addons": apps}
         for index in range(1, _count(answers, "servers", spec) + 1):
             nodes[fqdn("server{}".format(index))] = _node(

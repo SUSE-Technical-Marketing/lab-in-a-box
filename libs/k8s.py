@@ -434,6 +434,10 @@ class VanillaDistro(K8sDistro):
     # Each plugin's own manifest carries this network, so the cluster has to be initialised with the same one.
     CNI_POD_CIDRS = {"flannel": "10.244.0.0/16", "calico": "192.168.0.0/16"}
     DEFAULT_CNI = "flannel"
+    # The minor a lab gets when nothing names one: clu_rel is required by the schema, so this is for a caller
+    # that writes the definition itself (the lab-builder's step-by-step builder) rather than a default applied
+    # to a lab that left it out.
+    DEFAULT_REL = "1.33"
 
     def kubeconfig_path(self):
         return "/etc/kubernetes/admin.conf"
