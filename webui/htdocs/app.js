@@ -345,35 +345,57 @@ function renderPalette(filter) {
 // example or an opened file takes, so Validate, Save and Create lab all work on it unchanged.
 const wiz = { open: false, workflows: [], workflow: "", steps: [], answers: {}, index: 0, config: null };
 
+// Simplify asks for nothing: its three actions are served by the public API (webui/lib/api.py's _wizard), so the
+// browser never puts up a login dialog here. When a login already exists, the same actions are read through the
+// admin endpoint instead, where the server adds the credential store's cloud accounts to the "where" question.
+async function wizardCall(action, payload, params = {}) {
+  const q = new URLSearchParams({ action, ...params });
+  const base = state.auth && state.auth.user ? ADMIN_API : API;
+  const opts = payload === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+  };
+  const r = await fetch(`${base}?${q}`, opts);
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* not JSON: an error page */ }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
 async function openWizard() {
+  // The workflows are read before anything is shown: a panel that opened on a failed read would stand there
+  // empty, as if Simplify had nothing to offer.
+  let workflows;
+  try {
+    workflows = (await wizardCall("wizard")).workflows || [];
+  } catch (e) {
+    toastError(e.message);
+    return;
+  }
   wiz.open = true;
-  document.body.classList.add("wizard-on");
-  $("#wizardPanel").hidden = false;
+  wiz.workflows = workflows;
   wiz.workflow = "";
   wiz.answers = {};
   wiz.index = 0;
   wiz.config = null;
-  try {
-    const data = await adminCall("wizard");
-    wiz.workflows = data.workflows || [];
-  } catch (e) {
-    wiz.workflows = [];
-    toastError(e.message);
-  }
   renderWizard();
+  showDialog("#wizardPanel");
 }
 
 function closeWizard() {
   wiz.open = false;
-  document.body.classList.remove("wizard-on");
-  $("#wizardPanel").hidden = true;
+  closeDialog("#wizardPanel");
 }
 
-function wizardButtons({ back = false, next = false, open = false, create = false }) {
+function wizardButtons({ back = false, next = false, open = false, create = false, keep = false }) {
   $("#wizardBack").hidden = !back;
   $("#wizardNext").hidden = !next;
   $("#wizardOpen").hidden = !open;
   $("#wizardCreate").hidden = !create;
+  // Save to server needs a login; downloading the file never does.
+  $("#wizardDownload").hidden = !keep;
+  $("#wizardSave").hidden = !keep;
+  $("#wizardSave").disabled = Boolean(serverLock());
+  $("#wizardSave").title = serverLock() || "Save this lab on the automation node";
 }
 
 function renderWizard() {
@@ -409,7 +431,7 @@ function renderWizardWorkflows(body) {
   });
   body.appendChild(list);
   if (!(wiz.workflows || []).length) {
-    body.appendChild(el("p", "wizard-help", "The server offered no workflows — log in and try again."));
+    body.appendChild(el("p", "wizard-help", "This installation offered no workflows."));
   }
 }
 
@@ -417,19 +439,23 @@ async function startWizardWorkflow(name) {
   wiz.workflow = name;
   wiz.answers = {};
   wiz.index = 0;
-  await loadWizardSteps();
+  wiz.steps = [];
+  if (!(await loadWizardSteps())) wiz.workflow = "";
   renderWizard();
 }
 
+// Re-read on every answer: the server decides which questions follow from what has been answered so far.
+// Returns false when the read failed, which leaves wiz.steps as it was so the caller can stay where it is
+// rather than walk on into a summary of nothing.
 async function loadWizardSteps() {
-  // Re-read on every answer: the server decides which questions follow from what has been answered so far.
   try {
-    const data = await adminCall("wizard-steps", undefined, { name: wiz.workflow, answers: JSON.stringify(wiz.answers) });
+    const data = await wizardCall("wizard-steps", undefined, { name: wiz.workflow, answers: JSON.stringify(wiz.answers) });
     wiz.steps = data.steps || [];
     wiz.prerequisites = data.prerequisites || [];
+    return true;
   } catch (e) {
-    wiz.steps = [];
     toastError(e.message);
+    return false;
   }
 }
 
@@ -507,14 +533,17 @@ async function wizardStepBack() {
 async function wizardStepNext() {
   wiz.index += 1;
   // The answer just given may change what follows, so the steps are read again before the next one is shown.
-  await loadWizardSteps();
-  if (wiz.index >= wiz.steps.length) await buildWizardLab();
+  if (!(await loadWizardSteps())) {
+    wiz.index -= 1;
+  } else if (wiz.index >= wiz.steps.length) {
+    await buildWizardLab();
+  }
   renderWizard();
 }
 
 async function buildWizardLab() {
   try {
-    const data = await adminCall("wizard-build", { workflow: wiz.workflow, answers: wiz.answers });
+    const data = await wizardCall("wizard-build", { workflow: wiz.workflow, answers: wiz.answers });
     wiz.config = data.config || null;
   } catch (e) {
     wiz.config = null;
@@ -524,7 +553,7 @@ async function buildWizardLab() {
 
 function renderWizardSummary(body) {
   $("#wizardWhere").textContent = "Ready";
-  wizardButtons({ back: true, open: !!wiz.config, create: !!wiz.config });
+  wizardButtons({ back: true, open: !!wiz.config, create: !!wiz.config, keep: !!wiz.config });
   if (!wiz.config) {
     body.appendChild(el("p", "wizard-help", "The server could not build this lab. Go back and change an answer."));
     return;
@@ -551,9 +580,14 @@ function renderWizardSummary(body) {
   body.appendChild(list);
 }
 
+// What the lab is called: the name answered in the first question.
+function wizardLabName() {
+  return (wiz.answers.name || "lab").toString();
+}
+
 function wizardToCanvas() {
   if (!wiz.config) return;
-  const name = (wiz.answers.name || "lab").toString();
+  const name = wizardLabName();
   $("#labName").value = name;
   loadLab(wiz.config);
   closeWizard();
@@ -2203,18 +2237,21 @@ async function validateLab() {
       : (r.output || "Validation failed.");
   } catch (e) { toastError("Validate error: " + e.message); }
 }
-function downloadLab() {
-  if ($("#downloadBtn").disabled) return;
-  const name = ($("#labName").value.trim() || "lab").replace(/[^A-Za-z0-9._-]/g, "_");
-  const blob = new Blob([JSON.stringify(state.lab, null, 2) + "\n"], { type: "application/json" });
+// `definition`/`filename` let the step-by-step builder download or save what it just wrote without putting it on
+// the canvas first; with neither, this is the canvas's own button and takes the canvas's lab and name.
+function downloadLab(definition, filename) {
+  if (!definition && $("#downloadBtn").disabled) return;
+  const name = (filename || $("#labName").value.trim() || "lab").replace(/[^A-Za-z0-9._-]/g, "_");
+  const blob = new Blob([JSON.stringify(definition || state.lab, null, 2) + "\n"], { type: "application/json" });
   const a = el("a"); a.href = URL.createObjectURL(blob);
   a.download = name.endsWith(".json") ? name : name + ".json";
   a.click(); URL.revokeObjectURL(a.href);
 }
-async function saveLab() {
-  if ($("#saveBtn").disabled) return;
+async function saveLab(definition, filename) {
+  if (!definition && $("#saveBtn").disabled) return;
   try {
-    const r = await adminCall("save", { filename: $("#labName").value.trim() || "lab", config: state.lab });
+    const r = await adminCall("save", { filename: filename || $("#labName").value.trim() || "lab",
+                                        config: definition || state.lab });
     // r.path is the full server-side path (api.py's "save" action already
     // returns it) — show it, not just the basename, so it's actually
     // findable (reported live 2026-09-01: the toast never said where).
@@ -2720,6 +2757,10 @@ window.addEventListener("DOMContentLoaded", () => {
   if ($("#wizardNext")) $("#wizardNext").addEventListener("click", wizardStepNext);
   if ($("#wizardOpen")) $("#wizardOpen").addEventListener("click", wizardToCanvas);
   if ($("#wizardCreate")) $("#wizardCreate").addEventListener("click", wizardCreate);
+  if ($("#wizardDownload")) {
+    $("#wizardDownload").addEventListener("click", () => downloadLab(wiz.config, wizardLabName()));
+  }
+  if ($("#wizardSave")) $("#wizardSave").addEventListener("click", () => saveLab(wiz.config, wizardLabName()));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

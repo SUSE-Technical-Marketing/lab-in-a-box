@@ -204,8 +204,12 @@ def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_
          "help": "It names the file, and the lab's own DNS zone: '{}'.".format(domain_for(name_defaults[workflow]))},
         {"name": "backend", "title": "Where should it be built?", "kind": "choice",
          "default": backends[0]["value"] if backends else "libvirt", "options": backends,
-         "help": "SUSE Virtualization runs on an AWS account here, with nested virtualization." if harvester
-                 else "The one answer nothing else implies."},
+         "help": "SUSE Virtualization installs on bare metal and on KVM, but this project builds it only on an "
+                 "AWS account, from a Harvester AMI with nested virtualization: libs/harvester.py refuses a node "
+                 "on any other backend." if harvester
+                 else "The one answer nothing else implies." if accounts
+                 else "The one answer nothing else implies. Cloud accounts come from the credential store, which "
+                      "is read with a login."},
     ]
     # The first image the hypervisors report is the default, so a lab builds without the operator choosing one.
     # With no snapshot taken yet there is nothing to offer and nothing to default to: the preflight then says

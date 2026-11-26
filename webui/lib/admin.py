@@ -28,8 +28,15 @@ import syslog
 import discovery
 
 ACTIONS = {"labs", "lab", "save", "credentials", "credentials-add", "credentials-encrypt",
-           "credentials-delete", "create", "validate-credentials", "job", "jobs", "power",
-           "wizard", "wizard-steps", "wizard-build"}
+           "credentials-delete", "create", "validate-credentials", "job", "jobs", "power"}
+
+# Served without a login, and answered by api.py, not here: the step-by-step builder asks questions and returns a
+# definition, which is the public half's work, the same class as "schema" and "validate". Nothing it does reaches
+# the hypervisor or the credential store. What a login adds is this module's cloud_accounts()/service_accounts(),
+# which name the accounts the store holds: api.dispatch passes those in only for an authorized user, so the
+# builder offers an anonymous caller this hypervisor and names no account. Creating or saving the lab the builder
+# wrote is an ACTIONS entry like any other.
+WIZARD_ACTIONS = {"wizard", "wizard-steps", "wizard-build"}
 
 
 def helper_path():
@@ -155,13 +162,13 @@ def _credentials():
         return []
 
 
-def _cloud_accounts():
+def cloud_accounts():
     """[(name, cloudtype)] of the cloud accounts, for the wizard's "where should it be built" question."""
     return [(c.get("name"), c.get("type")) for c in _credentials()
             if c.get("kind") == "cloud" and c.get("name") and c.get("type")]
 
 
-def _service_accounts():
+def service_accounts():
     """{kind: [name, ...]} of the service credentials, for a workflow that needs one of a particular kind."""
     out = {}
     for credential in _credentials():
@@ -206,26 +213,6 @@ def dispatch(action, method, params, data):
     """Carry out login action `action`; returns the JSON answer. `params` is the
     parsed query string, `data` the parsed POST body."""
     one = lambda k: (params.get(k) or [""])[0]
-    # The step-by-step builder. Behind the login like everything else here, because its options name the
-    # credential accounts this installation holds, and because building a lab is an admin act anyway.
-    if action == "wizard" and method == "GET":
-        return {"workflows": discovery.wizard_workflows(service_accounts=_service_accounts()),
-                "network": discovery.lab_network()}
-    if action == "wizard-steps" and method == "GET":
-        # The answers so far ride along as JSON, because a GET is what the browser reads steps with and a later
-        # question can depend on an earlier one. Anything unparseable is treated as no answers at all.
-        try:
-            answers = json.loads(one("answers") or "{}")
-        except ValueError:
-            answers = {}
-        return discovery.wizard_steps(one("name"), answers if isinstance(answers, dict) else {},
-                                      cloud_accounts=_cloud_accounts(),
-                                      service_accounts=_service_accounts())
-    if action == "wizard-build" and method == "POST":
-        return discovery.wizard_build(data.get("workflow", ""), data.get("answers", {}),
-                                      cloud_accounts=_cloud_accounts(),
-                                      service_accounts=_service_accounts())
-
     if action == "labs" and method == "GET":
         return {"labs": list_labs()}
     if action == "lab" and method == "GET":

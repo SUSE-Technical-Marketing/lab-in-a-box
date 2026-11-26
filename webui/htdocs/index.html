@@ -66,23 +66,6 @@
       <div id="canvas" class="canvas"></div>
     </section>
 
-    <!-- the step-by-step builder: four questions and the server works the rest out (webui/lib/wizard.py) -->
-    <section class="panel wizard-area" id="wizardPanel" aria-label="Step-by-step lab builder" hidden>
-      <div class="panel-head">
-        <h2>Simplified</h2>
-        <span class="canvas-hint" id="wizardWhere"></span>
-        <button id="wizardClose" class="btn" title="Back to the full canvas">Full canvas</button>
-      </div>
-      <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
-      <div class="wizard-actions">
-        <button id="wizardBack" class="btn" hidden>Back</button>
-        <button id="wizardNext" class="btn primary" hidden>Next</button>
-        <button id="wizardOpen" class="btn" hidden title="Put this lab on the canvas, where every field can be changed">Open in the canvas</button>
-        <button id="wizardCreate" class="btn primary" hidden title="Create this lab now">Create lab</button>
-      </div>
-      <p class="hint" id="wizardHint">Every answer has a default worked out from this installation: the images its hypervisors report, the credentials it holds, and what each product's own documentation asks for.</p>
-    </section>
-
     <!-- assembled lab -->
     <aside class="panel lab-area">
       <div class="panel-head">
@@ -142,6 +125,27 @@
   </dialog>
 
   <!-- labs saved on the server (login) -->
+  <!-- the step-by-step builder: four questions and the server works the rest out (webui/lib/wizard.py). A
+       dialog over the page, so entering it changes nothing about the canvas, the catalogue or the lab panel. -->
+  <dialog id="wizardPanel" class="editor wizard-dialog" aria-labelledby="wizardTitle">
+    <div class="editor-head">
+      <h3 id="wizardTitle">Simplified</h3>
+      <span class="canvas-hint" id="wizardWhere"></span>
+    </div>
+    <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
+    <p class="hint" id="wizardHint">Every answer has a default worked out from this installation: the images its hypervisors report, the credentials it holds, and what each product's own documentation asks for.</p>
+    <div class="editor-foot">
+      <button type="button" id="wizardClose" class="btn" title="Back to the canvas">Close</button>
+      <span class="spacer"></span>
+      <button type="button" id="wizardBack" class="btn" hidden>Back</button>
+      <button type="button" id="wizardNext" class="btn primary" hidden>Next</button>
+      <button type="button" id="wizardDownload" class="btn" hidden title="Download the lab definition as a file">Download</button>
+      <button type="button" id="wizardSave" class="btn" hidden>Save to server</button>
+      <button type="button" id="wizardOpen" class="btn" hidden title="Put this lab on the canvas, where every field can be changed">Open in the canvas</button>
+      <button type="button" id="wizardCreate" class="btn primary" hidden title="Create this lab now">Create lab</button>
+    </div>
+  </dialog>
+
   <dialog id="savedDialog" class="editor small-dialog" aria-labelledby="savedTitle">
     <div class="editor-head"><h3 id="savedTitle">Saved labs</h3></div>
     <ul id="savedList" class="saved-list"></ul>

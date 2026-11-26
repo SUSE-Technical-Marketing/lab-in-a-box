@@ -223,9 +223,32 @@ check("the probe answered for the add-ons of this checkout, and half of them do 
 
 # ── what the browser is handed, and the panel that renders it ─────────────
 import admin as webui_admin  # noqa: E402
+import api  # noqa: E402
 
-check("the three wizard actions are behind the login, like every other action that builds a lab",
-      {"wizard", "wizard-steps", "wizard-build"} <= webui_admin.ACTIONS)
+# Simplify asks questions and writes a definition, which is what the public half of the API is for: putting its
+# actions behind the login made the browser raise a password dialog on the button itself, and refusing it left
+# the panel open with nothing in it. Creating or saving what it wrote still needs the login.
+check("the three wizard actions are not behind the login",
+      not ({"wizard", "wizard-steps", "wizard-build"} & webui_admin.ACTIONS)
+      and {"wizard", "wizard-steps", "wizard-build"} == webui_admin.WIZARD_ACTIONS)
+check("creating and saving a lab still are", {"create", "save"} <= webui_admin.ACTIONS)
+
+
+def public(action, method="GET", params=None, body=None):
+    """The action as anyone reaches it: no user, no HTTPS."""
+    status, obj = api.dispatch(action, method, params or {}, body)
+    check("the public API answers {} with 200".format(action), status == 200)
+    return obj
+
+
+def logged_in(action, method="GET", params=None, body=None):
+    """The same action with a login, which is what adds the credential store's accounts."""
+    status, obj = api.dispatch(action, method, params or {}, body, user="op", https=True)
+    check("the login API answers {} with 200".format(action), status == 200)
+    return obj
+
+
+webui_admin.authorized = lambda user: True
 
 # The credential files are root-only, so the web process cannot list them itself: the accounts have to come
 # through lab-builder-helper. Reading the directory instead found nothing and offered no cloud account at all,
@@ -236,37 +259,68 @@ webui_admin.helper = lambda args, stdin=None: {"credentials": [
     {"name": "scc-tmm", "kind": "service", "type": "scc"},
 ]}
 check("the cloud accounts the helper reports are the ones offered as a backend",
-      [o["value"] for o in webui_admin.dispatch("wizard-steps", "GET", {"name": ["vm"]}, {})["steps"][1]["options"]]
+      [o["value"] for o in logged_in("wizard-steps", params={"name": ["vm"]})["steps"][1]["options"]]
       == ["libvirt", "account:aws-tmm", "account:gcp-tmm"])
 check("a service credential it reports satisfies the workflow that needs one",
-      webui_admin.dispatch("wizard", "GET", {}, {})["workflows"][1]["prerequisites"] == [])
+      logged_in("wizard")["workflows"][1]["prerequisites"] == [])
 check("...and a build uses them too, so the account chosen in the form is one the lab can name",
-      webui_admin.dispatch("wizard-build", "POST", {}, {"workflow": "vm", "answers": {
-          "name": "cloudy", "backend": "account:aws-tmm", "count": 1}})["config"]["common"]["cloud_account"]
+      logged_in("wizard-build", "POST", body=json.dumps({"workflow": "vm", "answers": {
+          "name": "cloudy", "backend": "account:aws-tmm", "count": 1}}).encode())["config"]["common"]["cloud_account"]
       == "aws-tmm")
+# Without a login the same questions are asked, and the store's account names are not among the answers.
+check("no login names no account: the form offers this hypervisor alone",
+      [o["value"] for o in public("wizard-steps", params={"name": ["vm"]})["steps"][1]["options"]] == ["libvirt"])
+check("and says where a cloud account would come from",
+      "credential store" in public("wizard-steps", params={"name": ["vm"]})["steps"][1]["help"])
+check("every workflow is still offered without a login", len(public("wizard")["workflows"]) == 5)
+check("and a lab still builds without one",
+      list(public("wizard-build", "POST",
+                  body=json.dumps({"workflow": "vm",
+                                   "answers": {"name": "anon", "count": 1}}).encode())["config"]["nodes"])
+      == ["vm1.anon.lab"])
 webui_admin.helper = lambda args, stdin=None: (_ for _ in ()).throw(OSError("no helper here"))
 check("a helper that cannot be reached leaves the form working, with this hypervisor alone",
-      [o["value"] for o in webui_admin.dispatch("wizard-steps", "GET", {"name": ["vm"]}, {})["steps"][1]["options"]]
+      [o["value"] for o in logged_in("wizard-steps", params={"name": ["vm"]})["steps"][1]["options"]]
       == ["libvirt"])
 
-answered = webui_admin.dispatch("wizard-steps", "GET",
-                                {"name": ["virtualization"], "answers": ['{"product": "kvm"}']}, {})
+answered = public("wizard-steps", params={"name": ["virtualization"], "answers": ['{"product": "kvm"}']})
 check("the answers so far reach the server, which decides what follows from them",
       [s["name"] for s in answered["steps"]][-2:] == ["apps", "image"])
 check("an unparseable answers parameter is treated as none rather than failing the request",
-      webui_admin.dispatch("wizard-steps", "GET", {"name": ["vm"], "answers": ["{oops"]}, {})["steps"])
+      public("wizard-steps", params={"name": ["vm"], "answers": ["{oops"]})["steps"])
 
-built = webui_admin.dispatch("wizard-build", "POST", {},
-                             {"workflow": "vm", "answers": {"name": "from-the-api", "count": 1}})
+built = logged_in("wizard-build", "POST",
+                  body=json.dumps({"workflow": "vm", "answers": {"name": "from-the-api", "count": 1}}).encode())
 check("the build action answers with a definition the canvas can load",
       list(built["config"]["nodes"]) == ["vm1.from-the-api.lab"])
 
 page = (_REPO / "webui" / "htdocs" / "index.html").read_text()
 script = (_REPO / "webui" / "htdocs" / "app.js").read_text()
-check("the canvas has the button that swaps it for the step view", 'id="simplifyBtn"' in page)
-check("the step view is there, hidden until it is asked for", 'id="wizardPanel"' in page and "hidden" in page)
-check("the panel offers both endings: the canvas, and Create lab",
-      'id="wizardOpen"' in page and 'id="wizardCreate"' in page)
+style = (_REPO / "webui" / "htdocs" / "style.css").read_text()
+check("the canvas has the button that opens the step view", 'id="simplifyBtn"' in page)
+# A panel inside <main class="layout"> took a column of the grid and hid the catalogue and the canvas to get it,
+# which moved the lab panel. It is a dialog like every other one here, so entering it changes no layout at all.
+check("the step view is a dialog over the page", '<dialog id="wizardPanel"' in page)
+check("it is not a panel in the layout grid",
+      'class="panel wizard-area"' not in page and "wizard-area" not in style)
+check("and nothing in the page is hidden to show it",
+      "wizard-on" not in style and "wizard-on" not in script)
+# What this asserts is only the wiring; that the click really opens the dialog is run, in a sandboxed DOM and
+# through these same helpers, by tests/checks/07_webui_js_smoke.js.
+check("it opens only once the server has answered, so a failed read leaves the canvas alone",
+      'showDialog("#wizardPanel")' in script and "toastError(e.message);\n    return;" in script)
+check("and it opens through the dialog helper the rest of the page uses",
+      "function showDialog(sel)" in script and "openDialog" not in script)
+check("Simplify asks the public API, so the browser never raises a login dialog on the button",
+      "state.auth && state.auth.user ? ADMIN_API : API" in script
+      and 'await wizardCall("wizard")' in script)
+check("the panel offers every ending the brief asked for: save, download, the canvas and Create lab",
+      'id="wizardOpen"' in page and 'id="wizardCreate"' in page
+      and 'id="wizardDownload"' in page and 'id="wizardSave"' in page)
+check("saving and downloading reuse the canvas's own, rather than a second implementation of each",
+      "downloadLab(wiz.config, wizardLabName())" in script and "saveLab(wiz.config, wizardLabName())" in script)
+check("downloading the file needs no login, and Save to server says why when it cannot be used",
+      "$(\"#wizardSave\").disabled = Boolean(serverLock())" in script)
 check("the steps are re-read after each answer, since a later one can depend on an earlier one",
       "await loadWizardSteps()" in script)
 check("a finished lab goes onto the canvas through the same path an example takes",

@@ -400,8 +400,7 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .example-row .btn { flex: none; align-self: center; }
 
 /* the step-by-step builder (Simplify), which replaces the canvas while it is open */
-body.wizard-on .catalogue, body.wizard-on .canvas-area { display: none }
-.wizard-area { display: flex; flex-direction: column; min-height: 24rem }
+.wizard-dialog { width: min(46rem, 94vw) }
 .wizard-body { padding: 1rem; overflow-y: auto; flex: 1 }
 .wizard-actions { display: flex; gap: .5rem; padding: .6rem 1rem; border-top: 1px solid var(--line) }
 .wizard-q { font-weight: 640; font-size: 1.05rem; margin: 0 0 .2rem }
@@ -411,7 +410,7 @@ body.wizard-on .catalogue, body.wizard-on .canvas-area { display: none }
   border: 1px solid var(--line); border-radius: 8px; cursor: pointer }
 .wizard-choice label:hover { background: var(--code) }
 .wizard-choice .opt-help { color: var(--muted); font-size: .8rem; display: block }
-.wizard-area input[type="text"], .wizard-area input[type="number"] {
+.wizard-dialog input[type="text"], .wizard-dialog input[type="number"] {
   padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 7px;
   background: var(--field-bg); color: var(--ink); min-width: 14rem }
 .wizard-steps { color: var(--muted); font-size: .8rem; margin: 0 0 .8rem }

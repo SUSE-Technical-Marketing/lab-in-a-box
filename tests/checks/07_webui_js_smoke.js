@@ -40,6 +40,8 @@ const sandbox = {
   },
   window: { addEventListener: () => {} },
   localStorage: makeLocalStorage(),
+  // A page always has one; serverLock() reads the scheme off it to decide whether the login endpoint can work.
+  location: { protocol: "https:", search: "" },
   console, URL, URLSearchParams, TextDecoder, atob,
 };
 vm.createContext(sandbox);

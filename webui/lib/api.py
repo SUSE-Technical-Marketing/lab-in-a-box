@@ -19,6 +19,34 @@ def _one(v, default=""):
     return v if v is not None else default
 
 
+def _wizard(action, method, params, data, clouds, services):
+    """
+    The step-by-step builder (admin.WIZARD_ACTIONS), which needs no login: it asks questions and returns a lab
+    definition, never touching the hypervisor or the credential store.
+
+    `clouds` ([(name, cloudtype)]) and `services` ({kind: [name]}) are the credential store's accounts, or ()/{}
+    for a caller without a login: their names are not public, so without one the builder offers this hypervisor
+    and names no account. Everything the finished lab then needs a login for (Create lab, Save to server) is an
+    admin.ACTIONS entry and is gated there, as before.
+    """
+    if action == "wizard" and method == "GET":
+        return {"workflows": discovery.wizard_workflows(service_accounts=services),
+                "network": discovery.lab_network(), "accounts": bool(clouds)}
+    if action == "wizard-steps" and method == "GET":
+        # The answers so far ride along as JSON, because a GET is what the browser reads steps with and a later
+        # question can depend on an earlier one. Anything unparseable is treated as no answers at all.
+        try:
+            answers = json.loads(_one(params.get("answers")) or "{}")
+        except ValueError:
+            answers = {}
+        return discovery.wizard_steps(_one(params.get("name")), answers if isinstance(answers, dict) else {},
+                                      cloud_accounts=clouds, service_accounts=services)
+    if action == "wizard-build" and method == "POST":
+        return discovery.wizard_build(data.get("workflow", ""), data.get("answers", {}),
+                                      cloud_accounts=clouds, service_accounts=services)
+    raise ValueError("unknown action %r (%s)" % (action, method))
+
+
 def dispatch(action, method, params, body, user=None, https=False):
     """
     action  : str            e.g. "components", "schema", "credential-types", "examples", "validate", "save"
@@ -35,6 +63,17 @@ def dispatch(action, method, params, body, user=None, https=False):
     Every attempt at one of these actions is recorded with its user by admin.audit().
     """
     try:
+        # No login: the builder asks its questions for anyone, like "schema" and "validate" do. An authorized
+        # user on an HTTPS connection additionally gets the credential store's accounts by name, which the helper
+        # reads as root; the names are not public, so they are not sent to anyone else or over plain HTTP.
+        if action in admin.WIZARD_ACTIONS:
+            data = json.loads(body.decode("utf-8") or "{}") if body else {}
+            if user and https and admin.authorized(user):
+                answer = _wizard(action, method, params, data, admin.cloud_accounts(), admin.service_accounts())
+                admin.audit(user, action)
+                return 200, answer
+            return 200, _wizard(action, method, params, data, (), {})
+
         if action in admin.ACTIONS:
             if not https:
                 return 403, {"error": "You must connect via HTTPS to use this UI"}
