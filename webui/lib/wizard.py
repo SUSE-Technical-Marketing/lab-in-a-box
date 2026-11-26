@@ -106,8 +106,8 @@ def _addon_options(catalogue, placement, addable=None):
     does not mark the field required. Nothing here could fill either in, and a lab that named it would not
     validate; the canvas is where those are added.
 
-    `placement` is "kubernetes" for a cluster add-on and "host" for one that installs on a VM, read off each
-    item's own facets (webui/lib/discovery.py), so this never holds a list of add-on names.
+    `placement` is "kubernetes" for a cluster add-on and "host" for one that installs on a VM, matched against
+    each add-on's own declared layers, so this never holds a list of add-on names.
 
     `addable`, when given, is the set of add-ons whose own --validate accepts a lab that configures them not at
     all (apps.accepts_blank_config()). That is the complete answer and the one to trust: an add-on can refuse for
@@ -124,8 +124,8 @@ def _addon_options(catalogue, placement, addable=None):
         short = item["name"][len("install_"):] if item["name"].startswith("install_") else item["name"]
         if addable is not None and short not in addable:
             continue
-        facets = item.get("facets") or []
-        if wanted in facets or (placement == "host" and "os-native" in facets):
+        layers = item.get("layers") or []
+        if wanted in layers or (placement == "host" and "os-native" in layers):
             options.append({"value": item["name"][len("install_"):] if item["name"].startswith("install_")
                             else item["name"], "label": item.get("title") or item["name"],
                             "help": item.get("description") or ""})

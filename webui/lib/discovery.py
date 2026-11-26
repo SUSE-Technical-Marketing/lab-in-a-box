@@ -392,39 +392,50 @@ def example(name):
 # "requires_cluster"/"provides_cluster" what it needs and supplies, "requires_kubernetes" whether it is tied to a
 # distribution, "aux_services" whether the automation node has to run something for it, and "check" whether it can
 # be verified afterwards. The two kinds that are not add-ons carry the one fact their kind states.
-FACETS = (
-    ("kubernetes", "On a Kubernetes cluster", lambda it: "kubernetes" in (it.get("layers") or [])),
-    ("standalone-container", "A container on a host",
-     lambda it: "standalone-container" in (it.get("layers") or [])),
-    ("os-native", "Installed on the OS", lambda it: "os-native" in (it.get("layers") or [])),
-    ("needs-ingress", "Needs an ingress controller",
-     lambda it: "ingress" in (it.get("requires_cluster") or [])),
-    ("needs-storageclass", "Needs a storage class",
-     lambda it: "storageclass" in (it.get("requires_cluster") or [])),
-    ("provides-ingress", "Provides an ingress controller",
-     lambda it: "ingress" in (it.get("provides_cluster") or [])),
-    ("provides-storageclass", "Provides a storage class",
-     lambda it: "storageclass" in (it.get("provides_cluster") or [])),
-    ("distribution-specific", "Tied to a Kubernetes distribution",
-     lambda it: bool(it.get("requires_kubernetes"))),
-    ("lab-service", "Needs a lab-wide service", lambda it: bool(it.get("aux_services"))),
-    ("checkable", "Can be checked after installing", lambda it: bool(it.get("check"))),
-    ("under-construction", "Under construction", lambda it: it.get("status") == "under-construction"),
+# The capability fields an add-on declares in its own PLUGIN (libs/apps.py's DEFAULT_PLUGIN), and the words the
+# filter puts in front of their values. Every option the filter offers is one of these fields' own values, read
+# off the add-ons themselves: the filter says what the add-ons say, so there is no second vocabulary to invent or
+# to keep in step. requires_kubernetes is a list or a single name, so both shapes are read.
+CAPABILITY_FIELDS = (
+    ("layers", "Runs as"),
+    ("targets", "Installed on"),
+    ("requires_cluster", "Needs from the cluster"),
+    ("provides_cluster", "Provides to the cluster"),
+    ("requires_kubernetes", "Needs the distribution"),
+    ("aux_services", "Needs the lab service"),
 )
 
 
 def facets_of(item):
-    """Which of FACETS this catalogue item satisfies, in FACETS order."""
-    return [name for name, _title, holds in FACETS if holds(item)]
+    """
+    The capabilities `item` declares, each as "<field>:<value>" taken straight from its PLUGIN, in
+    CAPABILITY_FIELDS order.
+    """
+    out = []
+    for field, _group in CAPABILITY_FIELDS:
+        declared = item.get(field)
+        if not declared:
+            continue
+        values = declared if isinstance(declared, (list, tuple)) else [declared]
+        out.extend("{}:{}".format(field, v) for v in values if v)
+    return out
 
 
-def facets():
+def facets(items=None):
     """
-    FACETS as [{"name": ..., "title": ...}], for a filter over catalogue(). Sent with the catalogue rather than
-    worked out in the browser, so the filter offers the same names and the same titles whatever this installation
-    happens to have installed.
+    The capabilities this installation's own add-ons declare, as [{"name", "title", "group"}] in
+    CAPABILITY_FIELDS order: "name" is facets_of()'s "<field>:<value>", "title" is the declared value itself and
+    "group" the field's word. Only values something actually declares are listed, so the filter never offers one
+    that would show nothing. `items` is a catalogue() already in hand.
     """
-    return [{"name": name, "title": title} for name, title, _holds in FACETS]
+    present = set()
+    for item in (items if items is not None else catalogue()):
+        present.update(item.get("facets") or [])
+    out = []
+    for field, group in CAPABILITY_FIELDS:
+        values = sorted(n.split(":", 1)[1] for n in present if n.startswith(field + ":"))
+        out.extend({"name": "{}:{}".format(field, v), "title": v, "group": group} for v in values)
+    return out
 
 
 def catalogue():
@@ -439,13 +450,13 @@ def catalogue():
         if name not in CORE_SECTIONS:
             items.append({"name": name, "kind": "infrastructure", "title": sec.get("title") or name,
                           "description": sec.get("description", ""), "field_count": len(sec.get("fields", [])),
-                          "layers": [], "targets": [], "facets": ["lab-service"]})
+                          "layers": [], "targets": [], "facets": []})
     clu_types = [f.get("enum") for f in base["kclusters"].get("fields", []) if f.get("name") == "clu_type"]
     if not clu_types or not clu_types[0]:
         raise ValueError("lab_schema: kclusters has no clu_type enum")
     for name in clu_types[0]:
         items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
-                      "layers": [], "targets": [], "facets": ["kubernetes"]})
+                      "layers": [], "targets": [], "facets": ["layers:kubernetes"]})
     return items
 
 

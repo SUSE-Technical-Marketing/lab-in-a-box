@@ -104,16 +104,17 @@ check("the backend step offers this hypervisor, and a cloud account for each one
       [o["value"] for o in wizard.steps("vm", accounts=[("aws-tmm", "aws")])[1]["options"]]
       == ["libvirt", "account:aws-tmm"])
 
+# Where an add-on can go is its own declared layer, not the catalogue filter's vocabulary.
 CATALOGUE = [
     {"name": "install_local_path", "kind": "addon", "title": "local_path", "description": "storage",
-     "facets": ["kubernetes", "needs-ingress"]},
+     "layers": ["kubernetes"], "requires_cluster": ["ingress"]},
     {"name": "install_grafana", "kind": "addon", "title": "grafana", "description": "dashboards",
-     "facets": ["standalone-container"]},
+     "layers": ["standalone-container"]},
     {"name": "install_anthropic", "kind": "addon", "title": "anthropic", "description": "needs a key",
-     "facets": ["kubernetes"], "required_fields": ["anthropic_api_key"]},
+     "layers": ["kubernetes"], "required_fields": ["anthropic_api_key"]},
     {"name": "install_longhorn", "kind": "addon", "title": "longhorn-credential", "description": "needs an account",
-     "facets": ["kubernetes"], "credential_fields": ["lh_appcollection_account"]},
-    {"name": "pxe", "kind": "infrastructure", "title": "pxe", "facets": ["lab-service"]},
+     "layers": ["kubernetes"], "credential_fields": ["lh_appcollection_account"]},
+    {"name": "pxe", "kind": "infrastructure", "title": "pxe", "layers": []},
 ]
 cluster_apps = [o["value"] for o in wizard.steps("kubernetes", catalogue=CATALOGUE)[5]["options"]]
 check("the step the apps are on is the one asked after the counts", True)

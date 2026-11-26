@@ -189,18 +189,22 @@ async function loadComponents() {
 function renderFacetFilter() {
   const sel = $("#facetFilter");
   if (!sel) return;
-  const present = new Set();
-  state.components.forEach((c) => (c.facets || []).forEach((x) => present.add(x)));
-  const keep = state.facets.filter((x) => present.has(x.name));
+  const keep = state.facets || [];
   const chosen = sel.value;
   sel.innerHTML = "";
   const all = el("option", "", "Everything");
   all.value = "";
   sel.appendChild(all);
+  let group = null;
   keep.forEach((x) => {
+    if (!group || group.label !== x.group) {
+      group = el("optgroup");
+      group.label = x.group;
+      sel.appendChild(group);
+    }
     const o = el("option", "", x.title);
     o.value = x.name;
-    sel.appendChild(o);
+    group.appendChild(o);
   });
   sel.value = keep.some((x) => x.name === chosen) ? chosen : "";
 }
@@ -319,7 +323,7 @@ function renderPalette(filter) {
   });
   // pxe is the one base-schema section in this palette, and it is itself a lab-wide service, so a facet narrows
   // it away unless that is the facet asked for.
-  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && (!facet || facet === "lab-service");
+  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && !facet;
   if (pxe) {
     root.appendChild(paletteSection("Infrastructure", "Lab-wide services on the automation node",
       [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation node", "", [],

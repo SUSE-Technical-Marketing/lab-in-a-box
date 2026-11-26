@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# Unit tests for the catalogue's facets: webui/lib/discovery.py's FACETS/facets_of()/facets(), what the
-# components action sends, and the web UI's filter being wired to it. Nothing here is a list somebody maintains:
-# a facet is a fact read off an add-on's PLUGIN capabilities, so what is checked is the deriving. Run from
-# 143_catalogue_facets.sh, in its own container — see tests/run_tests.sh.
+# Unit tests for the catalogue's filter: webui/lib/discovery.py's CAPABILITY_FIELDS/facets_of()/facets(), what the
+# components action sends, and the web UI's dropdown being wired to it. Nothing here is a list somebody maintains.
+# Every option the filter offers is a capability value an add-on declares in its own PLUGIN, read off the add-ons
+# themselves, so what is checked is the reading. Run from 143_catalogue_facets.sh, in its own container — see
+# tests/run_tests.sh.
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "webui" / "lib"))
 
+import apps  # noqa: E402
 import discovery  # noqa: E402
 
 failures = []
@@ -21,56 +23,56 @@ def check(desc, cond):
         print("FAIL:", desc)
 
 
-# ── facets_of(): each one is read off the capabilities, nothing else ───────
-check("an add-on that installs on a cluster is on a cluster",
-      discovery.facets_of({"layers": ["kubernetes"]}) == ["kubernetes"])
-check("one that installs both ways carries both facets",
+# ── facets_of(): the add-on's own capability values, never a second vocabulary ─
+check("the capability an add-on declares is the facet it carries",
+      discovery.facets_of({"layers": ["kubernetes"]}) == ["layers:kubernetes"])
+check("one that installs both ways carries both values",
       discovery.facets_of({"layers": ["kubernetes", "standalone-container"]})
-      == ["kubernetes", "standalone-container"])
-check("an OS-native add-on is distinguished from a container on a host, which the palette's own grouping merges",
-      discovery.facets_of({"layers": ["os-native"]}) == ["os-native"])
-check("what it needs of a cluster is a facet of its own",
+      == ["layers:kubernetes", "layers:standalone-container"])
+check("what it needs of a cluster is read the same way, value by value",
       discovery.facets_of({"requires_cluster": ["ingress", "storageclass"]})
-      == ["needs-ingress", "needs-storageclass"])
+      == ["requires_cluster:ingress", "requires_cluster:storageclass"])
 check("so is what it supplies, which is the question 'who can give me an ingress' asks",
-      discovery.facets_of({"provides_cluster": ["ingress"]}) == ["provides-ingress"])
-check("an add-on tied to particular Kubernetes distributions says so",
-      discovery.facets_of({"requires_kubernetes": ["rke2", "k3s"]}) == ["distribution-specific"])
-check("...and one that works on any does not", discovery.facets_of({"requires_kubernetes": None}) == [])
-check("an add-on needing a lab-wide service on the automation node says so",
-      discovery.facets_of({"aux_services": ["pxe"]}) == ["lab-service"])
-check("one that implements --check is findable, since that is what makes a lab verifiable",
-      discovery.facets_of({"check": True}) == ["checkable"])
-check("an unfinished add-on is findable too",
-      discovery.facets_of({"status": "under-construction"}) == ["under-construction"])
-check("a stable one is not", discovery.facets_of({"status": "stable"}) == [])
-check("the facets come out in a fixed order, so the dropdown reads the same every time",
-      discovery.facets_of({"check": True, "layers": ["kubernetes"]}) == ["kubernetes", "checkable"])
-check("an item with no capabilities at all carries no facet rather than failing",
+      discovery.facets_of({"provides_cluster": ["ingress"]}) == ["provides_cluster:ingress"])
+check("a field holding a single name rather than a list is read too",
+      discovery.facets_of({"requires_kubernetes": "rke2"}) == ["requires_kubernetes:rke2"])
+check("...and the list shape gives one facet per distribution",
+      discovery.facets_of({"requires_kubernetes": ["rke2", "k3s"]})
+      == ["requires_kubernetes:rke2", "requires_kubernetes:k3s"])
+check("a field left empty contributes nothing", discovery.facets_of({"requires_kubernetes": None}) == [])
+check("the facets come out in CAPABILITY_FIELDS order, so the dropdown reads the same every time",
+      discovery.facets_of({"targets": ["container"], "layers": ["kubernetes"]})
+      == ["layers:kubernetes", "targets:container"])
+check("an item declaring no capability at all carries no facet rather than failing",
       discovery.facets_of({}) == [])
+check("every field read is one an add-on actually declares in its PLUGIN",
+      {field for field, _group in discovery.CAPABILITY_FIELDS} <= set(apps.DEFAULT_PLUGIN))
 
-check("every facet has a title for the dropdown to show",
-      all(name and title for name, title, _holds in discovery.FACETS))
-check("facets() offers them in FACETS order, with the names the items carry",
-      [f["name"] for f in discovery.facets()] == [name for name, _t, _h in discovery.FACETS])
+offered = discovery.facets([{"facets": ["layers:kubernetes", "targets:container"]},
+                            {"facets": ["layers:os-native"]}])
+check("facets() offers each declared value once, grouped by the field it came from",
+      [(f["name"], f["title"], f["group"]) for f in offered]
+      == [("layers:kubernetes", "kubernetes", "Runs as"), ("layers:os-native", "os-native", "Runs as"),
+          ("targets:container", "container", "Installed on")])
+check("a value nothing declares is not offered, so the dropdown never shows an empty answer",
+      not [f for f in offered if f["name"] == "targets:baremetal"])
 
 
-# ── the catalogue: everything it offers is findable ───────────────────────
+# ── the catalogue: the filter and the items agree ─────────────────────────
 cat = discovery.catalogue()
 check("the catalogue was built at all, so an empty result is not read as everything passing", len(cat) > 50)
-unfindable = sorted(it["name"] for it in cat if not it.get("facets"))
-check("every item carries at least one facet, or a filter would hide it for good: {}".format(
-    ", ".join(unfindable) or "none"), not unfindable)
+check("every add-on carries at least one capability, or the filter would hide it for good",
+      not sorted(it["name"] for it in cat if it["kind"] == "addon" and not it.get("facets")))
 check("every facet an item carries is one the dropdown offers",
-      not {f for it in cat for f in it["facets"]} - {name for name, _t, _h in discovery.FACETS})
+      not {f for it in cat for f in it.get("facets") or []} - {f["name"] for f in discovery.facets(cat)})
 check("an add-on's facets come from its own capabilities",
-      any(it["name"] == "install_longhorn" and "provides-storageclass" in it["facets"] for it in cat))
+      any(it["name"] == "install_longhorn" and "provides_cluster:storageclass" in it["facets"] for it in cat))
 check("a Kubernetes distribution is offered as such, since a lab starts by choosing one",
-      all("kubernetes" in it["facets"] for it in cat if it["kind"] == "kcluster"))
-check("an optional base-schema section reads as the lab-wide service it is",
-      all("lab-service" in it["facets"] for it in cat if it["kind"] == "infrastructure"))
-check("the capability fields a facet is read from are sent with each add-on, so the browser could too",
-      all(set(("requires_cluster", "provides_cluster", "check")) <= set(it)
+      all("layers:kubernetes" in it["facets"] for it in cat if it["kind"] == "kcluster"))
+check("an optional base-schema section declares no capability of its own, so no capability claims it",
+      all(not it["facets"] for it in cat if it["kind"] == "infrastructure"))
+check("the capability fields the facets are read from are sent with each add-on, so the browser could too",
+      all({field for field, _g in discovery.CAPABILITY_FIELDS} <= set(it)
           for it in cat if it["kind"] == "addon"))
 
 
@@ -79,9 +81,9 @@ import api as webui_api  # noqa: E402
 
 st, body = webui_api.dispatch("components", "GET", {}, b"", user=None, https=False)
 check("the components action sends the vocabulary beside the items",
-      st == 200 and [f["name"] for f in body["facets"]] == [n for n, _t, _h in discovery.FACETS])
-check("...and every component it sends carries its own facets",
-      all(c.get("facets") for c in body["components"]))
+      st == 200 and [f["name"] for f in body["facets"]] == [f["name"] for f in discovery.facets(cat)])
+check("...and it is the catalogue's own, so the two cannot disagree",
+      all(f["title"] and f["group"] for f in body["facets"]))
 
 index_html = (_REPO / "webui" / "htdocs" / "index.html").read_text()
 check("the catalogue panel has the filter", 'id="facetFilter"' in index_html)
@@ -93,8 +95,9 @@ check("the palette filters on the selected facet", "(c.facets || []).includes(fa
 check("changing it re-renders the palette", '$("#facetFilter").addEventListener("change"' in app_js)
 check("the dropdown is built from what the API sent, not from a copy in the browser",
       "state.facets = data.facets || []" in app_js)
+check("the options are grouped by the field they come from", "group.label = x.group" in app_js)
 check("no add-on tag vocabulary is left anywhere in the library",
-      not hasattr(__import__("apps"), "TAGS") and not hasattr(__import__("apps"), "tags_for"))
+      not hasattr(apps, "TAGS") and not hasattr(apps, "tags_for"))
 
 if failures:
     print("{} check(s) failed".format(len(failures)))
