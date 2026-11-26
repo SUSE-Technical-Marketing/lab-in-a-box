@@ -195,14 +195,23 @@ Consequences to preserve when touching either function:
 - `forget_dns_server()` removes exactly one lab's line, called by `destroy_lab.py`. `forget_site()` still removes
   every line of a site being retired, which is a different thing: there the server itself is going away.
 
-## Known gaps
+## The address a record is written through comes from the zone, not the registry
 
-**The registry should hold names, not addresses.** `overlay_dns` stores the DNS server's two addresses, which is
-state that goes stale. Storing its **name** instead would be immune, and it resolves locally without asking
-anyone: the automation node holds a copy of the external zone file **and** of every site view file, so the same
-name reads as the public address from `forward_file()` and the private one from `site_file()`. The cloud DNS VM now
-has its own A record (`_register_dns_vm_record()`), which is the prerequisite. This is the recommended shape for
-that file, not a defect in it.
+`_preferred_dns_address()` resolves a site's DNS server out of **this host's own copy of the zone** and falls back
+to the addresses the registry recorded. No field was added to the file for it: a site name already determines the
+server's name, so `dns_vm_name_for_site()` is the inverse of `site_name_for()` composed with
+`cloud_dns_vm_name()`, and `_register_dns_vm_record()` put that name in the zone.
+
+So the private address comes from `site_file(mydomain, site)` and the public one from `forward_file(mydomain)`,
+both local file reads with no query to anyone and no cloud credential, and a server whose address changed is still
+reached without anything re-registering it. The recorded addresses stay as the fallback for the first run, before
+that record exists, and for a reader holding no copy of the zone: a lookup that cannot fail today must not start
+failing. The `home` site has no such VM, its DNS server being the automation node, so it keeps its recorded
+address, which is `mydns` and does not move.
+
+The lesson generalises. What this file holds that is **derivable** should be derived: the server's name from the
+site, its address from the zone. What it holds that is genuinely **state** has to stay recorded: which sites exist
+at all, and which zones each serves.
 
 ## Considered and deferred: delegation plus native replication
 

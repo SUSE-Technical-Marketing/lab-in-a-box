@@ -41,7 +41,9 @@ from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_comm
                           package_manager,
                           CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB)
 import backends
+import dns_zone
 import ipalloc
+import services
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -78,6 +80,35 @@ def site_name_for(backend_name, account):
     if backend_name in ("libvirt", "harvester", None, ""):
         return "home"
     return "{}-{}".format(backend_name, account or "default")
+
+
+def dns_vm_name_for_site(site_name):
+    """
+    The cloud DNS VM serving `site_name`, by name: the inverse of site_name_for() composed with
+    backends.cloud_dns_vm_name(). "" for the libvirt and Harvester site, whose DNS server is the automation node
+    itself and has no such VM.
+
+    A site name already determines it, so the hub registry does not have to record it. That is what lets a reader
+    resolve the server out of its own copy of the zone instead of trusting an address the registry wrote down
+    earlier (see _preferred_dns_address()).
+    """
+    if not site_name or site_name == "home":
+        return ""
+    backend_name, _, account = site_name.partition("-")
+    if not account or account == "default":
+        return "lab-dns-{}".format(backend_name)
+    return "lab-dns-{}-{}".format(backend_name, account)
+
+
+def _zone_address(file_name, short):
+    """The address this host's own copy of zone file `file_name` gives node `short`; "" when it has neither."""
+    if not file_name or not short:
+        return ""
+    try:
+        text = (Path(services.NAMED_ZONE_DIR) / file_name).read_text(errors="replace")
+    except OSError:
+        return ""
+    return dns_zone.node_address(text, short)
 
 
 def hub_vm_name(backend_name, account):
@@ -424,14 +455,24 @@ def register_dns_server(hub_host, site_name, dns_ip, mydomain="", private_ip="")
 _private_dns_reachable = {}
 
 
-def _preferred_dns_address(site_name, public_ip, private_ip):
+def _preferred_dns_address(site_name, public_ip, private_ip, mydomain=""):
     """
-    Which of a site's two recorded DNS server addresses to write its records through: the private one when this
-    machine can reach it, keeping the traffic on the overlay, and the public one otherwise.
+    Which address to write a site's records through: the private one when this machine can reach it, keeping the
+    traffic on the overlay, and the public one otherwise.
+
+    Both come from this host's own copy of the zone where it holds a record for that site's DNS VM, whose name the
+    site already determines (dns_vm_name_for_site()): the site view's file gives the private address and the
+    external view's the public one, both read locally with no query to anyone. The addresses the registry recorded
+    are the fallback, for a reader holding no copy of that zone and for the first run, before the record exists.
+    Reading the zone is what keeps this right when a server's address changed and nothing has re-registered it.
 
     Reachability is SSH answering, because writing a record IS an SSH call (libs/services.py's add_to_dns). It is
     probed once per address per run.
     """
+    short = dns_vm_name_for_site(site_name)
+    if short and mydomain:
+        public_ip = _zone_address(dns_zone.forward_file(mydomain), short) or public_ip
+        private_ip = _zone_address(dns_zone.site_file(mydomain, site_name), short) or private_ip
     if not private_ip or private_ip == public_ip:
         return public_ip
     if private_ip not in _private_dns_reachable:
@@ -483,7 +524,8 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
         if len(chosen) < 3:
             warn("- site '{}' registered its DNS server before the domain was recorded: including it for "
                  "'{}', which is wrong if it serves another lab".format(site, mydomain or "this lab"))
-        out.append((site, _preferred_dns_address(site, chosen[1], chosen[3] if len(chosen) > 3 else "")))
+        out.append((site, _preferred_dns_address(site, chosen[1], chosen[3] if len(chosen) > 3 else "",
+                                                 mydomain=mydomain)))
     return out
 
 

@@ -926,6 +926,58 @@ check("existing_hub_host() answers \"\" with no hub account configured, which is
       overlay.existing_hub_host({}) == "")
 
 
+# ── the server is resolved from this host's own zone, not from what the registry wrote down ──
+# A site name already determines its DNS VM's name, so the registry never had to record it, and the address can
+# come from the zone this host holds a copy of rather than from state written earlier.
+check("a cloud site's DNS VM name is derived from the site",
+      overlay.dns_vm_name_for_site("aws-tmm") == "lab-dns-aws-tmm"
+      and overlay.dns_vm_name_for_site("hetzner-default") == "lab-dns-hetzner")
+check("the libvirt and Harvester site has none: its DNS server is the automation node itself",
+      overlay.dns_vm_name_for_site("home") == "" and overlay.dns_vm_name_for_site("") == "")
+
+with tempfile.TemporaryDirectory() as _zones:
+    Path(_zones, "mydemo.lab.lan").write_text(
+        "$TTL 300\n@ IN SOA ns admin ( 1 )\nlab-dns-aws-tmm         IN  A       198.51.100.9\n")
+    Path(_zones, "mydemo.lab.site-aws-tmm.lan").write_text(
+        "$TTL 300\n@ IN SOA ns admin ( 1 )\nlab-dns-aws-tmm         IN  A       10.0.0.77\n")
+    reset()
+    overlay._private_dns_reachable.clear()
+    scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                       FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_zones)):
+        resolved = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("the zone's own record wins over the address the registry recorded, so a server whose address changed "
+          "is still reached without anything re-registering it", resolved == [("aws-tmm", "10.0.0.77")])
+
+    reset()
+    overlay._private_dns_reachable.clear()
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_zones)), \
+            mock.patch.object(overlay, "ssh_run",
+                              side_effect=lambda host, cmd, **kw: FakeResult(returncode=1)
+                              if host == "10.0.0.77" else FakeResult()), \
+            mock.patch.object(overlay, "ssh_output", return_value="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n"):
+        unreachable = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("...and the public one from the same zone is the fallback when the private one cannot be reached",
+          unreachable == [("aws-tmm", "198.51.100.9")])
+
+with tempfile.TemporaryDirectory() as _empty:
+    reset()
+    overlay._private_dns_reachable.clear()
+    scripted["hub"] = {"cat /etc/wireguard/overlay_dns":
+                       FakeResult(stdout="aws-tmm 203.0.113.9 mydemo.lab 10.0.0.53\n")}
+    with mock.patch.object(overlay.services, "NAMED_ZONE_DIR", Path(_empty)):
+        first_run = overlay.list_dns_servers("hub", mydomain="mydemo.lab")
+    check("before that record exists, and for a reader holding no copy of the zone, the recorded addresses are "
+          "still used: a lookup that cannot fail today must not start failing",
+          first_run == [("aws-tmm", "10.0.0.53")])
+
+reset()
+overlay._private_dns_reachable.clear()
+scripted["hub"] = {"cat /etc/wireguard/overlay_dns": FakeResult(stdout="home 192.168.88.73 mydemo.lab\n")}
+check("the home site keeps its recorded address, which is mydns and does not move",
+      overlay.list_dns_servers("hub", mydomain="mydemo.lab") == [("home", "192.168.88.73")])
+
+
 if failures:
     print("{} check(s) FAILED:".format(len(failures)))
     for f in failures:
