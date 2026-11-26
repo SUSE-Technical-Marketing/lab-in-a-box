@@ -12,7 +12,8 @@
   },
   "nodes": {
     "harv1.mydemo.lab": {
-      "kcluster": "harv"
+      "kcluster": "harv",
+      "static_ip": "true"
     },
     "harv2.mydemo.lab": {
       "kcluster": "harv"

@@ -51,6 +51,13 @@ at.ssh_run = _fake_ssh_run
 at.install_packages = _fake_install_packages
 at.package_available = lambda host, pkg, manager="": pkg in _AVAILABLE
 at.package_manager = lambda host: _MANAGER[0]
+# The Node packages and the package-set choice live in libs/nodejs.py, which resolves these for itself, so the
+# same doubles go there too or it reaches for a real ssh.
+import nodejs  # noqa: E402
+
+nodejs.install_packages = _fake_install_packages
+nodejs.package_available = at.package_available
+nodejs.package_manager = at.package_manager
 died = []
 at.die = lambda m: died.append(m) or (_ for _ in ()).throw(SystemExit)
 

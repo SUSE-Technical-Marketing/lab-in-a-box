@@ -4,18 +4,56 @@
 # generation — mirrors the existing self-signed-cert pattern already used
 # for the webui's own HTTPS).
 #
-# Usage: lab-mcp-issue-client-cert <name>
+# Usage: lab-mcp-issue-client-cert <name> [--allow-mutations]
 #
-# Prints the paths of the generated key/cert. Copy both, plus
-# /etc/lab-mcp/tls/ca.crt, to wherever the MCP client runs — there is no
-# automated transmission mechanism (copying a private key over the network
-# safely needs an operator's own judgment call, not a script's).
+#   <name>              identifies this client: the certificate's CN, the name in the client
+#                       registry, and the name MCP_AUDIT_LOG records against every call it makes.
+#   --allow-mutations   also grant the "write" scope, letting this client run the mutating tools
+#                       (deploy_lab/rebuild_lab/destroy_lab/destroy_vm) when the server itself has
+#                       MCP_ALLOW_MUTATIONS on. Without it the client is read-only.
+#
+# Issues two things: the certificate, which lets the client connect at all, and a bearer token,
+# which says WHICH client it is and what it may do. The server stores only a SHA-256 of the token
+# (/etc/lab-mcp/clients.json), so the registry cannot hand anyone a working credential and the
+# token is printed here once and never recoverable afterwards.
+#
+# Prints the paths of the generated key/cert and the token. Copy the key, the cert,
+# /etc/lab-mcp/tls/ca.crt and the token to wherever the MCP client runs — there is no automated
+# transmission mechanism (copying a private key over the network safely needs an operator's own
+# judgment call, not a script's).
 
 set -euo pipefail
 
-_name="${1:-}"
+_name=""
+_allow_mutations=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --allow-mutations) _allow_mutations=1 ;;
+    -h|--help)
+      echo "Usage: $(basename "$0") <name> [--allow-mutations]"
+      exit 0
+      ;;
+    -*)
+      echo "ERROR: unknown option '$1'" >&2
+      echo "Usage: $(basename "$0") <name> [--allow-mutations]" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "${_name}" ]]; then
+        echo "ERROR: more than one name given ('${_name}' and '$1')" >&2
+        exit 1
+      fi
+      _name="$1"
+      ;;
+  esac
+  shift
+done
 if [[ -z "${_name}" ]]; then
-  echo "Usage: $(basename "$0") <name>" >&2
+  echo "Usage: $(basename "$0") <name> [--allow-mutations]" >&2
+  exit 1
+fi
+if [[ ! "${_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "ERROR: name must be letters, digits, dot, dash or underscore (got '${_name}')" >&2
   exit 1
 fi
 
@@ -45,9 +83,47 @@ rm -f "${_csr}"
 chmod 0600 "${_key}"
 chmod 0644 "${_crt}"
 
+# The bearer token: what the server reads to know WHICH client is calling. Only its SHA-256 is stored.
+_clients="${MCP_CLIENTS:-/etc/lab-mcp/clients.json}"
+_token=$(openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_')
+_digest=$(printf '%s' "${_token}" | openssl dgst -sha256 -hex | awk '{print $NF}')
+_scopes='["read"]'
+[[ "${_allow_mutations}" -eq 1 ]] && _scopes='["read", "write"]'
+
+mkdir -p "$(dirname "${_clients}")"
+[[ -f "${_clients}" ]] || printf '{"schema_version": "1.0", "clients": []}\n' > "${_clients}"
+chmod 0600 "${_clients}"
+
+# Upsert by name, so reissuing a client replaces its token instead of leaving two that both work.
+_tmp=$(mktemp)
+MCP_NAME="${_name}" MCP_DIGEST="${_digest}" MCP_SCOPES="${_scopes}" \
+  python3 -c '
+import json, os, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+data.setdefault("schema_version", "1.0")
+clients = [c for c in (data.get("clients") or []) if c.get("name") != os.environ["MCP_NAME"]]
+clients.append({"name": os.environ["MCP_NAME"],
+                "token_sha256": os.environ["MCP_DIGEST"],
+                "scopes": json.loads(os.environ["MCP_SCOPES"])})
+data["clients"] = clients
+json.dump(data, sys.stdout, indent=1)
+sys.stdout.write("\n")
+' "${_clients}" > "${_tmp}"
+cat "${_tmp}" > "${_clients}"
+rm -f "${_tmp}"
+
 echo "Issued client cert for '${_name}':"
-echo "  key:  ${_key}"
-echo "  cert: ${_crt}"
-echo "  ca:   ${_ca_crt}"
+echo "  key:   ${_key}"
+echo "  cert:  ${_crt}"
+echo "  ca:    ${_ca_crt}"
+echo "  token: ${_token}"
+echo "  scopes: ${_scopes}"
 echo
-echo "Copy all three to wherever your MCP client runs (this key never leaves this host automatically)."
+echo "The token is shown once and is not recoverable: ${_clients} keeps only its SHA-256."
+echo "The client sends it as an HTTP header on every call:"
+echo "  Authorization: Bearer ${_token}"
+echo
+echo "Copy the key, cert, CA and token to wherever your MCP client runs (the key never leaves this host"
+echo "automatically). Reissuing this name replaces its token; the old one stops working."

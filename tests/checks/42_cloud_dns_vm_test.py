@@ -122,6 +122,16 @@ class _FakeBackendReuse:
         self.calls.append(("get_ip", vm_name))
         return "203.0.113.100"
 
+    def ensure_stable_address(self, vm_name):
+        # What every real backend answers when it reserves nothing: "", so the caller keeps the provider's
+        # address. A backend that does reserve one returns it, and the DNS VM is then read at that address.
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
+
+    def get_private_ip(self, vm_name):
+        self.calls.append(("get_private_ip", vm_name))
+        return "10.0.0.53"
+
     def create_vm(self, *a, **kw):
         self.calls.append(("create_vm", a, kw))
         raise AssertionError("create_vm() must not be called when the DNS VM already exists")
@@ -145,23 +155,42 @@ check("ensure_cloud_dns_vm() returns the existing DNS VM's real IP on reuse", ip
 check("ensure_cloud_dns_vm() checks vm_exists() with the fixed 'lab-dns-<backend>' name",
       ("vm_exists", "lab-dns-aws") in reuse_backend.calls)
 check("ensure_cloud_dns_vm() calls get_ip() on reuse", ("get_ip", "lab-dns-aws") in reuse_backend.calls)
+# The DNS VM belongs to no lab, so no lab definition's static_ip can speak for it: every lab on this backend
+# resolves through it, and an address that moves breaks all of them at once.
+check("ensure_cloud_dns_vm() reserves the DNS VM's address whatever any lab definition says",
+      ("ensure_stable_address", "lab-dns-aws") in reuse_backend.calls)
+check("...before reading the address, so a DNS VM that came back from a stop on a new address is read at the "
+      "reserved one",
+      reuse_backend.calls.index(("ensure_stable_address", "lab-dns-aws"))
+      < reuse_backend.calls.index(("get_ip", "lab-dns-aws")))
 
 # The views are configured on every call that names a site, on a reused VM as on a new one.
 with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(services.DNSService, "add_to_dns") as registered, \
         mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
         tempfile.TemporaryDirectory() as tempfile_dir:
     backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
                                  "ami-xyz", tempfile_dir, site="aws-acct1")
 check("a reused DNS VM is given its site's view, at the address this host reaches it by",
       served.call_count == 1 and served.call_args[0][:2] == ("203.0.113.100", "aws-acct1"))
+check("...and its own A record, so the one host of a cloud lab nothing could name becomes resolvable",
+      registered.call_count == 1
+      and registered.call_args[0][:4] == ("lab-dns-aws.mydemo.lab", "203.0.113.100", "mydemo.lab", ""))
+check("...written into its own zone and into this host's, and into its site's view at its private address, which "
+      "is how a client inside that site reaches it",
+      registered.call_args[1] == {"remote_dns_servers": ["203.0.113.100"], "site": "aws-acct1",
+                                  "private_ip": "10.0.0.53"})
 check("...for the private ranges and the server's own networks",
       "localnets" in served.call_args[0][2] and "10.0.0.0/8" in served.call_args[0][2])
 with mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served, \
+        mock.patch.object(services.DNSService, "add_to_dns") as unregistered, \
         mock.patch.object(backends._lc, "wait_for_ssh_command", return_value=True), \
         tempfile.TemporaryDirectory() as tempfile_dir:
     backends.ensure_cloud_dns_vm(_FakeBackendReuse(), "aws", "ssh-ed25519 AAAAtest test@example", "mydemo.lab",
                                  "ami-xyz", tempfile_dir)
 check("without a site, what the server serves is left alone", not served.called)
+check("...and no record is written either: with no site there is no view to put a private address in, and the "
+      "public one alone would be wrong for every client already inside one", not unregistered.called)
 
 # An instance that never booted still has an address, so having one is not being alive. Reusing it would point
 # every node of the lab at a server that answers nothing.
@@ -279,6 +308,14 @@ class _FakeBackendCreate:
         self.open_ports = open_ports
         return "203.0.113.101"
 
+    def ensure_stable_address(self, vm_name):
+        self.calls.append(("ensure_stable_address", vm_name))
+        return ""
+
+    def get_private_ip(self, vm_name):
+        self.calls.append(("get_private_ip", vm_name))
+        return "10.0.0.54"
+
 
 create_backend = _FakeBackendCreate()
 with tempfile.TemporaryDirectory() as tempfile_dir:
@@ -296,16 +333,23 @@ with tempfile.TemporaryDirectory() as tempfile_dir:
 check("ensure_cloud_dns_vm() returns the newly created DNS VM's real IP", ip == "203.0.113.101")
 with tempfile.TemporaryDirectory() as tempfile_dir, \
         mock.patch.object(backends.subprocess, "run", return_value=_cp(0)), \
+        mock.patch.object(services.DNSService, "add_to_dns") as registered, \
         mock.patch.object(services.DNSService, "serve_site_view", return_value=True) as served:
     backends.ensure_cloud_dns_vm(_FakeBackendCreate(), "hetzner", "ssh-ed25519 AAAAtest test@example",
                                  "mydemo.lab", "ubuntu-24.04", tempfile_dir, site="hetzner-default")
 check("a new DNS VM is given its site's view once it is up",
       served.call_count == 1 and served.call_args[0][:2] == ("203.0.113.101", "hetzner-default"))
+check("a new DNS VM is given its own A record too",
+      registered.call_count == 1
+      and registered.call_args[0][0] == "lab-dns-hetzner.mydemo.lab"
+      and registered.call_args[1]["private_ip"] == "10.0.0.54")
 # vm_name sits at a different tuple index per call shape: index 1 for vm_exists/
 # push_provisioning_files/create_vm, index 2 for copy_vm_image(iso_image, vm_name, ...).
 _vm_name_by_call = {
     "vm_exists": lambda c: c[1], "copy_vm_image": lambda c: c[2],
     "push_provisioning_files": lambda c: c[1], "create_vm": lambda c: c[1],
+    "ensure_stable_address": lambda c: c[1],
+    "get_private_ip": lambda c: c[1],
     "opensuse_image": lambda c: "lab-dns-hetzner",
 }
 check("ensure_cloud_dns_vm() uses the fixed 'lab-dns-<backend>' name throughout",
@@ -323,8 +367,12 @@ check("a shared infra VM gets at least 1 GiB, the floor its image needs to decom
       lab_creation.CLOUD_INFRA_VM_MEM_MIB >= 1024)
 call_order = [c[0] for c in create_backend.calls]
 check("ensure_cloud_dns_vm() follows the real call order: vm_exists -> copy_vm_image -> "
-      "push_provisioning_files -> create_vm",
-      call_order == ["vm_exists", "opensuse_image", "copy_vm_image", "push_provisioning_files", "create_vm"])
+      "push_provisioning_files -> create_vm -> ensure_stable_address",
+      call_order == ["vm_exists", "opensuse_image", "copy_vm_image", "push_provisioning_files", "create_vm",
+                     "ensure_stable_address"])
+check("the new DNS VM's address is reserved before anything is told what it is: on a provider that reserves "
+      "one, the address create_vm() reported is not the address the VM keeps",
+      call_order.index("ensure_stable_address") == len(call_order) - 1)
 
 
 # ── ensure_cloud_dns_vm(): image order — CLOUD_DNS_IMAGE, then openSUSE, then the lab's image ──
@@ -511,7 +559,7 @@ check("port 53 is opened for it, which is what it exists for",
 
 
 class _Subnetted:
-    def get_subnet_cidr(self):
+    def get_subnet_cidr(self, vm_name=""):
         return "172.31.80.0/20"
 
 
@@ -522,7 +570,7 @@ check("no public range may recurse", not any(n.startswith(("0.", "1.", "8.", "18
 
 
 class _NoSubnet:
-    def get_subnet_cidr(self):
+    def get_subnet_cidr(self, vm_name=""):
         raise RuntimeError("no subnet configured")
 
 

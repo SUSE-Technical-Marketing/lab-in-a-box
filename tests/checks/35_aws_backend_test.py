@@ -226,8 +226,12 @@ with mock.patch.object(backends.subprocess, "run", return_value=_describe_none):
 # ── delete_vm(): idempotent when the instance is already gone ─────────────
 with mock.patch.object(backends.subprocess, "run", return_value=_describe_none) as m_run:
     backend.delete_vm("vm1")  # must not raise/die
-    check("delete_vm() only calls describe-instances (no terminate) when nothing exists",
-          m_run.call_count == 1)
+    check("delete_vm() terminates nothing when nothing exists (it looks for a leftover Elastic IP first, "
+          "then for the instance)",
+          not any("terminate-instances" in c[0][0] for c in m_run.call_args_list))
+    check("delete_vm() looks for this VM's Elastic IP even when the instance is already gone, since the "
+          "address outlives it and is billed on its own",
+          any("describe-addresses" in c[0][0] for c in m_run.call_args_list))
 
 
 # ── create_vm(): real command construction, incl. the root-device lookup ──
@@ -730,6 +734,83 @@ with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_dup_nam
 check("get_ip() falls back to the tag-based lookup when no InstanceId is cached "
       "for this vm_name (e.g. a fresh backend instance in a separate script run)",
       fallback_ip in ("203.0.113.1", "198.51.100.99"))
+
+
+# ── ensure_stable_address() / release_stable_address(): the Elastic IP path ─
+# static_ip "true" in the lab definition reaches the backend as this call. The address has to end up ON the
+# instance and be found again by this VM's own name on a later run, or every run allocates another one.
+_INSTANCE = {"Reservations": [{"Instances": [{"InstanceId": "i-123", "PublicIpAddress": "203.0.113.1"}]}]}
+
+
+def _fake_run_eip(addresses, calls, allocate_rc=0):
+    def _run(args, **kwargs):
+        calls.append(args)
+        if "describe-instances" in args:
+            return _cp(0, stdout=json.dumps(_INSTANCE))
+        if "describe-addresses" in args:
+            return _cp(0, stdout=json.dumps({"Addresses": addresses}))
+        if "allocate-address" in args:
+            if allocate_rc:
+                return _cp(allocate_rc, stderr="An error occurred (AddressLimitExceeded) when calling the "
+                                               "AllocateAddress operation")
+            return _cp(0, stdout=json.dumps({"AllocationId": "eipalloc-1", "PublicIp": "198.51.100.7"}))
+        return _cp(0, stdout="{}")
+    return _run
+
+
+b_eip = backends.AWSBackend("eu-central-1", profile="lab")
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip([], eip_calls)):
+    eip_address = b_eip.ensure_stable_address("vm1")
+allocate_call = next((c for c in eip_calls if "allocate-address" in c), [])
+associate_call = next((c for c in eip_calls if "associate-address" in c), [])
+check("ensure_stable_address() allocates a VPC Elastic IP", "--domain" in allocate_call and "vpc" in allocate_call)
+check("ensure_stable_address() tags the allocation with the VM's own name, so a later run finds that same "
+      "address instead of allocating another",
+      any("Value=vm1" in str(part) for part in allocate_call))
+check("ensure_stable_address() associates the allocation with the instance", "i-123" in associate_call)
+check("ensure_stable_address() allows reassociation, so an address tagged for this VM is taken back from an "
+      "earlier instance of the same name", "--allow-reassociation" in associate_call)
+check("ensure_stable_address() returns the Elastic IP, not the address the instance answered on before "
+      "(associating one releases that)", eip_address == "198.51.100.7")
+
+eip_calls = []
+_MINE = [{"AllocationId": "eipalloc-1", "PublicIp": "198.51.100.7", "InstanceId": "i-123",
+          "AssociationId": "eipassoc-1"}]
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    eip_address = b_eip.ensure_stable_address("vm1")
+check("ensure_stable_address() is idempotent: an address already on this instance is returned as it is",
+      eip_address == "198.51.100.7")
+check("ensure_stable_address() allocates nothing and re-associates nothing on a re-run",
+      not any("allocate-address" in c for c in eip_calls)
+      and not any("associate-address" in c for c in eip_calls))
+
+died = []
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip([], eip_calls, allocate_rc=1)):
+    with mock.patch.object(backends, "die",
+                           side_effect=lambda msg: died.append(msg) or (_ for _ in ()).throw(SystemExit)):
+        try:
+            b_eip.ensure_stable_address("vm1")
+        except SystemExit:
+            pass
+check("ensure_stable_address() explains the Elastic IP quota rather than passing the raw API error on, since "
+      "the default of 5 per region is reached by an ordinary lab",
+      any("AddressLimitExceeded" in m and "quota" in m and "static_ip" in m for m in died))
+
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    b_eip.release_stable_address("vm1")
+check("release_stable_address() disassociates the address before releasing it",
+      any("disassociate-address" in c and "eipassoc-1" in c for c in eip_calls))
+check("release_stable_address() releases the allocation, which is billed for as long as it is held",
+      any("release-address" in c and "eipalloc-1" in c for c in eip_calls))
+
+eip_calls = []
+with mock.patch.object(backends.subprocess, "run", side_effect=_fake_run_eip(_MINE, eip_calls)):
+    b_eip.delete_vm("vm1")
+check("delete_vm() releases this VM's Elastic IP as well as terminating it",
+      any("release-address" in c for c in eip_calls) and any("terminate-instances" in c for c in eip_calls))
 
 
 if failures:

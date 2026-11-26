@@ -40,6 +40,7 @@ Services:
     adds no new dependency.
 """
 
+import os
 import re
 import shlex
 import shutil
@@ -155,8 +156,8 @@ class DNSService(AuxService):
 
     # ── record management (moved from lab_creation.py) ──────────────────────
 
-    def _remote(self, hostname, cmd, check=True, capture=False):
-        return ssh_run(hostname, cmd, check=check, capture=capture)
+    def _remote(self, hostname, cmd, check=True, capture=False, input_text=None):
+        return ssh_run(hostname, cmd, check=check, capture=capture, input_text=input_text)
 
     def _remote_dns_add(self, server, zone_file, record):
         # check=False: a secondary DNS server being unreachable must not
@@ -253,7 +254,48 @@ class DNSService(AuxService):
                                      "2>/dev/null".format(_quote(pattern)), check=False)
         return found.returncode == 0
 
-    def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "", sites=()) -> bool:
+    def _lower_ttl(self, server, file_name: str, value: int) -> bool:
+        """
+        Lower `server`'s (None for this host) copy of `file_name` to a $TTL of `value`, when it states a higher one.
+
+        Only ever downwards. A zone gains a cloud node long after it was created, and from then on it holds an
+        address that moves, so the zone a mixed lab shares ends up at the shorter of the two. Raising it again on
+        the next write by a hypervisor node would undo that on a zone that still holds the moving address.
+        """
+        if not value:
+            return False
+        text = self._zone_text(server, file_name)
+        current = dns_zone.ttl(text)
+        if not current or current <= value:
+            return False
+        self._write_zone_text(server, file_name, dns_zone.with_ttl(text, value))
+        log("- DNS server '{}' caps '{}' at a {}s TTL, down from {}s: it holds an address a provider can change "
+            "when an instance restarts".format(server or "this host", file_name, value, current))
+        return True
+
+    def declared_zones(self, server) -> set:
+        """
+        Every zone `server` (None for this host) declares as a master, read from the same files _zone_declared()
+        greps. Empty when it declares none, or cannot be reached.
+
+        This is how a shared DNS server answers "is any lab other than this one still using me". It is
+        authoritative in a way no local record can be: the server is per cloud account, while a lab registry is per
+        automation node, so a second automation node's labs are invisible to everything except the server itself.
+        """
+        files = "/etc/named.conf /etc/named.lab.conf /etc/named.lab-site.conf /etc/bind/named.conf.local"
+        command = "grep -ho 'zone \"[^\"]*\"' {} 2>/dev/null".format(files)
+        result = self._run_on(server, command)
+        found = set()
+        for line in (result.stdout or "").splitlines():
+            name = line.split('"')[1] if '"' in line else ""
+            # BIND's own built-in zones are declared by every distribution's default named.conf and belong to no
+            # lab, so they never count as another lab still needing this server.
+            if name and name not in ("localhost", "localhost.localdomain", ".", "0.in-addr.arpa",
+                                     "127.in-addr.arpa", "255.in-addr.arpa", "1.0.0.127.in-addr.arpa"):
+                found.add(name)
+        return found
+
+    def ensure_zone(self, server, mydomain: str, mynet_reverse: str = "", sites=(), zone_ttl: int = 0) -> bool:
         """
         Make `server` (None for this host) a master of `mydomain`, and of its reverse zone when `mynet_reverse` is
         given, creating the zone file with the header BIND needs and declaring it in named.conf.
@@ -266,6 +308,9 @@ class DNSService(AuxService):
         records yet and needs sync_zone() rather than one appended line. Returns False when every zone was already
         there, which is the normal path and does nothing.
 
+        `zone_ttl`, when given, is the longest a resolver may cache an answer from this zone: it is written into a
+        zone created here and lowers one that already states a longer TTL (_lower_ttl()). 0 leaves the default.
+
         A record appended to a zone that is not declared, or to a file with no SOA, is silently never answered:
         this is what stops that happening. A zone already declared over a file with no SOA, which BIND rejects
         whole, gets its header added in front of the records it holds and named is restarted; that alone does not
@@ -273,10 +318,12 @@ class DNSService(AuxService):
         """
         created = False
         repaired = False
-        wanted = [(mydomain, dns_zone.forward_file(mydomain), dns_zone.forward_header(mydomain))]
+        header_ttl = zone_ttl or dns_zone.DEFAULT_TTL
+        wanted = [(mydomain, dns_zone.forward_file(mydomain),
+                   dns_zone.forward_header(mydomain, ttl=header_ttl))]
         if mynet_reverse:
             wanted.append((dns_zone.reverse_zone(mynet_reverse), dns_zone.reverse_file(mynet_reverse),
-                           dns_zone.reverse_header(mydomain, mynet_reverse)))
+                           dns_zone.reverse_header(mydomain, mynet_reverse, ttl=header_ttl)))
         for zone, file_name, header in wanted:
             if self._zone_declared(server, zone):
                 if self._add_missing_header(server, file_name, header):
@@ -291,8 +338,12 @@ class DNSService(AuxService):
                 self._create_remote_zone(server, zone, file_name, header)
             created = True
         own = self.view_site(server)
-        for site in sorted(set(sites) | ({own} if own else set())):
+        held_sites = sorted(set(sites) | ({own} if own else set()))
+        for site in held_sites:
             created = self._ensure_site_file(server, mydomain, site) or created
+        for file_name in self._forward_files(mydomain, held_sites) + (
+                [dns_zone.reverse_file(mynet_reverse)] if mynet_reverse else []):
+            repaired = self._lower_ttl(server, file_name, zone_ttl) or repaired
         if own:
             served = [(mydomain, dns_zone.site_file(mydomain, own))]
             if mynet_reverse:
@@ -468,14 +519,81 @@ class DNSService(AuxService):
 
     # ── sync: every master answers the same records ─────────────────────────
 
-    def zone_records(self, server, file_name: str) -> set:
-        """The comparable records `server` (None for this host) holds in `file_name`; empty when it has no such zone."""
+    def _zone_text(self, server, file_name: str) -> str:
+        """`server`'s (None for this host) copy of zone file `file_name`; empty when it has no such zone."""
         if server is None:
-            path = NAMED_ZONE_DIR / file_name
-            return dns_zone.records(path.read_text()) if path.exists() else set()
+            return self._local_text(file_name)
         result = self._remote(server, "cat {} 2>/dev/null".format(_quote(self._zone_path(server, file_name))),
                               check=False, capture=True)
-        return dns_zone.records(result.stdout if result.returncode == 0 else "")
+        return result.stdout if result.returncode == 0 else ""
+
+    def _write_zone_text(self, server, file_name: str, text: str) -> None:
+        """
+        Replace `server`'s (None for this host) copy of `file_name` with `text`.
+
+        Written beside the zone and moved into place, never edited where named is reading it: a write cut short
+        would otherwise leave a zone BIND refuses to load, which costs every record in it and not just the one
+        being changed.
+        """
+        if server is None:
+            path = NAMED_ZONE_DIR / file_name
+            staged = path.with_name(path.name + ".new")
+            staged.write_text(text)
+            os.replace(str(staged), str(path))
+            return
+        path = self._zone_path(server, file_name)
+        self._remote(server, "cat > {staged} && mv {staged} {path}".format(
+            staged=_quote(path + ".new"), path=_quote(path)), input_text=text, check=False)
+
+    def zone_records(self, server, file_name: str) -> set:
+        """The comparable records `server` (None for this host) holds in `file_name`; empty when it has no such zone."""
+        return dns_zone.records(self._zone_text(server, file_name))
+
+    def zone_serial(self, server, file_name: str) -> int:
+        """
+        The SOA serial `server` (None for this host) holds in `file_name`; 0 when it has no such zone.
+
+        A master a write could not reach keeps the serial it had, so a serial below the others' says that master is
+        behind, which no comparison of record sets can tell from a record the others have not been written yet.
+        """
+        return dns_zone.serial(self._zone_text(server, file_name))
+
+    def bump_serials(self, servers, file_names) -> int:
+        """
+        Raise every copy of `file_names` held by `servers` (None among them for this host) to one new serial, and
+        return it; 0 when none of them holds any of those zones.
+
+        One serial for all of them, so masters an operation reached agree, and the operation's own moment is what
+        the serial records. A master left out of `servers`, which is what masters() does with one that does not
+        answer, keeps its lower serial and is visibly behind until a sync brings it current.
+        """
+        texts, held = {}, []
+        for server in servers:
+            for file_name in file_names:
+                text = self._zone_text(server, file_name)
+                if not text:
+                    continue
+                texts[(server, file_name)] = text
+                held.append(dns_zone.serial(text))
+        if not texts:
+            return 0
+        value = dns_zone.next_serial(held)
+        for (server, file_name), text in texts.items():
+            updated = dns_zone.with_serial(text, value)
+            if updated != text:
+                self._write_zone_text(server, file_name, updated)
+        return value
+
+    def _finish_write(self, servers, file_names) -> int:
+        """
+        End a write: raise the serial of every copy of `file_names` on `servers` and on this host, then reload named
+        on all of them. Returns the new serial.
+
+        Every write path ends here, so the serial and the reload cannot drift apart and no path forgets one of them.
+        """
+        value = self.bump_serials([None] + list(servers), file_names)
+        self.restart_named(remote_servers=list(servers) or None)
+        return value
 
     def _zone_files(self, mydomain: str, mynet_reverse: str = "") -> list:
         """
@@ -570,9 +688,52 @@ class DNSService(AuxService):
                 out.append((file_name, server, union - records, records - others))
         return out
 
+    def _serials(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> dict:
+        """{zone file: {server (None for this host): its serial}} across the reachable masters of `mydomain`."""
+        servers = [None] + self.masters(remote_dns_servers)
+        return {file_name: {server: self.zone_serial(server, file_name) for server in servers}
+                for file_name in self._zone_files(mydomain, mynet_reverse)}
+
     @staticmethod
-    def _difference_messages(comparison: list) -> list:
-        """One message per real difference in a _compare_zone() result, in the order it was compared."""
+    def _behind(serials: dict) -> dict:
+        """
+        Which masters of each zone file hold a serial below the highest one: {file name: {server: its serial}}.
+
+        Only files at least two masters hold a copy of are judged, since a serial is a comparison and a file only
+        one master has is not behind anything.
+        """
+        out = {}
+        for file_name, held in serials.items():
+            present = {server: value for server, value in held.items() if value}
+            if len(present) < 2:
+                continue
+            highest = max(present.values())
+            trailing = {server: value for server, value in present.items() if value < highest}
+            if trailing:
+                out[file_name] = dict(trailing, **{"__highest__": highest})
+        return out
+
+    def _serial_messages(self, serials: dict) -> list:
+        """One message per master holding a zone whose serial is below the highest the other masters hold."""
+        messages = []
+        for file_name, trailing in sorted(self._behind(serials).items()):
+            highest = trailing.pop("__highest__")
+            for server, value in sorted(trailing.items(), key=lambda item: str(item[0])):
+                messages.append("DNS server '{}' is behind on '{}': its serial is {} against {} on the other "
+                                "master(s), so a write did not reach it".format(
+                                    server or "this host", file_name, value, highest))
+        return messages
+
+    def _difference_messages(self, comparison: list, serials: dict = None) -> list:
+        """
+        One message per real difference in a _compare_zone() result, in the order it was compared.
+
+        `serials` (a _serials() result) decides what a record held by one master alone means. A master whose serial
+        is behind the others was not reached by some write, so a record only it holds is one deleted from the others
+        while it was away, and pruning it is the repair. A master level with the others was reached by every write,
+        so such a record is one the others have not been written yet, and pruning it would destroy it.
+        """
+        behind = self._behind(serials or {})
         messages = []
         for file_name, server, missing, alone in comparison:
             name = server or "this host"
@@ -580,9 +741,13 @@ class DNSService(AuxService):
                 messages.append("DNS server '{}' is missing {} record(s) of '{}': {}".format(
                     name, len(missing), file_name, ", ".join(sorted(missing))))
             if alone:
-                messages.append("DNS server '{}' holds {} record(s) of '{}' no other master has, which is either a "
-                                "record the others have not been written yet or one deleted from them: {}".format(
-                                    name, len(alone), file_name, ", ".join(sorted(alone))))
+                verdict = ("its serial is behind the other master(s), so these were deleted from them while it was "
+                           "unreachable and pruning it is the repair"
+                           if server in behind.get(file_name, {}) else
+                           "its serial is level with the other master(s), so these are records they have not been "
+                           "written yet rather than ones deleted from them")
+                messages.append("DNS server '{}' holds {} record(s) of '{}' no other master has, and {}: {}".format(
+                    name, len(alone), file_name, verdict, ", ".join(sorted(alone))))
         return messages
 
     def report_zone(self, mydomain: str, mynet_reverse: str = "", remote_dns_servers=None) -> list:
@@ -596,8 +761,10 @@ class DNSService(AuxService):
         with _dns_lock:
             self._resolve_families(self.masters(remote_dns_servers))
             messages = self.validate_zones(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            serials = self._serials(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            messages += self._serial_messages(serials)
             messages += self._difference_messages(
-                self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers))
+                self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers), serials)
         for message in messages:
             warn("- " + message)
         return messages
@@ -615,15 +782,19 @@ class DNSService(AuxService):
         with _dns_lock:
             self._resolve_families(self.masters(remote_dns_servers))
             messages = self.validate_zones(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            serials = self._serials(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
+            messages += self._serial_messages(serials)
             comparison = self._compare_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
-            messages += self._difference_messages(comparison)
-            wrote = False
+            messages += self._difference_messages(comparison, serials)
+            wrote = set()
             for file_name, server, missing, _alone in comparison:
                 if missing:
                     self._write_records(server, file_name, sorted(missing))
-                    wrote = True
+                    wrote.add(file_name)
             if wrote:
-                self.restart_named(remote_servers=self.masters(remote_dns_servers) or None)
+                # A master brought current is level with the others, so its serial is raised with theirs: leaving it
+                # behind would report it as stale on every later comparison.
+                self._finish_write(self.masters(remote_dns_servers), sorted(wrote))
         for message in messages:
             warn("- " + message)
         return messages
@@ -663,7 +834,8 @@ class DNSService(AuxService):
                     else:
                         self._remote_dns_remove_record(server, self._zone_path(server, file_name), record)
             if messages:
-                self.restart_named(remote_servers=self.masters(remote_dns_servers) or None)
+                self._finish_write(self.masters(remote_dns_servers),
+                                   sorted({file_name for file_name, _s, _m, _a in comparison}))
         for message in messages:
             log("- " + message)
         return messages
@@ -836,9 +1008,13 @@ class DNSService(AuxService):
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
             sites = self.sites(mydomain, servers, [site] if own_file else [])
-            resync = self.ensure_zone(None, mydomain, mynet_reverse, sites=sites)
+            # A site is only ever a cloud account's, so either of these means this zone now holds an address the
+            # provider can hand back differently after a restart.
+            zone_ttl = dns_zone.CLOUD_TTL if (site or sites) else 0
+            resync = self.ensure_zone(None, mydomain, mynet_reverse, sites=sites, zone_ttl=zone_ttl)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain, mynet_reverse, sites=sites) or resync
+                resync = self.ensure_zone(server, mydomain, mynet_reverse, sites=sites,
+                                          zone_ttl=zone_ttl) or resync
 
             # file -> (the address the node had there, the address it has now), read from this host's copy, which
             # every master's matches.
@@ -859,7 +1035,6 @@ class DNSService(AuxService):
                     self._remote_retarget_services(server, path, old, new)
                 if mynet_reverse:
                     self._remote_dns_add(server, remote_rev, ptr_record)
-                self._remote(server, "systemctl restart named", check=False)
 
             # Drop any existing PTR record for this IP first. Each IP keeps one canonical PTR record.
             if mynet_reverse:
@@ -870,7 +1045,8 @@ class DNSService(AuxService):
             if mynet_reverse:
                 self._dns_add_line(rev_file, ptr_record)
             self._update_hosts_file(vm_name, myip)
-            self.restart_named()
+            self._finish_write(servers, list(addresses) + (
+                [dns_zone.reverse_file(mynet_reverse)] if mynet_reverse else []))
 
         if resync:
             self.sync_zone(mydomain, mynet_reverse, remote_dns_servers=remote_dns_servers)
@@ -915,7 +1091,6 @@ class DNSService(AuxService):
                     self._remote(server, "sed -Ei {} {}".format(node_line, path), check=False)
                     self._remote(server, "sed '/\\tIN A  {}$/d' -i {}".format(
                         address.replace(".", "\\."), path), check=False)
-                self._remote(server, "systemctl restart named", check=False)
 
             if mynet_reverse:
                 self._dns_remove_line(rev_file, ptr_record)
@@ -927,7 +1102,8 @@ class DNSService(AuxService):
                                               if not matcher.match(line)) + "\n")
                 self._dns_remove_service_lines(path, address)
             self._update_hosts_file(vm_name)
-            self.restart_named()
+            self._finish_write(servers, list(addresses) + (
+                [dns_zone.reverse_file(mynet_reverse)] if mynet_reverse else []))
 
     def add_service_dns(self, definition, clu_name, clu_type, dns_entry, mydomain, remote_dns_servers=None):
         """Add round-robin A records for a cluster service DNS entry."""
@@ -976,9 +1152,10 @@ class DNSService(AuxService):
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
             sites = self.sites(mydomain, servers)
-            resync = self.ensure_zone(None, mydomain, sites=sites)
+            zone_ttl = dns_zone.CLOUD_TTL if sites else 0
+            resync = self.ensure_zone(None, mydomain, sites=sites, zone_ttl=zone_ttl)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain, sites=sites) or resync
+                resync = self.ensure_zone(server, mydomain, sites=sites, zone_ttl=zone_ttl) or resync
             # Each file points the service at the address that file gives the node, so a site's view of it is the
             # node's private address there.
             for file_name in self._forward_files(mydomain, sites):
@@ -996,10 +1173,7 @@ class DNSService(AuxService):
                         self._remote(server, "echo -e '{}' >> {}".format(record, remote_zone), check=False)
                     self._dns_remove_line(zone_file, record)
                     self._dns_append_line(zone_file, record)
-            for server in servers:
-                self._remote(server, "systemctl restart named", check=False)
-
-            self.restart_named()
+            self._finish_write(servers, self._forward_files(mydomain, sites))
 
         if resync:
             self.sync_zone(mydomain, remote_dns_servers=remote_dns_servers)
@@ -1013,9 +1187,10 @@ class DNSService(AuxService):
             servers = self.masters(remote_dns_servers)
             self._resolve_families(servers)
             sites = self.sites(mydomain, servers)
-            resync = self.ensure_zone(None, mydomain, sites=sites)
+            zone_ttl = dns_zone.CLOUD_TTL if sites else 0
+            resync = self.ensure_zone(None, mydomain, sites=sites, zone_ttl=zone_ttl)
             for server in servers:
-                resync = self.ensure_zone(server, mydomain, sites=sites) or resync
+                resync = self.ensure_zone(server, mydomain, sites=sites, zone_ttl=zone_ttl) or resync
 
             # Each file's record points at the address that file gives the node, as add_service_dns() does.
             records = {file_name: "{}\tIN A  {}".format(
@@ -1031,10 +1206,10 @@ class DNSService(AuxService):
             for server in servers:
                 for file_name, record in records.items():
                     self._remote_dns_add(server, self._zone_path(server, file_name), record)
-                self._remote(server, "systemctl restart named", check=False)
 
             for file_name, record in records.items():
                 self._dns_add_line(NAMED_ZONE_DIR / file_name, record)
+            self._finish_write(servers, list(records))
 
         if resync:
             self.sync_zone(mydomain, remote_dns_servers=remote_dns_servers)

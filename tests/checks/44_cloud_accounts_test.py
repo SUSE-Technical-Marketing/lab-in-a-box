@@ -241,6 +241,9 @@ class _FakeCloudBackend:
     def get_ip(self, name):
         return "203.0.113.9"
 
+    def ensure_stable_address(self, name):
+        return ""   # what a backend that reserves nothing answers: the caller keeps the provider's address
+
     def provider_resolver(self):
         return ""
 

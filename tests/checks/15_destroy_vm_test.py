@@ -96,6 +96,71 @@ check("destroy_vm: get_ip() is called before delete_vm() — the instance must s
       cloud_backend.calls.index(("get_ip", "vm1")) < cloud_backend.calls.index(("delete_vm", "vm1")))
 
 
+# ── the overlay hub's node registry: a destroyed node's line comes off it ───
+# setup_vm.py's overlay.register_node() wrote the line; nothing took it off, and overlay.refresh_routes() then
+# opened an SSH connection to a destroyed host on every later run. The hub is looked up, never created.
+lookups, forgotten = [], []
+
+
+def _hub(address):
+    def _f(config, **kw):
+        lookups.append(kw.get("lab_setup_path"))
+        return address
+    return _f
+
+
+def _forget(hub_host, node_host):
+    forgotten.append((hub_host, node_host))
+
+
+overlay_definition = {"nodes": {"vm1": {"myip": "192.168.1.50"}, "vm2": {"myip": "192.168.1.51"}},
+                      "common": {"overlay": "true"}}
+overlay_config = dict(config, OVERLAY_HUB_ACCOUNT="aws-hub")
+overlay_defaults = {"LAB_SETUP_PATH": "/opt/lab_creation"}
+destroy_vm.load_vm_vars = lambda definition, vm_name: {"myip": "192.168.1.50", "mydomain": "mydemo.lab",
+                                                       "overlay": "true"}
+destroy_vm.del_from_dns = lambda *a, **kw: None
+destroy_vm.backends.get_backend = lambda *a, **kw: _FakeBackend()
+destroy_vm.overlay.existing_hub_host = _hub("hub.example")
+destroy_vm.overlay.forget_node = _forget
+
+order.clear()
+destroy_vm._HUB_HOST = None
+destroy_vm.destroy_vm(overlay_definition, overlay_config, overlay_defaults, "vm1")
+check("destroy_vm: an overlay lab's node is forgotten on the hub, by name",
+      forgotten == [("hub.example", "vm1")])
+check("destroy_vm: the hub is looked up without creating one, and told where the lab setup lives",
+      lookups == ["/opt/lab_creation"])
+check("destroy_vm: the VM itself is still deleted", "delete_vm" in order)
+
+destroy_vm.destroy_vm(overlay_definition, overlay_config, overlay_defaults, "vm2")
+check("destroy_vm: the hub address is looked up once per process, not once per node a teardown destroys",
+      lookups == ["/opt/lab_creation"] and forgotten[-1] == ("hub.example", "vm2"))
+
+lookups.clear()
+forgotten.clear()
+destroy_vm._HUB_HOST = None
+destroy_vm.load_vm_vars = lambda definition, vm_name: {"myip": "192.168.1.50", "mydomain": "mydemo.lab"}
+destroy_vm.destroy_vm({"nodes": {"vm1": {"myip": "192.168.1.50"}}, "common": {}},
+                      overlay_config, overlay_defaults, "vm1")
+check("destroy_vm: a lab with no overlay asks the hub nothing at all",
+      lookups == [] and forgotten == [])
+
+lookups.clear()
+forgotten.clear()
+destroy_vm._HUB_HOST = None
+destroy_vm.load_vm_vars = lambda definition, vm_name: {"myip": "192.168.1.50", "mydomain": "mydemo.lab",
+                                                       "overlay": "true"}
+destroy_vm.overlay.existing_hub_host = _hub("")
+order.clear()
+destroy_vm.destroy_vm(overlay_definition, overlay_config, overlay_defaults, "vm1")
+destroy_vm.destroy_vm(overlay_definition, overlay_config, overlay_defaults, "vm2")
+check("destroy_vm: no hub to talk to is skipped, and the teardown goes on",
+      forgotten == [] and order.count("delete_vm") == 2)
+check("destroy_vm: \"there is no hub\" is remembered too, so the absent one is not looked for again",
+      lookups == ["/opt/lab_creation"])
+
+
 # ── main(): --version exits cleanly ─────────────────────────────────────────
 import io
 from contextlib import redirect_stdout

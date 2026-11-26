@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "_comment": "One lab's entry in this automation node's lab registry: /etc/lab_creation/labs/<lab>.json (LAB_REGISTRY_DIR in lab_creation.cfg overrides the directory). Written by setup_lab.py when a lab is deployed, removed by destroy_lab.py when it is destroyed, and read by lab_watch.py, which is the only thing that knows which labs exist. One file per lab, so two parallel runs never rewrite each other's entry. Every action is also appended to /var/log/lab-in-a-box/labs.log (LAB_EVENT_LOG), one line of '<timestamp> <action> <lab> <fqdn> ...'.",
+  "_comment_lab": "The name the lab is recorded under: its definition file's base name without the extension, which is what the operator already calls it",
+  "lab": "solar-system-lab",
+  "_comment_definition": "Absolute path of the lab definition, so a scheduled run can load it again. The path, never a copy of the content, which would go stale the moment the operator edited the real file",
+  "definition": "/root/solar-system-lab.json",
+  "_comment_mydomain": "The DNS zone this lab's records go in, taken from common.mydomain or the first kcluster that names one",
+  "mydomain": "mydemo.lab",
+  "_comment_nodes": "The nodes the definition declared when this was last written. lab_watch.py drops one its provider no longer has, which is how a VM deleted outside this tooling stops being counted as deployed",
+  "nodes": [
+    "node101.mydemo.lab",
+    "node102.mydemo.lab"
+  ],
+  "_comment_created": "When the lab was first recorded, kept across later updates. UTC, to the second",
+  "created": "2026-11-25T09:00:00Z",
+  "_comment_updated": "When this entry was last written, which is what orders a listing",
+  "updated": "2026-11-25T09:42:00Z"
+}

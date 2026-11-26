@@ -56,7 +56,7 @@ from typing import Dict, Iterable, List, Optional
 from lab_creation import die
 
 # ── what an add-on needs from the cluster it is placed on ───────────────────
-# A kcluster's distribution brings some of these itself (K3s brings both, RKE2 an ingress controller, kubeadm
+# A kcluster's distribution brings some of these itself (K3s brings both, RKE2 an ingress controller, vanilla
 # neither); libs/k8s.py's cluster_provides() answers what a given kcluster will have, and the kcluster's clu_ingress
 # and clu_storage fields choose what supplies the rest.
 CLUSTER_INGRESS = "ingress"
@@ -81,6 +81,7 @@ DEFAULT_PLUGIN = {
 STATUS_STABLE = "stable"
 STATUS_UNDER_CONSTRUCTION = "under-construction"
 STATUSES = (STATUS_STABLE, STATUS_UNDER_CONSTRUCTION)
+
 
 _cache = {}
 

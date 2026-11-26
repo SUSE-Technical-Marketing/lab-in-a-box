@@ -1,0 +1,355 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Installs Antseed, a peer-to-peer marketplace for AI inference, on a lab node: the CLI, the
+# buyer proxy or the seller provider, the desktop app, and the connections from the node's own coding agents to
+# the buyer proxy.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://github.com/Antseed/antseed (GPL-3.0). It is a TypeScript monorepo: @antseed/cli on npm is
+# the CLI and the plugin manager, apps/desktop is an Electron app published as a release asset, and the buyer's
+# router exposes an OpenAI- and Anthropic-compatible proxy on one local port, 8377 by default, that any tool
+# taking a custom base URL can use.
+#
+# Two roles, and a node can hold both:
+#   buyer   runs the local proxy, and a coding agent on the node points ANTHROPIC_BASE_URL or OPENAI_BASE_URL at
+#           it. "antseed apps connect <app>" is upstream's own command for editing that app's configuration, and
+#           it backs the original up beside it.
+#   seller  announces capacity and serves other people's requests through a provider plugin.
+#
+# Payments are on-chain and the identity is a key: both are configuration the operator owns, so this add-on
+# installs and starts Antseed, writes the secrets it is given into a root-only environment file, and leaves
+# "antseed seller setup"'s own config.json to the operator. Upstream's terms do not allow reselling subscription
+# credentials, and its claude-code and claude-oauth provider plugins are for local testing only; neither is
+# configured here.
+#
+# Schema version: 1.0
+#
+# JSON section: "antseed" — Antseed, a peer-to-peer AI inference marketplace
+#   antseed_role         : "buyer" runs the local proxy, "seller" serves requests, "both" does each.
+#                          (options: buyer, seller, both) (default: buyer)
+#   antseed_version      : the @antseed/cli version to install, e.g. 0.1.261. Empty installs the latest.
+#   antseed_user         : the account on the node to install and run for. Its home holds ~/.antseed, which
+#                          upstream calls the durable source of truth. (default: root)
+#   antseed_proxy_port   : the buyer proxy's port, as config.json's proxyPort. This add-on prints it and hands it
+#                          to "antseed apps connect"; changing the port itself means editing config.json.
+#                          (default: 8377)
+#   antseed_start        : "true" or "false" (default: true). Writes a systemd unit per role and starts it, so the
+#                          proxy is up when the lab finishes. "false" installs everything and starts nothing.
+#   antseed_apps         : list of applications to point at the buyer proxy with "antseed apps connect", for
+#                          example ["claude-code", "codex"]. Each one's own configuration file is edited by that
+#                          command, which backs the original up as <file>.antseed.bak. Empty connects none.
+#   antseed_desktop      : "true" or "false" (default: true). Installs Antseed Desktop, the Electron app, from its
+#                          release asset: the .deb where the node's package manager is apt, and the AppImage
+#                          otherwise. It is a graphical app, so a headless node needs a desktop to use it — the
+#                          "xfce" add-on is one.
+#   antseed_desktop_version : the desktop release to install (default: 0.2.95)
+#   antseed_desktop_url  : base URL the desktop asset is fetched from. The release tag and the file name are
+#                          appended, so a lab with no internet can point this at its own mirror.
+#                          (default: https://github.com/Antseed/antseed/releases/download)
+#   antseed_identity_hex : the node's Antseed identity key, written to the environment file as
+#                          ANTSEED_IDENTITY_HEX. Unset, Antseed makes its own on first start.
+#   antseed_passphrase   : the passphrase for that key, written as ANTSEED_PASSPHRASE.
+#   antseed_account      : name of an encrypted credential file of kind "antseed" under
+#                          /etc/lab_creation/credentials/ to read antseed_identity_hex and antseed_passphrase
+#                          from. It is auto-discovered when exactly one such file exists and this is unset.
+#   antseed_env          : a dict of further environment variables for the services, for anything this add-on has
+#                          no field for — a provider's API key, ANTSEED_BASE_RPC_URL, ANTSEED_MIN_REPUTATION. The
+#                          whole file is root-only, so a secret belongs here rather than in a command.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "antseed",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from nodejs import ensure_node, npm_command  # noqa: E402
+from lab_creation import install_packages, package_manager, ssh_run, ssh_output, log, warn  # noqa: E402
+
+PACKAGE = "@antseed/cli"
+BINARY = "antseed"
+ROLES = ("buyer", "seller", "both")
+DEFAULT_PORT = 8377
+DEFAULT_DESKTOP_VERSION = "0.2.95"
+DESKTOP_URL = "https://github.com/Antseed/antseed/releases/download"
+ENV_FILE = "/etc/antseed/env"
+DESKTOP_DIR = "/opt/antseed"
+UNIT_DIR = "/etc/systemd/system"
+# uname -m to the architecture the desktop assets are named with, per release.
+DESKTOP_ARCHES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}
+DEB_ARCHES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+
+
+def _get(cfg, field, default=""):
+    value = (cfg or {}).get("antseed_{}".format(field))
+    return default if value in ("", None) else value
+
+
+def _truth(cfg, field, default):
+    return str(_get(cfg, field, default)).strip().lower() == "true"
+
+
+def role_of(cfg):
+    return str(_get(cfg, "role", "buyer")).strip().lower()
+
+
+def roles_of(cfg):
+    """The roles to run, as a list: "both" is each of them, in the order a node starts them."""
+    role = role_of(cfg)
+    return ["buyer", "seller"] if role == "both" else [role]
+
+
+def user_of(cfg):
+    return str(_get(cfg, "user", "root")).strip()
+
+
+def port_of(cfg):
+    return int(_get(cfg, "proxy_port", DEFAULT_PORT))
+
+
+def apps_of(cfg):
+    """The applications to point at the proxy, as a list of names."""
+    value = _get(cfg, "apps", [])
+    if isinstance(value, str):
+        value = [value]
+    return [str(v).strip() for v in (value or []) if str(v).strip()]
+
+
+def as_user(user, command):
+    """`command`, run as `user`: directly when that is root, and through a login shell otherwise."""
+    if user == "root":
+        return command
+    return "su - {} -c {}".format(shlex.quote(user), shlex.quote(command))
+
+
+def package_spec(cfg):
+    """The npm specifier: the version the lab pinned, or the latest."""
+    version = str(_get(cfg, "version", "")).strip().lstrip("v")
+    return "{}@{}".format(PACKAGE, version) if version else PACKAGE
+
+
+def desktop_asset(machine, manager):
+    """
+    The desktop release asset for this node: the .deb where the package manager is apt, the AppImage otherwise.
+    Returns (file name, kind) or ("", "") for an architecture upstream publishes neither for.
+    """
+    if manager == "apt-get":
+        arch = DEB_ARCHES.get(machine)
+        return ("Antseed-Desktop-{version}-{arch}.deb".format(version="{version}", arch=arch), "deb") \
+            if arch else ("", "")
+    arch = DESKTOP_ARCHES.get(machine)
+    return ("Antseed-Desktop-{version}-{arch}.AppImage".format(version="{version}", arch=arch), "appimage") \
+        if arch else ("", "")
+
+
+def _validate(v):
+    cfg = v.definition.get("antseed", {}) or {}
+    if role_of(cfg) not in ROLES:
+        v.errors.append("[ERROR] antseed.antseed_role='{}': must be one of {}".format(
+            cfg.get("antseed_role"), ", ".join(ROLES)))
+    v.vport("antseed", "antseed_proxy_port")
+    for field in ("antseed_start", "antseed_desktop"):
+        v.vbool("antseed", field)
+    apps = cfg.get("antseed_apps")
+    if apps not in ("", None) and not isinstance(apps, (list, str)):
+        v.errors.append("[ERROR] antseed.antseed_apps must be a list of application names")
+    extra = cfg.get("antseed_env")
+    if extra not in ("", None) and not isinstance(extra, dict):
+        v.errors.append("[ERROR] antseed.antseed_env must be a mapping of variable names to values")
+
+
+def write_environment(hostname, cfg):
+    """
+    The services' environment file: the identity and passphrase the lab configured, plus anything in antseed_env.
+    Root-only, and nothing in it ever reaches a command line, where the node's process list would show it.
+    Returns the variable names written, which is what the log can say without printing a value.
+    """
+    creds = ac.resolve_credential(cfg, "antseed",
+                                  {"antseed_identity_hex": "antseed_identity_hex",
+                                   "antseed_passphrase": "antseed_passphrase"},
+                                  account_key="antseed_account")
+    env = {}
+    if (creds or {}).get("antseed_identity_hex"):
+        env["ANTSEED_IDENTITY_HEX"] = str(creds["antseed_identity_hex"])
+    if (creds or {}).get("antseed_passphrase"):
+        env["ANTSEED_PASSPHRASE"] = str(creds["antseed_passphrase"])
+    for name, value in sorted((_get(cfg, "env", {}) or {}).items()):
+        env[str(name)] = str(value)
+
+    ssh_run(hostname, "mkdir -p {d} && chmod 0700 {d}".format(d=shlex.quote(os.path.dirname(ENV_FILE))))
+    content = "".join("{}={}\n".format(name, value) for name, value in sorted(env.items()))
+    ssh_run(hostname, "umask 077 && cat > {}".format(shlex.quote(ENV_FILE)), input_text=content)
+    if env:
+        log("- Wrote {} into {} on {}".format(", ".join(sorted(env)), ENV_FILE, hostname))
+    return sorted(env)
+
+
+def install_cli(hostname, cfg):
+    """Node, npm and the CLI itself, installed globally for the account that will run it."""
+    ensure_node(hostname)
+    user = user_of(cfg)
+    ssh_run(hostname, as_user(user, npm_command(user, package_spec(cfg))))
+    version = ssh_output(hostname, as_user(user, "{} --version 2>/dev/null".format(BINARY))).strip()
+    log("- Antseed CLI {} installed for {} on {}".format(version or "(version unknown)", user, hostname))
+    # Node 22 is the oldest the CLI is built against; the repositories of some distributions carry only 20.
+    node = ssh_output(hostname, as_user(user, "node --version 2>/dev/null")).strip().lstrip("v")
+    if node and int(node.split(".")[0]) < 22:
+        warn("- Node {} on {} is older than the 22 Antseed is built against: it may refuse to start".format(
+            node, hostname))
+    return version
+
+
+def service_unit(cfg, role):
+    """The unit that runs one role, reading its secrets from the environment file rather than from its own text."""
+    user = user_of(cfg)
+    return (
+        "[Unit]\n"
+        "Description=Antseed {role} (lab-in-a-box)\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        "User={user}\n"
+        "EnvironmentFile=-{env}\n"
+        "ExecStart=/usr/bin/env {binary} {role} start\n"
+        "Restart=always\n"
+        "RestartSec=5\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    ).format(role=role, user=user, env=ENV_FILE, binary=BINARY)
+
+
+def start_roles(hostname, cfg):
+    """Write and start one unit per role the lab asked for."""
+    for role in roles_of(cfg):
+        name = "antseed-{}".format(role)
+        ssh_run(hostname, "cat > {}/{}.service".format(UNIT_DIR, name), input_text=service_unit(cfg, role))
+        ssh_run(hostname, "systemctl daemon-reload && systemctl enable --now {}.service".format(
+            shlex.quote(name)), check=False)
+        log("- Started {} on {}".format(name, hostname))
+
+
+def connect_apps(hostname, cfg):
+    """Point each application the lab named at the buyer proxy, with Antseed's own command."""
+    user = user_of(cfg)
+    for app in apps_of(cfg):
+        result = ssh_run(hostname, as_user(user, "{} apps connect {} --port {}".format(
+            BINARY, shlex.quote(app), port_of(cfg))), check=False)
+        if result.returncode == 0:
+            log("- Pointed {} at the Antseed proxy on {}".format(app, hostname))
+        else:
+            warn("- 'antseed apps connect {}' failed on {}: Antseed knows that application by another name, or "
+                 "it is not installed for {}".format(app, hostname, user))
+
+
+def install_desktop(hostname, cfg):
+    """
+    Install Antseed Desktop from its release asset: the .deb on an apt node, the AppImage anywhere else. The
+    AppImage is put in /opt/antseed and linked into /usr/local/bin, since upstream publishes no installer for it.
+    """
+    manager = package_manager(hostname)
+    machine = (ssh_output(hostname, "uname -m") or "").strip()
+    template, kind = desktop_asset(machine, manager)
+    if not template:
+        warn("- Antseed Desktop is published for x86_64 and arm64 only, and this node is '{}': skipped".format(
+            machine or "an unknown architecture"))
+        return ""
+    version = str(_get(cfg, "desktop_version", DEFAULT_DESKTOP_VERSION)).lstrip("v")
+    asset = template.format(version=version)
+    url = "{}/v{}/{}".format(str(_get(cfg, "desktop_url", DESKTOP_URL)).rstrip("/"), version, asset)
+
+    if ssh_run(hostname, "command -v curl >/dev/null 2>&1", check=False).returncode != 0:
+        install_packages(hostname, ["curl"], manager=manager, required=False)
+    ssh_run(hostname, "mkdir -p {}".format(shlex.quote(DESKTOP_DIR)))
+    target = os.path.join(DESKTOP_DIR, asset)
+    ssh_run(hostname, "curl -fsSL -o {} {}".format(shlex.quote(target), shlex.quote(url)))
+
+    if kind == "deb":
+        # Through the one package-installing helper, as every other install here goes: apt resolves the .deb's
+        # own dependencies, which dpkg on its own would only complain about.
+        install_packages(hostname, [target], manager=manager)
+    else:
+        ssh_run(hostname, "chmod 0755 {} && ln -sf {} /usr/local/bin/antseed-desktop".format(
+            shlex.quote(target), shlex.quote(target)))
+    log("- Antseed Desktop {} installed on {} from {}".format(version, hostname, asset))
+    log("- It is a graphical application: a headless node needs a desktop to run it, such as the 'xfce' add-on")
+    return asset
+
+
+def setup_antseed(hostname, cfg):
+    """The whole install: the CLI, its environment, the desktop, the services, and the applications."""
+    install_cli(hostname, cfg)
+    write_environment(hostname, cfg)
+    if _truth(cfg, "desktop", "true"):
+        install_desktop(hostname, cfg)
+    if _truth(cfg, "start", "true"):
+        start_roles(hostname, cfg)
+    if "buyer" in roles_of(cfg):
+        log("- Buyer proxy: http://{}:{} — point ANTHROPIC_BASE_URL at it, or OPENAI_BASE_URL at its /v1".format(
+            hostname, port_of(cfg)))
+        connect_apps(hostname, cfg)
+    log("- Antseed's own configuration is ~/.antseed/config.json for {}: run '{} seller setup' there to write "
+        "it".format(user_of(cfg), BINARY))
+
+
+def _check(chk):
+    """That the CLI answers, that each role's service is running, and that the desktop is installed when asked."""
+    if "antseed" not in chk.definition:
+        chk.ok("this lab has no antseed section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("antseed", {}) or {}
+    user = user_of(cfg)
+
+    version = ssh_output(chk.vm_name, as_user(user, "{} --version 2>/dev/null".format(BINARY))).strip()
+    if not version:
+        chk.fail("the Antseed CLI for {} on {}".format(user, chk.vm_name), "answers", "does not run")
+    else:
+        wanted = str(_get(cfg, "version", "")).strip().lstrip("v")
+        chk.expect("the Antseed CLI's version", wanted, version.lstrip("v")) if wanted else \
+            chk.ok("the Antseed CLI answers with {} on {}".format(version, chk.vm_name))
+
+    if _truth(cfg, "start", "true"):
+        for role in roles_of(cfg):
+            name = "antseed-{}".format(role)
+            active = ssh_output(chk.vm_name, "systemctl is-active {}.service 2>/dev/null".format(name)).strip()
+            chk.expect("the {} service".format(name), "active", active or "inactive")
+
+    if _truth(cfg, "desktop", "true"):
+        if ssh_run(chk.vm_name, "test -x /usr/local/bin/antseed-desktop || command -v antseed-desktop",
+                   check=False).returncode == 0:
+            chk.ok("Antseed Desktop is installed on {}".format(chk.vm_name))
+        else:
+            chk.fail("Antseed Desktop on {}".format(chk.vm_name), "installed", "absent")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "antseed", vm_name=env_vm_name):
+        setup_antseed(vm_name, k8s.addon_node_config(definition, "antseed", vm_name))
+
+
+if __name__ == "__main__":
+    main()

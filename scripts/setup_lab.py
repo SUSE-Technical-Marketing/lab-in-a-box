@@ -47,6 +47,7 @@ import targets  # noqa: E402
 import addon_common as ac  # noqa: E402
 import apps  # noqa: E402
 import lab_examples  # noqa: E402
+import lab_registry  # noqa: E402
 import qr_util  # noqa: E402
 import spacecmd_common as sc  # noqa: E402
 import services  # noqa: E402
@@ -1156,6 +1157,10 @@ def main():
         _fold_issues_into_report(addon_issues)
         print_summary(definition)
         sys.exit(1)
+
+    # Recorded before anything is built, not after: a run that fails halfway has still created VMs, and a lab
+    # nothing knows about is one no scheduled reconcile walks and no operator finds again.
+    lab_registry.record(definition, lab_file, config)
 
     setup_lab(definition, config, defaults, lab_file, keep=keep, fresh=False, parallel=parallel)
 

@@ -24,8 +24,11 @@ Known limits:
   - Routes are pushed when a node is provisioned. A node provisioned before a new site joins gets the new routes when it is
     provisioned again.
   - Route persistence uses a systemd oneshot unit, so it assumes systemd.
-  - On AWS, the gateway's network interface needs source/destination checking disabled, which
-    backends.AWSBackend.disable_source_dest_check() does. The other cloud backends do not implement this.
+  - A gateway forwards for its site's other nodes, which a provider filtering on the instance's own addresses
+    drops. Only AWS (SourceDestCheck) and GCP (canIpForward) have such a filter and a way to clear it, which
+    backends.disable_source_dest_check() does on both, and which GCP also takes at create time
+    (create_vm(can_ip_forward=True)). Hetzner Cloud, Alibaba Cloud, Scaleway, UpCloud, Exoscale and OVHcloud
+    publish no such per-instance filter, so there is nothing to clear there.
   - The hub is never destroyed automatically, as with the cloud DNS VM. It is a single point of failure, and cross-site traffic
     goes through its region.
 """
@@ -37,7 +40,10 @@ from pathlib import Path
 from lab_creation import (ssh_run, ssh_output, log, warn, die, wait_for_ssh_command, install_packages,
                           package_manager,
                           CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB)
+import backends
+import dns_zone
 import ipalloc
+import services
 
 
 DEFAULT_OVERLAY_CIDR = "10.99.0.0/16"
@@ -74,6 +80,35 @@ def site_name_for(backend_name, account):
     if backend_name in ("libvirt", "harvester", None, ""):
         return "home"
     return "{}-{}".format(backend_name, account or "default")
+
+
+def dns_vm_name_for_site(site_name):
+    """
+    The cloud DNS VM serving `site_name`, by name: the inverse of site_name_for() composed with
+    backends.cloud_dns_vm_name(). "" for the libvirt and Harvester site, whose DNS server is the automation node
+    itself and has no such VM.
+
+    A site name already determines it, so the hub registry does not have to record it. That is what lets a reader
+    resolve the server out of its own copy of the zone instead of trusting an address the registry wrote down
+    earlier (see _preferred_dns_address()).
+    """
+    if not site_name or site_name == "home":
+        return ""
+    backend_name, _, account = site_name.partition("-")
+    if not account or account == "default":
+        return "lab-dns-{}".format(backend_name)
+    return "lab-dns-{}-{}".format(backend_name, account)
+
+
+def _zone_address(file_name, short):
+    """The address this host's own copy of zone file `file_name` gives node `short`; "" when it has neither."""
+    if not file_name or not short:
+        return ""
+    try:
+        text = (Path(services.NAMED_ZONE_DIR) / file_name).read_text(errors="replace")
+    except OSError:
+        return ""
+    return dns_zone.node_address(text, short)
 
 
 def hub_vm_name(backend_name, account):
@@ -122,9 +157,12 @@ def _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path
 
     backend.copy_vm_image(iso_image, vm_name, CLOUD_INFRA_VM_DSK_GIB, config_method="cloud-init")
     backend.push_provisioning_files(vm_name, config_method="cloud-init")
+    # can_ip_forward: a gateway forwards for its site's other nodes, which a provider that filters on the
+    # instance's own addresses drops. Only the backends with such a filter act on it (GCPBackend); the rest ignore
+    # it through **kwargs. The equivalent for an already-created VM is backend.disable_source_dest_check().
     ip = backend.create_vm(vm_name, CLOUD_INFRA_VM_CPUS, CLOUD_INFRA_VM_MEM_MIB, CLOUD_INFRA_VM_DSK_GIB,
                            None, config_method="cloud-init", iso_image=iso_image, mymac=None,
-                           open_ports=open_ports or [])
+                           open_ports=open_ports or [], can_ip_forward=True)
     if not ip:
         die("gateway VM '{}' was created on backend '{}' but create_vm() reported "
             "no IP".format(vm_name, backend_name))
@@ -359,10 +397,23 @@ def forget_node(hub_host, node_host):
 
 
 
-def register_dns_server(hub_host, site_name, dns_ip, mydomain=""):
+def register_dns_server(hub_host, site_name, dns_ip, mydomain="", private_ip=""):
     """
     Record, on the hub, which DNS server serves `site_name` and which zone it is a master of. Idempotent upsert of
-    one "site address domain" line.
+    one "site address domain [private address]" line per (site, domain).
+
+    One line per pair, not per site: a cloud account's DNS VM is shared by every lab on that account and holds one
+    zone per lab (backends.ensure_cloud_dns_vm()), so two labs there state two true things about one server. Keyed
+    on the site alone, the second one to run replaced the first's line, and the first lab's next run then found its
+    own site registered for another domain, left that server out, and silently stopped writing its records to the
+    very server already holding its zone. A multi-site lab lost cross-site resolution that way; a single-site one
+    did not, because its own site is excluded from the lookup anyway.
+
+    Both of the server's addresses are recorded. A reader prefers the private one, so the records of one site are
+    written into another site's server across the overlay rather than over the internet, and falls back to the
+    public one where the private one cannot be reached — an automation node whose own lab has no site of its own is
+    not a peer of the hub and has no route to another site's subnet (see _preferred_dns_address()). A line written
+    before the private address was recorded has three fields and still reads correctly.
 
     Every DNS server in this project is a master of the same zone and records reach them by being written to each
     one's zone file (libs/services.py's add_to_dns, through its remote_dns_servers list), so a site's nodes become
@@ -376,10 +427,60 @@ def register_dns_server(hub_host, site_name, dns_ip, mydomain=""):
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     existing = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
-    kept = [line for line in existing.splitlines() if line.split()[:1] != [site_name] and line.strip()]
-    kept.append(" ".join(part for part in (site_name, dns_ip, mydomain) if part))
+    kept = []
+    for line in existing.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] != site_name:
+            kept.append(line)
+            continue
+        # This site's own lines. The one for this domain is what is being rewritten, and one from before the
+        # domain was recorded cannot be told apart from it, so it goes too rather than lingering and being read
+        # as every other lab's server for ever (see list_dns_servers()).
+        domain = parts[2] if len(parts) > 2 else ""
+        if domain and domain != mydomain:
+            kept.append(line)
+    # Positional, so the private address can only follow a domain: a site registered without one keeps three
+    # fields and is read as having no private address.
+    fields = (site_name, dns_ip, mydomain, private_ip if mydomain else "")
+    kept.append(" ".join(part for part in fields if part))
     ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
             input_text="\n".join(kept) + "\n")
+
+
+# The result of probing a site DNS server's private address, by address, so a run with many nodes probes each
+# server once rather than once per node. A failure is cached too: a route that is not there does not appear
+# mid-run.
+_private_dns_reachable = {}
+
+
+def _preferred_dns_address(site_name, public_ip, private_ip, mydomain=""):
+    """
+    Which address to write a site's records through: the private one when this machine can reach it, keeping the
+    traffic on the overlay, and the public one otherwise.
+
+    Both come from this host's own copy of the zone where it holds a record for that site's DNS VM, whose name the
+    site already determines (dns_vm_name_for_site()): the site view's file gives the private address and the
+    external view's the public one, both read locally with no query to anyone. The addresses the registry recorded
+    are the fallback, for a reader holding no copy of that zone and for the first run, before the record exists.
+    Reading the zone is what keeps this right when a server's address changed and nothing has re-registered it.
+
+    Reachability is SSH answering, because writing a record IS an SSH call (libs/services.py's add_to_dns). It is
+    probed once per address per run.
+    """
+    short = dns_vm_name_for_site(site_name)
+    if short and mydomain:
+        public_ip = _zone_address(dns_zone.forward_file(mydomain), short) or public_ip
+        private_ip = _zone_address(dns_zone.site_file(mydomain, site_name), short) or private_ip
+    if not private_ip or private_ip == public_ip:
+        return public_ip
+    if private_ip not in _private_dns_reachable:
+        _private_dns_reachable[private_ip] = ssh_run(private_ip, "true", check=False).returncode == 0
+        if not _private_dns_reachable[private_ip]:
+            log("- site '{}': its DNS server's private address {} is not reachable from here, so its records go "
+                "to {} instead".format(site_name, private_ip, public_ip))
+    return private_ip if _private_dns_reachable[private_ip] else public_ip
 
 
 def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
@@ -388,29 +489,100 @@ def list_dns_servers(hub_host, exclude_site=None, mydomain=""):
     registered one, excluding `exclude_site` (the caller's own, whose server the local write already reached) and
     excluding any registered for a domain other than `mydomain`.
 
+    A site holds one line per domain its server is a master of, so one of them is chosen: the line naming
+    `mydomain`, else a line naming no domain at all. One entry per site is returned either way.
+
     A line with no domain predates that field. It is included rather than dropped, because excluding it would stop
-    an existing overlay resolving across sites until every site had run again, and register_dns_server() rewrites
-    its own line on each run, so such a line disappears as each site is next used.
+    an existing overlay resolving across sites until every site had run again, and register_dns_server() replaces
+    such a line as each site is next used.
     """
     ssh_run(hub_host, "mkdir -p {d} && touch {f}".format(
         d=shlex.quote(_WG_KEY_DIR), f=shlex.quote(_DNS_REGISTRY_PATH)))
     raw = ssh_output(hub_host, "cat {}".format(shlex.quote(_DNS_REGISTRY_PATH)))
-    out = []
+    # Grouped in the order the file lists each site, so the result does not depend on how a dict happens to order
+    # its keys, and the first line of an equally good pair wins.
+    order, by_site = [], {}
     for line in raw.splitlines():
         parts = line.split()
         if len(parts) < 2 or parts[0] == exclude_site:
             continue
-        site, dns_ip = parts[0], parts[1]
-        domain = parts[2] if len(parts) > 2 else ""
-        if domain and mydomain and domain != mydomain:
-            log("- site '{}' serves domain '{}', not '{}': its DNS server is left out of this lab's "
-                "records".format(site, domain, mydomain))
+        if parts[0] not in by_site:
+            order.append(parts[0])
+        by_site.setdefault(parts[0], []).append(parts)
+    out = []
+    for site in order:
+        lines = by_site[site]
+        # A line naming this lab's domain beats one naming none, so a site that carries both is written through
+        # the server its own domain is recorded against.
+        matching = [p for p in lines if len(p) > 2 and p[2] == mydomain] if mydomain else []
+        legacy = [p for p in lines if len(p) < 3]
+        chosen = (matching or legacy or [None])[0]
+        if chosen is None:
+            log("- site '{}' serves domain(s) {}, not '{}': its DNS server is left out of this lab's "
+                "records".format(site, ", ".join(sorted({p[2] for p in lines if len(p) > 2})), mydomain))
             continue
-        if not domain:
+        if len(chosen) < 3:
             warn("- site '{}' registered its DNS server before the domain was recorded: including it for "
                  "'{}', which is wrong if it serves another lab".format(site, mydomain or "this lab"))
-        out.append((site, dns_ip))
+        out.append((site, _preferred_dns_address(site, chosen[1], chosen[3] if len(chosen) > 3 else "",
+                                                 mydomain=mydomain)))
     return out
+
+
+def existing_hub_host(config, vm_img_loc=None, iso_loc=None, lab_setup_path=None):
+    """
+    The overlay hub's address when a hub already exists, and "" otherwise. Creates nothing.
+
+    ensure_overlay_hub() is the provisioning path and builds the hub when it is missing, which is exactly wrong for
+    a teardown: destroying a lab must not bring an overlay hub into being. This looks the hub VM up in the account
+    OVERLAY_HUB_ACCOUNT names and answers "" for every reason a teardown should simply skip its overlay cleanup:
+    no hub account configured, no hub VM, or no address on it.
+    """
+    account = (config or {}).get("OVERLAY_HUB_ACCOUNT")
+    if not account:
+        return ""
+    try:
+        hub_backend, hub_backend_name = backends.get_backend_for_account(
+            account, config, vm_img_loc=vm_img_loc, iso_loc=iso_loc, lab_setup_path=lab_setup_path)
+        vm_name = hub_vm_name(hub_backend_name, getattr(hub_backend, "account", ""))
+        if not hub_backend.vm_exists(vm_name):
+            return ""
+        return hub_backend.get_ip(vm_name) or ""
+    except (SystemExit, RuntimeError, OSError) as error:
+        warn("- The overlay hub in account '{}' could not be looked up, so this lab's overlay registrations are "
+             "left as they are: {}".format(account, error))
+        return ""
+
+
+def forget_dns_server(hub_host, site_name, mydomain):
+    """
+    Drop the (`site_name`, `mydomain`) line from the hub's DNS registry, for a lab that has been destroyed.
+    Returns whether a line was removed.
+
+    Keyed per (site, domain), a line is no longer replaced by the next lab to run on that site, so a destroyed
+    lab's line would stay for ever and have every reconciliation try to reach that server for a zone nobody holds.
+    forget_site() still removes every line of a site being retired, which is a different thing: that site's server
+    is going away, not one lab's zone on it.
+    """
+    if not mydomain:
+        return False
+    raw = ssh_output(hub_host, "cat {} 2>/dev/null".format(shlex.quote(_DNS_REGISTRY_PATH)))
+    kept, removed = [], False
+    for line in raw.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == site_name and len(parts) > 2 and parts[2] == mydomain:
+            removed = True
+            continue
+        kept.append(line)
+    if not removed:
+        return False
+    ssh_run(hub_host, "cat > {}".format(shlex.quote(_DNS_REGISTRY_PATH)),
+            input_text=("\n".join(kept) + "\n") if kept else "")
+    log("- Site '{}' no longer serves '{}' on the overlay hub: that lab's line was removed".format(
+        site_name, mydomain))
+    return True
 
 
 def dns_servers(hub_host, mydomain):
@@ -562,6 +734,13 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
     gateway that needs an INBOUND port open; every spoke gateway connects
     OUT to it (see ensure_site_gateway_vm(), which does not open a port).
 
+    Reuse and creation are serialised per backend and account with
+    backends.shared_resource_lock(), so a --parallel run creates one hub
+    however many nodes ask for it at the same time. An existing hub that
+    the provider reports as powered off is started again first
+    (backends.start_if_stopped()), since that is the normal state after
+    scripts/vm_power.py powered the lab down.
+
     Returns (hub_public_ip, hub_overlay_ip, hub_pubkey). Does NOT register
     the hub's own site — call ensure_overlay_hub_ready() again (or rely on
     the one this function already made, it's idempotent) with
@@ -571,18 +750,27 @@ def ensure_overlay_hub(backend, backend_name, iso_image, lab_setup_path, root_ss
     acct = getattr(backend, "account", "") or ""
     vm_name = hub_vm_name(backend_name, acct)
 
-    if backend.vm_exists(vm_name):
-        hub_public_ip = backend.get_ip(vm_name)
-        if not hub_public_ip:
-            die("overlay hub VM '{}' exists on backend '{}' but reported no IP — check it "
-                "manually before retrying".format(vm_name, backend_name))
-        log("- Reusing existing overlay hub VM \"{}\" ({})".format(vm_name, hub_public_ip))
-    else:
-        hub_public_ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
-                                            root_ssh_key, open_ports=["{}/udp".format(wg_port)])
+    with backends.shared_resource_lock(backend, "overlay"):
+        if backend.vm_exists(vm_name):
+            # A powered-off hub is started before its address is read: a provider that released its public address
+            # on stop hands back a different one, so an address read first would be the old one.
+            backends.start_if_stopped(backend, backend_name, vm_name, "overlay hub VM")
+            hub_public_ip = backend.get_ip(vm_name)
+            if not hub_public_ip:
+                die("overlay hub VM '{}' exists on backend '{}' but reported no IP — check it "
+                    "manually before retrying".format(vm_name, backend_name))
+            log("- Reusing existing overlay hub VM \"{}\" ({})".format(vm_name, hub_public_ip))
+        else:
+            hub_public_ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path,
+                                               root_ssh_key, open_ports=["{}/udp".format(wg_port)])
 
-    hub_overlay_ip, hub_pubkey = ensure_overlay_hub_ready(hub_public_ip, wg_port=wg_port,
-                                                           overlay_cidr=overlay_cidr)
+        # The hub's address is the Endpoint in every spoke's WireGuard config, so a hub that comes back from a
+        # stop on a different address drops every site's tunnel until each config is rewritten. It is reserved
+        # whatever any lab definition says (backends.ensure_infra_address()).
+        hub_public_ip = backends.ensure_infra_address(backend, vm_name, "overlay hub VM") or hub_public_ip
+
+        hub_overlay_ip, hub_pubkey = ensure_overlay_hub_ready(hub_public_ip, wg_port=wg_port,
+                                                              overlay_cidr=overlay_cidr)
     return hub_public_ip, hub_overlay_ip, hub_pubkey
 
 
@@ -594,19 +782,27 @@ def ensure_site_gateway_vm(backend, backend_name, iso_image, lab_setup_path, roo
 
     The function returns the VM's IP, public or private as the provider reports it. Only SSH reachability from the automation node is
     needed.
+
+    Reuse and creation are serialised per backend and account with backends.shared_resource_lock(), so a --parallel
+    run creates one gateway however many nodes ask for it at the same time. An existing gateway that the provider
+    reports as powered off is started again first (backends.start_if_stopped()).
     """
     acct = getattr(backend, "account", "") or ""
     vm_name = hub_vm_name(backend_name, acct)
 
-    if backend.vm_exists(vm_name):
-        ip = backend.get_ip(vm_name)
-        if not ip:
-            die("site gateway VM '{}' exists on backend '{}' but reported no IP — check it "
-                "manually before retrying".format(vm_name, backend_name))
-        log("- Reusing existing site gateway VM \"{}\" ({})".format(vm_name, ip))
-        return ip
+    with backends.shared_resource_lock(backend, "overlay"):
+        if backend.vm_exists(vm_name):
+            # Started before its address is read, for the reason given in ensure_overlay_hub().
+            backends.start_if_stopped(backend, backend_name, vm_name, "overlay site gateway VM")
+            ip = backend.get_ip(vm_name)
+            if not ip:
+                die("site gateway VM '{}' exists on backend '{}' but reported no IP — check it "
+                    "manually before retrying".format(vm_name, backend_name))
+            log("- Reusing existing site gateway VM \"{}\" ({})".format(vm_name, ip))
+            return backends.ensure_infra_address(backend, vm_name, "site gateway VM") or ip
 
-    return _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
+        ip = _create_gateway_vm(backend, backend_name, vm_name, iso_image, lab_setup_path, root_ssh_key)
+        return backends.ensure_infra_address(backend, vm_name, "site gateway VM") or ip
 
 
 def ensure_overlay_site_gateway(site_name, gateway_host, hub_host, hub_pubkey, hub_wg_port,

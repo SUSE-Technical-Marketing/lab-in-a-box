@@ -1,0 +1,94 @@
+{
+ "fields": {
+  "betterleaks_baseline_path": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_command": {
+   "default": "dir",
+   "enum": [
+    "dir",
+    "git"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_config": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_extra_args": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_fail_on_leaks": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_git_image": {
+   "default": "alpine/git",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_image": {
+   "default": "ghcr.io/betterleaks/betterleaks",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_image_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_mode": {
+   "default": "container",
+   "enum": [
+    "container",
+    "kubernetes"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_ns": {
+   "default": "betterleaks",
+   "required": false,
+   "type": "namespace"
+  },
+  "betterleaks_redact": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_report_path": {
+   "default": "/var/log/betterleaks/betterleaks-report.json",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_repos": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_scan_path": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_schedule": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "betterleaks_version": {
+   "default": "1.10.1",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:betterleaks",
+ "version": "1.0"
+}

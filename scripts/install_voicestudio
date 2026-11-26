@@ -1,0 +1,208 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Installs VoiceStudio (voicestudio.sh), a fully local voice tool — cloning, voice design,
+# dubbing, dictation, transcription and narration — as a podman container on a lab node, with its HTTP API and its
+# MCP endpoint on one port.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://github.com/debpalash/VoiceStudio (AGPL-3.0; the model weights carry their own licences, the
+# default OmniVoice ones CC-BY-NC). The headless image is ghcr.io/debpalash/voicestudio, which serves the API, the
+# web UI and the MCP endpoint on one port, 3900 by default. Nothing is sent anywhere: it runs the models itself,
+# which is also why its first boot downloads several gigabytes and takes a while.
+#
+# The service is reached at the node's own name, which the lab registered when it created the node, so this
+# add-on registers no DNS record of its own — the same as every other podman service here.
+#
+# Schema version: 1.0
+#
+# JSON section: "voicestudio" — VoiceStudio, a local voice and speech service
+#   voicestudio_image    : container image (default: ghcr.io/debpalash/voicestudio)
+#   voicestudio_image_tag : image tag (default: stable)
+#   voicestudio_port     : the port it serves the API, the web UI and the MCP endpoint on (default: 3900)
+#   voicestudio_listen   : the address on the node to publish that port on. Upstream's own example binds
+#                          127.0.0.1, which only that node can reach; a lab normally wants the other nodes to
+#                          reach it too, so the default publishes on every address and an API key is always set.
+#                          (default: 0.0.0.0)
+#   voicestudio_api_key  : the key clients send. Unset, a random one is generated on the node and kept, so the
+#                          service is never left open with no key at all; the log says where to read it.
+#   voicestudio_account  : name of an encrypted credential file of kind "voicestudio" under
+#                          /etc/lab_creation/credentials/ to read voicestudio_api_key from. It is auto-discovered
+#                          when exactly one such file exists and this is unset.
+#   voicestudio_data_dir : directory on the node for its data, models and databases
+#                          (default: /var/lib/voicestudio)
+#   voicestudio_cache_dir : directory on the node for the Hugging Face cache, so a rebuilt container does not
+#                          download the models again (default: /var/cache/voicestudio/huggingface)
+#   voicestudio_mcp_output_mode : what its MCP tools return: "resources" (inline), "files" (paths) or "both"
+#                          (options: resources, files, both)
+#   voicestudio_wait     : seconds to wait for /health before carrying on. The first boot downloads models, so
+#                          this is generous; it only decides how long the lab waits, never whether the service
+#                          was installed. (default: 600)
+#   voicestudio_container_name : the container's name on the node (default: voicestudio)
+#
+# NOTE: the MCP endpoint is unauthenticated on purpose upstream, and this add-on does not change that. Keep the
+# node off the public internet, which a lab-in-a-box node is anyway unless its lab opened a port for it.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "voicestudio",
+    "targets": ["vm", "baremetal"],
+    "layers": ["standalone-container"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import podman_service as ps  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, ssh_output, log  # noqa: E402
+
+DEFAULT_IMAGE = "ghcr.io/debpalash/voicestudio"
+DEFAULT_TAG = "stable"
+DEFAULT_PORT = 3900
+DEFAULT_DATA = "/var/lib/voicestudio"
+DEFAULT_CACHE = "/var/cache/voicestudio/huggingface"
+DEFAULT_NAME = "voicestudio"
+DEFAULT_WAIT = 600
+ENV_FILE = "/etc/voicestudio/env"
+# Where the image keeps each of them, which is fixed by the image and not something a lab chooses.
+CONTAINER_DATA = "/app/omnivoice_data"
+CONTAINER_CACHE = "/root/.cache/huggingface"
+MCP_PATH = "/mcp/"
+
+
+def _get(cfg, field, default=""):
+    value = (cfg or {}).get("voicestudio_{}".format(field))
+    return default if value in ("", None) else value
+
+
+def name_of(cfg):
+    return str(_get(cfg, "container_name", DEFAULT_NAME))
+
+
+def port_of(cfg):
+    return int(_get(cfg, "port", DEFAULT_PORT))
+
+
+def image_of(cfg):
+    return "{}:{}".format(_get(cfg, "image", DEFAULT_IMAGE), _get(cfg, "image_tag", DEFAULT_TAG))
+
+
+def _validate(v):
+    cfg = v.definition.get("voicestudio", {}) or {}
+    v.vport("voicestudio", "voicestudio_port")
+    mode = str(cfg.get("voicestudio_mcp_output_mode") or "").strip().lower()
+    if mode and mode not in ("resources", "files", "both"):
+        v.errors.append("[ERROR] voicestudio.voicestudio_mcp_output_mode='{}': must be resources, files or "
+                        "both".format(mode))
+    wait = cfg.get("voicestudio_wait")
+    if wait not in ("", None) and not str(wait).isdigit():
+        v.errors.append("[ERROR] voicestudio.voicestudio_wait='{}': must be a number of seconds".format(wait))
+
+
+def ensure_api_key(hostname, cfg):
+    """
+    The key clients send, and the env file podman reads it from. The lab's own key when it set one, otherwise one
+    generated on the node and kept, so a second run does not invalidate the first run's clients. The file is
+    root-only and the key never reaches the command line, where the node's process list would show it.
+    """
+    creds = ac.resolve_credential(cfg, "voicestudio", {"voicestudio_api_key": "voicestudio_api_key"},
+                                  account_key="voicestudio_account")
+    key = str((creds or {}).get("voicestudio_api_key") or "")
+    ssh_run(hostname, "mkdir -p {} && chmod 0700 {}".format(
+        shlex.quote(os.path.dirname(ENV_FILE)), shlex.quote(os.path.dirname(ENV_FILE))))
+    if key:
+        ssh_run(hostname, "umask 077 && cat > {}".format(shlex.quote(ENV_FILE)),
+                input_text="OMNIVOICE_API_KEY={}\n".format(key))
+        log("- Using the API key the lab configured")
+        return key
+    # Generated once and kept: "test -s" rather than "test -f", so an empty file from a failed run is replaced.
+    ssh_run(hostname, "test -s {f} || {{ umask 077; printf 'OMNIVOICE_API_KEY=%s\\n' "
+                      "\"$(openssl rand -hex 32)\" > {f}; }}".format(f=shlex.quote(ENV_FILE)))
+    log("- No voicestudio_api_key in the lab: generated one on the node, in {}".format(ENV_FILE))
+    return ""
+
+
+def setup_voicestudio(hostname, cfg):
+    """Deploy the container, wait for its health endpoint, and say how to reach the API and the MCP endpoint."""
+    name = name_of(cfg)
+    port = port_of(cfg)
+    data_dir = str(_get(cfg, "data_dir", DEFAULT_DATA))
+    cache_dir = str(_get(cfg, "cache_dir", DEFAULT_CACHE))
+    listen = str(_get(cfg, "listen", "0.0.0.0"))
+
+    ssh_run(hostname, "mkdir -p {} {}".format(shlex.quote(data_dir), shlex.quote(cache_dir)))
+    ensure_api_key(hostname, cfg)
+
+    env = {"OMNIVOICE_DATA_DIR": CONTAINER_DATA, "OMNIVOICE_PORT": str(port)}
+    mode = str(cfg.get("voicestudio_mcp_output_mode") or "").strip().lower()
+    if mode:
+        env["OMNIVOICE_MCP_OUTPUT_MODE"] = mode
+    ps.deploy(hostname, name, image_of(cfg),
+              description="VoiceStudio (lab-in-a-box)",
+              ports=["{}:{}:{}".format(listen, port, port)],
+              env=env, env_file=ENV_FILE,
+              volumes=["{}:{}".format(data_dir, CONTAINER_DATA),
+                       "{}:{}".format(cache_dir, CONTAINER_CACHE)])
+
+    # The first boot downloads the models, so this is a long wait by design, and a timeout is reported not raised.
+    ps.wait_for_http(hostname, "http://127.0.0.1:{}/health".format(port),
+                     timeout=int(_get(cfg, "wait", DEFAULT_WAIT)), what="VoiceStudio")
+    log("- VoiceStudio API: http://{}:{}/v1   web UI: http://{}:{}/".format(hostname, port, hostname, port))
+    log("- MCP endpoint for an agent on another machine: http://{}:{}{} (keep the trailing slash), with the "
+        "key from {} on the node".format(hostname, port, MCP_PATH, ENV_FILE))
+
+
+def _check(chk):
+    """That the container runs the image the lab asked for, and that the service answers on its own port."""
+    if "voicestudio" not in chk.definition:
+        chk.ok("this lab has no voicestudio section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("voicestudio", {}) or {}
+    name = name_of(cfg)
+
+    if not ps.is_running(chk.vm_name, name):
+        chk.fail("the {} container on {}".format(name, chk.vm_name), "running", "not running")
+        return
+    chk.ok("the {} container is running on {}".format(name, chk.vm_name))
+    running = ps.container_image(chk.vm_name, name)
+    if running:
+        chk.expect("the image {} runs".format(name), image_of(cfg), running)
+    health = ssh_run(chk.vm_name, "curl -fsS -o /dev/null http://127.0.0.1:{}/health".format(port_of(cfg)),
+                     check=False)
+    if health.returncode == 0:
+        chk.ok("it answers on port {}".format(port_of(cfg)))
+    else:
+        chk.fail("the health endpoint on port {}".format(port_of(cfg)), "answers", "does not answer")
+    languages = ssh_output(chk.vm_name, "curl -fsS http://127.0.0.1:{}/languages 2>/dev/null".format(
+        port_of(cfg)))
+    if languages.strip():
+        chk.ok("its models are loaded, since /languages answers")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "voicestudio", vm_name=env_vm_name):
+        setup_voicestudio(vm_name, k8s.addon_node_config(definition, "voicestudio", vm_name))
+
+
+if __name__ == "__main__":
+    main()

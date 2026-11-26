@@ -1,0 +1,280 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Installs HyperFrames, HeyGen's open-source video framework that renders HTML, CSS,
+# JavaScript and seekable animations into deterministic MP4 files, on a lab node, and connects it to whichever
+# coding agents on that node are meant to drive it.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://github.com/heygen-com/hyperframes (Apache-2.0). It is a Node CLI, run as "npx hyperframes",
+# needing Node.js 22 or newer and FFmpeg, and rendering through headless Chrome. It is not a service: there is
+# nothing to listen on a port, so this add-on registers no DNS record.
+#
+# The agent connectors are each agent's own documented mechanism, not a configuration file this add-on writes:
+#   claude-code   claude plugin marketplace add heygen-com/hyperframes; claude plugin install hyperframes@hyperframes
+#   copilot-cli   copilot plugin marketplace add heygen-com/hyperframes; copilot plugin install hyperframes@hyperframes
+#   gemini-cli    gemini extensions install https://github.com/heygen-com/hyperframes --auto-update (or --ref <tag>)
+#   codex         upstream publishes no command, so the agent-independent skills are installed instead
+#   cursor        the same skills; its plugin import is a dashboard action no CLI can do
+#   opencode      upstream's own answer for it is those skills
+# The skills route is "npx skills add heygen-com/hyperframes". An agent whose CLI is not on the node is reported
+# and skipped, because a lab that lists several agents should still get the ones it has.
+#
+# Schema version: 1.0
+#
+# JSON section: "hyperframes" — HyperFrames video rendering on a node
+#   hyperframes_agents   : which coding agents on the node to connect, as a list of
+#                          claude-code, codex, copilot-cli, cursor, gemini-cli, opencode — or the single string
+#                          "all" for every one of them. An explicit empty list connects none and installs only the
+#                          CLI and its prerequisites. (default: claude-code)
+#   hyperframes_version  : the CLI version npx runs, e.g. 1.4.0. Empty runs the latest, which is what the upstream
+#                          quickstart does. A pinned version also pins the Gemini CLI extension, through --ref.
+#   hyperframes_project  : a directory on the node to scaffold with "hyperframes init", so the node has a project
+#                          to render. Empty scaffolds nothing.
+#   hyperframes_user     : the account on the node to install for. An agent's plugins and skills live in that
+#                          user's own home, so this is who will be able to use them. (default: root)
+#   hyperframes_install_ffmpeg : "true" or "false" (default: true). FFmpeg is how HyperFrames writes an MP4 at
+#                          all, so the default installs it from the node's own repositories; "false" is for a node
+#                          that already carries a build of its own.
+#   hyperframes_skills   : "true" or "false" (default: true). Installs the agent-independent skills, which is what
+#                          upstream recommends first and what Codex, Cursor and OpenCode use. It is also what an
+#                          agent this add-on has no connector for will pick up.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "hyperframes",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from nodejs import ensure_node, first_available  # noqa: E402
+from lab_creation import install_packages, package_manager, ssh_run, ssh_output, log, warn  # noqa: E402
+
+REPO = "heygen-com/hyperframes"
+REPO_URL = "https://github.com/{}".format(REPO)
+PACKAGE = "hyperframes"
+SKILLS_PACKAGE = "skills"
+
+# Every agent this add-on can connect, and how. "plugin" is a marketplace CLI of the shape Claude Code and the
+# GitHub Copilot CLI both use; "extension" is the Gemini CLI's own; "skills" is upstream's answer for the agents
+# whose own import is a UI action. The command names are what has to be on the node for the agent to count.
+AGENTS = {
+    "claude-code": {"command": "claude", "kind": "plugin", "label": "Claude Code"},
+    "copilot-cli": {"command": "copilot", "kind": "plugin", "label": "GitHub Copilot CLI"},
+    "gemini-cli": {"command": "gemini", "kind": "extension", "label": "Gemini CLI"},
+    "codex": {"command": "codex", "kind": "skills", "label": "Codex"},
+    "cursor": {"command": "cursor-agent", "kind": "skills", "label": "Cursor"},
+    "opencode": {"command": "opencode", "kind": "skills", "label": "OpenCode"},
+}
+ALL = "all"
+FFMPEG_PACKAGES = {
+    "zypper": (["ffmpeg"],), "transactional-update": (["ffmpeg"],), "dnf": (["ffmpeg-free"], ["ffmpeg"]),
+    "yum": (["ffmpeg"],), "apt-get": (["ffmpeg"],), "apk": (["ffmpeg"],),
+}
+
+
+def agents_of(cfg):
+    """
+    The agents this configuration asks for, in AGENTS order so a run is the same whatever order a lab wrote them
+    in. "all" is every one of them; an unknown name is dropped here and reported by _validate().
+    """
+    value = cfg.get("hyperframes_agents")
+    if value in ("", None):
+        value = ["claude-code"]
+    if isinstance(value, str):
+        value = [value]
+    asked = [str(v).strip().lower() for v in value if str(v).strip()]
+    if ALL in asked:
+        return list(AGENTS)
+    return [name for name in AGENTS if name in asked]
+
+
+def unknown_agents(cfg):
+    """The names in hyperframes_agents that are neither an agent nor "all"."""
+    value = cfg.get("hyperframes_agents")
+    if isinstance(value, str):
+        value = [value]
+    return [str(v).strip() for v in (value or [])
+            if str(v).strip() and str(v).strip().lower() not in AGENTS and str(v).strip().lower() != ALL]
+
+
+def user_of(cfg):
+    return str(cfg.get("hyperframes_user") or "root").strip()
+
+
+def _truth(cfg, field, default):
+    value = cfg.get(field)
+    return str(default if value in ("", None) else value).strip().lower() == "true"
+
+
+def as_user(user, command):
+    """`command`, run as `user`: directly when that is root, and through a login shell otherwise."""
+    if user == "root":
+        return command
+    return "su - {} -c {}".format(shlex.quote(user), shlex.quote(command))
+
+
+def npx_package(cfg):
+    """The npx package specifier: the version the lab pinned, or the latest."""
+    version = str(cfg.get("hyperframes_version") or "").strip().lstrip("v")
+    return "{}@{}".format(PACKAGE, version) if version else PACKAGE
+
+
+def _validate(v):
+    cfg = v.definition.get("hyperframes", {}) or {}
+    value = cfg.get("hyperframes_agents")
+    if value not in ("", None) and not isinstance(value, (list, str)):
+        v.errors.append("[ERROR] hyperframes.hyperframes_agents must be a list of agent names, or \"all\"")
+    for name in unknown_agents(cfg):
+        v.errors.append("[ERROR] hyperframes.hyperframes_agents: '{}' is not an agent this add-on connects — "
+                        "use one of {}, or \"all\"".format(name, ", ".join(sorted(AGENTS))))
+    v.vver("hyperframes")
+    v.vbool("hyperframes", "hyperframes_install_ffmpeg")
+    v.vbool("hyperframes", "hyperframes_skills")
+
+
+def install_prerequisites(hostname, cfg):
+    """Node and npm, which the CLI is, and FFmpeg, which is how it writes an MP4 at all."""
+    manager = package_manager(hostname)
+    ensure_node(hostname, manager)
+    if _truth(cfg, "hyperframes_install_ffmpeg", "true"):
+        install_packages(hostname, first_available(hostname, FFMPEG_PACKAGES.get(manager), manager),
+                         manager=manager, required=False)
+        if ssh_run(hostname, "command -v ffmpeg >/dev/null 2>&1", check=False).returncode != 0:
+            warn("- No ffmpeg on {}: HyperFrames will preview but not render. Its repositories carry none, so "
+                 "install one there, or set hyperframes_install_ffmpeg false once you have.".format(hostname))
+
+
+def connect_agent(hostname, cfg, name):
+    """
+    Connect one agent on the node, by its own documented mechanism. An agent whose CLI is not installed is
+    reported and skipped: a lab naming several agents should still get the ones the node actually has.
+    """
+    agent = AGENTS[name]
+    user = user_of(cfg)
+    if ssh_run(hostname, as_user(user, "command -v {} >/dev/null 2>&1".format(shlex.quote(agent["command"]))),
+               check=False).returncode != 0:
+        warn("- {} is not installed for {} on {}: its HyperFrames connector was skipped".format(
+            agent["label"], user, hostname))
+        return False
+
+    if agent["kind"] == "plugin":
+        cli = agent["command"]
+        ssh_run(hostname, as_user(user, "{} plugin marketplace add {}".format(cli, shlex.quote(REPO))))
+        ssh_run(hostname, as_user(user, "{} plugin install {}@{}".format(cli, PACKAGE, PACKAGE)))
+    elif agent["kind"] == "extension":
+        version = str(cfg.get("hyperframes_version") or "").strip()
+        # A pinned CLI version pins the extension to the matching release tag; otherwise it tracks upstream.
+        pin = "--ref {}".format(shlex.quote(version if version.startswith("v") else "v" + version)) \
+            if version else "--auto-update"
+        ssh_run(hostname, as_user(user, "gemini extensions install {} {}".format(shlex.quote(REPO_URL), pin)))
+    else:
+        install_skills(hostname, cfg)
+    log("- Connected {} to HyperFrames for {} on {}".format(agent["label"], user, hostname))
+    return True
+
+
+def install_skills(hostname, cfg):
+    """The agent-independent skills, which is what upstream recommends first and what every other agent reads."""
+    ssh_run(hostname, as_user(user_of(cfg), "npx -y {} add {}".format(SKILLS_PACKAGE, shlex.quote(REPO))))
+
+
+def scaffold(hostname, cfg):
+    """Scaffold the project the lab named, so the node has something to render. Idempotent: an existing one is kept."""
+    project = str(cfg.get("hyperframes_project") or "").strip()
+    if not project:
+        return
+    user = user_of(cfg)
+    if ssh_run(hostname, as_user(user, "test -e {}".format(shlex.quote(project))), check=False).returncode == 0:
+        log("- {} already exists on {}: left as it is".format(project, hostname))
+        return
+    parent = os.path.dirname(project.rstrip("/")) or "/"
+    name = os.path.basename(project.rstrip("/"))
+    ssh_run(hostname, as_user(user, "mkdir -p {}".format(shlex.quote(parent))))
+    ssh_run(hostname, as_user(user, "cd {} && npx -y {} init {}".format(
+        shlex.quote(parent), npx_package(cfg), shlex.quote(name))))
+    log("- Scaffolded a HyperFrames project at {} on {}".format(project, hostname))
+
+
+def setup_hyperframes(hostname, cfg):
+    """Install the CLI's prerequisites, warm the CLI itself, connect the agents, and scaffold a project."""
+    install_prerequisites(hostname, cfg)
+    user = user_of(cfg)
+    # npx fetches on first use, so this both proves the package resolves and leaves it cached for the agents.
+    ssh_run(hostname, as_user(user, "npx -y {} --version".format(npx_package(cfg))))
+    if _truth(cfg, "hyperframes_skills", "true"):
+        install_skills(hostname, cfg)
+    for name in agents_of(cfg):
+        connect_agent(hostname, cfg, name)
+    scaffold(hostname, cfg)
+    log("- HyperFrames is ready on {}: run it with 'npx {} <command>'".format(hostname, PACKAGE))
+
+
+def _check(chk):
+    """
+    What is deployed against the lab's "hyperframes" section: that the CLI answers on the node, that FFmpeg is
+    there to render with, and that each connected agent reports the plugin or extension.
+    """
+    if "hyperframes" not in chk.definition:
+        chk.ok("this lab has no hyperframes section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("hyperframes", {}) or {}
+    user = user_of(cfg)
+
+    if ssh_run(chk.vm_name, as_user(user, "npx -y {} --version".format(npx_package(cfg))),
+               check=False).returncode == 0:
+        chk.ok("the HyperFrames CLI answers for {} on {}".format(user, chk.vm_name))
+    else:
+        chk.fail("the HyperFrames CLI for {} on {}".format(user, chk.vm_name), "answers", "does not run")
+
+    if _truth(cfg, "hyperframes_install_ffmpeg", "true"):
+        if ssh_run(chk.vm_name, "command -v ffmpeg", check=False).returncode == 0:
+            chk.ok("ffmpeg is on {}, so a render can write an MP4".format(chk.vm_name))
+        else:
+            chk.fail("ffmpeg on {}".format(chk.vm_name), "present", "absent")
+
+    for name in agents_of(cfg):
+        agent = AGENTS[name]
+        if agent["kind"] == "plugin":
+            listed = ssh_output(chk.vm_name, as_user(user, "{} plugin list 2>/dev/null".format(agent["command"])))
+        elif agent["kind"] == "extension":
+            listed = ssh_output(chk.vm_name, as_user(user, "gemini extensions list 2>/dev/null"))
+        else:
+            # The skills route leaves no listing of its own, so what is checked is that they were written.
+            listed = ssh_output(chk.vm_name, as_user(user, "ls ~/.config/skills ~/.skills 2>/dev/null"))
+        if PACKAGE in (listed or ""):
+            chk.ok("{} reports HyperFrames on {}".format(agent["label"], chk.vm_name))
+        else:
+            chk.fail("{}'s HyperFrames connector on {}".format(agent["label"], chk.vm_name), "present", "absent")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "hyperframes", vm_name=env_vm_name):
+        setup_hyperframes(vm_name, k8s.addon_node_config(definition, "hyperframes", vm_name))
+
+
+if __name__ == "__main__":
+    main()
