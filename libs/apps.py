@@ -139,6 +139,7 @@ _TAGS_BY_ADDON = {
     "fluid": ("storage", "kubernetes-platform"),
     "gemini": ("ai",),
     "gitlab": ("devops",),
+    "gitleaks": ("security", "devops"),
     "gpu_operator": ("kubernetes-platform",),
     "grafana": ("observability",),
     "groq": ("ai",),

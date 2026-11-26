@@ -1,0 +1,337 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Installs Gitleaks, which scans a directory or a git repository's history for committed
+# secrets, in either of two shapes: a podman container on a node, or a Kubernetes CronJob that clones repositories
+# and scans them on a schedule.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://github.com/gitleaks/gitleaks. The container images are ghcr.io/gitleaks/gitleaks and
+# zricethezav/gitleaks, whose entrypoint is gitleaks itself, so a mode's arguments are the Gitleaks command line.
+# Its exit code is 0 for a clean scan and 1 when it found leaks or hit an error, which is what
+# gitleaks_fail_on_leaks decides what to do with.
+#
+# Schema version: 1.0
+#
+# JSON section: "gitleaks" — Gitleaks secret scanning
+#   gitleaks_mode        : how it runs. "container" runs it with podman on each node that lists this add-on, over
+#                          the directory gitleaks_scan_path names. "kubernetes" installs a CronJob on the kcluster
+#                          that clones gitleaks_repos and scans them. (options: container, kubernetes)
+#                          (default: container)
+#   gitleaks_version     : release version, without the "v" (default: 8.30.1)
+#   gitleaks_image       : container image, whose entrypoint is gitleaks itself (default: ghcr.io/gitleaks/gitleaks)
+#   gitleaks_image_tag   : image tag. Empty uses "v" and gitleaks_version, which is how the images are tagged.
+#
+# container fields
+#   gitleaks_scan_path   : the directory on the node to scan, mounted read-only into the container. Required in
+#                          this mode.
+#   gitleaks_command     : "dir" scans the files as they are on disk, "git" scans a repository's commit history
+#                          with git log -p. (options: dir, git) (default: dir)
+#   gitleaks_report_path : where the report is written on the node, as JSON
+#                          (default: /var/log/gitleaks/gitleaks-report.json)
+#   gitleaks_schedule    : a five-field cron expression. Set, the scan is written to /etc/cron.d/gitleaks and
+#                          repeats; unset, it runs once now. The kubernetes mode's CronJob takes the same
+#                          expression, and defaults to "0 3 * * *" there.
+#
+# kubernetes fields
+#   gitleaks_ns          : Kubernetes namespace (default: gitleaks)
+#   gitleaks_repos       : list of git URLs the CronJob clones (--depth 1) and scans. Public repositories only:
+#                          this add-on configures no credentials, so a private URL fails in the clone step.
+#                          Required in this mode. The report is the job's own output, read with
+#                          "kubectl -n <namespace> logs job/<name>".
+#   gitleaks_git_image   : image of the init container that clones them (default: alpine/git)
+#
+# both modes
+#   gitleaks_config      : path on the node of a Gitleaks configuration file (.gitleaks.toml), mounted into the
+#                          container and passed as --config. Unset, Gitleaks uses the .gitleaks.toml of what it
+#                          scans, else its own default rules.
+#   gitleaks_baseline_path : path of an earlier report whose findings are ignored, passed as --baseline-path. The
+#                          usual way to adopt the tool on a repository that already has findings nobody is going
+#                          to fix today. In the container mode the path is one inside the container, so it belongs
+#                          under the directory being scanned.
+#   gitleaks_redact      : "true" or "false" (default: true). Keeps the secrets themselves out of the report and
+#                          the log, which in a lab are both world-readable.
+#   gitleaks_fail_on_leaks : "true" or "false" (default: false). False reports findings and lets the lab carry on,
+#                          which is what a demo of the tool wants; true makes a scan that found something fail the
+#                          add-on, which is what a lab asserting a repository is clean wants.
+#
+# NOTE: upstream describes Gitleaks as feature complete, with further releases carrying security fixes only, and
+# points at Betterleaks for continued development — see install_betterleaks, which has the same two modes.
+# Nothing here depends on a newer Gitleaks feature.
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "gitleaks",
+    "targets": ["container", "vm", "baremetal"],
+    "layers": ["standalone-container", "kubernetes"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import json
+import os
+import posixpath
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, ssh_output, ensure_podman, process_template, die, log, warn  # noqa: E402
+
+MODES = ("container", "kubernetes")
+_DEFAULT_VERSION = "8.30.1"
+_DEFAULT_IMAGE = "ghcr.io/gitleaks/gitleaks"
+_DEFAULT_GIT_IMAGE = "alpine/git"
+_DEFAULT_REPORT = "/var/log/gitleaks/gitleaks-report.json"
+_DEFAULT_SCHEDULE = "0 3 * * *"
+_CRON_FILE = "/etc/cron.d/gitleaks"
+_CRONJOB_TEMPLATE = "cronjob.yml.tmpl"
+
+
+def mode_of(cfg):
+    """The mode this configuration asks for, normalised; "container" when it asks for none."""
+    return str(cfg.get("gitleaks_mode") or "container").strip().lower()
+
+
+def _list_field(cfg, field):
+    """A list-valued field as a list of non-empty strings. A single string counts as a list of one."""
+    value = cfg.get(field)
+    if isinstance(value, str):
+        value = [value]
+    return [str(v).strip() for v in (value or []) if str(v).strip()]
+
+
+def _truth(cfg, field, default):
+    return str(cfg.get(field) if cfg.get(field) not in ("", None) else default).strip().lower() == "true"
+
+
+def image_of(cfg):
+    """The image and tag this lab runs, in both modes. An unset tag is "v" and the version, as the images are tagged."""
+    version = str(cfg.get("gitleaks_version") or _DEFAULT_VERSION).lstrip("v")
+    return "{}:{}".format(str(cfg.get("gitleaks_image") or _DEFAULT_IMAGE),
+                          str(cfg.get("gitleaks_image_tag") or "v{}".format(version)))
+
+
+def _validate(v):
+    # gitleaks_mode and gitleaks_command are declared with "(options: ...)" in the header above, so the schema's
+    # own enum check already refuses a value outside them; what is left to say here is what each mode needs.
+    cfg = v.definition.get("gitleaks", {}) or {}
+    mode = mode_of(cfg)
+    v.vver("gitleaks")
+    v.vns("gitleaks")
+    v.vbool("gitleaks", "gitleaks_redact")
+    v.vbool("gitleaks", "gitleaks_fail_on_leaks")
+
+    for field in ("gitleaks_repos",):
+        value = cfg.get(field)
+        if value not in ("", None) and not isinstance(value, (list, str)):
+            v.errors.append("[ERROR] gitleaks.{} must be a list of strings".format(field))
+
+    if mode == "kubernetes" and not _list_field(cfg, "gitleaks_repos"):
+        v.errors.append("[ERROR] gitleaks.gitleaks_repos is required when gitleaks_mode is 'kubernetes' "
+                        "(the CronJob has nothing to scan without it)")
+    if mode == "container" and not cfg.get("gitleaks_scan_path"):
+        v.errors.append("[ERROR] gitleaks.gitleaks_scan_path is required when gitleaks_mode is 'container' "
+                        "(the container scans the directory mounted into it)")
+    if mode == "kubernetes" and cfg.get("gitleaks_scan_path"):
+        v.errors.append("[ERROR] gitleaks.gitleaks_scan_path has no meaning when gitleaks_mode is 'kubernetes': "
+                        "the CronJob scans gitleaks_repos, which it clones itself")
+
+
+def scan_arguments(cfg, path, config_path="", report_path=""):
+    """
+    The Gitleaks arguments for one scan, shared by both modes so that a flag is read from the lab the same way
+    wherever the scan runs: the command, what to scan, and the report, redaction, configuration and baseline the
+    lab asked for. Every path here is one the container sees, not one on the node.
+    """
+    args = [str(cfg.get("gitleaks_command") or "dir").strip().lower()]
+    if path:
+        args.append(path)
+    args.append("--no-banner")
+    if _truth(cfg, "gitleaks_redact", "true"):
+        args.append("--redact")
+    if config_path:
+        args += ["--config", config_path]
+    if cfg.get("gitleaks_baseline_path"):
+        args += ["--baseline-path", str(cfg["gitleaks_baseline_path"])]
+    if report_path:
+        args += ["--report-format", "json", "--report-path", report_path]
+    return args
+
+
+def _report_outcome(cfg, returncode, what):
+    """
+    What a finished scan means. Gitleaks exits 1 both for leaks found and for an error, so the outcome is reported
+    as the one thing that is certain, and gitleaks_fail_on_leaks decides whether it stops the lab.
+    """
+    if returncode == 0:
+        log("- {}: no secrets found".format(what))
+        return
+    message = "{}: Gitleaks exited {} — it found secrets, or the scan itself failed. The report and the log " \
+              "above say which.".format(what, returncode)
+    if _truth(cfg, "gitleaks_fail_on_leaks", "false"):
+        die(message)
+    warn("- " + message)
+
+
+def _install_cron(hostname, command, schedule):
+    """Write /etc/cron.d/gitleaks so `command` repeats on `schedule`, and report that it did."""
+    content = ("# Written by lab-in-a-box install_gitleaks\n"
+               "SHELL=/bin/sh\n"
+               "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n"
+               "{} root {}\n").format(schedule, command)
+    ssh_run(hostname, "cat > {}".format(shlex.quote(_CRON_FILE)), input_text=content)
+    ssh_run(hostname, "chmod 0644 {}".format(shlex.quote(_CRON_FILE)))
+    log("- Scheduled it on {} as '{}' in {}".format(hostname, schedule, _CRON_FILE))
+
+
+def setup_container(hostname, cfg):
+    """
+    Run Gitleaks from its container image on `hostname`, over the directory the lab names. The image's entrypoint
+    is Gitleaks itself, so the arguments are the ones scan_arguments() builds for either mode; only the paths
+    differ, because the container sees what is mounted into it.
+    """
+    image = image_of(cfg)
+    scan_path = str(cfg.get("gitleaks_scan_path") or "").strip()
+    report = str(cfg.get("gitleaks_report_path") or _DEFAULT_REPORT)
+    report_dir = posixpath.dirname(report) or "/"
+    config_path = str(cfg.get("gitleaks_config") or "").strip()
+
+    ensure_podman(hostname)
+    ssh_run(hostname, "mkdir -p {}".format(shlex.quote(report_dir)))
+    ssh_run(hostname, "podman pull {}".format(shlex.quote(image)))
+
+    mounts = ["-v {}:/scan:ro".format(shlex.quote(scan_path)),
+              "-v {}:/report".format(shlex.quote(report_dir))]
+    if config_path:
+        mounts.append("-v {}:/gitleaks.toml:ro".format(shlex.quote(config_path)))
+    args = scan_arguments(cfg, "/scan", config_path="/gitleaks.toml" if config_path else "",
+                          report_path="/report/{}".format(posixpath.basename(report)))
+    command = "podman run --rm {} {} {}".format(
+        " ".join(mounts), shlex.quote(image), " ".join(shlex.quote(a) for a in args))
+    result = ssh_run(hostname, command, check=False)
+    _report_outcome(cfg, result.returncode, "{} on {}, from {}".format(scan_path, hostname, image))
+    log("- Report written to {} on {}".format(report, hostname))
+    schedule = str(cfg.get("gitleaks_schedule") or "").strip()
+    if schedule:
+        _install_cron(hostname, command, schedule)
+
+
+def clone_script(repos):
+    """
+    The init container's command: clone each repository shallowly into /repos, under its own name. A clone that
+    fails stops the job rather than letting the scan report a clean tree it never saw.
+    """
+    lines = ["set -e"]
+    for url in repos:
+        name = posixpath.basename(url.rstrip("/"))
+        if name.endswith(".git"):
+            name = name[:-4]
+        lines.append("git clone --depth 1 {} {}".format(
+            shlex.quote(url), shlex.quote(posixpath.join("/repos", name or "repo"))))
+    return "\n".join(lines)
+
+
+def setup_kubernetes(hostname, cfg, templ_addons_loc):
+    """
+    Install the CronJob on the cluster `hostname` is a server of: an init container clones the repositories into an
+    emptyDir and the Gitleaks container scans them. No volume claim, so this needs nothing of the cluster; the
+    report is the job's output, which is what "kubectl logs" gives.
+    """
+    namespace = ac.require_k8s_name(cfg, "gitleaks_ns", "gitleaks")
+    repos = _list_field(cfg, "gitleaks_repos")
+    render = {
+        "gitleaks_ns": namespace,
+        "gitleaks_schedule": str(cfg.get("gitleaks_schedule") or _DEFAULT_SCHEDULE),
+        "gitleaks_image": image_of(cfg),
+        "gitleaks_git_image": str(cfg.get("gitleaks_git_image") or _DEFAULT_GIT_IMAGE),
+        # JSON is valid YAML, so both of these go in as one flow value each and need no quoting of their own.
+        "gitleaks_args_json": json.dumps(scan_arguments(cfg, "/repos")),
+        "gitleaks_clone_json": json.dumps(clone_script(repos)),
+    }
+    ssh_run(hostname, ac.namespace_command(namespace))
+    template = "{}/gitleaks/{}".format(str(templ_addons_loc).rstrip("/"), _CRONJOB_TEMPLATE)
+    ssh_run(hostname, "kubectl apply -f -", input_text=process_template(template, render))
+    log("- CronJob 'gitleaks' installed in namespace '{}', scanning {} on '{}'".format(
+        namespace, ", ".join(repos), render["gitleaks_schedule"]))
+
+    # One run now, so the lab does not have to wait for the schedule to learn whether the configuration works.
+    ssh_run(hostname, "kubectl -n {} delete job gitleaks-first --ignore-not-found".format(shlex.quote(namespace)),
+            check=False)
+    result = ssh_run(hostname, "kubectl -n {ns} create job gitleaks-first --from=cronjob/gitleaks && "
+                               "kubectl -n {ns} wait --for=condition=complete --timeout=600s job/gitleaks-first".format(
+                                   ns=shlex.quote(namespace)), check=False)
+    if result.returncode == 0:
+        log("- Its first run found no secrets. Later runs: kubectl -n {} logs job/<name>".format(namespace))
+    else:
+        _report_outcome(cfg, result.returncode,
+                        "the first run of the CronJob (kubectl -n {} logs job/gitleaks-first)".format(namespace))
+
+
+def _check(chk):
+    """
+    What is deployed against the lab's "gitleaks" section: in the container mode the image on the node, and in the
+    kubernetes mode the CronJob and the schedule it runs on.
+    """
+    if "gitleaks" not in chk.definition:
+        chk.ok("this lab has no gitleaks section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("gitleaks", {}) or {}
+
+    if mode_of(cfg) == "kubernetes":
+        namespace = chk.get("gitleaks", "gitleaks_ns", "gitleaks")
+        found = ssh_output(chk.vm_name, "kubectl -n {} get cronjob gitleaks -o jsonpath={{.spec.schedule}} "
+                                        "2>/dev/null".format(shlex.quote(namespace))).strip()
+        if not found:
+            chk.fail("the gitleaks CronJob in namespace '{}'".format(namespace), "present", "absent")
+        else:
+            chk.expect("the gitleaks CronJob's schedule", cfg.get("gitleaks_schedule") or _DEFAULT_SCHEDULE, found)
+        return
+
+    image = image_of(cfg)
+    if ssh_run(chk.vm_name, "podman image exists {}".format(shlex.quote(image)), check=False).returncode == 0:
+        chk.ok("the image {} is on {}".format(image, chk.vm_name))
+    else:
+        chk.fail("the image {} on {}".format(image, chk.vm_name), "present", "absent")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    lab_file = sys.argv[1]
+    definition = primary.load_definition(lab_file)
+    defaults = primary.load_defaults()
+    cfg = definition.get("gitleaks", {}) or {}
+    mode = mode_of(cfg)
+    if mode not in MODES:
+        die("gitleaks.gitleaks_mode='{}': must be one of {}".format(cfg.get("gitleaks_mode"), ", ".join(MODES)))
+
+    if mode == "kubernetes":
+        target = k8s.first_server_node(definition)
+        if not target:
+            sys.exit(1)
+        vm_name, _ssh_cmd = target
+        setup_kubernetes(vm_name, cfg, defaults.get("_templ_addons_loc",
+                                                    "/usr/share/lab_creation/templates/addons/"))
+        return
+
+    # The container mode acts on the nodes that list this add-on, and reads its configuration per node: one lab can
+    # scan a different directory on each of them (libs/k8s.py's addon_node_config()).
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "gitleaks", vm_name=env_vm_name):
+        setup_container(vm_name, k8s.addon_node_config(definition, "gitleaks", vm_name))
+
+
+if __name__ == "__main__":
+    main()

@@ -114,6 +114,9 @@
    {"version": "1.1", "breaking": false, "changes": "Defaults written as literal values, or left unset where the code computes them: gitlab_deployment, gitlab_edition, gitlab_hostname, gitlab_http_port, gitlab_https, gitlab_https_port, gitlab_image, gitlab_namespace, gitlab_rel, gitlab_repo_url, gitlab_ssh_port, gitlab_version."},
    {"version": "1.2", "breaking": false, "changes": "A one-line description in the section header, so the add-on says what it installs wherever it is listed."}
   ],
+  "addon:gitleaks": [
+   {"version": "1.0", "breaking": false, "changes": "Gitleaks secret scanning in two modes: a podman container on a node and a Kubernetes CronJob"}
+  ],
   "addon:gpu_operator": [
    {"version": "1.0", "breaking": false, "changes": "First recorded version."},
    {"version": "1.1", "breaking": false, "changes": "A one-line description instead of \"configurable keys\", so the add-on says what it installs wherever it is listed."}

@@ -1,0 +1,89 @@
+{
+ "fields": {
+  "gitleaks_baseline_path": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_command": {
+   "default": "dir",
+   "enum": [
+    "dir",
+    "git"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_config": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_fail_on_leaks": {
+   "default": "false",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_git_image": {
+   "default": "alpine/git",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_image": {
+   "default": "ghcr.io/gitleaks/gitleaks",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_image_tag": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_mode": {
+   "default": "container",
+   "enum": [
+    "container",
+    "kubernetes"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_ns": {
+   "default": "gitleaks",
+   "required": false,
+   "type": "namespace"
+  },
+  "gitleaks_redact": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_report_path": {
+   "default": "/var/log/gitleaks/gitleaks-report.json",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_repos": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_scan_path": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_schedule": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "gitleaks_version": {
+   "default": "8.30.1",
+   "required": false,
+   "type": "version"
+  }
+ },
+ "schema": "addon:gitleaks",
+ "version": "1.0"
+}
