@@ -210,6 +210,7 @@ _TAGS_BY_ADDON = {
     "trento": ("observability", "linux-management"),
     "uyuni": ("linux-management",),
     "vllm": ("ai",),
+    "voicestudio": ("ai", "apps"),
     "voyage": ("ai",),
     "weaviate": ("database", "ai"),
     "wikimusic": ("apps",),

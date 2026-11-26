@@ -1,0 +1,66 @@
+{
+ "fields": {
+  "voicestudio_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_cache_dir": {
+   "default": "/var/cache/voicestudio/huggingface",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_container_name": {
+   "default": "voicestudio",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_data_dir": {
+   "default": "/var/lib/voicestudio",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_image": {
+   "default": "ghcr.io/debpalash/voicestudio",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_image_tag": {
+   "default": "stable",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_listen": {
+   "default": "0.0.0.0",
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_mcp_output_mode": {
+   "default": "",
+   "enum": [
+    "resources",
+    "files",
+    "both"
+   ],
+   "required": false,
+   "type": "string"
+  },
+  "voicestudio_port": {
+   "default": "3900",
+   "required": false,
+   "type": "port"
+  },
+  "voicestudio_wait": {
+   "default": "600",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:voicestudio",
+ "version": "1.0"
+}

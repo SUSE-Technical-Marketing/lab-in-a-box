@@ -415,6 +415,9 @@
   "addon:vllm": [
    {"version": "1.0", "breaking": false, "changes": "First version: the vLLM serving engine from its upstream chart or the SUSE Application Collection, behind an ingress"}
   ],
+  "addon:voicestudio": [
+   {"version": "1.0", "breaking": false, "changes": "VoiceStudio as a podman container on a node, with its API, web UI and MCP endpoint on one port"}
+  ],
   "addon:voyage": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
