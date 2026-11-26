@@ -1,0 +1,44 @@
+# A secret scanner's scheduled scan, rendered by libs/secret_scan.py for install_gitleaks and
+# install_betterleaks alike (<tool>_mode "kubernetes"). The init container clones the lab's
+# repositories into an emptyDir and the scanner's container scans them, so the job needs no volume
+# claim and nothing of the cluster. The findings are the job's own output.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ${scan_name}
+  namespace: ${scan_ns}
+  labels:
+    app.kubernetes.io/name: ${scan_name}
+    app.kubernetes.io/managed-by: lab-in-a-box
+spec:
+  schedule: "${scan_schedule}"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ${scan_name}
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: clone
+              image: ${scan_git_image}
+              command: ["sh", "-c", ${scan_clone_json}]
+              volumeMounts:
+                - name: repos
+                  mountPath: ${scan_repos_path}
+          containers:
+            - name: ${scan_name}
+              image: ${scan_image}
+              args: ${scan_args_json}
+              volumeMounts:
+                - name: repos
+                  mountPath: ${scan_repos_path}
+                  readOnly: true
+          volumes:
+            - name: repos
+              emptyDir: {}
