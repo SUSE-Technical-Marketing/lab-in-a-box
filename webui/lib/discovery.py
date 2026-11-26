@@ -599,7 +599,7 @@ def wizard_steps(workflow, answers=None, cloud_accounts=None, service_accounts=N
         "prerequisites": wizard.prerequisites(workflow, accounts),
         "steps": wizard.steps(workflow, catalogue=catalogue(), accounts=clouds,
                               images=_image_names(), addable=addable_addons(),
-                              service_accounts=accounts, answers=answers or {}),
+                              service_accounts=accounts, examples=examples(), answers=answers or {}),
     }
 
 
@@ -611,9 +611,14 @@ def wizard_build(workflow, answers, cloud_accounts=None, service_accounts=None):
     wizard = _wizard()
     accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
     clouds = cloud_accounts if cloud_accounts is not None else globals()["cloud_accounts"]()
+    # An example lab is the definition the builder hands back, so it is read here, where libs/lab_examples.py
+    # already resolves a name to its file; wizard.py reads no files of its own.
+    chosen = str((answers or {}).get("example") or "")
+    definition = example(chosen) if workflow == "example" and chosen else None
     return {"config": wizard.build(workflow, answers or {}, network=lab_network(), catalogue=catalogue(),
                                    accounts=clouds, images=_image_names(),
-                                   addable=addable_addons(), service_accounts=accounts)}
+                                   addable=addable_addons(), service_accounts=accounts,
+                                   examples=examples(), example_definition=definition)}
 
 
 _lab_creation = None

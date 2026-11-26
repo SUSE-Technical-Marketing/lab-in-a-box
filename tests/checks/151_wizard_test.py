@@ -2,7 +2,7 @@
 # Unit tests and the feasibility sweep for webui/lib/wizard.py.
 #
 # The sweep is the point: it walks every combination of the choice answers and the smallest, default and largest
-# of every count answer in all four workflows, builds the lab each one describes, and runs the real preflight over
+# of every count answer in all five workflows, builds the lab each one describes, and runs the real preflight over
 # it with host_checks=False — the same call the lab-builder's Validate makes. A workflow that can produce an
 # invalid lab fails here. Run from 151_wizard.sh, in its own container — see tests/run_tests.sh.
 import io
@@ -73,8 +73,9 @@ for _part in ("ignition", "combustion"):
 
 
 # ── the questions ─────────────────────────────────────────────────────────
-check("four workflows, the four shapes a lab is started from",
-      [w["name"] for w in wizard.workflows()] == ["kubernetes", "multi-linux", "virtualization", "vm"])
+check("five workflows, the five shapes a lab is started from",
+      [w["name"] for w in wizard.workflows()]
+      == ["kubernetes", "multi-linux", "virtualization", "vm", "example"])
 check("each one says what it is for, since the operator picks from these alone",
       all(w["title"] and w["description"] for w in wizard.workflows()))
 check("a workflow that does not exist is refused rather than rendering an empty form",
@@ -90,8 +91,9 @@ for workflow in [w["name"] for w in wizard.workflows()]:
     names = [s["name"] for s in steps]
     check("{}: every step has a name, a title, a kind and a default".format(workflow),
           all(s.get("name") and s.get("title") and s.get("kind") and "default" in s for s in steps))
+    # The example workflow is the exception by design: the example it starts from already answers both.
     check("{}: the lab's name is asked first and the backend second, which is the one thing never guessed"
-          .format(workflow), names[:2] == ["name", "backend"])
+          .format(workflow), names[:2] == ["name", "backend"] or workflow == "example")
     check("{}: every kind is one the browser knows how to render".format(workflow),
           all(s["kind"] in ("text", "count", "choice", "multi") for s in steps))
     check("{}: a choice or a multi offers options, and a count declares its range".format(workflow),
@@ -330,10 +332,56 @@ check("the static page hides the button, having no server to answer it",
       "#simplifyBtn" in (_REPO / "scripts" / "build-cube-static.py").read_text())
 
 
+# ── starting from an example lab ──────────────────────────────────────────
+ex_steps = wizard.steps("example", examples=[
+    {"name": "cluster.json.template", "title": "cluster", "description": "", "nodes": 6, "kclusters": 1,
+     "addons": ["longhorn", "neuvector"]},
+    {"name": "portable-k3s-rancher.json.template", "title": "portable k3s rancher", "description": "One node.",
+     "nodes": 1, "kclusters": 1, "addons": []},
+])
+check("the example workflow asks which example, and nothing the example already answers",
+      [s["name"] for s in ex_steps] == ["example", "name"])
+check("every example this installation has is offered",
+      [o["value"] for o in ex_steps[0]["options"]]
+      == ["cluster.json.template", "portable-k3s-rancher.json.template"])
+check("each one says what it holds, counting add-ons listed by name",
+      ex_steps[0]["options"][0]["help"] == "6 VMs, 1 cluster, 2 add-ons")
+check("...and a description is not followed by a stray full stop",
+      ex_steps[0]["options"][1]["help"] == "One node. 1 VM, 1 cluster")
+check("the file name defaults to the example's own, without its extension",
+      wizard.steps("example", examples=[{"name": "solar-system-lab.json", "title": "solar"}],
+                   answers={"example": "solar-system-lab.json"})[1]["default"] == "solar-system-lab")
+built_example = wizard.build("example", {"example": "cluster.json.template", "name": "mine"},
+                             example_definition={"nodes": {"n1.a.lab": {"myip": "10.0.0.1"}}})
+check("the lab built is the example itself, unrewritten",
+      built_example == {"nodes": {"n1.a.lab": {"myip": "10.0.0.1"}}})
+source = {"nodes": {"n1.a.lab": {"myip": "10.0.0.1"}}}
+twice = wizard.build("example", {"example": "cluster.json.template"}, example_definition=source)
+twice["nodes"]["n1.a.lab"]["myip"] = "changed"
+check("...and a copy of it, so editing the lab on the canvas cannot change the example",
+      source["nodes"]["n1.a.lab"]["myip"] == "10.0.0.1")
+try:
+    wizard.build("example", {"example": "nothing-here.json"})
+    check("an example that cannot be resolved is refused rather than built empty", False)
+except ValueError:
+    pass
+
+
 # ── the feasibility sweep ─────────────────────────────────────────────────
+# The example workflow hands back a shipped lab as it is written, so sweeping it runs every example this
+# checkout ships through the same preflight: lab_examples resolves a name to its file, as discovery does.
+import lab_examples  # noqa: E402
+
+EXAMPLES = lab_examples.catalogue(config={})
+
+
+def _example_definition(name):
+    return primary.load_definition(lab_examples.path_of(name, config={})) if name else None
+
+
 def _steps(workflow, answers=None):
     return wizard.steps(workflow, catalogue=CATALOGUE_LIVE, images=IMAGES, addable=ADDABLE,
-                        accounts=ACCOUNTS, service_accounts=SERVICE_ACCOUNTS, answers=answers)
+                        accounts=ACCOUNTS, service_accounts=SERVICE_ACCOUNTS, examples=EXAMPLES, answers=answers)
 
 
 def paths(workflow):
@@ -399,20 +447,29 @@ def preflight(definition):
     try:
         loaded = primary.load_definition(path)
         buf = io.StringIO()
-        with redirect_stdout(buf):
-            ok = lc.validate_lab_definition(loaded, CONFIG, "/iso", _SETUP, host_checks=False,
-                                            read_credentials=False)
+        try:
+            with redirect_stdout(buf):
+                ok = lc.validate_lab_definition(loaded, CONFIG, "/iso", _SETUP, host_checks=False,
+                                                read_credentials=False)
+        except SystemExit as e:
+            # Part of the preflight reports by die() rather than by returning False. Without this the sweep
+            # exited on the first such lab, printing nothing and failing the check with no report of why.
+            return False, buf.getvalue() + "\nERROR: exited: {}\n".format(e)
         return ok, buf.getvalue()
     finally:
         os.unlink(path)
 
 
+# The example workflow is left out of the sweep on purpose: it generates nothing, it hands back a lab this
+# project ships, so sweeping it would test the examples rather than the builder. What it does contribute, that
+# the file arrives unchanged, is checked above and again right below.
 swept, broken = 0, []
-for workflow in [w["name"] for w in wizard.workflows()]:
+for workflow in [w["name"] for w in wizard.workflows() if w["name"] != "example"]:
     for answers in paths(workflow):
         definition = wizard.build(workflow, dict(answers, name="sweep"), network=NETWORK,
                                   catalogue=CATALOGUE_LIVE, images=IMAGES, addable=ADDABLE,
-                                  accounts=ACCOUNTS, service_accounts=SERVICE_ACCOUNTS)
+                                  accounts=ACCOUNTS, service_accounts=SERVICE_ACCOUNTS, examples=EXAMPLES,
+                                  example_definition=_example_definition(answers.get("example")))
         ok, report = preflight(definition)
         swept += 1
         if not ok:
@@ -423,6 +480,20 @@ check("every path through every workflow builds a lab the preflight accepts: {}"
     "" if not broken else "\n    " + "\n    ".join(
         "{} {} -> {}".format(w, a, e) for w, a, e in broken[:6])), not broken)
 print("swept {} generated labs through the preflight".format(swept))
+
+# Every example this checkout ships is reachable through the workflow and arrives as its file says, which is the
+# whole of what the workflow does.
+offered = [o["value"] for o in _steps("example")[0]["options"]]
+check("every shipped example is offered by the workflow: {}".format(", ".join(offered)),
+      sorted(offered) == sorted(e["name"] for e in EXAMPLES) and len(offered) >= 4)
+unchanged = []
+for name in offered:
+    on_disk = _example_definition(name)
+    handed = wizard.build("example", {"example": name}, examples=EXAMPLES, example_definition=on_disk)
+    if handed != on_disk:
+        unchanged.append(name)
+check("and each one is handed over exactly as written: {}".format(", ".join(unchanged) or "all unchanged"),
+      not unchanged)
 
 if failures:
     print("{} check(s) failed".format(len(failures)))

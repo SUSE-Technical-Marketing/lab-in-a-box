@@ -28,6 +28,7 @@ What it decides for itself, and why:
                        field cannot be added blind, and the canvas is where those belong.
 """
 
+import copy
 import re
 import secrets
 
@@ -68,6 +69,12 @@ WORKFLOWS = (
         "name": "vm",
         "title": "Plain virtual machines",
         "description": "One or more VMs with no cluster, and whatever you want installed on them.",
+    },
+    {
+        "name": "example",
+        "title": "An example lab",
+        "description": "Start from one of the labs this installation ships, unchanged, and adjust it on the "
+                       "canvas if you want to.",
     },
 )
 
@@ -250,7 +257,8 @@ def prerequisites(workflow, service_accounts=None):
     return missing
 
 
-def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_accounts=None, answers=None):
+def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_accounts=None,
+          examples=(), answers=None):
     """
     `workflow`'s questions, in order, each one {"name", "title", "kind", "default", ...}. Kinds: "text" a string,
     "count" a whole number between min and max, "choice" one of options, "multi" any number of them.
@@ -265,6 +273,20 @@ def steps(workflow, catalogue=(), accounts=(), images=(), addable=None, service_
     answers = answers or {}
     if not known(workflow):
         raise ValueError("unknown workflow: {}".format(workflow))
+
+    # An example lab already answers every question this form would ask, including where it is built and how big
+    # its nodes are, so the only questions left are which one and what to call the file.
+    if workflow == "example":
+        offered_examples = _example_options(examples)
+        chosen = str(answers.get("example") or (offered_examples[0]["value"] if offered_examples else ""))
+        return [
+            {"name": "example", "title": "Which example lab?", "kind": "choice",
+             "default": offered_examples[0]["value"] if offered_examples else "", "options": offered_examples,
+             "help": "Taken as it is written. Nothing here rewrites it; the canvas is where it is changed."},
+            {"name": "name", "title": "What should the file be called?", "kind": "text",
+             "default": slug(re.sub(r"\.(json|yaml|yml)(\.template)?$", "", chosen)) or "example-lab",
+             "help": "The file name only: the lab's own domain and node names stay as the example writes them."},
+        ]
 
     name_defaults = {"kubernetes": "k8s-lab", "multi-linux": "mlm-lab",
                      "virtualization": "virt-lab", "vm": "vm-lab"}
@@ -421,7 +443,7 @@ def _node(role, answers, addons=(), sized_with=(), extra=None):
 
 
 def build(workflow, answers, network=None, catalogue=(), accounts=(), images=(), addable=None,
-          service_accounts=None):  # noqa: C901 — one branch per workflow, each one short
+          service_accounts=None, examples=(), example_definition=None):  # noqa: C901 — one branch per workflow, each one short
     """
     The lab definition `answers` describe. Addresses are deliberately absent: the run allocates them from the
     lab's own subnet, which `network` supplies as {"mygw", "mymask", "mydns"} and which the web layer reads off
@@ -432,9 +454,19 @@ def build(workflow, answers, network=None, catalogue=(), accounts=(), images=(),
     """
     if not known(workflow):
         raise ValueError("unknown workflow: {}".format(workflow))
+
+    # The example is the definition: it is handed back as it is written, so what runs is what the example says,
+    # not this form's reading of it. `example_definition` comes from the caller, which resolves the chosen name
+    # through libs/lab_examples.py.
+    if workflow == "example":
+        if not example_definition:
+            raise ValueError("no example lab named {!r}".format(answers.get("example") if answers else ""))
+        return copy.deepcopy(example_definition)
+
     spec = {step["name"]: step for step in steps(workflow, catalogue=catalogue, accounts=accounts,
                                                  images=images, addable=addable,
-                                                 service_accounts=service_accounts, answers=answers)}
+                                                 service_accounts=service_accounts, examples=examples,
+                                                 answers=answers)}
     name = slug(_answer(answers, "name", spec))
     domain = domain_for(name)
     backend = str(_answer(answers, "backend", spec) or "libvirt")
