@@ -161,6 +161,7 @@ _TAGS_BY_ADDON = {
     "kubectl_apply": ("devops",),
     "kubewarden": ("security", "kubernetes-platform"),
     "lab_in_a_box": ("devops",),
+    "libretranslate": ("ai", "apps"),
     "linkerd": ("networking", "kubernetes-platform"),
     "local_path": ("storage", "kubernetes-platform"),
     "longhorn": ("storage", "kubernetes-platform"),
