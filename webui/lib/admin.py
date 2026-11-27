@@ -30,6 +30,14 @@ import discovery
 ACTIONS = {"labs", "lab", "save", "credentials", "credentials-add", "credentials-encrypt",
            "credentials-delete", "create", "validate-credentials", "job", "jobs", "power"}
 
+# Served without a login, and answered by api.py, not here: the step-by-step builder asks questions and returns a
+# definition, which is the public half's work, the same class as "schema" and "validate". Nothing it does reaches
+# the hypervisor or the credential store. What a login adds is this module's cloud_accounts()/service_accounts(),
+# which name the accounts the store holds: api.dispatch passes those in only for an authorized user, so the
+# builder offers an anonymous caller this hypervisor and names no account. Creating or saving the lab the builder
+# wrote is an ACTIONS entry like any other.
+WIZARD_ACTIONS = {"wizard", "wizard-steps", "wizard-build"}
+
 
 def helper_path():
     return os.environ.get("LABBUILDER_HELPER", "/usr/local/sbin/lab-builder-helper")
@@ -138,6 +146,35 @@ def check_login(authorization):
     except (ValueError, OSError):
         return None
     return None
+
+
+def _credentials():
+    """
+    The credential store as the helper reports it: [{"name", "kind", "type", ...}], names and types only.
+
+    It has to come through the helper. The files are root-only on purpose, so the web process cannot read them
+    itself (see CLAUDE.md's credentials model), and anything here that listed them by reading the directory would
+    find nothing and silently offer no accounts at all.
+    """
+    try:
+        return helper(["credentials-list"]).get("credentials") or []
+    except (OSError, ValueError, RuntimeError):
+        return []
+
+
+def cloud_accounts():
+    """[(name, cloudtype)] of the cloud accounts, for the wizard's "where should it be built" question."""
+    return [(c.get("name"), c.get("type")) for c in _credentials()
+            if c.get("kind") == "cloud" and c.get("name") and c.get("type")]
+
+
+def service_accounts():
+    """{kind: [name, ...]} of the service credentials, for a workflow that needs one of a particular kind."""
+    out = {}
+    for credential in _credentials():
+        if credential.get("kind") == "service" and credential.get("name") and credential.get("type"):
+            out.setdefault(credential["type"], []).append(credential["name"])
+    return {kind: sorted(names) for kind, names in out.items()}
 
 
 def helper(args, stdin=None):

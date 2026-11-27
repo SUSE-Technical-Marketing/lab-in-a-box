@@ -1,6 +1,9 @@
 #!/usr/bin/env python3.11
-# Part of lab-in-a-box — stands up a Harvester HCI cluster via PXE netboot,
-# using PXEService's new "ipxe-uefi" mode (libs/services.py). This is NOT a
+# Part of lab-in-a-box — stands up a Harvester HCI cluster on a hypervisor,
+# by netboot (PXEService's "ipxe-uefi" mode, libs/services.py) or from the
+# release ISO attached to each node; see libs/harvester.py's choose_method().
+# A cluster on a cloud is built from a prebuilt image by a lab definition
+# instead (clu_type "harvester", libs/harvester.py). This is NOT a
 # lab-JSON addon: standing up the Harvester cluster itself is infrastructure
 # bootstrap (the same category as setup_kvm_node.py — provisioning the
 # hypervisor a lab later runs on top of), not "define a lab", so it takes
@@ -49,32 +52,45 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 import harvester  # noqa: E402
 import migrations  # noqa: E402
 import primary  # noqa: E402
+import releases  # noqa: E402
 import services  # noqa: E402
 from lab_creation import (  # noqa: E402
-    log, die, run_libvirt_tool, check_ssh_conn, process_template, purge_known_host,
+    log, warn, die, run_libvirt_tool, check_ssh_conn, process_template, purge_known_host,
+    fetch_source_image, reset_to_disk_boot,
     yaml_scalar as _yaml_scalar,
 )
 
-# Release assets for a Harvester version: one ISO and three boot files, all under releases.rancher.com.
-_RELEASE_BASE = "https://releases.rancher.com/harvester"
-_ASSETS = ("amd64.iso", "vmlinuz-amd64", "initrd-amd64", "rootfs-amd64.squashfs")
-
-
 def _fetch_release_assets(version, dest_dir):
-    """Idempotently download this version's 4 release assets."""
+    """Idempotently download this version's release assets (libs/harvester.py addresses them)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for suffix in _ASSETS:
-        fname = "harvester-{}-{}".format(version, suffix)
-        dest = dest_dir / fname
+    for suffix in harvester.ASSETS:
+        url = harvester.asset_url(version, suffix)
+        dest = dest_dir / url.rsplit("/", 1)[-1]
         if dest.exists():
-            log("- {} already present, skipping download".format(fname))
+            log("- {} already present, skipping download".format(dest.name))
             continue
-        url = "{}/{}/{}".format(_RELEASE_BASE, version, fname)
         log("- downloading {}".format(url))
         try:
             urllib.request.urlretrieve(url, str(dest))
         except OSError as e:
             die("failed to download {}: {}".format(url, e))
+
+
+def _resolve_version(cluster_cfg):
+    """
+    The Harvester version this run installs: the config's own "harvester_version", or the newest stable release
+    the Harvester project lists when the config names none (libs/releases.py, which reads that list at most once
+    a day and keeps it). Any release tag is accepted on its shape, listed or not, so a version newer than this
+    node's cached list still installs.
+    """
+    version = str(cluster_cfg.get("harvester_version") or "").strip()
+    if not version:
+        version = releases.newest(harvester.CLU_TYPE)
+        log("No harvester_version in the cluster config; installing {}, the newest stable release "
+            "listed".format(version))
+    if not releases.is_version(harvester.CLU_TYPE, version):
+        die("harvester_version '{}' is not a Harvester release tag (expected e.g. v1.9.1)".format(version))
+    return version
 
 
 # _yaml_scalar is lab_creation.yaml_scalar. The Harvester config and the install-ISO cloud-config use the same escaping.
@@ -216,6 +232,99 @@ def _render_node_files(cluster_cfg, node, http_base, web_root):
     return "{}/{}".format(http_base, ipxe_name)
 
 
+def _wait_for_cluster(cluster_cfg):
+    """
+    Wait for the cluster to answer on its VIP and apply the post-install Harvester Settings, if any. The same for
+    every install method: once a node is installed, the cluster forms the same way.
+    """
+    log("Waiting for the 'create' node's VIP ({}) to come up — this can take 15-30+ minutes "
+        "(install + first-boot cluster bootstrap)".format(cluster_cfg["vip"]))
+    check_ssh_conn(cluster_cfg["vip"], tcp_port=443, retry_interval=15, retry_limit=240)
+    log("Harvester VIP is responding — check https://{}/ to confirm cluster health".format(cluster_cfg["vip"]))
+
+    if cluster_cfg.get("post_install_settings"):
+        create_node = next(n for n in cluster_cfg["nodes"] if n.get("role") == "create")
+        log("Fetching kubeconfig from '{}' to apply post-install settings".format(create_node["name"]))
+        kubeconfig_path = _fetch_harvester_kubeconfig(cluster_cfg, create_node)
+        _apply_post_install_settings(cluster_cfg, kubeconfig_path)
+
+
+def _hypervisor(cluster_cfg, config):
+    """
+    (remote_host, virt_srv, vm_img_loc, iso_loc) for this cluster. The hypervisor_* keys in cluster.json take
+    priority over REMOTE_HOST, VIRT_SRV, VM_IMG_LOC and ISO_LOC in lab_creation.cfg: a Harvester cluster can be
+    built on a different hypervisor from the one the shared config points at for ordinary lab VMs.
+    """
+    return (cluster_cfg.get("hypervisor_host") or config.get("REMOTE_HOST", ""),
+            cluster_cfg.get("hypervisor_virt_srv") or config.get("VIRT_SRV", "qemu:///system"),
+            cluster_cfg.get("vm_img_loc") or config.get("VM_IMG_LOC", "/var/lib/libvirt/images"),
+            cluster_cfg.get("iso_loc") or config.get("ISO_LOC", "/var/lib/libvirt/images/sources"))
+
+
+def _fetch_iso_assets(cluster_cfg, config):
+    """
+    Put the three files an ISO install boots from on the hypervisor, in ISO_LOC: the ISO itself, and the kernel
+    and initrd the VM is booted with directly. Each is verified against the sha512 the Harvester project
+    publishes for that release, and a verified copy is never fetched again.
+
+    The kernel and initrd are the published release assets, not files extracted from the ISO: Harvester's own
+    build scripts boot the ISO this way, so no loop-mount or extraction step is needed. Returns their paths on
+    the hypervisor, as (iso, kernel, initrd).
+    """
+    version = cluster_cfg["harvester_version"]
+    remote_host, _virt_srv, _vm_img_loc, iso_loc = _hypervisor(cluster_cfg, config)
+    if not remote_host:
+        die("the iso install method needs a hypervisor to stage the install medium on — set 'hypervisor_host' "
+            "in the cluster config, or REMOTE_HOST in lab_creation.cfg")
+    paths = []
+    for suffix in ("amd64.iso", "vmlinuz-amd64", "initrd-amd64"):
+        name = "harvester-{}-{}".format(version, suffix)
+        log("- {} on {}".format(name, remote_host))
+        fetch_source_image(remote_host, iso_loc, name, harvester.asset_url(version, suffix),
+                           digest_url=harvester.checksum_url(version), algo="sha512")
+        paths.append("{}/{}".format(iso_loc.rstrip("/"), name))
+    return tuple(paths)
+
+
+def _create_iso_vm(node, cluster_cfg, config, config_url, media):
+    """
+    Install one node from the release ISO: create the VM booting the release kernel and initrd directly, with the
+    ISO attached, and let the installer run unattended against this node's own configuration at `config_url`.
+    `media` is _fetch_iso_assets()' answer.
+
+    virt-install blocks until the install finishes, which it does by powering the node off
+    (harvester.install.powerOff in the kernel arguments). The domain is then taken off the installer kernel and
+    started on its own disk, as every other direct-kernel install in this project is.
+    """
+    remote_host, virt_srv, vm_img_loc, _iso_loc = _hypervisor(cluster_cfg, config)
+    iso, kernel, initrd = media
+    purge_known_host(node["ip"], node["name"])
+
+    args = [
+        "--name", node["name"],
+        "--boot", "uefi,loader={0},loader.readonly=yes,loader.type=pflash,nvram.template={1},"
+        "kernel={2},initrd={3},cmdline={4}".format(
+            cluster_cfg.get("ovmf_code", "/usr/share/qemu/ovmf-x86_64-code.bin"),
+            cluster_cfg.get("ovmf_vars", "/usr/share/qemu/ovmf-x86_64-vars.bin"),
+            kernel, initrd, harvester.iso_kernel_args(config_url, cluster_cfg.get("console", "tty1"))),
+        "--vcpus", str(cluster_cfg.get("vm_cpu", 12)),
+        "--memory", str(cluster_cfg.get("vm_mem", 36864)),
+        "--os-variant", cluster_cfg.get("os_variant", "generic"),
+        "--disk", "size={},path={}/{}.qcow2,sparse=no,bus=virtio,boot.order=1".format(
+            cluster_cfg.get("vm_dsk", 260), vm_img_loc, node["name"]),
+        "--disk", "path={},device=cdrom,readonly=on".format(iso),
+        "--network", "bridge={},mac.address={},model=virtio".format(
+            cluster_cfg.get("hypervisor_bridge", "br0"), node["mac"]),
+        "--graphics", "spice,listen=0.0.0.0", "--noautoconsole", "--wait", "-1",
+    ]
+    log("- Installing {} from the ISO (this blocks until the installer powers it off)".format(node["name"]))
+    r = run_libvirt_tool("virt-install", remote_host, virt_srv, args)
+    if r.returncode != 0:
+        die("virt-install failed for '{}'".format(node["name"]))
+    if not reset_to_disk_boot(remote_host, virt_srv, node["name"]):
+        die("failed to take '{}' off its installer kernel after the ISO install".format(node["name"]))
+
+
 def _create_netboot_vm(node, cluster_cfg, config):
     """
     Define and start a VM with an empty disk (boot.order=1) and a network device (boot.order=2). The disk comes first, so the
@@ -229,11 +338,7 @@ def _create_netboot_vm(node, cluster_cfg, config):
     Secure Boot variant on this host, which blocks loading ipxe.efi, because that file is not signed for the VM's Secure Boot
     database.
     """
-    # The hypervisor_* keys in cluster_cfg take priority over REMOTE_HOST, VIRT_SRV and VM_IMG_LOC in lab_creation.cfg. A Harvester
-    # cluster can be built on a different hypervisor from the one that the shared config points at for ordinary lab VMs.
-    remote_host = cluster_cfg.get("hypervisor_host") or config.get("REMOTE_HOST", "")
-    virt_srv = cluster_cfg.get("hypervisor_virt_srv") or config.get("VIRT_SRV", "qemu:///system")
-    vm_img_loc = cluster_cfg.get("vm_img_loc") or config.get("VM_IMG_LOC", "/var/lib/libvirt/images")
+    remote_host, virt_srv, vm_img_loc, _iso_loc = _hypervisor(cluster_cfg, config)
 
     # Stale host keys are purged here, as in setup_lab.py. A reused lab IP can have a host key for another VM on file, and then
     # StrictHostKeyChecking=accept-new refuses a connection to a node whose sshd is answering correctly.
@@ -281,8 +386,17 @@ def _apply_post_install_settings(cluster_cfg, kubeconfig_path):
 _HELP_TEXT = """\
 Usage: setup_harvester_cluster.py <cluster.json>
 
-Stands up a Harvester HCI cluster through PXE netboot. <cluster.json> is a standalone configuration file, not a lab
+Stands up a Harvester HCI cluster on a hypervisor. <cluster.json> is a standalone configuration file, not a lab
 definition; templates/harvester-cluster.json.example lists every key.
+
+Its "install_method" key chooses how each node is installed:
+  pxe   Netboot (the default). The installer is served over HTTP and nothing is staged on the hypervisor.
+  iso   The release ISO attached to the node. No PXE or DHCP service is needed and the node is served nothing,
+        but the ISO, kernel and initrd are staged in ISO_LOC on the hypervisor; the ISO alone is over 8 GB.
+A method that cannot be used here is reported and replaced with one that can.
+
+A Harvester cluster on a cloud is built from a prebuilt Harvester image by a lab definition instead
+(kclusters.<name>.clu_type "harvester"), which is where a cloud account, backend and image are declared.
 
 Options:
   --help, -h  Print this help and exit.
@@ -302,6 +416,14 @@ def main():
     defaults = primary.load_defaults()
     config = primary.load_config()
 
+    cluster_cfg["harvester_version"] = _resolve_version(cluster_cfg)
+    # This script builds the nodes itself, on a hypervisor, so the target is always libvirt: the choice is
+    # between netboot and the release ISO. A cloud's prebuilt-image method belongs to a lab definition
+    # (clu_type harvester), which is where a cloud account, backend and image are declared.
+    method, complaint = harvester.choose_method(cluster_cfg.get("install_method"), "libvirt")
+    if complaint:
+        warn(complaint)
+    log("Install method: {}".format(method))
     cluster_cfg["_templ_addons_loc"] = defaults.get("_templ_addons_loc", "/usr/share/lab_creation/templates/addons/")
     lab_setup_path = defaults.get("LAB_SETUP_PATH", "/srv/www/htdocs/lab_creation")
 
@@ -328,6 +450,21 @@ def main():
 
     if not any(n.get("role") == "create" for n in cluster_cfg["nodes"]):
         die("cluster config has no node with role 'create' — exactly one is required to bootstrap the cluster")
+
+    # The ISO carries everything a node installs, so this path serves it nothing: only the per-node
+    # configuration is published, and the install medium is staged on the hypervisor instead.
+    if method == harvester.METHOD_ISO:
+        log("Staging the Harvester {} install medium on the hypervisor".format(cluster_cfg["harvester_version"]))
+        media = _fetch_iso_assets(cluster_cfg, config)
+        log("Rendering per-node install config")
+        for node in cluster_cfg["nodes"]:
+            _render_node_files(cluster_cfg, node, http_base, web_root)
+        if cluster_cfg.get("create_vms", True):
+            for node in cluster_cfg["nodes"]:
+                _create_iso_vm(node, cluster_cfg, config,
+                               "{}/config-{}.yaml".format(http_base, node["name"]), media)
+        _wait_for_cluster(cluster_cfg)
+        return
 
     log("Fetching Harvester {} release assets".format(cluster_cfg["harvester_version"]))
     _fetch_release_assets(cluster_cfg["harvester_version"], web_root)
@@ -372,16 +509,7 @@ def main():
         for node in cluster_cfg["nodes"]:
             _create_netboot_vm(node, cluster_cfg, config)
 
-    log("Waiting for the 'create' node's VIP ({}) to come up — this can take 15-30+ minutes "
-        "(install + first-boot cluster bootstrap)".format(cluster_cfg["vip"]))
-    check_ssh_conn(cluster_cfg["vip"], tcp_port=443, retry_interval=15, retry_limit=240)
-    log("Harvester VIP is responding — check https://{}/ to confirm cluster health".format(cluster_cfg["vip"]))
-
-    if cluster_cfg.get("post_install_settings"):
-        create_node = next(n for n in cluster_cfg["nodes"] if n.get("role") == "create")
-        log("Fetching kubeconfig from '{}' to apply post-install settings".format(create_node["name"]))
-        kubeconfig_path = _fetch_harvester_kubeconfig(cluster_cfg, create_node)
-        _apply_post_install_settings(cluster_cfg, kubeconfig_path)
+    _wait_for_cluster(cluster_cfg)
 
 
 if __name__ == "__main__":

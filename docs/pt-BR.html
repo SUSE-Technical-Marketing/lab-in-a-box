@@ -232,7 +232,7 @@ footer.site {
 <ul>
 <li><strong>Um arquivo, um comando.</strong> Descreva VMs, clusters Kubernetes (RKE2 ou K3s) e complementos de forma declarativa. O <code>setup_lab.py</code> os cria na ordem das dependências, sem que você precise executar <code>virt-install</code> ou Ansible manualmente.</li>
 <li><strong>Laboratório em casa ou na nuvem, a mesma definição.</strong> As VMs do laboratório rodam em hosts KVM próprios, no Harvester HCI ou na AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud ou Exoscale. Um laboratório pode abranger vários hosts KVM e combinar nuvens e locais por meio de uma <a href="#cross-cloud-wireguard-overlay">rede sobreposta WireGuard entre nuvens</a>.</li>
-<li><strong><span data-addon-count>108</span> complementos prontos.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud e outros, além de aplicações de demonstração intencionalmente vulneráveis para treinamento em segurança.</li>
+<li><strong><span data-addon-count>109</span> complementos prontos.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud e outros, além de aplicações de demonstração intencionalmente vulneráveis para treinamento em segurança.</li>
 <li><strong>Uma interface web que acompanha o código.</strong> O <a href="#web-ui-lab-builder">lab-builder</a> gera cada formulário a partir do esquema do próprio complemento, então um campo novo em um script aparece na interface sem mudanças no frontend.</li>
 <li><strong>Provisionamento intercambiável.</strong> Ignition e Combustion para SLE Micro, cloud-init para openSUSE e Ubuntu, <code>virt-customize</code> para imagens antigas, ou uma instalação automatizada a partir de uma ISO de instalação (AutoYaST, Kickstart, Preseed ou AutoInstall).</li>
 <li><strong>Credenciais fora do arquivo do laboratório.</strong> As credenciais de nuvens e serviços podem ficar em arquivos criptografados por conta (derivação de chave Argon2id, seguida de AES-256-GCM e ChaCha20-Poly1305 em cascata).</li>
@@ -685,7 +685,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Interface web (lab-builder)</h2>
-<p>Um editor de arquivos <code>lab.json</code> no navegador que <strong>inspeciona em tempo de execução as próprias bibliotecas Python do projeto</strong>: ele não tem conhecimento fixo de nenhum complemento. Escolha um componente e ele exibe um formulário gerado diretamente do esquema desse componente; adicione um campo a um script e a interface o mostra sem nenhuma mudança no frontend. Um complemento marcado como em construção (<code>status</code> no seu <code>PLUGIN</code>, veja o <a href="addons.html">Guia de complementos</a>) exibe um selo "under construction"; passe o mouse sobre ele para ver o que ainda não funciona. Ele ainda pode ser adicionado e executado, com um aviso.</p>
+<p>Um editor de arquivos <code>lab.json</code> no navegador que <strong>inspeciona em tempo de execução as próprias bibliotecas Python do projeto</strong>: ele não tem conhecimento fixo de nenhum complemento. Escolha um componente e ele exibe um formulário gerado diretamente do esquema desse componente; adicione um campo a um script e a interface o mostra sem nenhuma mudança no frontend. Um complemento marcado como em construção (<code>status</code> no seu <code>PLUGIN</code>, veja o <a href="addons.html">Guia de complementos</a>) exibe um selo "under construction"; passe o mouse sobre ele para ver o que ainda não funciona. Ele ainda pode ser adicionado e executado, com um aviso. O <strong>Simplify</strong>, no painel Lab, faz quatro ou cinco perguntas em vez disso e constrói o laboratório a partir delas: onde construí-lo é sempre perguntado, os endereços nunca, e cada nó é dimensionado pelo que seus próprios produtos documentam; não exige login, e um de seus fluxos parte de um laboratório de exemplo (veja <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>). O <code>clu_rel</code> de um cluster oferece as versões que a distribuição escolhida realmente publica, lidas das etiquetas git daquele projeto no máximo uma vez por dia, e qualquer outra versão ainda pode ser digitada.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -960,6 +960,63 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>Um cluster Harvester pode ser construído de quatro maneiras, e todas instalam o mesmo appliance a partir dos mesmos arquivos da versão. Elas diferem apenas em como cada nó chega ao instalador, então o ponto de entrada decorre de onde os nós são executados.</p>
+<table>
+<thead>
+<tr><th>Onde os nós são executados</th><th>Método</th><th>Construído por</th></tr>
+</thead>
+<tbody>
+<tr><td>Um hipervisor KVM</td><td><code>pxe</code>, o padrão: inicialização pela rede, nada preparado no hipervisor</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>Um hipervisor KVM</td><td><code>iso</code>: a ISO da versão conectada a cada nó, sem serviço PXE nem DHCP</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>Qualquer backend de nuvem</td><td><code>image</code>: uma imagem Harvester já construída que você indica em <code>SOURCE_IMAGE</code></td><td>uma definição de laboratório, <code>clu_type: &quot;harvester&quot;</code></td></tr>
+<tr><td>Um cluster Kubernetes existente</td><td>o chart Helm do Harvester</td><td>o complemento <code>harvester</code></td></tr>
+</tbody>
+</table>
+<p><strong>Em um hipervisor.</strong> O <code>setup_harvester_cluster.py</code> usa seu próprio arquivo de configuração independente, não uma definição de laboratório (<code>templates/harvester-cluster.json.example</code> lista todas as chaves), e sua chave <code>install_method</code> escolhe entre os dois métodos disponíveis ali. <code>pxe</code> serve o instalador por HTTP e não prepara nada no hipervisor; <code>iso</code> coloca a ISO, o kernel e o initrd da versão em <code>ISO_LOC</code> e inicia cada nó a partir deles, o que não exige nenhum serviço PXE ou DHCP, mas transfere mais de 8 GB para o hipervisor uma vez por versão. Cada arquivo é verificado com o sha512 publicado pelo projeto Harvester, e uma cópia já verificada nunca é baixada de novo. Um método que não pode ser usado nesse destino é avisado e substituído por um que funcione, de modo que uma configuração escrita para um destino continua funcionando em outro. A versão vem de <code>harvester_version</code>; se for omitida, instala-se a versão estável mais recente que o projeto Harvester lista.</p>
+<p><strong>Em uma nuvem.</strong> Uma entrada de <code>kclusters</code> com <code>clu_type: &quot;harvester&quot;</code> constrói o cluster a partir de instâncias na nuvem. Cada nó inicia uma imagem Harvester já construída que você indica em <code>SOURCE_IMAGE</code> (a SUSE não publica nenhuma; <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> documenta como construir uma AMI a partir da ISO do Harvester) e se instala na primeira inicialização com a configuração do Harvester que o lab-in-a-box passa como user-data. O primeiro nó do cluster no arquivo o cria; os demais entram pela VIP do cluster. A versão do cluster vai em <code>clu_rel</code>, o mesmo campo de onde todas as outras distribuições tiram sua versão, como uma etiqueta de versão como <code>v1.9.1</code>; ali não se aceita um nome de canal. O exemplo abaixo é da AWS, onde também é preciso ativar a virtualização aninhada.</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>Nós</strong> devem usar um backend de nuvem; na <code>aws</code> isso significa <code>aws_nested_virtualization: &quot;true&quot;</code> com um <code>cloud_instance_type</code> compatível (famílias M7i/M8i/C7i/R7i/I7i; veja <a href="#compute-backends_1">Backends de computação</a>) e o identificador da AMI do Harvester como <code>SOURCE_IMAGE</code>. 250 GiB é o disco mínimo da AMI.</li>
+<li><strong>Campos do cluster</strong>: <code>harvester_token</code> (obrigatório, compartilhado por todos os nós); <code>harvester_vip</code> (padrão: um endereço livre de <code>AWS_SUBNET_ID</code>, registrado como IP privado secundário no nó criador); <code>harvester_mtu</code> (padrão 1500, igual em todos os nós); <code>harvester_replica_count</code> (use 1 com menos de 3 nós); <code>harvester_device</code> (padrão <code>/dev/nvme0n1p6</code>, o layout da AMI da comunidade); <code>harvester_ntp_servers</code> (padrão o serviço de hora da AWS, 169.254.169.123); <code>harvester_config</code> (mesclado por último na configuração Harvester de cada nó); <code>harvester_settings</code> (configurações do Harvester aplicadas quando o cluster está no ar). Por nó: <code>harvester_role</code> (default, management, worker, witness).</li>
+<li><strong>Acesso</strong>: os nós aceitam a chave SSH do nó de automação para o usuário <code>rancher</code> (o Harvester bloqueia SSH de root) e o <code>ROOT_PWD_HASH</code> do laboratório como senha. O grupo de segurança recebe 80, 443, 6443 e 9345 e todo o tráfego entre suas próprias instâncias. Quando o cluster está no ar, o <code>setup_lab.py</code> mostra o endereço da interface (<code>https://&lt;nó criador&gt;/</code>) e guarda o kubeconfig em <code>/etc/lab_creation/harvester-&lt;cluster&gt;.kubeconfig</code>.</li>
+<li><strong>Limites</strong>: a VIP permanece no nó criador (a AWS não move um IP secundário, portanto não há failover); o EC2 descarta quadros com endereços MAC de terceiros, então as VMs do Harvester não podem usar redes VLAN em ponte; complementos ainda não são instalados em um cluster Harvester; cada nó custa aproximadamente o preço por hora do seu tipo de instância mais 250 GiB de EBS.</li>
+</ul>
+
+<h3 id="reusable-machine-images">Imagens de máquina reutilizáveis</h3>
+<p>Um produto que leva horas para instalar vale a pena instalar uma única vez. O SUSE Multi-Linux Manager é o caso evidente, com mais de um dia. Dê a um nó <code>keep_image</code> e o laboratório o construirá a partir da imagem desse produto sempre que já existir uma, e guardará uma quando não existir.</p>
+<pre><code class="language-json">"nodes": {
+  &quot;smlm1.mydemo.lab&quot;: { &quot;keep_image&quot;: &quot;smlm&quot;, &quot;keep_image_version&quot;: &quot;5.2&quot;, &quot;addons&quot;: [&quot;smlm&quot;] }
+}
+</code></pre>
+<p>A primeira execução instala o produto como de costume e, depois que os complementos do nó, sua entrada no cluster e seus <code>post_commands</code> terminarem, pede à nuvem uma imagem do disco desse nó. Cada execução posterior encontra essa imagem e parte dela, então a instalação acontece uma vez e não a cada vez. Os dois campos também são aceitos em <code>common</code>, para um laboratório cujos nós carregam todos o mesmo produto; um nó que indica seu próprio <code>keep_image</code> não herda a versão de <code>common</code>, o que daria à imagem o nome de um produto com a versão de outro.</p>
+<p>A imagem se chama <code>lab-in-a-box-&lt;produto&gt;-&lt;versão&gt;</code>, que é como um laboratório posterior a encontra, e é marcada como deste projeto onde o provedor permite. Uma segunda execução não acrescenta nem faz nada: a imagem já está lá, então o nó é construído a partir dela e nunca é capturado de novo. Um backend que não pode guardar imagens avisa e instala o produto outra vez em vez de fazer a execução falhar.</p>
+<p>Há dois caminhos para uma imagem, e o produto decide qual se aplica. <strong>Capturar</strong> é o padrão e funciona em todos os backends de nuvem: a VM é criada a partir de uma imagem de sistema operacional comum, a instalação demorada roda uma vez, e a nuvem faz uma imagem do resultado. Nada é enviado e nada é convertido. <strong>Importar</strong> é para um produto que não pode ser instalado sobre um sistema operacional em execução, como um appliance que o próprio instalador grava em um disco: o disco é construído fora da nuvem e registrado lá. Nem todo provedor consegue fazer isso, então cada backend o declara.</p>
+<table>
+<thead>
+<tr><th>Backend</th><th>Capturar uma VM</th><th>Importar um disco</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>sim</td><td>sim</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>sim</td><td><strong>não</strong>: a API de nenhum dos dois tem a operação</td></tr>
+<tr><td>libvirt, harvester</td><td>não</td><td>não</td></tr>
+</tbody>
+</table>
+<p>O <code>lab_image.py</code> faz o mesmo à mão contra o backend de um laboratório específico: <code>find</code> mostra a imagem de um produto, se houver, <code>capture</code> faz uma imagem de um nó como ele está, e <code>import</code> registra um disco que o provedor lê de um armazenamento de objetos ou de uma URL. A captura para ou reinicia a VM onde o provedor exige, na GCP parando-a e iniciando-a de novo, porque uma imagem tirada de um disco em uso pode precisar se reparar na primeira inicialização.</p>
+
 <h3 id="deploying-a-legacy-image-centos-7">Implantar uma imagem antiga (CentOS 7)</h3>
 <p>O CentOS 7 (e outras imagens <code>.qcow2</code> tão antigas) não traz Ignition/Combustion nem
 cloud-init, então <code>config_method</code> precisa ser <code>virt_customize</code> (veja
@@ -1040,7 +1097,7 @@ para que esta seção não cresça sem limite.</p>
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p>O <code>setup_lab.py</code> verifica o arquivo automaticamente antes de fazer qualquer outra coisa: IPs errados, uma referência a um <code>kcluster</code> inexistente, um <code>SOURCE_IMAGE</code> ausente e erros semelhantes são detectados e mostrados (<code>✗ Preflight FAILED — N error(s)</code>) sem criar nada, em vez de falhar no meio do caminho. Um arquivo correto mostra <code>✓ Preflight passed</code> e segue direto para a criação. Cada valor também é verificado contra o esquema que o declara: um <code>myip</code> que não é um endereço IP, um <code>VM_MEM</code> que não é um número ou está abaixo do mínimo, um <code>clu_type</code> que não é um dos tipos de cluster Kubernetes declarados. O <code>--validate</code> de cada add-on faz o mesmo para os próprios campos e para uma substituição por nó. Um endereço escrito à mão passa pelas mesmas regras que o alocador aplica a um que ele próprio escolhe: um endereço que o DNS do laboratório já mantém sob outro nome, ou um do próprio nó de automação, é erro e não aviso, porque construir esse nó apontaria um nome existente para o host errado. Um endereço que apenas responde a um ping continua sendo aviso, e um nó que pede exatamente o endereço que o seu próprio registro DNS já lhe dá não é conflito nenhum, então reconstruir um laboratório existente continua validando.</p>
+<p>O <code>setup_lab.py</code> verifica o arquivo automaticamente antes de fazer qualquer outra coisa: IPs errados, uma referência a um <code>kcluster</code> inexistente, um <code>SOURCE_IMAGE</code> ausente e erros semelhantes são detectados e mostrados (<code>✗ Preflight FAILED — N error(s)</code>) sem criar nada, em vez de falhar no meio do caminho. Um arquivo correto mostra <code>✓ Preflight passed</code> e segue direto para a criação. Cada valor também é verificado contra o esquema que o declara: um <code>myip</code> que não é um endereço IP, um <code>VM_MEM</code> que não é um número ou está abaixo do mínimo, um <code>clu_type</code> que não é um dos tipos de cluster Kubernetes declarados. O <code>--validate</code> de cada add-on faz o mesmo para os próprios campos e para uma substituição por nó. Um endereço escrito à mão passa pelas mesmas regras que o alocador aplica a um que ele próprio escolhe: um endereço que o DNS do laboratório já mantém sob outro nome, ou um do próprio nó de automação, é erro e não aviso, porque construir esse nó apontaria um nome existente para o host errado. Um endereço que apenas responde a um ping continua sendo aviso, e um nó que pede exatamente o endereço que o seu próprio registro DNS já lhe dá não é conflito nenhum, então reconstruir um laboratório existente continua validando. Um nó menor do que pedem os produtos que ele executa também gera um aviso, retirado da documentação de cada produto (<code>libs/sizing.py</code>, que registra a página de onde veio cada número): um nó do Rancher abaixo de 4 vCPU e 16 GB, um servidor do Multi-Linux Manager abaixo de 4 núcleos e 16 GB, um nó do Longhorn sem disco próprio. Nunca bloqueia, porque um laboratório de demonstração pode rodar um produto com menos, mas nada mais diria isso antes de um pod não ser agendado.</p>
 <p>Na ordem: registra os dois nós no DNS → cria as duas VMs (copia a imagem QCOW2, gera os arquivos do Combustion, inicia as VMs e espera o SSH) → instala o RKE2 em <code>node101</code> como servidor e depois em <code>node102</code> como agente → instala <code>rancher</code> e <code>longhorn</code> no nó de gerenciamento do cluster (<code>mgm_node</code>, por padrão o primeiro nó servidor, aqui <code>node101</code>). Um cluster de 2 nós com Rancher costuma levar de 15 a 25 minutos; a maior parte é a inicialização do RKE2 e a instalação do Rancher via Helm.</p>
 <ol start="3">
 <li><strong>Verifique se o DNS resolve</strong> (do seu computador, depois de <a href="#step-5--point-your-client-dns-at-the-automation-vm">apontá-lo para o DNS da VM de automação</a>):</li>
@@ -1634,6 +1691,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
 <td>Antseed: um mercado ponto a ponto de inferência de IA em um nó — o proxy comprador que qualquer ferramenta pode usar como URL base, ou o lado vendedor, mais o Antseed Desktop</td>
+</tr>
+<tr>
+<td><a href="https://buffer.com/"><code>buffer</code></a></td>
+<td>Buffer (buffer.com) para os agentes de código de um nó: seu servidor MCP remoto registrado nos agentes que o laboratório indicar, e sua chave de API no nó para o que chamar a API diretamente. Nada é auto-hospedado, porque o Buffer não publica uma edição auto-hospedável. Suas ferramentas podem criar, editar e excluir publicações reais, então nenhum agente é conectado a menos que <code>buffer_agents</code> indique um</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>

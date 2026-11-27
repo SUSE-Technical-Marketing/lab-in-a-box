@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests-paths: scripts/install_anthropic_tools
+# Tests-paths: scripts/install_anthropic_tools libs/agents.py
 # Unit tests for install_anthropic_tools. Independent container — see tests/run_tests.sh.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit

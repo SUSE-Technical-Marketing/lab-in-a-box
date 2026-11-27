@@ -21,6 +21,10 @@
 
 __version__ = "__LABVERSION__"
 
+# How many release branches a version dropdown offers, newest first. The newest patch of each branch is the real
+# choice; a version outside this list is still installable by naming it.
+BRANCHES_OFFERED = 8
+
 import json
 import os
 import re
@@ -35,6 +39,7 @@ for _candidate in ("/usr/local/lib/lab_creation",
 
 import primary  # noqa: E402
 import lab_creation as lc  # noqa: E402
+import releases  # noqa: E402
 
 _SECRET_NAME_RE = re.compile(r'(PASS|PWD|SECRET|TOKEN|KEY)', re.IGNORECASE)
 _IMAGE_RE = re.compile(r'\.(?:iso|qcow2)$', re.IGNORECASE)
@@ -132,14 +137,40 @@ def build_status():
         "hosts": host_statuses,
         "images": images,
         "images_by_host": images_by_host,
+        "releases": release_lists(),
     }
+
+
+def release_lists():
+    """
+    The releases each Kubernetes distribution currently publishes, as {distribution: [version, ...]}, newest
+    first, for the version a lab-builder form offers.
+
+    This is the only place the list is read from the distributions' own repositories: libs/releases.py caches it
+    for a day, and this script is the one thing that runs as root on a schedule, so the web UI's CGI reads the
+    answer out of this snapshot and never makes an outbound request of its own. A repository that cannot be
+    reached leaves the list that was read last, or the one baked into libs/releases.py on a node that has never
+    read one, so a snapshot always carries a usable list.
+    """
+    out = {}
+    for distribution in sorted(releases.SOURCES):
+        found = []
+        try:
+            found = releases.versions(distribution, channel="stable")
+        except Exception as e:  # a provider's repository must never fail the whole snapshot
+            found = releases.cached(distribution, "stable")
+            print("could not refresh the {} release list ({}); keeping the list already "
+                  "held".format(distribution, e), file=sys.stderr)
+        out[distribution] = releases.newest_per_branch(found, limit=BRANCHES_OFFERED)
+    return out
 
 
 _HELP_TEXT = """\
 Usage: refresh_hypervisor_status.py [output_path]
 
-Writes the hypervisor status snapshot that the lab-builder web UI reads: hosts, their state, and the source images
-present on each of them.
+Writes the hypervisor status snapshot that the lab-builder web UI reads: hosts, their state, the source images
+present on each of them, and the releases each Kubernetes distribution publishes (read at most once a day; the
+web UI never asks for them itself).
 Secret-shaped configuration values are masked. output_path defaults to $LABBUILDER_STATUS_FILE, else
 /srv/www/lab-builder/status.json.
 
@@ -162,7 +193,7 @@ def main():
         # snapshot from before the breakage.
         status = {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "config": {}, "hosts": [], "images": [],
+            "config": {}, "hosts": [], "images": [], "releases": {},
             "error": "could not load lab_creation.cfg: {}".format(e),
         }
 

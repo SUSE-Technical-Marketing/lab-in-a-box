@@ -65,6 +65,20 @@ check("...and the report names the command and the path", errors and "does not e
 errors = bmp.build(sorted(bmp.COMMANDS), _REPO / "scripts", out_dir)
 check("every page is generated from the checkout with no error: {}".format(errors), not errors)
 
+# An installed tree holds the helper under the command's own name, a checkout under its source name, and the page
+# has to build from either: it did not, and lab-builder-helper had no page on every installed node.
+import os  # noqa: E402
+
+installed_dir = out_dir / "as-installed"
+os.makedirs(str(installed_dir))
+source = (_REPO / "scripts" / bmp.SOURCE_NAMES["lab-builder-helper"]).read_text()
+renamed = installed_dir / "lab-builder-helper"
+renamed.write_text(source)
+os.chmod(str(renamed), 0o755)
+errors = bmp.build(["lab-builder-helper"], installed_dir, out_dir)
+check("the helper's page builds from a tree that holds it under its installed name: {}".format(errors),
+      not errors and (out_dir / "man8" / "lab-builder-helper.8").is_file())
+
 for command, section in sorted(bmp.COMMANDS.items()):
     page = out_dir / "man{}".format(section) / "{}.{}".format(command, section)
     check("{}: its page was written".format(command), page.is_file())

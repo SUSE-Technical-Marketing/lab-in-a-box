@@ -77,6 +77,33 @@ with tempfile.TemporaryDirectory() as tmp:
     check("_fetch_release_assets does not re-download assets already present",
           fetched == [])
 
+# ── _resolve_version(): the config's version, or the newest the project lists ─
+check("a version in the config is used as given", shc._resolve_version({"harvester_version": "v1.6.2"}) == "v1.6.2")
+check("surrounding whitespace is not part of a version",
+      shc._resolve_version({"harvester_version": " v1.6.2 "}) == "v1.6.2")
+check("a version this project has never listed is still accepted",
+      shc._resolve_version({"harvester_version": "v9.42.0"}) == "v9.42.0")
+
+_newest = shc.releases.newest
+shc.releases.newest = lambda *a, **k: "v1.8.0"
+try:
+    check("a config naming no version installs the newest release listed", shc._resolve_version({}) == "v1.8.0")
+    check("an empty version is the same as none", shc._resolve_version({"harvester_version": ""}) == "v1.8.0")
+finally:
+    shc.releases.newest = _newest
+
+for bad in ("1.7.1", "latest", "v1.7"):
+    died = []
+    _die = shc.die
+    shc.die = lambda msg, _d=died: _d.append(msg) or sys.exit(1)
+    try:
+        shc._resolve_version({"harvester_version": bad})
+    except SystemExit:
+        pass
+    finally:
+        shc.die = _die
+    check("'{}' is refused as a version, by name".format(bad), died and bad in died[0])
+
 # ── _render_node_files(): real template rendering, "create" role ────────────
 with tempfile.TemporaryDirectory() as tmp:
     web_root = Path(tmp)
@@ -312,7 +339,99 @@ check("cluster_cfg's hypervisor_host overrides lab_creation.cfg's REMOTE_HOST",
 check("cluster_cfg's hypervisor_virt_srv overrides lab_creation.cfg's VIRT_SRV",
       override_virt_srv == "qemu+ssh://root@nuc6.mydemo.lab/system")
 
-# A failed virt-install must die(), not silently continue.
+# ── _create_iso_vm(): boots the release kernel with the ISO attached, then comes off it ──
+# The release kernel and initrd are published assets, so nothing is extracted from the ISO. The installer powers
+# the node off when it is done, and the domain then has to be taken off that kernel or it would install again.
+captured_calls.clear()
+shc.run_libvirt_tool = _fake_run_libvirt_tool
+# reset_to_disk_boot() lives in lab_creation and drives libvirt through lab_creation's own run_libvirt_tool, so
+# that one is stood in for as well; otherwise the test would really try to reach a hypervisor over SSH.
+_real_run_libvirt_tool = lc.run_libvirt_tool
+lc.run_libvirt_tool = _fake_run_libvirt_tool
+_media = ("/srv/iso/harvester-v1.7.1-amd64.iso", "/srv/iso/harvester-v1.7.1-vmlinuz-amd64",
+          "/srv/iso/harvester-v1.7.1-initrd-amd64")
+shc._create_iso_vm(_CREATE_NODE, vm_cluster_cfg,
+                   {"REMOTE_HOST": "hv1.mydemo.lab", "VM_IMG_LOC": "/var/lib/libvirt/images"},
+                   "http://10.0.0.1/config-harvester1.mydemo.lab.yaml", _media)
+_binaries = [c[0] for c in captured_calls]
+_install = next(c for c in captured_calls if c[0] == "virt-install")
+_iso_args = _install[3]
+_boot = _iso_args[_iso_args.index("--boot") + 1]
+check("_create_iso_vm boots the published kernel and initrd directly, not files pulled out of the ISO",
+      "kernel=/srv/iso/harvester-v1.7.1-vmlinuz-amd64" in _boot
+      and "initrd=/srv/iso/harvester-v1.7.1-initrd-amd64" in _boot)
+check("_create_iso_vm boots without Secure Boot, as the netboot path does, via the explicit OVMF files",
+      "loader=/usr/share/qemu/ovmf-x86_64-code.bin" in _boot and "uefi," in _boot)
+check("_create_iso_vm passes the unattended install arguments on the kernel command line",
+      "harvester.install.automatic=true" in _boot and "harvester.install.powerOff=true" in _boot
+      and "config_url=http://10.0.0.1/config-harvester1.mydemo.lab.yaml" in _boot)
+check("_create_iso_vm attaches the ISO as a read-only cdrom, which is where the installer reads from",
+      any("path=/srv/iso/harvester-v1.7.1-amd64.iso" in a and "device=cdrom" in a and "readonly=on" in a
+          for a in _iso_args))
+check("_create_iso_vm gives the node its own disk to install onto",
+      any("harvester1.mydemo.lab.qcow2" in a and "boot.order=1" in a for a in _iso_args))
+check("_create_iso_vm sets no netboot order on the network device, since nothing netboots here",
+      not any("boot.order=2" in a for a in _iso_args))
+check("_create_iso_vm waits for the installer to finish", "--wait" in _iso_args and "-1" in _iso_args)
+check("_create_iso_vm then takes the domain off the installer kernel and starts it on its disk",
+      any(c[0] == "virt-xml" and "kernel=,initrd=,cmdline=,hd" in c[3] for c in captured_calls)
+      and any(c[0] == "virsh" and "start" in c[3] for c in captured_calls))
+check("_create_iso_vm stops the domain before editing it, or the edit would not take effect on the next start",
+      _binaries.index("virsh") < _binaries.index("virt-xml"))
+
+captured_calls.clear()
+shc.run_libvirt_tool = lambda b, h, s, a, **k: lc.subprocess.CompletedProcess(args=[], returncode=1)
+try:
+    shc._create_iso_vm(_CREATE_NODE, vm_cluster_cfg, {"REMOTE_HOST": "hv1"}, "http://x/c.yaml", _media)
+    check("a failed ISO install raises SystemExit via die()", False)
+except SystemExit:
+    check("a failed ISO install raises SystemExit via die()", True)
+
+# The install can succeed and the domain still be left on its installer kernel, which would install it again on
+# every boot. That has to be a failure, not a warning.
+captured_calls.clear()
+shc.run_libvirt_tool = _fake_run_libvirt_tool
+lc.run_libvirt_tool = lambda b, h, s, a, **k: lc.subprocess.CompletedProcess(
+    args=[], returncode=1 if b == "virt-xml" else 0)
+try:
+    shc._create_iso_vm(_CREATE_NODE, vm_cluster_cfg, {"REMOTE_HOST": "hv1"}, "http://x/c.yaml", _media)
+    check("a domain left on its installer kernel raises SystemExit via die()", False)
+except SystemExit:
+    check("a domain left on its installer kernel raises SystemExit via die()", True)
+lc.run_libvirt_tool = _real_run_libvirt_tool
+shc.run_libvirt_tool = _fake_run_libvirt_tool
+
+# ── _fetch_iso_assets(): the three files an ISO install boots from, verified ──
+fetched_images = []
+
+
+def _fake_fetch_source_image(host, iso_loc, image, url, digest="", digest_url="", algo="sha256"):
+    fetched_images.append((host, iso_loc, image, url, digest_url, algo))
+    return "downloaded"
+
+
+shc.fetch_source_image = _fake_fetch_source_image
+_iso_paths = shc._fetch_iso_assets(dict(_CLUSTER_CFG, harvester_version="v1.9.1"),
+                                   {"REMOTE_HOST": "hv1.mydemo.lab", "ISO_LOC": "/srv/sources"})
+check("_fetch_iso_assets stages exactly the ISO, the kernel and the initrd",
+      [i[2] for i in fetched_images] == ["harvester-v1.9.1-amd64.iso", "harvester-v1.9.1-vmlinuz-amd64",
+                                         "harvester-v1.9.1-initrd-amd64"])
+check("_fetch_iso_assets does not stage the squashfs, which only a netboot install fetches",
+      not any("squashfs" in i[2] for i in fetched_images))
+check("_fetch_iso_assets puts them on the hypervisor, in its source directory",
+      all(i[0] == "hv1.mydemo.lab" and i[1] == "/srv/sources" for i in fetched_images))
+check("_fetch_iso_assets verifies each one against the sha512 the project publishes",
+      all(i[5] == "sha512" and i[4].endswith("harvester-v1.9.1-amd64.sha512") for i in fetched_images))
+check("_fetch_iso_assets returns their paths on the hypervisor",
+      _iso_paths == ("/srv/sources/harvester-v1.9.1-amd64.iso", "/srv/sources/harvester-v1.9.1-vmlinuz-amd64",
+                     "/srv/sources/harvester-v1.9.1-initrd-amd64"))
+try:
+    shc._fetch_iso_assets(dict(_CLUSTER_CFG, harvester_version="v1.9.1"), {})
+    check("_fetch_iso_assets refuses to stage anything with no hypervisor to stage it on", False)
+except SystemExit:
+    check("_fetch_iso_assets refuses to stage anything with no hypervisor to stage it on", True)
+
+# A failed virt-install must die(), not silently continue.# A failed virt-install must die(), not silently continue.
 captured_calls.clear()
 
 

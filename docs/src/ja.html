@@ -3,7 +3,7 @@
 <ul>
 <li><strong>1 つのファイル、1 つのコマンド。</strong>VM、Kubernetes クラスター（RKE2 または K3s）、アドオンを宣言的に記述します。<code>setup_lab.py</code> が依存関係の順に構築するので、<code>virt-install</code> や Ansible を手動で実行する必要はありません。</li>
 <li><strong>ホームラボでもクラウドでも同じ定義。</strong>ラボの VM は自前の KVM ホスト、Harvester HCI、または AWS、Google Cloud、Alibaba Cloud、Hetzner、Scaleway、UpCloud、OVHcloud、Exoscale で実行されます。ラボは複数の KVM ホストにまたがることができ、<a href="#cross-cloud-wireguard-overlay">クラウド間 WireGuard オーバーレイ</a>によって 1 つのラボで複数のクラウドや拠点を組み合わせられます。</li>
-<li><strong><span data-addon-count>108</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
+<li><strong><span data-addon-count>109</span> 個の既製アドオン。</strong>Rancher、Longhorn、NeuVector、Harbor、Keycloak、Jenkins、Argo CD、SUSE Multi-Linux Manager/Uyuni、Nextcloud などに加え、セキュリティトレーニング用に意図的に脆弱にしたデモアプリもあります。</li>
 <li><strong>コードに追従する Web UI。</strong><a href="#web-ui-lab-builder">lab-builder</a> はアドオン自身のスキーマから各フォームを生成するため、スクリプトに追加したフィールドはフロントエンドを変更しなくても UI に表示されます。</li>
 <li><strong>差し替え可能なプロビジョニング。</strong>SLE Micro には Ignition と Combustion、openSUSE と Ubuntu には cloud-init、古いイメージには <code>virt-customize</code>、またはインストーラー ISO からの自動インストール（AutoYaST、Kickstart、Preseed、AutoInstall）を使います。</li>
 <li><strong>認証情報はラボファイルの外に。</strong>クラウドやサービスの認証情報は、アカウントごとの暗号化ファイルに保存できます（Argon2id で鍵を導出し、AES-256-GCM と ChaCha20-Poly1305 をカスケードで適用）。</li>
@@ -498,7 +498,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web UI（lab-builder）</h2>
-<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。</p>
+<p><code>lab.json</code> ファイルをブラウザーで設計するツールで、<strong>実行時にプロジェクト自身の Python ライブラリを調べます</strong>。どのアドオンについても固定の知識を持っていません。コンポーネントを選ぶと、そのスキーマから直接フォームが生成されます。スクリプトにフィールドを追加すれば、フロントエンドを一切変更せずに UI に表示されます。 開発中としてマークされたアドオン（<code>PLUGIN</code> の <code>status</code>。<a href="addons.html">アドオンガイド</a>を参照）には「under construction」バッジが付きます。バッジにマウスを重ねると、まだ動作しない点が表示されます。警告付きで、追加も実行もできます。 Lab パネルの <strong>Simplify</strong> は代わりに 4〜5 個の質問をして、その答えからラボを組み立てます。どこに作るかは必ず尋ね、アドレスは一切尋ねず、各ノードは搭載する製品自身のドキュメントに基づいて見積もられます。ログインは不要で、ワークフローの一つはサンプルラボから始まります (<a href="webui.html#simplify--the-step-by-step-builder">Simplify</a> を参照)。クラスタの <code>clu_rel</code> は、選んだディストリビューションが実際に公開しているリリースを提示します。各プロジェクト自身の git タグから 1 日に 1 回までの頻度で読み取り、それ以外のバージョンも手で入力できます。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -779,6 +779,63 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>Harvester クラスタは 4 つの方法で構築できます。どの方法も同じリリース資材から同じアプライアンスをインストールし、違うのはノードがインストーラーに到達する経路だけです。したがって、どの入口を使うかはノードがどこで動くかで決まります。</p>
+<table>
+<thead>
+<tr><th>ノードが動く場所</th><th>方法</th><th>構築するもの</th></tr>
+</thead>
+<tbody>
+<tr><td>KVM ハイパーバイザー</td><td><code>pxe</code>（既定）: ネットワークブート。ハイパーバイザー側に何も置きません</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>KVM ハイパーバイザー</td><td><code>iso</code>: リリース ISO を各ノードに接続します。PXE も DHCP サービスも不要です</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>任意のクラウドバックエンド</td><td><code>image</code>: <code>SOURCE_IMAGE</code> で指定する、あらかじめ作成された Harvester イメージ</td><td>ラボ定義、<code>clu_type: &quot;harvester&quot;</code></td></tr>
+<tr><td>既存の Kubernetes クラスタ</td><td>Harvester の Helm チャート</td><td><code>harvester</code> アドオン</td></tr>
+</tbody>
+</table>
+<p><strong>ハイパーバイザー上。</strong> <code>setup_harvester_cluster.py</code> はラボ定義ではなく独自の単独設定ファイルを使い（<code>templates/harvester-cluster.json.example</code> に全キーがあります）、その <code>install_method</code> キーでここで使える 2 つの方法を選びます。<code>pxe</code> はインストーラーを HTTP で配信し、ハイパーバイザーには何も置きません。<code>iso</code> はリリースの ISO、カーネル、initrd を <code>ISO_LOC</code> に配置して各ノードをそこから起動します。PXE も DHCP サービスも不要ですが、リリースごとに 8 GB 超をハイパーバイザーへ転送します。各ファイルは Harvester プロジェクトが公開する sha512 で検証され、検証済みのコピーは二度と取得されません。その対象で使えない方法を指定した場合は警告し、使える方法に置き換えるので、ある対象向けに書いた設定でも別の対象で構築できます。バージョンは <code>harvester_version</code> から取り、省略すると Harvester プロジェクトが示す最新の安定版をインストールします。</p>
+<p><strong>クラウド上。</strong> <code>clu_type: &quot;harvester&quot;</code> を持つ <code>kclusters</code> エントリは、クラウドのインスタンスからクラスタを構築します。各ノードは <code>SOURCE_IMAGE</code> で指定した、あらかじめ作成された Harvester イメージで起動し（SUSE は公開していません。<a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> が Harvester ISO から AMI を作る手順を説明しています）、lab-in-a-box が user-data として渡す Harvester 設定から初回起動時に自分をインストールします。ファイル内の最初のノードがクラスタを作成し、残りはクラスタ VIP 経由で参加します。クラスタのバージョンは <code>clu_rel</code> に入れます。他のすべてのディストリビューションがバージョンを取るのと同じフィールドで、<code>v1.9.1</code> のようなリリースタグを指定します。ここではチャネル名は受け付けません。以下の例は AWS で、ネストした仮想化も有効にする必要があります。</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>ノード</strong>はクラウドバックエンドを使う必要があります。<code>aws</code> では <code>aws_nested_virtualization: &quot;true&quot;</code> と対応する <code>cloud_instance_type</code>（M7i/M8i/C7i/R7i/I7i ファミリ。<a href="#compute-backends_1">コンピュートバックエンド</a>を参照）、そして <code>SOURCE_IMAGE</code> に Harvester AMI の ID が必要です。AMI の最小ディスクは 250 GiB です。</li>
+<li><strong>クラスタのフィールド</strong>: <code>harvester_token</code>（必須。全ノードで共有）、<code>harvester_vip</code>（既定は <code>AWS_SUBNET_ID</code> の空きアドレスで、作成ノードのセカンダリプライベート IP として登録）、<code>harvester_mtu</code>（既定 1500。全ノードで同一）、<code>harvester_replica_count</code>（3 ノード未満では 1）、<code>harvester_device</code>（既定 <code>/dev/nvme0n1p6</code>。コミュニティ AMI の構成）、<code>harvester_ntp_servers</code>（既定は AWS の時刻サービス 169.254.169.123）、<code>harvester_config</code>（各ノードの Harvester 設定に最後にマージ）、<code>harvester_settings</code>（クラスタ起動後に適用する Harvester 設定）。ノード単位では <code>harvester_role</code>（default、management、worker、witness）。</li>
+<li><strong>アクセス</strong>: ノードは <code>rancher</code> ユーザー向けに自動化ノードの SSH 鍵を受け付け（Harvester は root の SSH を禁止しています）、パスワードはラボの <code>ROOT_PWD_HASH</code> です。セキュリティグループには 80、443、6443、9345 と自身のインスタンス間の全通信が許可されます。クラスタが起動すると <code>setup_lab.py</code> が UI のアドレス（<code>https://&lt;作成ノード&gt;/</code>）を表示し、kubeconfig を <code>/etc/lab_creation/harvester-&lt;クラスタ&gt;.kubeconfig</code> に保持します。</li>
+<li><strong>制限</strong>: VIP は作成ノードに留まります（AWS はセカンダリ IP を移動しないため、フェイルオーバーしません）。EC2 は他の MAC アドレスのフレームを破棄するため、Harvester の VM はブリッジした VLAN ネットワークを使えません。Harvester クラスタにはまだアドオンをインストールしません。各ノードの費用は、そのインスタンスタイプの時間単価に 250 GiB の EBS を加えたおおよその額です。</li>
+</ul>
+
+<h3 id="reusable-machine-images">再利用できるマシンイメージ</h3>
+<p>インストールに何時間もかかる製品は、一度だけインストールする価値があります。SUSE Multi-Linux Manager は 1 日以上かかる明確な例です。ノードに <code>keep_image</code> を与えると、その製品のイメージが既にあればそれからノードを構築し、なければ 1 つ保存します。</p>
+<pre><code class="language-json">"nodes": {
+  &quot;smlm1.mydemo.lab&quot;: { &quot;keep_image&quot;: &quot;smlm&quot;, &quot;keep_image_version&quot;: &quot;5.2&quot;, &quot;addons&quot;: [&quot;smlm&quot;] }
+}
+</code></pre>
+<p>最初の実行では通常どおり製品をインストールし、そのノードのアドオン、クラスタへの参加、<code>post_commands</code> がすべて終わった時点で、そのノード自身のディスクのイメージをクラウドに作成させます。以降の実行はそのイメージを見つけてそこから始めるので、インストールは毎回ではなく一度だけです。どちらのフィールドも <code>common</code> でも指定できます。ノードが自分の <code>keep_image</code> を指定した場合、<code>common</code> のバージョンは継承しません。継承すると、ある製品のイメージに別の製品のバージョンの名前が付いてしまいます。</p>
+<p>イメージの名前は <code>lab-in-a-box-&lt;製品&gt;-&lt;バージョン&gt;</code> で、後の実行はこれで見つけます。プロバイダーが許す場合はこのプロジェクトのものとしてタグやラベルを付けます。2 回目の実行は何も追加せず、何もしません。イメージが既にあるので、ノードはそれから構築され、再び取得されることはありません。イメージを保持できないバックエンドでは警告を出し、実行を失敗させるのではなく製品を再びインストールします。</p>
+<p>イメージを得る方法は 2 つあり、どちらになるかは製品が決めます。<strong>取得</strong>が既定で、すべてのクラウドバックエンドで動きます。通常の OS イメージから VM を作り、時間のかかるインストールを一度だけ実行し、その結果をクラウドがイメージにします。アップロードも変換も行いません。<strong>インポート</strong>は、動いている OS の上にはインストールできない製品、たとえば自前のインストーラーがディスクに書き込むアプライアンスのためのものです。ディスクをクラウドの外で作り、クラウドに登録します。すべてのプロバイダーができるわけではないので、各バックエンドが自分で宣言します。</p>
+<table>
+<thead>
+<tr><th>バックエンド</th><th>VM の取得</th><th>ディスクのインポート</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>可</td><td>可</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>可</td><td><strong>不可</strong>: どちらの API にもその操作がありません</td></tr>
+<tr><td>libvirt, harvester</td><td>不可</td><td>不可</td></tr>
+</tbody>
+</table>
+<p><code>lab_image.py</code> は同じことを特定のラボのバックエンドに対して手で行います。<code>find</code> は製品のイメージがあればそれを表示し、<code>capture</code> はノードを現状のままイメージにし、<code>import</code> はプロバイダーがオブジェクトストレージや URL から読むディスクを登録します。取得はプロバイダーが必要とする場合に VM を停止または再起動します。GCP では停止してから再び起動します。使用中のディスクから取ったイメージは、初回起動時に自分を修復しなければならないことがあるためです。</p>
+
 <h3 id="deploying-a-legacy-image-centos-7">古いイメージのデプロイ（CentOS 7）</h3>
 <p>CentOS 7（および同程度に古い既製の <code>.qcow2</code> イメージ）には Ignition/Combustion も
 cloud-init も組み込まれていないため、<code>config_method</code> は <code>virt_customize</code> にする必要があります
@@ -859,7 +916,7 @@ root パスワードを設定します。省略すると、cloud-init や Igniti
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>SOURCE_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。 値そのものも、それを宣言しているスキーマに照らして検査されます。IP アドレスになっていない <code>myip</code>、数値でない、または最小値を下回る <code>VM_MEM</code>、宣言された Kubernetes クラスタ種別のいずれでもない <code>clu_type</code> などです。各アドオンの <code>--validate</code> も、自身のフィールドとノードごとの上書きに対して同じ検査を行います。 手で書いたアドレスも、アロケーターが自ら選ぶアドレスに適用するのと同じ規則で検査されます。ラボの DNS が既に別の名前で保持しているアドレス、または自動化ノード自身のアドレスは、警告ではなくエラーです。そのノードを構築すれば、既存の名前が誤ったホストを指すことになるからです。単に ping に応答するだけのアドレスは警告のままで、自分自身の DNS レコードが既に与えているアドレスを要求するノードは競合ではありません。したがって既存のラボの再構築は従来どおり検証を通ります。</p>
+<p><code>setup_lab.py</code> は何かを行う前に自動でファイルを事前チェックします。誤った IP、存在しない <code>kcluster</code> の参照、<code>SOURCE_IMAGE</code> の欠落などは、途中で失敗するのではなく、何も作成しないまま検出されて表示されます（<code>✗ Preflight FAILED — N error(s)</code>）。問題のないファイルでは <code>✓ Preflight passed</code> と表示され、そのまま構築に進みます。 値そのものも、それを宣言しているスキーマに照らして検査されます。IP アドレスになっていない <code>myip</code>、数値でない、または最小値を下回る <code>VM_MEM</code>、宣言された Kubernetes クラスタ種別のいずれでもない <code>clu_type</code> などです。各アドオンの <code>--validate</code> も、自身のフィールドとノードごとの上書きに対して同じ検査を行います。 手で書いたアドレスも、アロケーターが自ら選ぶアドレスに適用するのと同じ規則で検査されます。ラボの DNS が既に別の名前で保持しているアドレス、または自動化ノード自身のアドレスは、警告ではなくエラーです。そのノードを構築すれば、既存の名前が誤ったホストを指すことになるからです。単に ping に応答するだけのアドレスは警告のままで、自分自身の DNS レコードが既に与えているアドレスを要求するノードは競合ではありません。したがって既存のラボの再構築は従来どおり検証を通ります。 ノード上で動かす製品が求める値を下回る場合も警告になります。数値は各製品のドキュメントから取っており (<code>libs/sizing.py</code> が出典ページも保持しています)、4 vCPU と 16 GB を下回る Rancher ノード、4 コアと 16 GB を下回る Multi-Linux Manager サーバー、専用ディスクのない Longhorn ノードが対象です。ブロックはしません。デモ用のラボが推奨値未満で動かすのは自由ですが、そうでなければ Pod が配置できなくなるまで誰も指摘しないからです。</p>
 <p>処理の順序：両ノードを DNS に登録 → 両 VM を作成（QCOW2 イメージをコピーし、Combustion ファイルを生成して起動し、SSH を待つ）→ <code>node101</code> にサーバーとして、続いて <code>node102</code> にエージェントとして RKE2 をインストール → クラスターの管理ノード（<code>mgm_node</code>、デフォルトは最初のサーバーノードで、ここでは <code>node101</code>）に <code>rancher</code> と <code>longhorn</code> をインストール。Rancher 付きの 2 ノードクラスターは通常 15～25 分かかり、その大半は RKE2 の起動と Rancher の Helm インストールです。</p>
 <ol start="3">
 <li><strong>DNS の解決を確認します</strong>（自分のデスクトップを<a href="#step-5--point-your-client-dns-at-the-automation-vm">オートメーション VM の DNS に向けた</a>後で）：</li>
@@ -1453,6 +1510,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
 <td>Antseed: ノード上の P2P な AI 推論マーケットプレイス。任意のツールがベース URL として使える購入側プロキシ、または販売側。Antseed Desktop も含みます</td>
+</tr>
+<tr>
+<td><a href="https://buffer.com/"><code>buffer</code></a></td>
+<td>Buffer (buffer.com) をノードのコーディングエージェントに接続します。ラボが指定したエージェントにリモート MCP サーバーを登録し、API を直接呼ぶもののために API キーをノードに置きます。Buffer は自己ホスト版を公開していないため、何も自己ホストしません。ツールには実際の投稿の作成、編集、削除が含まれるので、<code>buffer_agents</code> で指定しない限りエージェントは接続されません</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>

@@ -312,6 +312,21 @@ with mock.patch.object(admin, "helper", lambda args, stdin=None: {"args": args, 
     saved = admin.dispatch("create", "POST", {}, {"filename": "mylab.json"})
     check("a saved lab is still created by its file name", saved["args"] == ["lab-create", "mylab.json"])
 
+# ── a config file the caller cannot read counts as no config file ────────────
+# /etc/lab_creation.cfg is root-only on a real automation node and the lab-builder's web process is not root:
+# opening it raised PermissionError and the whole catalogue failed, instead of listing the shipped examples.
+import primary  # noqa: E402
+
+with tempfile.NamedTemporaryFile(suffix=".cfg") as cfg:
+    cfg.write(b"EXAMPLE_LABS_DIR=/nowhere\n")
+    cfg.flush()
+    with mock.patch.object(primary.os, "access", return_value=False):
+        check("an unreadable config file is reported as no config file",
+              primary.config_file_exists([cfg.name]) is False)
+        check("so the examples are listed from what is shipped, with no config read",
+              [e["name"] for e in lab_examples.catalogue()] == [e["name"] for e in items])
+    check("a readable config file is still found", primary.config_file_exists([cfg.name]) is True)
+
 # ── the UI offers Launch beside Open, for a logged-in operator only ───────────
 app_js = (_REPO / "webui" / "htdocs" / "app.js").read_text()
 check("the dialog offers Launch only where the server actions work and someone is logged in",

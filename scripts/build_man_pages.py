@@ -66,6 +66,7 @@ COMMANDS = {
     "dns_sync.py": 1,
     "reconcile_lab.py": 1,
     "lab_watch.py": 1,
+    "lab_image.py": 1,
     "setup_credentials.py": 1,
     "build_lab_usb.py": 1,
     "refresh_hypervisor_status.py": 1,
@@ -78,8 +79,10 @@ COMMANDS = {
     "lab-builder-passwd": 8,
 }
 
-# A command deployed under a different file name than the one it is installed as (install_automation_node_scripts.sh
-# renames the helper); the page is named after the installed command, built from this file.
+# A command whose source file is named differently from the command itself (install_automation_node_scripts.sh
+# renames the helper as it deploys it); the page is named after the command, built from this file. It applies to a
+# repository checkout: in an installed tree the file already carries the command's own name, which _help_text()
+# falls back to.
 SOURCE_NAMES = {"lab-builder-helper": "lab_builder_helper.py"}
 
 DEFAULT_OUTPUT_DIR = Path("/usr/local/share/man")
@@ -117,6 +120,9 @@ def command_help(command: str, source_dir: Path) -> str:
     message would be worse than no page.
     """
     path = source_dir / SOURCE_NAMES.get(command, command)
+    if not path.is_file():
+        # An installed tree holds it under the command's own name; only a checkout uses the source name.
+        path = source_dir / command
     if not path.is_file():
         raise RuntimeError("{} does not exist".format(path))
     argv = [str(path), "--help"]

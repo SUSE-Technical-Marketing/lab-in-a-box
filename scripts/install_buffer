@@ -1,0 +1,238 @@
+#!/usr/bin/env python3.11
+# Part of lab-in-a-box. Connects the coding agents on a lab node to Buffer (buffer.com), a hosted social-media
+# management service, through Buffer's own remote MCP server, and leaves its API key on the node for anything
+# that calls the API directly.
+# Author/s: Raul Mahiques
+# License: GPLv3
+#
+# References: https://developers.buffer.com/guides/integrations/mcp.html and
+# https://developers.buffer.com/guides/authentication.html.
+#
+# NOTHING IS INSTALLED ON THE NODE BY THIS ADD-ON, because there is nothing to install: Buffer is a hosted
+# service with no self-hosted or open-source edition. What a lab can do is make the node's own agents able to
+# drive it, which is what this does. Two facts from Buffer's own documentation shape it:
+#   - the MCP server is remote, at MCP_URL below, and it is the only Buffer MCP endpoint. Clients connect to it
+#     over OAuth, so the first use of a Buffer tool in an agent opens Buffer's own consent flow and this add-on
+#     never sees a Buffer credential for it.
+#   - the API is a GraphQL endpoint at API_URL, authenticated with "Authorization: Bearer <key>", where the key
+#     comes from Buffer's own Settings -> API page. That key is this add-on's only secret, written for the users
+#     it installs for and used by whatever on the node calls the API without an agent.
+#
+# The MCP tools Buffer's server exposes are its account, channels, posts (including creating, editing and
+# deleting them), ideas and post templates. create_post, edit_post and delete_post act on real published
+# accounts, so an agent given this server can post publicly: buffer_agents defaults to none for that reason, and
+# a lab has to name the agents it means.
+#
+# Schema version: 1.0
+#
+# JSON section: "buffer" — Buffer (buffer.com) for a node's coding agents
+#   buffer_agents       : which coding agents on this node to connect, as a list of
+#                         claude-code, copilot-cli, gemini-cli, codex, cursor, opencode, or the single string
+#                         "all". Empty (the default) connects none: Buffer's MCP tools can publish to real
+#                         social accounts, so this is opt-in per lab.
+#   buffer_users        : list of existing accounts on the node to install for. An agent's MCP registration and
+#                         the API key both belong to one account's home. (default: root)
+#   buffer_api_key      : a Buffer API key, from Settings -> API in Buffer. Written to the node as BUFFER_TOKEN
+#                         for anything calling the API directly. The MCP server does not use it: it authenticates
+#                         over OAuth. Unset, nothing is written and only the MCP route works.
+#   buffer_account      : name of an encrypted credential file of kind "buffer" under
+#                         /etc/lab_creation/credentials/ holding buffer_api_key, instead of putting the key in
+#                         the lab file. One such file in the store is found without naming it.
+#   buffer_mcp_url      : the MCP endpoint, for an installation that reaches Buffer through a proxy of its own
+#                         (default: https://mcp.buffer.com/mcp)
+#   buffer_server_name  : the name the MCP server is registered under in each agent (default: buffer)
+#   buffer_path         : "true"/"false" — also put BUFFER_TOKEN in each user's ~/.bashrc, so an interactive
+#                         shell has it (default: true)
+
+__version__ = "__LABVERSION__"
+
+PLUGIN = {
+    "name": "buffer",
+    "targets": ["vm", "baremetal"],
+    "layers": ["os-native"],
+    "requires_kubernetes": None,
+    "requires_cluster": [],
+    "aux_services": [],
+    "check": True,
+}
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().parent.parent / "libs")):
+    if Path(_candidate).is_dir() and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+
+import addon_common as ac  # noqa: E402
+import agents  # noqa: E402
+import k8s  # noqa: E402
+import primary  # noqa: E402
+from lab_creation import ssh_run, log, warn  # noqa: E402
+
+# Buffer's own published endpoints. The MCP page states this is the only Buffer MCP endpoint.
+MCP_URL = "https://mcp.buffer.com/mcp"
+API_URL = "https://api.buffer.com"
+
+ALL = "all"
+DEFAULT_SERVER_NAME = "buffer"
+TOKEN_FILE = ".config/buffer/token.env"
+
+
+def _get(cfg, field, default=""):
+    """cfg["buffer_<field>"], falling back to `default` for an unset or empty value."""
+    value = cfg.get("buffer_{}".format(field))
+    return default if value in ("", None) else value
+
+
+def agents_of(cfg):
+    """
+    The agents this configuration asks for, in AGENT_COMMANDS order so a run is the same whatever order a lab
+    wrote them in. "all" is every one of them, and nothing named is none: these tools can publish publicly.
+    """
+    value = cfg.get("buffer_agents")
+    if value in ("", None):
+        return []
+    if isinstance(value, str):
+        value = [ALL] if value.strip().lower() == ALL else [value]
+    wanted = {str(v).strip().lower() for v in value}
+    if ALL in wanted:
+        return list(agents.AGENT_COMMANDS)
+    return [name for name in agents.AGENT_COMMANDS if name in wanted]
+
+
+def unknown_agents(cfg):
+    """The names in buffer_agents that are not agents this add-on can connect."""
+    value = cfg.get("buffer_agents")
+    if value in ("", None):
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return sorted({str(v).strip().lower() for v in value}
+                  - set(agents.AGENT_COMMANDS) - {ALL})
+
+
+def users_of(cfg):
+    """The accounts on the node to install for, root when the lab names none."""
+    value = _get(cfg, "users", ["root"])
+    if isinstance(value, str):
+        value = [value]
+    return [str(u).strip() for u in value if str(u).strip()]
+
+
+def mcp_definition(cfg):
+    """
+    The server definition an agent is given: a remote HTTP endpoint, with no credential in it. Buffer's MCP
+    clients authenticate over OAuth, so a token here would be both unused and needlessly on the node's process
+    list while the registration runs.
+    """
+    return {"type": "http", "url": str(_get(cfg, "mcp_url", MCP_URL))}
+
+
+def api_key(cfg):
+    """
+    The API key this lab gives: from a "buffer" credential file when the store holds one, else from the lab
+    file's own buffer_api_key; "" when it gives neither.
+    """
+    creds = ac.resolve_credential(cfg, "buffer", {"buffer_api_key": "buffer_api_key"},
+                                  account_key="buffer_account") or {}
+    return str(creds.get("buffer_api_key") or "")
+
+
+def _validate(v):
+    cfg = v.definition.get("buffer", {}) or {}
+    for name in unknown_agents(cfg):
+        v.errors.append("[ERROR] buffer.buffer_agents: '{}' is not an agent this add-on can connect — use one "
+                        "of {}, or \"all\"".format(name, ", ".join(sorted(agents.AGENT_COMMANDS))))
+    value = cfg.get("buffer_users")
+    if value not in ("", None) and not isinstance(value, (list, str)):
+        v.errors.append("[ERROR] buffer.buffer_users must be a list of account names on the node")
+    v.vbool("buffer", "buffer_path")
+    url = str(_get(cfg, "mcp_url", MCP_URL))
+    if not url.startswith(("http://", "https://")):
+        v.errors.append("[ERROR] buffer.buffer_mcp_url='{}': must be an http:// or https:// URL".format(url))
+
+
+def write_api_key(hostname, user, key, on_path):
+    """Leave `key` on the node as BUFFER_TOKEN for `user`, readable by that account only."""
+    body = "BUFFER_TOKEN={}\n".format(key)
+    ssh_run(hostname, agents.as_user(user, 'mkdir -p "$HOME/{}" && umask 077 && cat > "$HOME/{}"'.format(
+        shlex.quote(str(Path(TOKEN_FILE).parent)).strip("'"), TOKEN_FILE)), input_text=body)
+    log("  the API key is at ~{}/{} for '{}'".format("" if user == "root" else "/" + user, TOKEN_FILE, user))
+    if on_path:
+        line = '[ -r "$HOME/{}" ] && . "$HOME/{}"'.format(TOKEN_FILE, TOKEN_FILE)
+        quoted = shlex.quote(line)
+        ssh_run(hostname, agents.as_user(user, 'grep -qxF {0} "$HOME/.bashrc" 2>/dev/null || printf "%s\\n" {0} '
+                                               '>> "$HOME/.bashrc"'.format(quoted)))
+
+
+def setup_buffer(hostname, cfg):
+    """Register Buffer's MCP server with the agents this lab names, and write the API key it gives."""
+    wanted = agents_of(cfg)
+    key = api_key(cfg)
+    on_path = str(_get(cfg, "path", "true")).lower() == "true"
+    server_name = str(_get(cfg, "server_name", DEFAULT_SERVER_NAME))
+    definition = mcp_definition(cfg)
+
+    if not wanted and not key:
+        warn("buffer on '{}': no agents named and no API key, so there is nothing to do".format(hostname))
+        return
+
+    for user in users_of(cfg):
+        if key:
+            write_api_key(hostname, user, key, on_path)
+        for name in wanted:
+            command = agents.AGENT_COMMANDS[name]
+            if not agents.has_command(hostname, command, user):
+                warn("buffer on '{}': '{}' is not on the node for '{}', so it was not connected".format(
+                    hostname, command, user))
+                continue
+            if name == "claude-code":
+                agents.register_mcp_servers(hostname, user, {server_name: definition})
+            else:
+                # Every other agent registers a remote MCP server through its own CLI, and their subcommands are
+                # not the same; rather than guess one, the endpoint is printed for whoever sets that agent up.
+                log("  '{}' on '{}' takes the MCP server itself: add {} as '{}'".format(
+                    command, hostname, definition["url"], server_name))
+    log("- Buffer's MCP tools act on real social accounts: creating, editing and deleting posts are among them")
+
+
+def _check(chk):
+    """That the agents this lab named have the server, and that the API key is where it was written."""
+    if "buffer" not in chk.definition:
+        chk.ok("this lab has no buffer section, so there is nothing to check")
+        return
+    cfg = chk.definition.get("buffer", {}) or {}
+    server_name = str(_get(cfg, "server_name", DEFAULT_SERVER_NAME))
+    for user in users_of(cfg):
+        if "claude-code" in agents_of(cfg) and agents.has_command(chk.vm_name, "claude", user):
+            listed = ssh_run(chk.vm_name, agents.as_user(user, agents.claude_command("mcp list")),
+                             check=False, capture=True)
+            if server_name in (listed.stdout or ""):
+                chk.ok("Claude Code has the '{}' MCP server for '{}'".format(server_name, user))
+            else:
+                chk.fail("the '{}' MCP server for '{}'".format(server_name, user), "registered", "absent")
+        if api_key(cfg):
+            found = ssh_run(chk.vm_name, agents.as_user(user, 'test -r "$HOME/{}"'.format(TOKEN_FILE)),
+                            check=False, capture=True)
+            if found.returncode == 0:
+                chk.ok("the API key is on the node for '{}'".format(user))
+            else:
+                chk.fail("the API key for '{}'".format(user), "written", "absent")
+
+
+def main():
+    ac.handle_common_args(__file__, __version__, validate_fn=_validate, plugin=PLUGIN, check_fn=_check)
+
+    if len(sys.argv) < 2:
+        print("Usage: {} <lab-file>".format(Path(sys.argv[0]).name))
+        sys.exit(1)
+    definition = primary.load_definition(sys.argv[1])
+    env_vm_name = os.environ.get("_vm_name") or None
+    for vm_name, _ssh_cmd in k8s.addon_nodes(definition, "buffer", vm_name=env_vm_name):
+        setup_buffer(vm_name, k8s.addon_node_config(definition, "buffer", vm_name))
+
+
+if __name__ == "__main__":
+    main()

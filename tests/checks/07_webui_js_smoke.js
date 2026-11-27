@@ -12,11 +12,37 @@ const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
 function makeElement(tag) {
   return {
     tagName: String(tag).toUpperCase(), className: "", textContent: "", childNodes: [], dataset: {},
+    style: {}, value: "", listeners: {},
     get childElementCount() { return this.childNodes.length; },
+    // A real <select> exposes its <option> children as .options, which applyFieldDefault() walks.
+    get options() { return this.childNodes.filter((c) => c && c.tagName === "OPTION"); },
+    // Only the one use app.js makes of innerHTML: assigning "" to empty an element.
+    get innerHTML() { return ""; },
+    set innerHTML(value) { if (String(value) === "") this.childNodes = []; },
     appendChild(child) { this.childNodes.push(child); return child; },
     removeChild(child) { this.childNodes = this.childNodes.filter((c) => c !== child); return child; },
-    setAttribute() {}, addEventListener() {},
-    querySelectorAll: () => [], querySelector: () => null,
+    setAttribute() {},
+    // Listeners are recorded rather than dropped, so a check can drive a control the way a person does:
+    // choosing a value and letting the change event do its work. fire() is this stub's dispatchEvent.
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    fire(type) { (this.listeners[type] || []).forEach((fn) => fn({ target: this })); },
+    // Enough of a selector engine for "input" and "input, select": every descendant of those tags. The real
+    // one matches far more, and a check that needs more than this would be testing the stub.
+    querySelectorAll(sel) {
+      const want = String(sel).split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
+      const out = [];
+      const visit = (node) => {
+        (node.childNodes || []).forEach((child) => {
+          if (child && child.tagName) {
+            if (want.indexOf(child.tagName) >= 0) out.push(child);
+            visit(child);
+          }
+        });
+      };
+      visit(this);
+      return out;
+    },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   };
 }
 
@@ -40,6 +66,8 @@ const sandbox = {
   },
   window: { addEventListener: () => {} },
   localStorage: makeLocalStorage(),
+  // A page always has one; serverLock() reads the scheme off it to decide whether the login endpoint can work.
+  location: { protocol: "https:", search: "" },
   console, URL, URLSearchParams, TextDecoder, atob,
 };
 vm.createContext(sandbox);
@@ -689,13 +717,227 @@ async function urlParamChecks() {
   });
 }
 
-Promise.all([urlParamChecks(), credentialChecks]).then(() => {
+// $() resolves through document.querySelector, so a check that drives real UI code needs one. Each selector
+// gets its own element, remembered, with the <dialog> methods app.js calls on them.
+function stubNodes() {
+  const nodes = {};
+  sandbox.document.querySelector = (sel) => {
+    if (!nodes[sel]) {
+      const node = makeElement("div");
+      node.open = false;
+      node.hidden = false;
+      node.required = false;
+      node.placeholder = "";
+      node.showModal = () => { node.open = true; };
+      node.close = () => { node.open = false; };
+      nodes[sel] = node;
+    }
+    return nodes[sel];
+  };
+  return nodes;
+}
+
+// -- Simplify opens the dialog, and only when the server answered ----------
+// The button went dead once because openWizard() called a helper that does not exist: nothing throws at parse
+// time, node --check passes, and the click does nothing. So this runs the real click through the real helpers.
+const wizardChecks = async () => {
+  const nodes = stubNodes();
+  const answer = { workflows: [{ name: "vm", title: "VMs", description: "plain virtual machines" }] };
+  let asked = "";
+  sandbox.fetch = async (url) => {
+    asked = String(url);
+    return { ok: true, status: 200, json: async () => answer };
+  };
+  await sandbox.openWizard();
+  check("Simplify opens the step-by-step dialog", nodes["#wizardPanel"].open === true);
+  check("...having asked the public API for the workflows, so no login is demanded",
+        asked.startsWith("api?") && asked.includes("action=wizard"));
+  check("...and rendered them into the panel", nodes["#wizardBody"].childNodes.length > 0);
+  sandbox.closeWizard();
+  check("closing it leaves the dialog shut", nodes["#wizardPanel"].open === false);
+
+  sandbox.fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: "nope" }) });
+  await sandbox.openWizard();
+  check("a server that refuses leaves the dialog shut rather than opening an empty one",
+        nodes["#wizardPanel"].open === false);
+};
+
+// -- the version a cluster installs is offered per distribution -------------
+// clu_rel is one field serving four distributions that name their releases differently, so a single list would
+// be wrong for three of them. The browser is the only side that knows which clu_type a row chose, so it is the
+// side that narrows the list. Free text has to survive, or a release the server has not listed yet becomes
+// uninstallable through the form.
+const releaseChoiceChecks = () => {
+  const options = {
+    harvester: ["v1.9.1", "v1.8.2"],
+    rke2: ["stable", "latest", "v1.37.2+rke2r1"],
+  };
+  const container = makeElement("div");
+  container.appendChild(sandbox.fieldRow(
+    { name: "clu_type", type: "string", enum: ["rke2", "k3s", "vanilla", "harvester"] }, [], true));
+  container.appendChild(sandbox.fieldRow(
+    { name: "clu_rel", type: "string", enum_by: { on: "clu_type", options } }, [], true));
+  sandbox.wireDependentFields(container);
+
+  const inputs = container.querySelectorAll("input, select");
+  const clu_type = inputs.find((i) => i._field && i._field.name === "clu_type");
+  const value = inputs.find((i) => i._field && i._field.name === "clu_rel");
+  const select = container.querySelectorAll("select").find((s) => s.className === "enum-by-select");
+  const text = container.querySelectorAll("input").find((i) => i.className === "enum-by-custom");
+  const listed = () => select.childNodes.map((o) => o.value).filter((v) => v && v !== "CUSTOM_VALUE");
+
+  check("the version field is a dependent control, not a plain text box",
+        !!select && !!text && value._dependsOn === "clu_type");
+
+  clu_type.value = "harvester";
+  clu_type.fire("change");
+  check("choosing SUSE Virtualization offers its own releases",
+        JSON.stringify(listed()) === JSON.stringify(options.harvester));
+  check("...and not another distribution's", listed().indexOf("v1.37.2+rke2r1") < 0);
+
+  clu_type.value = "rke2";
+  clu_type.fire("change");
+  check("choosing rke2 offers its channels first, then its releases",
+        JSON.stringify(listed()) === JSON.stringify(options.rke2));
+
+  select.value = "v1.37.2+rke2r1";
+  select.fire("change");
+  check("picking a release is what the form submits", value.value === "v1.37.2+rke2r1");
+
+  select.value = "CUSTOM_VALUE";
+  select.fire("change");
+  text.value = "v1.99.0+rke2r1";
+  text.fire("input");
+  check("a release the server never listed can still be typed in", value.value === "v1.99.0+rke2r1");
+  check("...and the free-text box is shown once it is being used", text.style.display === "block");
+
+  clu_type.value = "k3s";
+  clu_type.fire("change");
+  check("a distribution the server listed nothing for leaves the field typeable rather than empty",
+        listed().length === 0 && !!text);
+};
+
+// -- the step builder shows where you are and what the lab is becoming ------
+// The questions used to arrive one after another with nothing to say how many there were or what had been
+// answered. The strip across the top and the box beside the question are the whole of that, so they are driven
+// here rather than asserted on source text.
+// app.js declares its wizard state as a top-level const, which a vm context does not expose on the sandbox
+// object, so it is reached by evaluating inside that context rather than through it.
+const setWiz = (patch) => vm.runInContext(
+  "Object.assign(wiz, " + JSON.stringify(patch) + ")", sandbox);
+const getWiz = (expr) => vm.runInContext("JSON.stringify(" + expr + ")", sandbox);
+
+const stepBuilderChecks = () => {
+  const nodes = stubNodes();
+  setWiz({ workflow: "kubernetes", index: 2, answers: { distribution: "rke2", nodes: "3" }, steps: [
+    { name: "distribution", title: "Distribution", kind: "choice",
+      options: [{ value: "rke2", label: "RKE2" }, { value: "k3s", label: "K3s" }] },
+    { name: "nodes", title: "Nodes", kind: "count", min: 1, max: 9 },
+    { name: "backend", title: "Where", kind: "choice",
+      options: [{ value: "host:nuc6", label: "nuc6.mydemo.lab" }] },
+    { name: "addons", title: "Add-ons", kind: "multi",
+      options: [{ value: "rancher", label: "Rancher" }, { value: "longhorn", label: "SUSE Storage" }] },
+  ] });
+
+  sandbox.renderWizardStrip(true);
+  const strip = nodes["#wizardSteps"];
+  const chips = strip.childNodes;
+  check("every question is a step in the strip", chips.length === 4);
+  check("the strip names the questions", chips.map((c) => c.childNodes[1].textContent).join("|")
+        === "Distribution|Nodes|Where|Add-ons");
+  check("the answered ones are ticked", chips[0].className.includes("done") && chips[1].className.includes("done")
+        && chips[0].childNodes[0].textContent === "✓");
+  check("the current one is marked, not ticked",
+        chips[2].className.includes("now") && chips[2].childNodes[0].textContent === "3");
+  check("an answered step can be gone back to", chips[0].className.includes("can-go"));
+  check("a question not yet reached cannot be jumped to",
+        !chips[3].className.includes("can-go") && chips[3].disabled === true);
+  check("the strip carries no answers, which the box beside the question already has",
+        !chips.some((c) => (c.childNodes[1].textContent || "").includes("RKE2")));
+
+  sandbox.renderWizardSoFar(true);
+  const box = nodes["#wizardSoFar"];
+  const rows = box.childNodes[1].childNodes;
+  check("the box is headed as the lab so far", box.childNodes[0].textContent === "Your lab so far");
+  check("an answer is shown by its own label, not the value stored",
+        rows[0].childNodes[1].textContent === "RKE2");
+  check("a typed answer is shown as typed", rows[1].childNodes[1].textContent === "3");
+  check("the question being asked says so", rows[2].childNodes[1].textContent === "this question"
+        && rows[2].childNodes[1].className.includes("pending"));
+  check("a question still to come says so", rows[3].childNodes[1].textContent === "not yet");
+
+  setWiz({ answers: { distribution: "rke2", nodes: "3", addons: ["rancher", "longhorn"] } });
+  sandbox.renderWizardSoFar(true);
+  check("several answers to one question read as a list",
+        nodes["#wizardSoFar"].childNodes[1].childNodes[3].childNodes[1].textContent === "Rancher, SUSE Storage");
+
+  setWiz({ answers: { distribution: "rke2", nodes: "3", addons: [] } });
+  sandbox.renderWizardSoFar(true);
+  check("choosing nothing is not shown as an answer",
+        nodes["#wizardSoFar"].childNodes[1].childNodes[3].childNodes[1].className.includes("pending"));
+
+  sandbox.renderWizardStrip(false);
+  sandbox.renderWizardSoFar(false);
+  check("both are out of the way where there is nothing to show",
+        nodes["#wizardSteps"].hidden === true && nodes["#wizardSoFar"].hidden === true);
+
+  check("the state really is the dialog's own, not a copy", getWiz("wiz.index") === "2");
+  setWiz({ workflow: "", steps: [], answers: {}, index: 0 });
+};
+
+// -- the Create dialog asks for a passphrase only where one is needed -------
+// "only if this lab uses encrypted credentials" put the question to the operator; the credentials list already
+// carries each file's encryption flags, so it is a fact to read instead.
+const passphraseChecks = async () => {
+  const nodes = stubNodes();
+  const listed = {
+    credentials: [
+      { name: "aws-plain", kind: "cloud", type: "aws", encrypted: false, encrypted_fields: [] },
+      { name: "aws-locked", kind: "cloud", type: "aws", encrypted: true, encrypted_fields: [] },
+      { name: "scc-partly", kind: "service", type: "scc", encrypted: false, encrypted_fields: ["regcode"] },
+    ],
+  };
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => listed });
+
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-plain" } });
+  check("a lab whose credential is plaintext is not asked for a passphrase at all",
+        nodes["#createPassRow"].hidden === true);
+
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-locked" } });
+  check("a lab naming an encrypted credential is asked, and told which one",
+        nodes["#createPassRow"].hidden === false && nodes["#createPass"].required === true
+        && nodes["#createPassNote"].textContent.includes("aws-locked"));
+
+  await sandbox.setCreatePassphrase({ common: {}, smlm: { smlm_scc_account: "scc-partly" } });
+  check("a per-field encrypted credential counts, wherever in the lab it is named",
+        nodes["#createPassRow"].hidden === false
+        && nodes["#createPassNote"].textContent.includes("scc-partly"));
+
+  await sandbox.setCreatePassphrase({ common: { mydomain: "aws-plain.lab" }, nodes: { "n1": { myip: "10.0.0.1" } } });
+  check("a lab naming no credential at all is not asked either",
+        nodes["#createPassRow"].hidden === true);
+
+  sandbox.fetch = async () => ({ ok: false, status: 401, json: async () => ({ error: "log in" }) });
+  await sandbox.setCreatePassphrase({ common: { cloud_account: "aws-locked" } });
+  check("a credentials list that cannot be read offers the field rather than deciding for the run",
+        nodes["#createPassRow"].hidden === false && nodes["#createPass"].required === false);
+};
+
+// One stubbed document between them, so they take turns rather than overwrite each other's elements.
+const domChecks = (async () => {
+  await wizardChecks();
+  await passphraseChecks();
+  releaseChoiceChecks();
+  stepBuilderChecks();
+})();
+
+Promise.all([urlParamChecks(), credentialChecks, domChecks]).then(() => {
   if (failures) {
     console.error(failures + " check(s) failed");
     process.exit(1);
   }
   console.log("all app.js smoke checks passed");
 }, (e) => {
-  console.error("FAIL: the ?addons=/?lab= checks threw: " + e.message);
+  console.error("FAIL: an async check threw: " + e.message);
   process.exit(1);
 });

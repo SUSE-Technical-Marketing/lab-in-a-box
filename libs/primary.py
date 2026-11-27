@@ -206,10 +206,12 @@ def load_config(paths=None):
 
 def config_file_exists(paths=None):
     """
-    True when a lab_creation.cfg exists in `paths` (the default search path when None). Lets a caller for whom the
-    file is optional skip load_config() rather than take its SystemExit.
+    True when a lab_creation.cfg exists in `paths` (the default search path when None) and this process can read
+    it. Lets a caller for whom the file is optional skip load_config() rather than take its SystemExit, or, where
+    the file is readable by root alone and the caller is not root (the lab-builder's web process), rather than
+    take the PermissionError that opening it raises.
     """
-    return any(Path(p).is_file() for p in (paths or _DEFAULT_CFG_PATHS))
+    return any(Path(p).is_file() and os.access(str(p), os.R_OK) for p in (paths or _DEFAULT_CFG_PATHS))
 
 
 def load_defaults(paths=None):

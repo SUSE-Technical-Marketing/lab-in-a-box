@@ -1554,6 +1554,73 @@ check("validate_lab_definition: an address nothing in the zone claims but someth
 lc.ssh_run = _real_ssh_run
 lc.warn = _real_warn
 
+# ── the documented hardware minimums (libs/sizing.py), as a preflight warning ──
+# A node sized under what a product it runs documents for itself. Warnings never block, so what is asserted is
+# that the message is printed, names the field and the product it came from, and that a node sized properly gets
+# none. The cluster's own distribution is enough to trigger it: an add-on would also need its install script on
+# this interpreter's addon path, which a test container has no reason to carry.
+import io  # noqa: E402
+from contextlib import redirect_stdout  # noqa: E402
+
+
+def _preflight_output(definition, **kwargs):
+    """validate_lab_definition()'s whole report, for a test that cares what it said rather than what it returned."""
+    lc.subprocess.run = img_check_ok
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        lc.validate_lab_definition(definition, single_host_cfg, "/iso", "/lab", **kwargs)
+    return buf.getvalue()
+
+
+def _sized_lab(**common):
+    return _lab_def({"common": dict(base_common, mydomain="mydemo.lab", **common),
+                     "nodes": {"vm1": {"myip": "192.168.1.50", "mymac": "aa:bb:cc:dd:ee:01",
+                                       "config_method": "virt_customize", "kcluster": "c1"}},
+                     "kclusters": {"c1": {"clu_type": "rke2", "clu_rel": "stable",
+                                          "mydomain": "mydemo.lab"}}})
+
+
+_small = _sized_lab(VM_MEM="2048", VM_CPU="1", VM_DSK="40")
+out = _preflight_output(_small, host_checks=False)
+check("preflight: a node under its distribution's documented figures is warned about, naming the field",
+      "vm1.VM_MEM" in out and "vm1.VM_CPU" in out and "RKE2" in out and "4096" in out)
+check("preflight: the warning points at the page the figure came from", "docs.rke2.io" in out)
+check("preflight: the disk falls back to this project's own floor, which no product documents",
+      "vm1.VM_DSK" in out and "floor for a node image" in out)
+check("preflight: it is a warning, so a lab that wants to try anyway still validates",
+      lc.validate_lab_definition(_small, single_host_cfg, "/iso", "/lab", host_checks=False) is True)
+
+out = _preflight_output(_sized_lab(VM_MEM="8192", VM_CPU="4", VM_DSK="80"), host_checks=False)
+check("preflight: a node that meets every figure is not warned about at all", "asks for at least" not in out)
+
+_plain = _lab_def({"common": dict(base_common, mydomain="mydemo.lab"),
+                   "nodes": {"vm1": {"myip": "192.168.1.50", "mymac": "aa:bb:cc:dd:ee:01",
+                                     "config_method": "virt_customize"}}})
+out = _preflight_output(_plain, host_checks=False)
+check("preflight: a lab running nothing with a documented requirement is left alone",
+      "asks for at least" not in out)
+
+_agent = _lab_def({"common": dict(base_common, VM_MEM="1024", VM_CPU="1", VM_DSK="60", mydomain="mydemo.lab"),
+                   "nodes": {"vm1": {"myip": "192.168.1.50", "mymac": "aa:bb:cc:dd:ee:01",
+                                     "config_method": "virt_customize", "kcluster": "c1",
+                                     "INSTALL_RKE2_TYPE": "agent"}},
+                   "kclusters": {"c1": {"clu_type": "k3s", "clu_rel": "stable",
+                                        "mydomain": "mydemo.lab"}}})
+out = _preflight_output(_agent, host_checks=False)
+check("preflight: a K3s agent is held to the agent's own figures, the smallest in the table, so 1 GB passes",
+      "asks for at least" not in out)
+
+_server = _lab_def({"common": dict(base_common, VM_MEM="1024", VM_CPU="1", VM_DSK="60", mydomain="mydemo.lab"),
+                    "nodes": {"vm1": {"myip": "192.168.1.50", "mymac": "aa:bb:cc:dd:ee:01",
+                                      "config_method": "virt_customize", "kcluster": "c1",
+                                      "INSTALL_RKE2_TYPE": "server"}},
+                    "kclusters": {"c1": {"clu_type": "k3s", "clu_rel": "stable",
+                                         "mydomain": "mydemo.lab"}}})
+out = _preflight_output(_server, host_checks=False)
+check("preflight: the same node as a K3s server is warned about, since a server asks for more",
+      "K3s server" in out and "2048" in out)
+
+
 if failures:
     print("{} check(s) failed".format(len(failures)))
     sys.exit(1)

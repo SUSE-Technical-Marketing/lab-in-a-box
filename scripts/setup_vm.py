@@ -42,6 +42,7 @@ from lab_creation import (  # noqa: E402
 from targets import is_existing_node  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
+import images  # noqa: E402
 import overlay  # noqa: E402
 import ssh_keys  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
@@ -238,6 +239,17 @@ def provision_vm(definition, config, defaults, vm_name, ensure_cloud_dns=True):
                 "Harvester node '{}': create node '{}' has no VIP yet; create it first".format(vm_name, harv_first))
 
     config_method = env.get("config_method", "") or ""
+
+    # A node that keeps a reusable image of a product (keep_image) is built from that image whenever one is
+    # already there, instead of installing the product again. The image's own id replaces SOURCE_IMAGE, and its
+    # checksum goes with it: a provider's image has no file to verify, unlike a downloaded qcow2.
+    keep_product, keep_version = images.product_of(definition, vm_name)
+    if keep_product:
+        kept = images.existing(backend, keep_product, keep_version)
+        if kept:
+            env["SOURCE_IMAGE"] = kept
+            env["SOURCE_SHA256"] = ""
+            env["SOURCE_SHA256_URL"] = ""
 
     backend.copy_vm_image(env.get("SOURCE_IMAGE", ""), vm_name,
                            env.get("VM_DSK", ""), config_method=config_method,
