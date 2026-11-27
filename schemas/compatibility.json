@@ -47,6 +47,9 @@
   "addon:betterleaks": [
    {"version": "1.0", "breaking": false, "changes": "Betterleaks secret scanning in two modes, a podman container and a Kubernetes CronJob, with the command line of whichever major version the lab names"}
   ],
+  "addon:buffer": [
+   {"version": "1.0", "breaking": false, "changes": "initial version: buffer_agents, buffer_users, buffer_api_key, buffer_account, buffer_mcp_url, buffer_server_name and buffer_path"}
+  ],
   "addon:cerebras": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],

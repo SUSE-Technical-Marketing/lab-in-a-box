@@ -1,0 +1,41 @@
+{
+ "fields": {
+  "buffer_account": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "buffer_agents": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "buffer_api_key": {
+   "default": "",
+   "required": false,
+   "type": "string"
+  },
+  "buffer_mcp_url": {
+   "default": "https://mcp.buffer.com/mcp",
+   "required": false,
+   "type": "url"
+  },
+  "buffer_path": {
+   "default": "true",
+   "required": false,
+   "type": "string"
+  },
+  "buffer_server_name": {
+   "default": "buffer",
+   "required": false,
+   "type": "string"
+  },
+  "buffer_users": {
+   "default": "root",
+   "required": false,
+   "type": "string"
+  }
+ },
+ "schema": "addon:buffer",
+ "version": "1.0"
+}

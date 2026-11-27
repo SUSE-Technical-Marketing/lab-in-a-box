@@ -25,6 +25,7 @@
         "hyperframes",
         "voicestudio",
         "antseed",
+        "buffer",
         "libretranslate",
         "gitleaks"
       ]
@@ -80,6 +81,10 @@
   },
   "open_webui": {
     "open_webui_source": "upstream"
+  },
+  "buffer": {
+    "buffer_agents": ["claude-code"],
+    "buffer_api_key": "??buffer_api_key"
   },
   "libretranslate": {},
   "voicestudio": {},
