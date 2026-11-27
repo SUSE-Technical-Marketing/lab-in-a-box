@@ -123,12 +123,16 @@ _NOT_A_DISTRIBUTION = ("harvester",)
 
 def _cluster_release(distribution):
     """
-    The clu_rel this distribution needs: upstream Kubernetes installs a named minor, and VanillaDistro.minor()
-    refuses a channel, while the vendor distributions take one.
+    The clu_rel this distribution needs: rke2 and k3s take a channel their own installers resolve, upstream
+    Kubernetes installs a named minor (VanillaDistro.minor() refuses a channel), and Harvester takes a release
+    tag of its own project, where a channel name is not accepted at all.
     """
     if distribution == "vanilla":
         import k8s
         return k8s.VanillaDistro.DEFAULT_REL
+    if distribution == "harvester":
+        import releases
+        return releases.newest("harvester")
     return _CLUSTER_RELEASE
 
 
@@ -529,9 +533,11 @@ def build(workflow, answers, network=None, catalogue=(), accounts=(), images=(),
         if product == "harvester":
             cluster = "{}-harvester".format(slug(name))
             # No add-ons: libs/harvester.py refuses a Harvester cluster that lists any. A join token is generated
-            # here because it is a secret the cluster needs and nobody has to choose, and every node gets nested
-            # virtualization, which is the only way this project builds Harvester.
-            kclusters[cluster] = {"clu_type": "harvester", "clu_rel": _CLUSTER_RELEASE, "mydomain": domain,
+            # here because it is a secret the cluster needs and nobody has to choose. A lab definition builds
+            # Harvester on a cloud, from a prebuilt image, which on AWS needs nested virtualization; a cluster on
+            # a hypervisor is built by setup_harvester_cluster.py instead, which this workflow does not write.
+            kclusters[cluster] = {"clu_type": "harvester", "clu_rel": _cluster_release("harvester"),
+                                  "mydomain": domain,
                                   "harvester_token": _token()}
             ami = str(_answer(answers, "ami", spec) or "")
             if ami:

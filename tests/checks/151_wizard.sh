@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests-paths: webui/lib/wizard.py webui/lib/discovery.py
+# Tests-paths: webui/lib/wizard.py webui/lib/discovery.py libs/harvester.py libs/releases.py libs/k8s.py
 # The step-by-step lab builder: every path through all four workflows is generated and put through the same
 # preflight a hand-written lab goes through, so a question whose answer produces an invalid lab fails here rather
 # than in front of an operator. Independent container — see tests/run_tests.sh.

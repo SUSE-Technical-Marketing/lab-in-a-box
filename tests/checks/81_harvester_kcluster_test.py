@@ -54,14 +54,64 @@ with mock.patch.object(harvester, "die", side_effect=SystemExit("no token")):
     except SystemExit:
         pass
 
+# ── which install method a target gets ─────────────────────────────────────────────────────────────────────────────
+# A backend that netboots is offered netboot first, because the ISO alone is over 8 GB and has to be staged on
+# the hypervisor. Every other backend is a cloud, which boots a node only from an image already in it.
+check("methods: a hypervisor can netboot or install from the ISO, netboot first",
+      harvester.methods_for("libvirt") == ("pxe", "iso"))
+check("methods: a cloud boots a prebuilt image only", harvester.methods_for("aws") == ("image",))
+check("methods: naming nothing gets the preferred method of that target",
+      harvester.choose_method("", "libvirt") == ("pxe", "") and harvester.choose_method("", "gcp") == ("image", ""))
+check("methods: a method the target can do is used as asked",
+      harvester.choose_method("iso", "libvirt") == ("iso", ""))
+method, complaint = harvester.choose_method("pxe", "aws")
+check("methods: a method the target cannot do falls back to one that works", method == "image")
+check("methods: and says what was asked for, why it does not apply and what it did instead",
+      "'pxe'" in complaint and "aws" in complaint and "'image'" in complaint)
+method, complaint = harvester.choose_method("nonsense", "libvirt")
+check("methods: an unknown method falls back too, listing the real ones",
+      method == "pxe" and all(m in complaint for m in harvester.METHODS))
+
+# ── the kernel command line of an ISO install ──────────────────────────────────────────────────────────────────────
+args = harvester.iso_kernel_args("http://10.0.0.1/config-h1.yaml")
+check("iso: the installer finds the medium by the ISO's own volume label, not over the network",
+      "root=live:CDLABEL=COS_LIVE" in args and "http" not in args.split("config_url=")[0])
+check("iso: it installs unattended",
+      "harvester.install.automatic=true" in args and "harvester.install.skipchecks=true" in args)
+check("iso: and powers the node off at the end, so it can be taken off the installer kernel",
+      "harvester.install.powerOff=true" in args)
+check("iso: the node's own configuration is fetched from where it was published",
+      "harvester.install.config_url=http://10.0.0.1/config-h1.yaml" in args)
+check("iso: the console is configurable", "console=ttyS0" in harvester.iso_kernel_args("http://x/c", "ttyS0"))
+check("iso: the checksum published for a release is the sha512 of every asset",
+      harvester.checksum_url("v1.9.1").endswith("/harvester-v1.9.1-amd64.sha512"))
+
 # ── problems ───────────────────────────────────────────────────────────────────────────────────────────────────────
 check("problems: none for a valid lab", harvester.problems(LAB, lambda vm: "aws") == [])
 bad = {"kclusters": {"hv": {"clu_type": "harvester", "addons": ["rancher"]}, "e": {"clu_type": "harvester"}},
        "nodes": {"h1": {"kcluster": "hv", "SOURCE_IMAGE": "harvester.qcow2"}}}
 out = harvester.problems(bad, lambda vm: "libvirt")
-for expected in ("'e' has no node", "'hv' has no harvester_token", "lists add-ons", "must use the aws backend",
-                 "needs aws_nested_virtualization", "needs its Harvester AMI ID"):
+for expected in ("'e' has no node", "'hv' has no harvester_token", "lists add-ons"):
     check("problems: reports " + expected, any(expected in p for p in out))
+check("problems: a node on a hypervisor is sent to the entry point that builds it there",
+      any("setup_harvester_cluster.py" in p and "libvirt" in p for p in out))
+check("problems: and is not told it must be on AWS, since any cloud will do",
+      not any("must use the aws backend" in p for p in out))
+
+# A cloud other than AWS needs a prebuilt image and nothing AWS-specific.
+other = {"kclusters": {"hv": {"clu_type": "harvester", "mydomain": "x.lab", "harvester_token": "t"}},
+         "nodes": {"h1": {"kcluster": "hv", "SOURCE_IMAGE": "harvester-v1.9.1"}}}
+check("problems: a prebuilt image on another cloud is accepted",
+      harvester.problems(other, lambda vm: "gcp") == [])
+check("problems: nested virtualization is asked for on AWS only",
+      any("aws_nested_virtualization" in p for p in harvester.problems(other, lambda vm: "aws"))
+      and not any("aws_nested_virtualization" in p for p in harvester.problems(other, lambda vm: "gcp")))
+no_image = {"kclusters": {"hv": {"clu_type": "harvester", "mydomain": "x.lab", "harvester_token": "t"}},
+            "nodes": {"h1": {"kcluster": "hv"}}}
+check("problems: a cloud node with no image at all is reported",
+      any("needs a prebuilt Harvester image" in p for p in harvester.problems(no_image, lambda vm: "gcp")))
+check("problems: on AWS the image still has to be an AMI",
+      any("Harvester AMI ID" in p for p in harvester.problems(other, lambda vm: "aws")))
 
 # ── wait_https ─────────────────────────────────────────────────────────────────────────────────────────────────────
 answers = [urllib.error.URLError("refused"), OSError("reset"), None]
