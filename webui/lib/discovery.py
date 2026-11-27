@@ -264,6 +264,65 @@ def product_choices():
             for name, meaning in sorted(names.items())]
 
 
+# The channel names a distribution's own installer resolves for itself, offered ahead of a pinned version
+# because they are what a lab usually wants and what clu_rel defaults to. Harvester has none: a channel name is
+# not accepted there at all (libs/harvester.py), and upstream Kubernetes takes a minor, not a channel.
+_RELEASE_CHANNELS = {"rke2": ("stable", "latest"), "k3s": ("stable", "latest")}
+
+
+def release_choices(snapshot=None):
+    """
+    What clu_rel may be, per distribution: {"<clu_type>": ["stable", "v1.37.2+rke2r1", ...]}.
+
+    The releases come out of the status snapshot, which scripts/refresh_hypervisor_status.py fills as root (see
+    libs/releases.py: the CGI makes no outbound request of its own, so a distribution's repository is never
+    reached from here). A distribution the snapshot says nothing about is left out, and the field stays free
+    text for it.
+    """
+    snap = status() if snapshot is None else snapshot
+    listed = (snap or {}).get("releases") or {}
+    out = {}
+    for distribution, versions in listed.items():
+        options = list(_RELEASE_CHANNELS.get(distribution, ())) + [str(v) for v in (versions or [])]
+        if options:
+            out[str(distribution)] = options
+    return out
+
+
+def dynamic_enum_by(snapshot=None):
+    """
+    Live choices for a field whose options depend on another field's value, by field name:
+    {"clu_rel": {"on": "clu_type", "options": {"<clu_type>": [...]}}}.
+
+    clu_rel is one field serving every distribution, and each one names its releases differently, so the choice
+    cannot be a single list. The browser knows which clu_type the row it is rendering has chosen, so it is the
+    one that can narrow this (see app.js). A field with nothing to offer is left out and stays free text.
+    """
+    choices = release_choices(snapshot)
+    return {"clu_rel": {"on": "clu_type", "options": choices}} if choices else {}
+
+
+def _inject_enum_by(node, choices):
+    """
+    Walk a schema tree as _inject_dynamic_enums() does and give each field named in `choices` (see
+    dynamic_enum_by()) its `enum_by`, so the renderer can offer the options that match a sibling field's value.
+    """
+    if isinstance(node, list):
+        for n in node:
+            _inject_enum_by(n, choices)
+        return
+    if not isinstance(node, dict):
+        return
+    if _is_field(node):
+        live = choices.get(node.get("name"))
+        if live and live.get("options"):
+            node["enum_by"] = {"on": live["on"], "options": dict(live["options"])}
+        return
+    for v in node.values():
+        if isinstance(v, (dict, list)):
+            _inject_enum_by(v, choices)
+
+
 def dynamic_enums(snapshot=None):
     """
     Live `enum` choices by field name, for the fields whose options are whatever the hypervisors currently have rather
@@ -312,7 +371,9 @@ def schema(name):
 def base_schema():
     """The base lab-definition schema (common/nodes/kclusters), via the library."""
     sc = _schema_lib().base_lab_schema()
-    _inject_dynamic_enums(sc, dynamic_enums())
+    snap = status()
+    _inject_dynamic_enums(sc, dynamic_enums(snap))
+    _inject_enum_by(sc, dynamic_enum_by(snap))
     return sc
 
 

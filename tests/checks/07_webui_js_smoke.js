@@ -12,11 +12,37 @@ const src = fs.readFileSync("webui/htdocs/app.js", "utf8");
 function makeElement(tag) {
   return {
     tagName: String(tag).toUpperCase(), className: "", textContent: "", childNodes: [], dataset: {},
+    style: {}, value: "", listeners: {},
     get childElementCount() { return this.childNodes.length; },
+    // A real <select> exposes its <option> children as .options, which applyFieldDefault() walks.
+    get options() { return this.childNodes.filter((c) => c && c.tagName === "OPTION"); },
+    // Only the one use app.js makes of innerHTML: assigning "" to empty an element.
+    get innerHTML() { return ""; },
+    set innerHTML(value) { if (String(value) === "") this.childNodes = []; },
     appendChild(child) { this.childNodes.push(child); return child; },
     removeChild(child) { this.childNodes = this.childNodes.filter((c) => c !== child); return child; },
-    setAttribute() {}, addEventListener() {},
-    querySelectorAll: () => [], querySelector: () => null,
+    setAttribute() {},
+    // Listeners are recorded rather than dropped, so a check can drive a control the way a person does:
+    // choosing a value and letting the change event do its work. fire() is this stub's dispatchEvent.
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    fire(type) { (this.listeners[type] || []).forEach((fn) => fn({ target: this })); },
+    // Enough of a selector engine for "input" and "input, select": every descendant of those tags. The real
+    // one matches far more, and a check that needs more than this would be testing the stub.
+    querySelectorAll(sel) {
+      const want = String(sel).split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
+      const out = [];
+      const visit = (node) => {
+        (node.childNodes || []).forEach((child) => {
+          if (child && child.tagName) {
+            if (want.indexOf(child.tagName) >= 0) out.push(child);
+            visit(child);
+          }
+        });
+      };
+      visit(this);
+      return out;
+    },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   };
 }
 
@@ -736,6 +762,61 @@ const wizardChecks = async () => {
         nodes["#wizardPanel"].open === false);
 };
 
+// -- the version a cluster installs is offered per distribution -------------
+// clu_rel is one field serving four distributions that name their releases differently, so a single list would
+// be wrong for three of them. The browser is the only side that knows which clu_type a row chose, so it is the
+// side that narrows the list. Free text has to survive, or a release the server has not listed yet becomes
+// uninstallable through the form.
+const releaseChoiceChecks = () => {
+  const options = {
+    harvester: ["v1.9.1", "v1.8.2"],
+    rke2: ["stable", "latest", "v1.37.2+rke2r1"],
+  };
+  const container = makeElement("div");
+  container.appendChild(sandbox.fieldRow(
+    { name: "clu_type", type: "string", enum: ["rke2", "k3s", "vanilla", "harvester"] }, [], true));
+  container.appendChild(sandbox.fieldRow(
+    { name: "clu_rel", type: "string", enum_by: { on: "clu_type", options } }, [], true));
+  sandbox.wireDependentFields(container);
+
+  const inputs = container.querySelectorAll("input, select");
+  const clu_type = inputs.find((i) => i._field && i._field.name === "clu_type");
+  const value = inputs.find((i) => i._field && i._field.name === "clu_rel");
+  const select = container.querySelectorAll("select").find((s) => s.className === "enum-by-select");
+  const text = container.querySelectorAll("input").find((i) => i.className === "enum-by-custom");
+  const listed = () => select.childNodes.map((o) => o.value).filter((v) => v && v !== "CUSTOM_VALUE");
+
+  check("the version field is a dependent control, not a plain text box",
+        !!select && !!text && value._dependsOn === "clu_type");
+
+  clu_type.value = "harvester";
+  clu_type.fire("change");
+  check("choosing SUSE Virtualization offers its own releases",
+        JSON.stringify(listed()) === JSON.stringify(options.harvester));
+  check("...and not another distribution's", listed().indexOf("v1.37.2+rke2r1") < 0);
+
+  clu_type.value = "rke2";
+  clu_type.fire("change");
+  check("choosing rke2 offers its channels first, then its releases",
+        JSON.stringify(listed()) === JSON.stringify(options.rke2));
+
+  select.value = "v1.37.2+rke2r1";
+  select.fire("change");
+  check("picking a release is what the form submits", value.value === "v1.37.2+rke2r1");
+
+  select.value = "CUSTOM_VALUE";
+  select.fire("change");
+  text.value = "v1.99.0+rke2r1";
+  text.fire("input");
+  check("a release the server never listed can still be typed in", value.value === "v1.99.0+rke2r1");
+  check("...and the free-text box is shown once it is being used", text.style.display === "block");
+
+  clu_type.value = "k3s";
+  clu_type.fire("change");
+  check("a distribution the server listed nothing for leaves the field typeable rather than empty",
+        listed().length === 0 && !!text);
+};
+
 // -- the Create dialog asks for a passphrase only where one is needed -------
 // "only if this lab uses encrypted credentials" put the question to the operator; the credentials list already
 // carries each file's encryption flags, so it is a fact to read instead.
@@ -778,6 +859,7 @@ const passphraseChecks = async () => {
 const domChecks = (async () => {
   await wizardChecks();
   await passphraseChecks();
+  releaseChoiceChecks();
 })();
 
 Promise.all([urlParamChecks(), credentialChecks, domChecks]).then(() => {

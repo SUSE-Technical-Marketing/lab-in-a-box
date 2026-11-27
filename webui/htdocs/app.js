@@ -1357,6 +1357,7 @@ async function openEditor(id) {
       kind = "Add-on"; title = item.section; desc = sc.description || "";
       layers = (sc.capabilities && sc.capabilities.layers) || [];
       walk(sc, form, []);
+      wireDependentFields(form);
       attachVersionSuggestions(form, sc);
       const frag = m.addonCfg[item.section] || {};
       form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
@@ -1405,6 +1406,23 @@ function applyEditor() {
   closeEditor();
   renderCanvas();
   refreshLab();
+}
+
+/* Connect every field in `container` whose options depend on another field there (fieldRow's enum_by branch) to
+ * the sibling it depends on, so choosing a distribution narrows the version list in that same row. Called once
+ * the container holds both, because either may be rendered first. */
+function wireDependentFields(container) {
+  if (!container || !container.querySelectorAll) return;
+  const dependents = Array.from(container.querySelectorAll("input")).filter((i) => i._dependsOn);
+  dependents.forEach((dep) => {
+    const source = Array.from(container.querySelectorAll("input, select")).find(
+      (i) => i._field && i._field.name === dep._dependsOn);
+    if (!source) return;
+    const apply = () => { if (dep._refillFor) dep._refillFor(source.value || ""); };
+    source.addEventListener("change", apply);
+    source.addEventListener("input", apply);
+    apply();
+  });
 }
 
 /* Recursively render `node` into `parent`, tracking the output-key path. */
@@ -1537,6 +1555,66 @@ function fieldRow(field, outPath, repeatMode) {
 
     row.appendChild(container);
     // Don't append input here; let the normal flow handle it after initialization
+  } else if (field.enum_by && field.enum_by.options) {
+    // A field whose choices depend on another field in the same section (discovery.dynamic_enum_by): clu_rel is
+    // one field serving every distribution, and each names its releases differently, so the list is narrowed
+    // here by whatever clu_type this row has chosen. Free text stays available: a release the server's list
+    // does not mention is still installable by naming it.
+    const byField = field.enum_by.on;
+    const byOptions = field.enum_by.options;
+    const container = el("div", "enum-by-container");
+    const select = el("select");
+    select.className = "enum-by-select";
+    const textInput = el("input");
+    textInput.type = "text";
+    textInput.className = "enum-by-custom";
+    textInput.placeholder = "or type a version";
+    textInput.style.display = "none";
+
+    input = el("input");
+    input.type = "hidden";
+    input.className = "enum-by-value";
+
+    const fill = (depends, keep) => {
+      const listed = byOptions[depends] || [];
+      select.innerHTML = "";
+      const blank = el("option", null, listed.length ? "— select or type —" : "— type a version —");
+      blank.value = "";
+      select.appendChild(blank);
+      listed.forEach((v) => { const o = el("option", null, v); o.value = v; select.appendChild(o); });
+      const custom = el("option", null, "— other —");
+      custom.value = "CUSTOM_VALUE";
+      select.appendChild(custom);
+      if (keep && listed.indexOf(keep) >= 0) {
+        select.value = keep; textInput.value = keep; textInput.style.display = "none";
+      } else if (keep) {
+        select.value = "CUSTOM_VALUE"; textInput.value = keep; textInput.style.display = "block";
+      }
+      input.value = keep || "";
+    };
+
+    const syncValue = () => {
+      if (select.value === "CUSTOM_VALUE") {
+        textInput.style.display = "block";
+        input.value = textInput.value;
+      } else {
+        textInput.style.display = "none";
+        input.value = select.value;
+      }
+    };
+    select.addEventListener("change", syncValue);
+    textInput.addEventListener("input", () => { input.value = textInput.value; });
+
+    container.appendChild(select);
+    container.appendChild(textInput);
+    // The sibling this depends on may be rendered after this field, so the list is filled on every change of it
+    // rather than only once: _dependsOn is read by the section renderer, which knows both rows.
+    input._dependsOn = byField;
+    input._refillFor = (depends) => fill(depends, input.value);
+    input._setFromValue = (v) => { fill(select._depends || "", v); };
+    fill("", "");
+
+    row.appendChild(container);
   } else if (options) {
     const optValue = (o) => (o && typeof o === "object") ? o.value : o;
     const optLabel = (o) => (o && typeof o === "object") ? o.label : o;
@@ -1747,6 +1825,7 @@ function instanceBox(fields, keyLabel) {
   keyRow.appendChild(ki);
   inst.appendChild(keyRow);
   fields.forEach((f) => inst.appendChild(fieldRow(f, [], true)));
+  wireDependentFields(inst);
   const rm = el("button", "btn rm-inst", "remove");
   rm.type = "button";
   rm.addEventListener("click", () => inst.remove());
