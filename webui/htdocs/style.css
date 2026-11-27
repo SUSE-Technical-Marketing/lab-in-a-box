@@ -54,6 +54,13 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
   background:var(--panel);color:var(--ink);font:600 .8rem/1 inherit;font-family:inherit;cursor:pointer;
 }
 .theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
+/* The way into the step-by-step builder, so it reads as an offer rather than one more control: the project's own
+   accent, filled, against the outlined buttons beside it. The mark is a glyph, not an asset, so it needs no file
+   and inherits the button's own colour in both themes. */
+.btn.btn-accent{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.btn-accent:hover{filter:brightness(1.08)}
+.btn.btn-accent:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.btn-accent .btn-mark{margin-right:.4em;font-size:.85em;opacity:.9}
 .theme-toggle .dot{width:.7rem;height:.7rem;border-radius:50%;background:linear-gradient(90deg,var(--ink) 50%,var(--panel) 50%);box-shadow:0 0 0 1.5px var(--ink)}
 .sub{margin:.15rem 0 0;color:var(--muted);font-size:.8rem}
 .count-pill{

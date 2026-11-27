@@ -299,7 +299,19 @@ check("the build action answers with a definition the canvas can load",
 page = (_REPO / "webui" / "htdocs" / "index.html").read_text()
 script = (_REPO / "webui" / "htdocs" / "app.js").read_text()
 style = (_REPO / "webui" / "htdocs" / "style.css").read_text()
-check("the canvas has the button that opens the step view", 'id="simplifyBtn"' in page)
+# The way in sits in the top bar beside Credentials, themed with the project's own accent, rather than on the
+# canvas panel where it read as one more control on a crowded header.
+check("the page has the button that opens the step view", 'id="simplifyBtn"' in page)
+top_actions = page.split('<div class="top-actions">')[1].split("</div>")[0]
+check("it is in the top bar", 'id="simplifyBtn"' in top_actions)
+check("...next to Credentials, and before it, since it is the way in rather than a detail",
+      top_actions.index('id="simplifyBtn"') < top_actions.index('id="credBtn"'))
+check("...and is not back on the canvas panel's own header",
+      'id="simplifyBtn"' not in page.split('aria-label="Lab canvas"')[1].split("</section>")[0])
+check("it is themed with a project colour rather than left as a plain button",
+      'class="btn btn-accent"' in page and ".btn.btn-accent{background:var(--accent)" in style)
+check("the theme works in both schemes, since it uses the tokens rather than a fixed colour",
+      "--accent-ink" in style.split(".btn.btn-accent{")[1].split("}")[0])
 # A panel inside <main class="layout"> took a column of the grid and hid the catalogue and the canvas to get it,
 # which moved the lab panel. It is a dialog like every other one here, so entering it changes no layout at all.
 check("the step view is a dialog over the page", '<dialog id="wizardPanel"' in page)
