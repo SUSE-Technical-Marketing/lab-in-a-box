@@ -616,7 +616,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web-UI (lab-builder)</h2>
-<p>Ein browserbasierter Designer für <code>lab.json</code>-Dateien, der <strong>die eigenen Python-Bibliotheken des Projekts zur Laufzeit auswertet</strong>. Er hat kein fest eingebautes Wissen über ein Add-on. Wählen Sie eine Komponente, und es wird ein Formular direkt aus deren Schema gerendert. Fügen Sie ein Feld zu einem Skript hinzu, und die UI zeigt es ohne jede Frontend-Änderung an. Ein als in Arbeit markiertes Add-on (<code>status</code> in seinem <code>PLUGIN</code>, siehe <a href="addons.html">Add-on-Leitfaden</a>) trägt ein Badge „under construction“. Fahren Sie mit der Maus darüber, um zu sehen, was noch nicht funktioniert. Es lässt sich trotzdem hinzufügen und ausführen, mit einer Warnung. <strong>Simplify</strong> im Lab-Panel stellt stattdessen vier oder fünf Fragen und baut das Lab daraus: wohin es gebaut wird, wird immer gefragt, die Adressen nie, und jeder Knoten wird nach den Angaben seiner eigenen Produkte dimensioniert; eine Anmeldung ist nicht nötig, und einer seiner Abläufe beginnt mit einem Beispiel-Lab (siehe <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>).</p>
+<p>Ein browserbasierter Designer für <code>lab.json</code>-Dateien, der <strong>die eigenen Python-Bibliotheken des Projekts zur Laufzeit auswertet</strong>. Er hat kein fest eingebautes Wissen über ein Add-on. Wählen Sie eine Komponente, und es wird ein Formular direkt aus deren Schema gerendert. Fügen Sie ein Feld zu einem Skript hinzu, und die UI zeigt es ohne jede Frontend-Änderung an. Ein als in Arbeit markiertes Add-on (<code>status</code> in seinem <code>PLUGIN</code>, siehe <a href="addons.html">Add-on-Leitfaden</a>) trägt ein Badge „under construction“. Fahren Sie mit der Maus darüber, um zu sehen, was noch nicht funktioniert. Es lässt sich trotzdem hinzufügen und ausführen, mit einer Warnung. <strong>Simplify</strong> im Lab-Panel stellt stattdessen vier oder fünf Fragen und baut das Lab daraus: wohin es gebaut wird, wird immer gefragt, die Adressen nie, und jeder Knoten wird nach den Angaben seiner eigenen Produkte dimensioniert; eine Anmeldung ist nicht nötig, und einer seiner Abläufe beginnt mit einem Beispiel-Lab (siehe <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>). Das <code>clu_rel</code> eines Clusters bietet die Releases, die die gewählte Distribution tatsächlich veröffentlicht, höchstens einmal täglich aus den git-Tags des jeweiligen Projekts gelesen; jede andere Version lässt sich weiterhin eintippen.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -879,6 +879,63 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>Ein Harvester-Cluster lässt sich auf vier Wege aufbauen, und jeder installiert dieselbe Appliance aus denselben Release-Dateien. Sie unterscheiden sich nur darin, wie ein Knoten den Installer erreicht, also ergibt sich der Einstiegspunkt daraus, wo die Knoten laufen.</p>
+<table>
+<thead>
+<tr><th>Wo die Knoten laufen</th><th>Methode</th><th>Erstellt von</th></tr>
+</thead>
+<tbody>
+<tr><td>Ein KVM-Hypervisor</td><td><code>pxe</code>, die Vorgabe: Netzwerkstart, nichts wird auf dem Hypervisor bereitgelegt</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>Ein KVM-Hypervisor</td><td><code>iso</code>: die Release-ISO am Knoten angeschlossen, ohne PXE- oder DHCP-Dienst</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>Jedes Cloud-Backend</td><td><code>image</code>: ein vorgefertigtes Harvester-Image, das Sie als <code>SOURCE_IMAGE</code> angeben</td><td>eine Labordefinition, <code>clu_type: &quot;harvester&quot;</code></td></tr>
+<tr><td>Ein bestehender Kubernetes-Cluster</td><td>das Harvester-Helm-Chart</td><td>das Add-on <code>harvester</code></td></tr>
+</tbody>
+</table>
+<p><strong>Auf einem Hypervisor.</strong> <code>setup_harvester_cluster.py</code> verwendet seine eigene, eigenständige Konfigurationsdatei, keine Labordefinition (<code>templates/harvester-cluster.json.example</code> führt jeden Schlüssel auf), und sein Schlüssel <code>install_method</code> wählt zwischen den beiden dort verfügbaren Methoden. <code>pxe</code> liefert den Installer über HTTP aus und legt nichts auf dem Hypervisor ab; <code>iso</code> legt ISO, Kernel und Initrd des Release in <code>ISO_LOC</code> und startet jeden Knoten daraus, was keinen PXE- oder DHCP-Dienst braucht, aber einmal pro Release über 8 GB auf den Hypervisor überträgt. Jede Datei wird gegen die sha512 geprüft, die das Harvester-Projekt veröffentlicht, und eine geprüfte Kopie wird nie erneut geholt. Eine Methode, die auf diesem Ziel nicht möglich ist, wird gemeldet und durch eine ersetzt, die funktioniert, sodass eine für ein Ziel geschriebene Konfiguration auch auf einem anderen baut. Die Version kommt aus <code>harvester_version</code>; ohne Angabe wird das neueste stabile Release installiert, das das Harvester-Projekt auflistet.</p>
+<p><strong>In einer Cloud.</strong> Ein <code>kclusters</code>-Eintrag mit <code>clu_type: &quot;harvester&quot;</code> baut den Cluster aus Cloud-Instanzen. Jeder Knoten startet ein vorgefertigtes Harvester-Image, das Sie als <code>SOURCE_IMAGE</code> angeben (SUSE veröffentlicht keines; <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> dokumentiert, wie man aus der Harvester-ISO eine AMI baut), und installiert sich beim ersten Start aus der Harvester-Konfiguration, die lab-in-a-box als User-Data übergibt. Der erste Knoten des Clusters in der Datei erstellt ihn; die übrigen treten über die Cluster-VIP bei. Die Version des Clusters steht in <code>clu_rel</code>, demselben Feld, aus dem jede andere Distribution ihre Version nimmt, als Release-Tag wie <code>v1.9.1</code>; ein Kanalname wird dort nicht angenommen. Das Beispiel unten ist AWS, wo zusätzlich verschachtelte Virtualisierung aktiv sein muss.</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>Knoten</strong> müssen ein Cloud-Backend verwenden; auf <code>aws</code> heißt das <code>aws_nested_virtualization: &quot;true&quot;</code> mit einem unterstützten <code>cloud_instance_type</code> (Familien M7i/M8i/C7i/R7i/I7i; siehe <a href="#compute-backends_1">Compute-Backends</a>) und der Harvester-AMI-ID als <code>SOURCE_IMAGE</code>. 250 GiB ist die Mindestplattengröße der AMI.</li>
+<li><strong>Cluster-Felder</strong>: <code>harvester_token</code> (erforderlich, von jedem Knoten geteilt); <code>harvester_vip</code> (Vorgabe: eine freie Adresse aus <code>AWS_SUBNET_ID</code>, als sekundäre private IP am Erstellungsknoten registriert); <code>harvester_mtu</code> (Vorgabe 1500, auf jedem Knoten gleich); <code>harvester_replica_count</code> (bei unter 3 Knoten auf 1 setzen); <code>harvester_device</code> (Vorgabe <code>/dev/nvme0n1p6</code>, das Layout der Community-AMI); <code>harvester_ntp_servers</code> (Vorgabe der AWS-Zeitdienst, 169.254.169.123); <code>harvester_config</code> (wird zuletzt in die Harvester-Konfiguration jedes Knotens eingemischt); <code>harvester_settings</code> (Harvester-Einstellungen, angewendet sobald der Cluster läuft). Pro Knoten: <code>harvester_role</code> (default, management, worker, witness).</li>
+<li><strong>Zugang</strong>: die Knoten akzeptieren den SSH-Schlüssel des Automatisierungsknotens für den Benutzer <code>rancher</code> (Harvester sperrt root-SSH) und den <code>ROOT_PWD_HASH</code> des Labors als Passwort. Die Security-Group erhält 80, 443, 6443 und 9345 sowie den gesamten Verkehr zwischen ihren eigenen Instanzen. Steht der Cluster, gibt <code>setup_lab.py</code> die UI-Adresse aus (<code>https://&lt;Erstellungsknoten&gt;/</code>) und legt die kubeconfig in <code>/etc/lab_creation/harvester-&lt;Cluster&gt;.kubeconfig</code> ab.</li>
+<li><strong>Grenzen</strong>: die VIP bleibt am Erstellungsknoten (AWS verschiebt keine sekundäre IP, es gibt also kein Failover); EC2 verwirft Frames mit fremden MAC-Adressen, Harvester-VMs können daher keine gebrückten VLAN-Netze nutzen; Add-ons werden auf einem Harvester-Cluster noch nicht installiert; jeder Knoten kostet etwa so viel wie sein Instanztyp pro Stunde plus 250 GiB EBS.</li>
+</ul>
+
+<h3 id="reusable-machine-images">Wiederverwendbare Maschinen-Images</h3>
+<p>Ein Produkt, dessen Installation Stunden dauert, lohnt es sich einmal zu installieren. SUSE Multi-Linux Manager ist der klare Fall, mit über einem Tag. Geben Sie einem Knoten <code>keep_image</code>, und das Labor baut ihn aus dem Image dieses Produkts, wann immer eines vorhanden ist, und behält eines, wenn keines da ist.</p>
+<pre><code class="language-json">"nodes": {
+  &quot;smlm1.mydemo.lab&quot;: { &quot;keep_image&quot;: &quot;smlm&quot;, &quot;keep_image_version&quot;: &quot;5.2&quot;, &quot;addons&quot;: [&quot;smlm&quot;] }
+}
+</code></pre>
+<p>Der erste Lauf installiert das Produkt wie gewohnt und bittet die Cloud, sobald die Add-ons des Knotens, sein Cluster-Beitritt und seine <code>post_commands</code> fertig sind, um ein Image von dessen eigener Platte. Jeder spätere Lauf findet dieses Image und startet daraus, die Installation passiert also einmal und nicht jedes Mal. Beide Felder werden auch in <code>common</code> angenommen, für ein Labor, dessen Knoten alle dasselbe Produkt tragen; ein Knoten mit eigenem <code>keep_image</code> erbt die Version aus <code>common</code> nicht, was dem Image den Namen des einen Produkts mit der Version eines anderen geben würde.</p>
+<p>Das Image heißt <code>lab-in-a-box-&lt;Produkt&gt;-&lt;Version&gt;</code>, woran ein späteres Labor es findet, und wird als Image dieses Projekts markiert, wo der Anbieter das zulässt. Ein zweiter Lauf fügt nichts hinzu und tut nichts: das Image ist schon da, der Knoten wird daraus gebaut und nie erneut aufgenommen. Ein Backend, das keine Images halten kann, warnt und installiert das Produkt erneut, anstatt den Lauf scheitern zu lassen.</p>
+<p>Es gibt zwei Wege zu einem Image, und das Produkt entscheidet, welcher gilt. <strong>Aufnehmen</strong> ist der Standard und funktioniert auf jedem Cloud-Backend: die VM wird aus einem gewöhnlichen Betriebssystem-Image erstellt, die langsame Installation läuft einmal, und die Cloud macht ein Image des Ergebnisses. Nichts wird hochgeladen und nichts konvertiert. <strong>Importieren</strong> ist für ein Produkt, das sich nicht auf ein laufendes Betriebssystem installieren lässt, etwa eine Appliance, die ihr eigener Installer auf eine Platte schreibt: die Platte wird außerhalb der Cloud gebaut und dort registriert. Das kann nicht jeder Anbieter, deshalb erklärt jedes Backend es für sich.</p>
+<table>
+<thead>
+<tr><th>Backend</th><th>Eine VM aufnehmen</th><th>Eine Platte importieren</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>ja</td><td>ja</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>ja</td><td><strong>nein</strong>: in keiner der beiden APIs gibt es die Operation</td></tr>
+<tr><td>libvirt, harvester</td><td>nein</td><td>nein</td></tr>
+</tbody>
+</table>
+<p><code>lab_image.py</code> macht dasselbe von Hand gegen das Backend eines bestimmten Labors: <code>find</code> gibt das Image eines Produkts aus, wenn es eines gibt, <code>capture</code> macht ein Image eines Knotens, so wie er jetzt ist, und <code>import</code> registriert eine Platte, die der Anbieter aus einem Objektspeicher oder von einer URL liest. Das Aufnehmen hält die VM an oder startet sie neu, wo der Anbieter es verlangt, auf GCP durch Anhalten und erneutes Starten, denn ein Image einer gerade benutzten Platte kann sich beim ersten Start erst reparieren müssen.</p>
+
 <h3 id="deploying-a-legacy-image-centos-7">Bereitstellung eines Legacy-Images (CentOS 7)</h3>
 <p>CentOS 7 (und andere vorgefertigte <code>.qcow2</code>-Images dieses Alters) enthalten weder Ignition/Combustion noch cloud-init. Deshalb muss <code>config_method</code> auf <code>virt_customize</code> stehen (siehe <a href="#vm-provisioning">VM-Bereitstellung</a>). Dabei wird das qcow2-Dateisystem direkt bearbeitet, statt sich auf einen Agenten im Gast zu verlassen. Bei einem so alten Image sind zwei weitere Überschreibungen wichtig:</p>
 <ul>

@@ -498,7 +498,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web 界面（lab-builder）</h2>
-<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。 标记为开发中的附加组件（其 <code>PLUGIN</code> 中的 <code>status</code>，参见<a href="addons.html">附加组件指南</a>）带有“under construction”徽章；将鼠标悬停在徽章上可查看尚未正常工作的部分。它仍可被添加和运行，并会显示警告。 Lab 面板上的 <strong>Simplify</strong> 改为提出四到五个问题，并据此构建实验室：构建位置始终会询问，地址则从不询问，每个节点按其所运行产品自身文档的要求来配置规格；无需登录，其中一个流程从示例实验室开始（参见 <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>）。</p>
+<p>一个在浏览器中设计 <code>lab.json</code> 文件的工具，它<strong>在运行时检查项目自身的 Python 库</strong>，对任何附加组件都没有硬编码的知识。选择一个组件，它会直接根据该组件的架构生成表单；在脚本中添加一个字段，界面无需任何前端改动就会显示它。 标记为开发中的附加组件（其 <code>PLUGIN</code> 中的 <code>status</code>，参见<a href="addons.html">附加组件指南</a>）带有“under construction”徽章；将鼠标悬停在徽章上可查看尚未正常工作的部分。它仍可被添加和运行，并会显示警告。 Lab 面板上的 <strong>Simplify</strong> 改为提出四到五个问题，并据此构建实验室：构建位置始终会询问，地址则从不询问，每个节点按其所运行产品自身文档的要求来配置规格；无需登录，其中一个流程从示例实验室开始（参见 <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>）。集群的 <code>clu_rel</code> 会给出所选发行版实际发布的版本，这些版本每天最多从该项目自己的 git 标签读取一次，其他版本仍然可以手工输入。</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -778,6 +778,63 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>Harvester 集群有四种构建方式，每一种都用同一批发布文件安装同一个设备镜像，差别只在于节点如何到达安装程序。因此，入口由节点运行在哪里决定。</p>
+<table>
+<thead>
+<tr><th>节点运行的位置</th><th>方式</th><th>由谁构建</th></tr>
+</thead>
+<tbody>
+<tr><td>KVM 虚拟化主机</td><td><code>pxe</code>（默认）：网络引导，不在虚拟化主机上准备任何文件</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>KVM 虚拟化主机</td><td><code>iso</code>：把发布的 ISO 挂到每个节点，无需 PXE 或 DHCP 服务</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>任意云后端</td><td><code>image</code>：你在 <code>SOURCE_IMAGE</code> 中指定的、已经构建好的 Harvester 镜像</td><td>实验室定义，<code>clu_type: &quot;harvester&quot;</code></td></tr>
+<tr><td>已有的 Kubernetes 集群</td><td>Harvester 的 Helm chart</td><td><code>harvester</code> 插件</td></tr>
+</tbody>
+</table>
+<p><strong>在虚拟化主机上。</strong> <code>setup_harvester_cluster.py</code> 使用它自己的独立配置文件，而不是实验室定义（<code>templates/harvester-cluster.json.example</code> 列出了全部键），其 <code>install_method</code> 键在这里可用的两种方式之间选择。<code>pxe</code> 通过 HTTP 提供安装程序，不在虚拟化主机上准备任何东西；<code>iso</code> 把发布的 ISO、内核和 initrd 放入 <code>ISO_LOC</code> 并据此引导每个节点，完全不需要 PXE 或 DHCP 服务，但每个版本要向虚拟化主机传输 8 GB 以上。每个文件都用 Harvester 项目公布的 sha512 校验，已校验的副本不会再次下载。指定了该目标无法使用的方式时会给出警告，并替换为可用的方式，因此为某个目标写的配置在另一个目标上仍能构建。版本来自 <code>harvester_version</code>；省略时安装 Harvester 项目列出的最新稳定版。</p>
+<p><strong>在云上。</strong> 带 <code>clu_type: &quot;harvester&quot;</code> 的 <code>kclusters</code> 条目用云实例构建集群。每个节点以你在 <code>SOURCE_IMAGE</code> 中指定的、已构建好的 Harvester 镜像启动（SUSE 不发布这类镜像；<a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> 说明了如何用 Harvester ISO 构建 AMI），并在首次启动时根据 lab-in-a-box 作为 user-data 传入的 Harvester 配置自行安装。文件中集群的第一个节点创建集群，其余节点通过集群 VIP 加入。集群版本写在 <code>clu_rel</code> 中，这与其他所有发行版取版本的字段相同，形式为 <code>v1.9.1</code> 这样的发布标签；这里不接受通道名称。下面的示例是 AWS，在那里还必须启用嵌套虚拟化。</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>节点</strong>必须使用云后端；在 <code>aws</code> 上这意味着 <code>aws_nested_virtualization: &quot;true&quot;</code>、受支持的 <code>cloud_instance_type</code>（M7i/M8i/C7i/R7i/I7i 系列，见<a href="#compute-backends_1">计算后端</a>），以及把 Harvester AMI 的 ID 作为 <code>SOURCE_IMAGE</code>。该 AMI 的最小磁盘为 250 GiB。</li>
+<li><strong>集群字段</strong>：<code>harvester_token</code>（必填，所有节点共用）；<code>harvester_vip</code>（默认取 <code>AWS_SUBNET_ID</code> 中的空闲地址，并注册为创建节点的辅助私有 IP）；<code>harvester_mtu</code>（默认 1500，所有节点一致）；<code>harvester_replica_count</code>（少于 3 个节点时设为 1）；<code>harvester_device</code>（默认 <code>/dev/nvme0n1p6</code>，即社区 AMI 的布局）；<code>harvester_ntp_servers</code>（默认为 AWS 时间服务 169.254.169.123）；<code>harvester_config</code>（最后合并进每个节点的 Harvester 配置）；<code>harvester_settings</code>（集群就绪后应用的 Harvester 设置）。每个节点可设 <code>harvester_role</code>（default、management、worker、witness）。</li>
+<li><strong>访问</strong>：节点为 <code>rancher</code> 用户接受自动化节点的 SSH 密钥（Harvester 禁止 root 登录 SSH），密码为实验室的 <code>ROOT_PWD_HASH</code>。安全组开放 80、443、6443 和 9345，并允许其自身实例之间的全部流量。集群就绪后，<code>setup_lab.py</code> 会打印界面地址（<code>https://&lt;创建节点&gt;/</code>），并把 kubeconfig 保存在 <code>/etc/lab_creation/harvester-&lt;集群&gt;.kubeconfig</code>。</li>
+<li><strong>限制</strong>：VIP 固定在创建节点上（AWS 不会迁移辅助 IP，因此不会故障转移）；EC2 丢弃来自其他 MAC 地址的帧，所以 Harvester 虚拟机不能使用桥接的 VLAN 网络；目前还不会在 Harvester 集群上安装插件；每个节点的花费大致是其实例类型的小时价格加上 250 GiB EBS。</li>
+</ul>
+
+<h3 id="reusable-machine-images">可复用的机器镜像</h3>
+<p>安装需要数小时的产品值得只安装一次。SUSE Multi-Linux Manager 就是最明显的例子，超过一天。给节点加上 <code>keep_image</code>，只要该产品的镜像已经存在，实验室就从那个镜像构建节点；不存在时则保存一个。</p>
+<pre><code class="language-json">"nodes": {
+  &quot;smlm1.mydemo.lab&quot;: { &quot;keep_image&quot;: &quot;smlm&quot;, &quot;keep_image_version&quot;: &quot;5.2&quot;, &quot;addons&quot;: [&quot;smlm&quot;] }
+}
+</code></pre>
+<p>第一次运行照常安装产品，等该节点的插件、加入集群以及它的 <code>post_commands</code> 全部完成后，再请云为该节点自己的磁盘制作镜像。之后每次运行都会找到这个镜像并从它开始，所以安装只发生一次，而不是每次都来一遍。这两个字段也可以写在 <code>common</code> 里，适合所有节点都承载同一产品的实验室；节点如果写了自己的 <code>keep_image</code>，就不会继承 <code>common</code> 的版本，否则镜像会以一个产品的名字配上另一个产品的版本。</p>
+<p>镜像名为 <code>lab-in-a-box-&lt;产品&gt;-&lt;版本&gt;</code>，后续的实验室正是靠它找到镜像；在提供商允许的地方，还会打上属于本项目的标记。第二次运行既不新增也不做任何事：镜像已经在那里，于是节点由它构建，不会再次采集。无法保存镜像的后端会给出警告并重新安装该产品，而不是让整次运行失败。</p>
+<p>获得镜像有两条路径，由产品决定适用哪一条。<strong>采集</strong>是默认路径，在所有云后端上都可用：先用普通的操作系统镜像创建虚拟机，让耗时的安装只跑一次，再由云为结果制作镜像。既不上传也不转换。<strong>导入</strong>针对无法安装到运行中操作系统之上的产品，例如由自带安装程序写入磁盘的设备镜像：磁盘在云外构建，然后注册到云中。并非每家提供商都支持，因此由各后端自行声明。</p>
+<table>
+<thead>
+<tr><th>后端</th><th>采集虚拟机</th><th>导入磁盘</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>支持</td><td>支持</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>支持</td><td><strong>不支持</strong>：两家的 API 都没有这个操作</td></tr>
+<tr><td>libvirt, harvester</td><td>不支持</td><td>不支持</td></tr>
+</tbody>
+</table>
+<p><code>lab_image.py</code> 针对某个实验室自己的后端手工完成同样的事：<code>find</code> 打印某个产品的镜像（若有），<code>capture</code> 把节点按当前状态做成镜像，<code>import</code> 注册一块由提供商从对象存储或 URL 读取的磁盘。在提供商要求时，采集会停止或重启虚拟机，在 GCP 上是先停止再启动，因为从正在使用的磁盘取得的镜像可能需要在首次启动时自行修复。</p>
+
 <h3 id="deploying-a-legacy-image-centos-7">部署旧镜像（CentOS 7）</h3>
 <p>CentOS 7（以及同样老旧的预构建 <code>.qcow2</code> 镜像）既没有内置 Ignition/Combustion，也没有
 cloud-init，因此 <code>config_method</code> 必须为 <code>virt_customize</code>（请参阅

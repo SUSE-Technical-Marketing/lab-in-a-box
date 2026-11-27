@@ -498,7 +498,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">واجهة الويب (lab-builder)</h2>
-<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير. و<strong>Simplify</strong> في لوحة Lab يطرح بدلًا من ذلك أربعة أو خمسة أسئلة ويبني المختبر منها: مكان البناء يُسأل عنه دائمًا، والعناوين لا يُسأل عنها أبدًا، وكل عقدة تُحدَّد مواردها وفق ما توثّقه منتجاتها نفسها؛ ولا يحتاج إلى تسجيل دخول، وأحد مساراته يبدأ من مختبر جاهز (انظر <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>).</p>
+<p>أداة في المتصفح لتصميم ملفات <code>lab.json</code> <strong>تفحص مكتبات Python الخاصة بالمشروع أثناء التشغيل</strong>، فلا تحمل أي معرفة مبرمجة مسبقًا عن أي إضافة. اختر مكوّنًا فتعرض نموذجًا مبنيًا مباشرة من مخططه؛ وأضف حقلًا إلى سكربت فتعرضه الواجهة دون أي تعديل في الواجهة الأمامية. وتحمل الإضافة الموسومة بأنها قيد الإنشاء (<code>status</code> في <code>PLUGIN</code> الخاص بها، راجع <a href="addons.html">دليل الإضافات</a>) شارة "under construction"؛ مرّر المؤشر فوقها لمعرفة ما لا يعمل بعد. ويمكن مع ذلك إضافتها وتشغيلها، مع تحذير. و<strong>Simplify</strong> في لوحة Lab يطرح بدلًا من ذلك أربعة أو خمسة أسئلة ويبني المختبر منها: مكان البناء يُسأل عنه دائمًا، والعناوين لا يُسأل عنها أبدًا، وكل عقدة تُحدَّد مواردها وفق ما توثّقه منتجاتها نفسها؛ ولا يحتاج إلى تسجيل دخول، وأحد مساراته يبدأ من مختبر جاهز (انظر <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>). ويعرض <code>clu_rel</code> الخاص بالعنقود الإصدارات التي تنشرها التوزيعة المختارة فعلًا، مقروءةً من وسوم git لذلك المشروع مرة واحدة في اليوم على الأكثر، ويمكن كتابة أي إصدار آخر يدويًا.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -781,6 +781,63 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>يمكن بناء عنقود Harvester بأربع طرق، وكلها تثبّت الجهاز نفسه من ملفات الإصدار نفسها. الفرق بينها هو كيف يصل كل عقدة إلى المثبّت، لذلك تتحدد نقطة البداية بحسب المكان الذي تعمل فيه العقد.</p>
+<table>
+<thead>
+<tr><th>حيث تعمل العقد</th><th>الطريقة</th><th>من يبنيها</th></tr>
+</thead>
+<tbody>
+<tr><td>مضيف افتراضية KVM</td><td><code>pxe</code>، الافتراضي: إقلاع عبر الشبكة، ولا يُجهَّز شيء على المضيف</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>مضيف افتراضية KVM</td><td><code>iso</code>: صورة ISO للإصدار موصولة بكل عقدة، بلا خدمة PXE أو DHCP</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>أي خادمية سحابية</td><td><code>image</code>: صورة Harvester مبنية مسبقًا تحددها في <code>SOURCE_IMAGE</code></td><td>تعريف مختبر، <code>clu_type: &quot;harvester&quot;</code></td></tr>
+<tr><td>عنقود Kubernetes قائم</td><td>مخطط Helm الخاص بـ Harvester</td><td>إضافة <code>harvester</code></td></tr>
+</tbody>
+</table>
+<p><strong>على مضيف افتراضية.</strong> يستخدم <code>setup_harvester_cluster.py</code> ملف إعداد مستقلًا خاصًا به، لا تعريف مختبر (يسرد <code>templates/harvester-cluster.json.example</code> كل المفاتيح)، ويختار مفتاحه <code>install_method</code> بين الطريقتين المتاحتين هنا. تقدّم <code>pxe</code> المثبّت عبر HTTP ولا تجهّز شيئًا على المضيف؛ أما <code>iso</code> فتضع صورة ISO للإصدار ونواته وinitrd في <code>ISO_LOC</code> وتُقلع كل عقدة منها، وهذا لا يحتاج أي خدمة PXE أو DHCP لكنه ينقل أكثر من 8 غيغابايت إلى المضيف مرة واحدة لكل إصدار. يُتحقق من كل ملف مقابل قيمة sha512 التي ينشرها مشروع Harvester، والنسخة المتحقق منها لا تُنزَّل مرة أخرى. وإذا طُلبت طريقة لا يمكن استخدامها على هذا الهدف فيُنبَّه إلى ذلك وتُستبدل بطريقة تعمل، فيبقى الإعداد المكتوب لهدف واحد قابلًا للبناء على هدف آخر. تأتي النسخة من <code>harvester_version</code>؛ وعند إغفالها يُثبَّت أحدث إصدار مستقر يسرده مشروع Harvester.</p>
+<p><strong>على سحابة.</strong> يبني مدخل <code>kclusters</code> الذي يحمل <code>clu_type: &quot;harvester&quot;</code> العنقود من نسخ سحابية. تُقلع كل عقدة من صورة Harvester مبنية مسبقًا تحددها في <code>SOURCE_IMAGE</code> (لا تنشر SUSE أي صورة؛ ويوثّق <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> بناء صورة AMI من صورة ISO الخاصة بـ Harvester)، وتثبّت نفسها عند أول إقلاع من إعداد Harvester الذي يمرّره lab-in-a-box كـ user-data. تنشئ أول عقدة في الملف العنقود، وتنضم البقية عبر عنوان VIP للعنقود. تُكتب نسخة العنقود في <code>clu_rel</code>، وهو الحقل نفسه الذي تأخذ منه كل التوزيعات الأخرى نسختها، على صورة وسم إصدار مثل <code>v1.9.1</code>؛ ولا يُقبل اسم قناة هناك. المثال التالي على AWS، حيث يجب أيضًا تمكين الافتراضية المتداخلة.</p>
+<pre><code class="language-json">{
+  &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
+              &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
+              &quot;aws_nested_virtualization&quot;: &quot;true&quot; },
+  &quot;nodes&quot;: {
+    &quot;harv1.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot; },
+    &quot;harv2.mydemo.lab&quot;: { &quot;kcluster&quot;: &quot;harv&quot;, &quot;harvester_role&quot;: &quot;worker&quot; }
+  },
+  &quot;kclusters&quot;: {
+    &quot;harv&quot;: { &quot;clu_type&quot;: &quot;harvester&quot;, &quot;clu_rel&quot;: &quot;v1.9.0&quot;, &quot;mydomain&quot;: &quot;mydemo.lab&quot;,
+              &quot;harvester_token&quot;: &quot;change-me&quot;, &quot;harvester_replica_count&quot;: 1 }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>العقد</strong> يجب أن تستخدم خادمية سحابية؛ وعلى <code>aws</code> يعني ذلك <code>aws_nested_virtualization: &quot;true&quot;</code> مع <code>cloud_instance_type</code> مدعوم (عائلات M7i/M8i/C7i/R7i/I7i؛ انظر <a href="#compute-backends_1">خادميات الحوسبة</a>)، ومعرّف صورة Harvester AMI في <code>SOURCE_IMAGE</code>. والحد الأدنى لقرص هذه الصورة 250 غيغابايت.</li>
+<li><strong>حقول العنقود</strong>: <code>harvester_token</code> (إلزامي، مشترك بين كل العقد)؛ <code>harvester_vip</code> (افتراضيًا عنوان حر من <code>AWS_SUBNET_ID</code>، يُسجَّل عنوانًا خاصًا ثانويًا على عقدة الإنشاء)؛ <code>harvester_mtu</code> (افتراضيًا 1500، نفسه على كل العقد)؛ <code>harvester_replica_count</code> (اجعله 1 دون ثلاث عقد)؛ <code>harvester_device</code> (افتراضيًا <code>/dev/nvme0n1p6</code>، تقسيم صورة المجتمع)؛ <code>harvester_ntp_servers</code> (افتراضيًا خدمة الوقت في AWS، 169.254.169.123)؛ <code>harvester_config</code> (يُدمج أخيرًا في إعداد Harvester لكل عقدة)؛ <code>harvester_settings</code> (إعدادات Harvester تُطبَّق بعد أن يعمل العنقود). ولكل عقدة: <code>harvester_role</code> (default، management، worker، witness).</li>
+<li><strong>الوصول</strong>: تقبل العقد مفتاح SSH الخاص بعقدة الأتمتة للمستخدم <code>rancher</code> (يمنع Harvester دخول root عبر SSH)، وكلمة المرور هي <code>ROOT_PWD_HASH</code> الخاصة بالمختبر. وتحصل مجموعة الأمان على المنافذ 80 و443 و6443 و9345 وعلى كل حركة البيانات بين نسخها. وعندما يعمل العنقود يطبع <code>setup_lab.py</code> عنوان الواجهة (<code>https://&lt;عقدة الإنشاء&gt;/</code>) ويحفظ kubeconfig في <code>/etc/lab_creation/harvester-&lt;العنقود&gt;.kubeconfig</code>.</li>
+<li><strong>الحدود</strong>: يبقى عنوان VIP على عقدة الإنشاء (لا تنقل AWS عنوانًا ثانويًا، فلا يوجد تحويل عند الفشل)؛ وتُسقط EC2 الإطارات القادمة من عناوين MAC غريبة، فلا تستطيع آلات Harvester الافتراضية استخدام شبكات VLAN مجسورة؛ ولا تُثبَّت الإضافات على عنقود Harvester بعد؛ وتكلفة كل عقدة تقارب سعر نوع نسختها بالساعة زائد 250 غيغابايت من EBS.</li>
+</ul>
+
+<h3 id="reusable-machine-images">صور أجهزة قابلة لإعادة الاستخدام</h3>
+<p>المنتج الذي يستغرق تثبيته ساعات يستحق أن يُثبَّت مرة واحدة. وSUSE Multi-Linux Manager هو المثال الواضح، بأكثر من يوم. أضف إلى العقدة <code>keep_image</code> فيبنيها المختبر من صورة ذلك المنتج كلما كانت موجودة، ويحفظ واحدة إن لم تكن.</p>
+<pre><code class="language-json">"nodes": {
+  &quot;smlm1.mydemo.lab&quot;: { &quot;keep_image&quot;: &quot;smlm&quot;, &quot;keep_image_version&quot;: &quot;5.2&quot;, &quot;addons&quot;: [&quot;smlm&quot;] }
+}
+</code></pre>
+<p>يثبّت التشغيل الأول المنتج كالمعتاد، ثم بعد أن تنتهي إضافات العقدة وانضمامها إلى العنقود وأوامر <code>post_commands</code> الخاصة بها، يطلب من السحابة صورة لقرص تلك العقدة نفسها. ويجد كل تشغيل لاحق تلك الصورة ويبدأ منها، فيحدث التثبيت مرة واحدة لا في كل مرة. ويُقبل الحقلان في <code>common</code> أيضًا، لمختبر تحمل كل عقده المنتج نفسه؛ والعقدة التي تحدد <code>keep_image</code> خاصًا بها لا ترث النسخة من <code>common</code>، إذ كان ذلك سيعطي الصورة اسم منتج مع نسخة منتج آخر.</p>
+<p>تُسمّى الصورة <code>lab-in-a-box-&lt;المنتج&gt;-&lt;النسخة&gt;</code>، وبهذا يجدها مختبر لاحق، وتوسم بأنها من هذا المشروع حيث يسمح المزود بذلك. والتشغيل الثاني لا يضيف شيئًا ولا يفعل شيئًا: فالصورة موجودة أصلًا، فتُبنى العقدة منها ولا تُؤخذ صورتها مرة أخرى. والخادمية التي لا تستطيع حفظ الصور تنبّه وتثبّت المنتج من جديد بدلًا من إفشال التشغيل.</p>
+<p>للوصول إلى صورة طريقان، والمنتج هو ما يحدد أيهما ينطبق. <strong>الالتقاط</strong> هو الافتراضي ويعمل على كل خادمية سحابية: تُنشأ الآلة الافتراضية من صورة نظام تشغيل عادية، ويُجرى التثبيت الطويل مرة واحدة، ثم تصنع السحابة صورة للنتيجة. لا شيء يُرفَع ولا شيء يُحوَّل. و<strong>الاستيراد</strong> للمنتج الذي لا يمكن تثبيته على نظام تشغيل يعمل، مثل جهاز يكتبه مثبّته الخاص على قرص: يُبنى القرص خارج السحابة ثم يُسجَّل فيها. وليس كل مزود قادرًا على ذلك، لذلك تعلن كل خادمية عن ذلك بنفسها.</p>
+<table>
+<thead>
+<tr><th>الخادمية</th><th>التقاط آلة افتراضية</th><th>استيراد قرص</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>نعم</td><td>نعم</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>نعم</td><td><strong>لا</strong>: لا توجد هذه العملية في أي من واجهتي المزودين</td></tr>
+<tr><td>libvirt, harvester</td><td>لا</td><td>لا</td></tr>
+</tbody>
+</table>
+<p>يفعل <code>lab_image.py</code> الشيء نفسه يدويًا على خادمية مختبر بعينه: يطبع <code>find</code> صورة منتج إن وُجدت، ويصنع <code>capture</code> صورة لعقدة كما هي الآن، ويسجّل <code>import</code> قرصًا يقرؤه المزود من تخزين كائنات أو من رابط. ويوقف الالتقاط الآلة الافتراضية أو يعيد تشغيلها حيث يتطلب المزود ذلك، وعلى GCP بإيقافها ثم تشغيلها مجددًا، لأن صورة مأخوذة من قرص قيد الاستخدام قد تحتاج إلى إصلاح نفسها عند أول إقلاع.</p>
+
 <h3 id="deploying-a-legacy-image-centos-7">نشر صورة قديمة (CentOS 7)</h3>
 <p>لا يتضمن CentOS 7 (ولا صور <code>.qcow2</code> الجاهزة القديمة مثله) أيًّا من Ignition/Combustion أو
 cloud-init، لذا يجب أن تكون قيمة <code>config_method</code> هي <code>virt_customize</code> (راجع

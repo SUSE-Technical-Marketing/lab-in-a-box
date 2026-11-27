@@ -283,7 +283,16 @@ tree with one rule set ("Option B"):</p>
 <li><code>fields</code> / <code>sections</code> are <strong>structural wrappers</strong> (they never become output keys).</li>
 <li>Any other named object is a <strong>group</strong> that becomes an output key; a group
   marked <code>repeatable</code> becomes a keyed map of instances.</li>
+<li>A field with <code>enum</code> gets a dropdown; one with <code>enum_by</code> gets a dropdown whose options
+  depend on another field in the same section, plus a box to type a value the list does not carry.
+  <code>clu_rel</code> is the case: one field serves four Kubernetes distributions that name their releases
+  differently, so choosing a <code>clu_type</code> narrows the versions on offer to that distribution's own.</li>
 </ul>
+<p>Those release lists come out of the status snapshot that <code>refresh_hypervisor_status.py</code> writes as
+root, which reads each distribution's own git tags at most once a day. The CGI never asks a distribution's
+repository itself, for the same reason it never queries a hypervisor: it runs as the web server's user and does
+no slow or privileged work. A snapshot that has none yet leaves the field as free text, and a version outside the
+list is always accepted, so a release published this morning is installable before any refresh has seen it.</p>
 <p>So new fields, new components and new nested sections all render with zero UI
 changes. The only fixed convention is that small schema vocabulary — and it
 lives in the definitions, not the UI.</p>
