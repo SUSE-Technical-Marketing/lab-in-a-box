@@ -66,6 +66,7 @@ COMMANDS = {
     "dns_sync.py": 1,
     "reconcile_lab.py": 1,
     "lab_watch.py": 1,
+    "lab_image.py": 1,
     "setup_credentials.py": 1,
     "build_lab_usb.py": 1,
     "refresh_hypervisor_status.py": 1,
