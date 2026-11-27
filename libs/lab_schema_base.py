@@ -15,7 +15,7 @@ LAB_SCHEMA_VERSION is its own schema version, recorded in schemas/compatibility.
 __version__ = "__LABVERSION__"
 
 
-LAB_SCHEMA_VERSION = "4.1"
+LAB_SCHEMA_VERSION = "4.2"
 
 # A user name an ssh_authorized_keys entry may name (libs/ssh_keys.py).
 SSH_KEY_USER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_.-]{0,31}\$?$"
@@ -120,6 +120,8 @@ def base_lab_schema():
                     {"name": "post_commands", "required": False, "type": "array", "description": "Overrides common.post_commands for this node only — shell commands run on the VM itself, as root, after everything else for it is done — its Kubernetes join and its own add-ons included. Same reporting as pre_commands."},
                     _ssh_authorized_keys_field("Extra SSH keys for this node only, added to common.ssh_authorized_keys (both lists are installed). Same entry forms: a key, an https URL or a file path on the automation node, as a string for root or as {\"key\": ..., \"user\": ...}"),
                     {"name": "extra_dsk", "required": False, "type": "string", "description": "Additional disk paths or UUID=… entries (space-separated); per-disk bus: /dev/sdb,bus=scsi"},
+                    {"name": "keep_image", "required": False, "type": "string", "description": "Keep a reusable image of this node under this product name, on a cloud backend that can hold one. The node is built from that image whenever it already exists, and captured into it once this lab has finished with it, so a product that takes hours to install is installed once instead of every time. Also accepted in common, for a lab whose nodes all carry the same product"},
+                    {"name": "keep_image_version", "required": False, "type": "string", "description": "The version keep_image's image is kept under, so a new release gets its own image instead of silently reusing the old one (e.g. \"5.2\"). The image is named lab-in-a-box-<keep_image>-<version>"},
                     # VM_MEM/VM_DSK/VM_CPU/VM_BOOT/VM_DSK_BUS/VM_NET_MODEL/VM_OSVARIANT/
                     # VM_ROOT_PASS: load_vm_vars() (libs/lab_creation.py) merges 'common'
                     # then overlays EVERY key present in a node's own dict, so all of
@@ -180,7 +182,7 @@ def base_lab_schema():
                 "key_label": "Kubernetes cluster name",
                 "fields": [
                     {"name": "clu_type", "required": True, "type": "string", "enum": ["rke2", "k3s", "vanilla", "harvester"], "description": "Kubernetes cluster type: rke2, k3s, vanilla (upstream Kubernetes, built with kubeadm and configured by clu_cni and clu_pod_cidr) or harvester (Harvester / SUSE Virtualization appliance nodes on AWS from an AMI)"},
-                    {"name": "clu_rel", "required": True, "type": "string", "description": "Release channel: stable, latest, or a version string"},
+                    {"name": "clu_rel", "required": True, "type": "string", "description": "This cluster's release. rke2/k3s: a channel their own installer resolves (stable, latest) or a pinned version (v1.37.2+rke2r1, v1.37.2+k3s1). vanilla: the Kubernetes minor (1.33) or a full version (v1.37.3). harvester: a release tag of the Harvester project (v1.9.1); a channel name is not accepted there"},
                     {"name": "clu_cni", "required": False, "type": "string", "enum": ["flannel", "calico", "none"], "description": "clu_type vanilla: network plugin the first server applies (default: flannel; none applies nothing, for a lab that brings its own)"},
                     {"name": "clu_ingress", "required": False, "type": "string", "enum": ["nginx", "traefik", "none"], "description": "Ingress controller for this cluster. Unset keeps the one its distribution brings (nginx on rke2, traefik on k3s) and installs one on a distribution that brings none, when an add-on needs it. Naming a different one replaces the bundled controller; \"none\" installs no controller, for a cluster that brings its own."},
                     {"name": "clu_storage", "required": False, "type": "string", "enum": ["longhorn", "local-path", "none"], "description": "Default storage class for this cluster. Unset keeps the one its distribution brings (local-path on k3s, Longhorn on harvester) and installs one on a distribution that brings none, when an add-on needs it. longhorn is SUSE Storage, replicated across nodes; local-path is a directory on the node the pod runs on; \"none\" installs none."},

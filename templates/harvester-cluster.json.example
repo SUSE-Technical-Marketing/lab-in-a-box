@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "harvester_version": "v1.7.1",
+  "_comment_install_method": "install_method -- how each node is installed: \"pxe\" (default) netboots it, so nothing is staged on the hypervisor; \"iso\" boots the release ISO attached to the node, which needs no PXE or DHCP service and nothing served to the node, but stages the ISO, kernel and initrd in ISO_LOC on the hypervisor (the ISO alone is over 8 GB). A method this target cannot do is warned about and replaced with one that works.",
+  "_comment_harvester_version": "harvester_version -- any release tag from https://github.com/harvester/harvester/releases, e.g. v1.7.1. Omit it to install the newest release the Harvester project lists (read at most once a day and cached, so an offline or rate-limited node still installs); a tag newer than the cached list is accepted too, it is only checked for its shape.",
   "token": "XYZ REPLACE ME",
   "ssh_authorized_keys": [
     "ssh-rsa AAAA... XYZ REPLACE ME"

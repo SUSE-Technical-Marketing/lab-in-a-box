@@ -34,6 +34,7 @@ from lab_creation import (
 )
 from services import DNSService
 import apps
+import releases
 from lab_schema_base import field_default
 
 
@@ -215,6 +216,15 @@ class K3sDistro(K8sDistro):
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
         self._before_installer(hostname)
 
+        # The channel is resolved to a release here rather than left to the installer, for the reason the rke2
+        # path gives: a channel service that does not answer leaves the installer carrying the channel's own
+        # name where a version belongs. "" means it could not be resolved, and then the channel is passed on
+        # exactly as before.
+        version = releases.resolve("k3s", clu_rel)
+        if version and version != clu_rel:
+            log("    k3s '{}' is release {}".format(clu_rel, version))
+        pinned = "INSTALL_K3S_VERSION={} ".format(shlex.quote(version)) if version else ""
+
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
             # clu_rel, clu_name, mydomain and clu_token are free text from the lab JSON. They are shell-quoted before they reach
@@ -223,9 +233,10 @@ class K3sDistro(K8sDistro):
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} {}"
+                "INSTALL_K3S_CHANNEL={} {}{}"
                 "sh -s - server --tls-san {}.{}{}".format(
-                    shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
+                    shlex.quote(clu_rel), pinned,
+                    "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
                     shlex.quote(clu_name), shlex.quote(mydomain), disable)
             )
             self._start(hostname, "k3s")
@@ -238,10 +249,10 @@ class K3sDistro(K8sDistro):
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} "
+                "INSTALL_K3S_CHANNEL={} {}"
                 "K3S_URL=https://{}:6443 "
                 "K3S_TOKEN={} "
-                "sh -".format(shlex.quote(clu_rel), shlex.quote(rancher1_ip), shlex.quote(token))
+                "sh -".format(shlex.quote(clu_rel), pinned, shlex.quote(rancher1_ip), shlex.quote(token))
             )
             self._start(hostname, "k3s-agent")
             return token, rancher1_ip
@@ -369,17 +380,28 @@ class RKE2Distro(K8sDistro):
             update_kernel(hostname)
             reboot_into_pending_snapshot(hostname)
         log("  Installing RKE2 on '{}'".format(hostname))
-        # install_method and clu_rel are free text from the lab JSON, so they are shell-quoted. clu_type and node_type are fixed
-        # literals, so they are not quoted.
+        # The channel is resolved to a release here rather than left to the installer, which reads
+        # update.rke2.io for it and, when that does not answer, carries the channel's own name on as the version
+        # and builds a repository URL out of it that does not exist. releases.resolve() asks the same service, so
+        # a lab installs the release rke2 itself calls stable; it falls back to the last answer that service gave
+        # this node, then to the newest release tagged. "" means it could not be resolved at all, and then the
+        # channel is passed on exactly as before.
+        version = releases.resolve(clu_type, clu_rel)
+        if version and version != clu_rel:
+            log("    {} '{}' is release {}".format(clu_type, clu_rel, version))
+        # install_method, clu_rel and version are free text from the lab JSON, so they are shell-quoted. clu_type
+        # and node_type are fixed literals, so they are not quoted.
         ssh_run(
             hostname,
             "curl -sfL https://get.{clu_type}.io | "
             "INSTALL_RKE2_TYPE={node_type} "
             "INSTALL_RKE2_METHOD={install_method} "
             "INSTALL_RKE2_CHANNEL={clu_rel} "
+            "{version}"
             "sh -".format(
                 clu_type=clu_type, node_type=node_type,
                 install_method=shlex.quote(install_method), clu_rel=shlex.quote(clu_rel),
+                version="INSTALL_RKE2_VERSION={} ".format(shlex.quote(version)) if version else "",
             )
         )
 
@@ -434,6 +456,10 @@ class VanillaDistro(K8sDistro):
     # Each plugin's own manifest carries this network, so the cluster has to be initialised with the same one.
     CNI_POD_CIDRS = {"flannel": "10.244.0.0/16", "calico": "192.168.0.0/16"}
     DEFAULT_CNI = "flannel"
+    # The minor a lab gets when nothing names one: clu_rel is required by the schema, so this is for a caller
+    # that writes the definition itself (the lab-builder's step-by-step builder) rather than a default applied
+    # to a lab that left it out.
+    DEFAULT_REL = "1.33"
 
     def kubeconfig_path(self):
         return "/etc/kubernetes/admin.conf"

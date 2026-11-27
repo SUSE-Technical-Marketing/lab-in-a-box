@@ -24,6 +24,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import os
 import re
 import sys
@@ -263,6 +264,65 @@ def product_choices():
             for name, meaning in sorted(names.items())]
 
 
+# The channel names a distribution's own installer resolves for itself, offered ahead of a pinned version
+# because they are what a lab usually wants and what clu_rel defaults to. Harvester has none: a channel name is
+# not accepted there at all (libs/harvester.py), and upstream Kubernetes takes a minor, not a channel.
+_RELEASE_CHANNELS = {"rke2": ("stable", "latest"), "k3s": ("stable", "latest")}
+
+
+def release_choices(snapshot=None):
+    """
+    What clu_rel may be, per distribution: {"<clu_type>": ["stable", "v1.37.2+rke2r1", ...]}.
+
+    The releases come out of the status snapshot, which scripts/refresh_hypervisor_status.py fills as root (see
+    libs/releases.py: the CGI makes no outbound request of its own, so a distribution's repository is never
+    reached from here). A distribution the snapshot says nothing about is left out, and the field stays free
+    text for it.
+    """
+    snap = status() if snapshot is None else snapshot
+    listed = (snap or {}).get("releases") or {}
+    out = {}
+    for distribution, versions in listed.items():
+        options = list(_RELEASE_CHANNELS.get(distribution, ())) + [str(v) for v in (versions or [])]
+        if options:
+            out[str(distribution)] = options
+    return out
+
+
+def dynamic_enum_by(snapshot=None):
+    """
+    Live choices for a field whose options depend on another field's value, by field name:
+    {"clu_rel": {"on": "clu_type", "options": {"<clu_type>": [...]}}}.
+
+    clu_rel is one field serving every distribution, and each one names its releases differently, so the choice
+    cannot be a single list. The browser knows which clu_type the row it is rendering has chosen, so it is the
+    one that can narrow this (see app.js). A field with nothing to offer is left out and stays free text.
+    """
+    choices = release_choices(snapshot)
+    return {"clu_rel": {"on": "clu_type", "options": choices}} if choices else {}
+
+
+def _inject_enum_by(node, choices):
+    """
+    Walk a schema tree as _inject_dynamic_enums() does and give each field named in `choices` (see
+    dynamic_enum_by()) its `enum_by`, so the renderer can offer the options that match a sibling field's value.
+    """
+    if isinstance(node, list):
+        for n in node:
+            _inject_enum_by(n, choices)
+        return
+    if not isinstance(node, dict):
+        return
+    if _is_field(node):
+        live = choices.get(node.get("name"))
+        if live and live.get("options"):
+            node["enum_by"] = {"on": live["on"], "options": dict(live["options"])}
+        return
+    for v in node.values():
+        if isinstance(v, (dict, list)):
+            _inject_enum_by(v, choices)
+
+
 def dynamic_enums(snapshot=None):
     """
     Live `enum` choices by field name, for the fields whose options are whatever the hypervisors currently have rather
@@ -311,7 +371,9 @@ def schema(name):
 def base_schema():
     """The base lab-definition schema (common/nodes/kclusters), via the library."""
     sc = _schema_lib().base_lab_schema()
-    _inject_dynamic_enums(sc, dynamic_enums())
+    snap = status()
+    _inject_dynamic_enums(sc, dynamic_enums(snap))
+    _inject_enum_by(sc, dynamic_enum_by(snap))
     return sc
 
 
@@ -339,6 +401,13 @@ def discover():
             "targets": caps.get("targets") or [],
             "status": caps.get("status") or "stable",
             "status_note": caps.get("status_note") or "",
+            # What an add-on cannot be added without: a field its own schema requires, and a field naming a
+            # credential account, which its --validate refuses to go without even though the schema does not
+            # mark it required (addon_common.Validator's vreq_or_credential). The step-by-step builder offers
+            # neither, since it has no way to fill either in.
+            "required_fields": [f["name"] for f in (sc.get("fields") or []) if f.get("required")],
+            "credential_fields": [f["name"] for f in (sc.get("fields") or [])
+                                  if str(f.get("name", "")).endswith("_account")],
             "requires_cluster": caps.get("requires_cluster") or [],
             "provides_cluster": caps.get("provides_cluster") or [],
             "requires_kubernetes": caps.get("requires_kubernetes"),
@@ -384,39 +453,50 @@ def example(name):
 # "requires_cluster"/"provides_cluster" what it needs and supplies, "requires_kubernetes" whether it is tied to a
 # distribution, "aux_services" whether the automation node has to run something for it, and "check" whether it can
 # be verified afterwards. The two kinds that are not add-ons carry the one fact their kind states.
-FACETS = (
-    ("kubernetes", "On a Kubernetes cluster", lambda it: "kubernetes" in (it.get("layers") or [])),
-    ("standalone-container", "A container on a host",
-     lambda it: "standalone-container" in (it.get("layers") or [])),
-    ("os-native", "Installed on the OS", lambda it: "os-native" in (it.get("layers") or [])),
-    ("needs-ingress", "Needs an ingress controller",
-     lambda it: "ingress" in (it.get("requires_cluster") or [])),
-    ("needs-storageclass", "Needs a storage class",
-     lambda it: "storageclass" in (it.get("requires_cluster") or [])),
-    ("provides-ingress", "Provides an ingress controller",
-     lambda it: "ingress" in (it.get("provides_cluster") or [])),
-    ("provides-storageclass", "Provides a storage class",
-     lambda it: "storageclass" in (it.get("provides_cluster") or [])),
-    ("distribution-specific", "Tied to a Kubernetes distribution",
-     lambda it: bool(it.get("requires_kubernetes"))),
-    ("lab-service", "Needs a lab-wide service", lambda it: bool(it.get("aux_services"))),
-    ("checkable", "Can be checked after installing", lambda it: bool(it.get("check"))),
-    ("under-construction", "Under construction", lambda it: it.get("status") == "under-construction"),
+# The capability fields an add-on declares in its own PLUGIN (libs/apps.py's DEFAULT_PLUGIN), and the words the
+# filter puts in front of their values. Every option the filter offers is one of these fields' own values, read
+# off the add-ons themselves: the filter says what the add-ons say, so there is no second vocabulary to invent or
+# to keep in step. requires_kubernetes is a list or a single name, so both shapes are read.
+CAPABILITY_FIELDS = (
+    ("layers", "Runs as"),
+    ("targets", "Installed on"),
+    ("requires_cluster", "Needs from the cluster"),
+    ("provides_cluster", "Provides to the cluster"),
+    ("requires_kubernetes", "Needs the distribution"),
+    ("aux_services", "Needs the lab service"),
 )
 
 
 def facets_of(item):
-    """Which of FACETS this catalogue item satisfies, in FACETS order."""
-    return [name for name, _title, holds in FACETS if holds(item)]
+    """
+    The capabilities `item` declares, each as "<field>:<value>" taken straight from its PLUGIN, in
+    CAPABILITY_FIELDS order.
+    """
+    out = []
+    for field, _group in CAPABILITY_FIELDS:
+        declared = item.get(field)
+        if not declared:
+            continue
+        values = declared if isinstance(declared, (list, tuple)) else [declared]
+        out.extend("{}:{}".format(field, v) for v in values if v)
+    return out
 
 
-def facets():
+def facets(items=None):
     """
-    FACETS as [{"name": ..., "title": ...}], for a filter over catalogue(). Sent with the catalogue rather than
-    worked out in the browser, so the filter offers the same names and the same titles whatever this installation
-    happens to have installed.
+    The capabilities this installation's own add-ons declare, as [{"name", "title", "group"}] in
+    CAPABILITY_FIELDS order: "name" is facets_of()'s "<field>:<value>", "title" is the declared value itself and
+    "group" the field's word. Only values something actually declares are listed, so the filter never offers one
+    that would show nothing. `items` is a catalogue() already in hand.
     """
-    return [{"name": name, "title": title} for name, title, _holds in FACETS]
+    present = set()
+    for item in (items if items is not None else catalogue()):
+        present.update(item.get("facets") or [])
+    out = []
+    for field, group in CAPABILITY_FIELDS:
+        values = sorted(n.split(":", 1)[1] for n in present if n.startswith(field + ":"))
+        out.extend({"name": "{}:{}".format(field, v), "title": v, "group": group} for v in values)
+    return out
 
 
 def catalogue():
@@ -431,14 +511,175 @@ def catalogue():
         if name not in CORE_SECTIONS:
             items.append({"name": name, "kind": "infrastructure", "title": sec.get("title") or name,
                           "description": sec.get("description", ""), "field_count": len(sec.get("fields", [])),
-                          "layers": [], "targets": [], "facets": ["lab-service"]})
+                          "layers": [], "targets": [], "facets": []})
     clu_types = [f.get("enum") for f in base["kclusters"].get("fields", []) if f.get("name") == "clu_type"]
     if not clu_types or not clu_types[0]:
         raise ValueError("lab_schema: kclusters has no clu_type enum")
     for name in clu_types[0]:
         items.append({"name": name, "kind": "kcluster", "title": name, "description": "", "field_count": 0,
-                      "layers": [], "targets": [], "facets": ["kubernetes"]})
+                      "layers": [], "targets": [], "facets": ["layers:kubernetes"]})
     return items
+
+
+# ── the step-by-step builder ────────────────────────────────────────────────
+# webui/lib/wizard.py holds the questions and builds the definition; everything installation-specific it needs
+# is gathered here, because this is the module that already knows where the add-ons, the credentials and the
+# hypervisor snapshot live.
+
+
+def addable_addons():
+    """
+    The add-ons that can go into a lab with no configuration of their own, by name, asked of each add-on's own
+    --validate and cached (apps.accepts_blank_config()). Roughly half of them: the rest want a credential, a
+    required field or a choice only an operator can make. None when this installation's library cannot answer.
+    """
+    apps = _apps_lib()
+    if not hasattr(apps, "accepts_blank_config"):
+        # A deployed library older than this web UI: say nothing rather than fail, and the wizard falls back to
+        # what an add-on's schema already shows about its required fields.
+        return None
+    files = {}
+    for d in addon_dirs():
+        for name, path in apps.addon_files(d).items():
+            files.setdefault(name, path)
+    answers = apps.accepts_blank_config(list(files.values()))
+    return {name[len("install_"):] for name, path in files.items()
+            if answers.get(os.path.realpath(path))}
+
+
+def cloud_accounts():
+    """[(name, cloudtype)] of the cloud accounts the credential store holds. Nothing is decrypted or read."""
+    return list(_primary_lib().list_cloud_accounts())
+
+
+def service_accounts():
+    """{kind: [name, ...]} of the service credentials the store holds. Names only, nothing decrypted."""
+    out = {}
+    for name, kind in _primary_lib().list_service_credentials():
+        out.setdefault(kind, []).append(name)
+    return {kind: sorted(names) for kind, names in out.items()}
+
+
+def lab_network():
+    """
+    The subnet a generated lab's nodes live on: this automation node's own. A lab's nodes share the network with
+    the automation node that serves their DNS, so its gateway, prefix and resolver are the lab's, and the run
+    then allocates each address from it (libs/ipalloc.py).
+
+    {} when it cannot be read — no default route, no address, no `ip` command — and the generated lab then names
+    no network, which its own preflight reports rather than this guessing one.
+
+    Read here with `ip -j` rather than through libs/host_network.py, whose current_settings() is the same answer
+    but needs Python 3.7: this module is imported by the CGI under the host's own python3, which can be 3.6.
+    """
+    try:
+        routes = _ip_json("-4", "route", "show", "default")
+        route = next((r for r in routes if r.get("gateway") and r.get("dev")), None)
+        if not route:
+            return {}
+        addrs = _ip_json("-4", "addr", "show", "dev", route["dev"])
+        info = [a for a in (addrs[0].get("addr_info") or [])
+                if a.get("family") == "inet" and a.get("scope") == "global"]
+        if not info:
+            return {}
+        return {"mygw": route["gateway"], "mymask": str(info[0]["prefixlen"]),
+                "mydns": _resolver() or route["gateway"]}
+    except (OSError, ValueError, IndexError, KeyError, TypeError, subprocess.SubprocessError):
+        return {}
+
+
+def _ip_json(*args):
+    """`ip -j <args>` as parsed JSON, or [] when there is no such command or it says nothing."""
+    out = subprocess.run(["ip", "-j"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return json.loads(out.stdout.decode("utf-8") or "[]")
+
+
+def _resolver():
+    """The first nameserver of /etc/resolv.conf, which on an automation node is its own BIND, or ""."""
+    try:
+        with open("/etc/resolv.conf") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) > 1 and parts[0] == "nameserver":
+                    return parts[1]
+    except OSError:
+        pass
+    return ""
+
+
+def _wizard():
+    """
+    webui/lib/wizard.py, which sits beside this file rather than in libs/: it is a web-UI concern. Loading
+    libs/sizing.py first is what puts libs_dir() on the path, which is where the wizard's own import of it
+    resolves — the same reason every other library here goes through _lib().
+    """
+    _lib("sizing")
+    import wizard
+    return wizard
+
+
+def _image_names():
+    """The source images the hypervisor snapshot reports, by name. Its entries are strings on some versions of
+    the snapshot and objects on others, so both are read."""
+    names = []
+    for image in status().get("images") or []:
+        name = image if isinstance(image, str) else (image or {}).get("name") or ""
+        if name:
+            names.append(str(name))
+    return names
+
+
+def wizard_workflows(service_accounts=None):
+    """
+    The workflows the step-by-step builder offers, each with whatever stands in its way on this installation.
+
+    `service_accounts` comes from the caller because the credential files are root-only: the web process reads
+    them through lab-builder-helper (webui/lib/admin.py) and passes the names in. Reading them here is the
+    fallback for a caller that runs as root itself.
+    """
+    wizard = _wizard()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
+    out = []
+    for workflow in wizard.workflows():
+        workflow["prerequisites"] = wizard.prerequisites(workflow["name"], accounts)
+        out.append(workflow)
+    return out
+
+
+def wizard_steps(workflow, answers=None, cloud_accounts=None, service_accounts=None):
+    """
+    `workflow`'s questions, with every option filled in from what this installation has, and narrowed by what has
+    been answered so far: a later question can depend on an earlier one, so a caller re-reads these after each
+    answer.
+    """
+    wizard = _wizard()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
+    clouds = cloud_accounts if cloud_accounts is not None else globals()["cloud_accounts"]()
+    return {
+        "workflow": workflow,
+        "prerequisites": wizard.prerequisites(workflow, accounts),
+        "steps": wizard.steps(workflow, catalogue=catalogue(), accounts=clouds,
+                              images=_image_names(), addable=addable_addons(),
+                              service_accounts=accounts, examples=examples(), answers=answers or {}),
+    }
+
+
+def wizard_build(workflow, answers, cloud_accounts=None, service_accounts=None):
+    """
+    The lab definition these answers describe, ready for the canvas and for Validate. The accounts come from the
+    caller for the same reason wizard_steps()' do.
+    """
+    wizard = _wizard()
+    accounts = service_accounts if service_accounts is not None else globals()["service_accounts"]()
+    clouds = cloud_accounts if cloud_accounts is not None else globals()["cloud_accounts"]()
+    # An example lab is the definition the builder hands back, so it is read here, where libs/lab_examples.py
+    # already resolves a name to its file; wizard.py reads no files of its own.
+    chosen = str((answers or {}).get("example") or "")
+    definition = example(chosen) if workflow == "example" and chosen else None
+    return {"config": wizard.build(workflow, answers or {}, network=lab_network(), catalogue=catalogue(),
+                                   accounts=clouds, images=_image_names(),
+                                   addable=addable_addons(), service_accounts=accounts,
+                                   examples=examples(), example_definition=definition)}
 
 
 _lab_creation = None

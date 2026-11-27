@@ -47,6 +47,9 @@
   "addon:betterleaks": [
    {"version": "1.0", "breaking": false, "changes": "Betterleaks secret scanning in two modes, a podman container and a Kubernetes CronJob, with the command line of whichever major version the lab names"}
   ],
+  "addon:buffer": [
+   {"version": "1.0", "breaking": false, "changes": "initial version: buffer_agents, buffer_users, buffer_api_key, buffer_account, buffer_mcp_url, buffer_server_name and buffer_path"}
+  ],
   "addon:cerebras": [
    {"version": "1.0", "breaking": false, "changes": "First version: a LiteLLM proxy in front of the provider's hosted API, with the model named by the lab"}
   ],
@@ -496,7 +499,8 @@
    {"version": "3.1", "breaking": false, "changes": "ssh_authorized_keys in common and nodes: extra SSH keys (a key, an https URL or a file path; for root or a named user) added to each VM once it is up."},
    {"version": "3.2", "breaking": false, "changes": "Declare aws_nested_virtualization in common and per node: an AWS-only knob the backend and the Harvester helper already read, and that examples/harvester-aws.json.template already sets, but the schema did not list"},
    {"version": "4.0", "breaking": true, "changes": "clu_type kubeadm is now clu_type vanilla: the same upstream Kubernetes built with kubeadm, under the name the lab definition and the documentation use for it. A lab naming the old value is migrated.", "migration": "lab_4_0"},
-   {"version": "4.1", "breaking": false, "changes": "Declare static_ip in common and per node: on a cloud backend \"true\" reserves a VM's public address with the provider, so a stop and start hands back the same address instead of a new one that leaves every record of the lab naming an address that answers nothing"}
+   {"version": "4.1", "breaking": false, "changes": "Declare static_ip in common and per node: on a cloud backend \"true\" reserves a VM's public address with the provider, so a stop and start hands back the same address instead of a new one that leaves every record of the lab naming an address that answers nothing"},
+   {"version": "4.2", "breaking": false, "changes": "nodes.keep_image and nodes.keep_image_version: keep a reusable image of a node under a product name, build the node from that image when it already exists, and capture it once the lab has finished with it"}
   ]
  }
 }

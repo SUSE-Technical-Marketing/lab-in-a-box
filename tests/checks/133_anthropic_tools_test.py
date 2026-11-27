@@ -48,6 +48,11 @@ def _fake_install_packages(host, pkgs, manager="", reboot=True, required=True, e
 
 
 at.ssh_run = _fake_ssh_run
+# The MCP registration lives in libs/agents.py, which drives SSH through its own import of ssh_run, so that one
+# is stood in for as well; otherwise registering a server would really try to reach a node.
+import agents  # noqa: E402
+
+agents.ssh_run = _fake_ssh_run
 at.install_packages = _fake_install_packages
 at.package_available = lambda host, pkg, manager="": pkg in _AVAILABLE
 at.package_manager = lambda host: _MANAGER[0]

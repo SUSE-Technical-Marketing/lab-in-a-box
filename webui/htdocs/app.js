@@ -189,18 +189,22 @@ async function loadComponents() {
 function renderFacetFilter() {
   const sel = $("#facetFilter");
   if (!sel) return;
-  const present = new Set();
-  state.components.forEach((c) => (c.facets || []).forEach((x) => present.add(x)));
-  const keep = state.facets.filter((x) => present.has(x.name));
+  const keep = state.facets || [];
   const chosen = sel.value;
   sel.innerHTML = "";
   const all = el("option", "", "Everything");
   all.value = "";
   sel.appendChild(all);
+  let group = null;
   keep.forEach((x) => {
+    if (!group || group.label !== x.group) {
+      group = el("optgroup");
+      group.label = x.group;
+      sel.appendChild(group);
+    }
     const o = el("option", "", x.title);
     o.value = x.name;
-    sel.appendChild(o);
+    group.appendChild(o);
   });
   sel.value = keep.some((x) => x.name === chosen) ? chosen : "";
 }
@@ -319,7 +323,7 @@ function renderPalette(filter) {
   });
   // pxe is the one base-schema section in this palette, and it is itself a lab-wide service, so a facet narrows
   // it away unless that is the facet asked for.
-  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && (!facet || facet === "lab-service");
+  const pxe = (!f || "pxe tftp dhcp boot service".includes(f)) && !facet;
   if (pxe) {
     root.appendChild(paletteSection("Infrastructure", "Lab-wide services on the automation node",
       [paletteRow(PXE_SPEC, "pxe", "TFTP / PXE-boot / DHCP service on the automation node", "", [],
@@ -331,6 +335,350 @@ function renderPalette(filter) {
     root.appendChild(el("p", "pal-hint", f ? `No add-on matches “${filter}”${where}.`
       : `No add-on${where}.`));
   }
+}
+
+// ---- the step-by-step builder (Simplify) ------------------------------------
+// Four questions and the server works the rest out: webui/lib/wizard.py holds the questions and builds the
+// definition, so what is here is the form and nothing else. Every answer is sent back for the next step, because
+// a later question can depend on an earlier one (choosing SUSE Virtualization narrows the backends and drops the
+// add-on question), and the finished definition goes onto the canvas through loadLab() — the same path an
+// example or an opened file takes, so Validate, Save and Create lab all work on it unchanged.
+const wiz = { open: false, workflows: [], workflow: "", steps: [], answers: {}, index: 0, config: null };
+
+// Simplify asks for nothing: its three actions are served by the public API (webui/lib/api.py's _wizard), so the
+// browser never puts up a login dialog here. When a login already exists, the same actions are read through the
+// admin endpoint instead, where the server adds the credential store's cloud accounts to the "where" question.
+async function wizardCall(action, payload, params = {}) {
+  const q = new URLSearchParams({ action, ...params });
+  const base = state.auth && state.auth.user ? ADMIN_API : API;
+  const opts = payload === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+  };
+  const r = await fetch(`${base}?${q}`, opts);
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* not JSON: an error page */ }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function openWizard() {
+  // The workflows are read before anything is shown: a panel that opened on a failed read would stand there
+  // empty, as if Simplify had nothing to offer.
+  let workflows;
+  try {
+    workflows = (await wizardCall("wizard")).workflows || [];
+  } catch (e) {
+    toastError(e.message);
+    return;
+  }
+  wiz.open = true;
+  wiz.workflows = workflows;
+  wiz.workflow = "";
+  wiz.answers = {};
+  wiz.index = 0;
+  wiz.config = null;
+  renderWizard();
+  showDialog("#wizardPanel");
+}
+
+function closeWizard() {
+  wiz.open = false;
+  closeDialog("#wizardPanel");
+}
+
+function wizardButtons({ back = false, next = false, open = false, create = false, keep = false }) {
+  $("#wizardBack").hidden = !back;
+  $("#wizardNext").hidden = !next;
+  $("#wizardOpen").hidden = !open;
+  $("#wizardCreate").hidden = !create;
+  // Save to server needs a login; downloading the file never does.
+  $("#wizardDownload").hidden = !keep;
+  $("#wizardSave").hidden = !keep;
+  $("#wizardSave").disabled = Boolean(serverLock());
+  $("#wizardSave").title = serverLock() || "Save this lab on the automation node";
+}
+
+function renderWizard() {
+  const body = $("#wizardBody");
+  body.innerHTML = "";
+  if (!wiz.workflow) {
+    renderWizardStrip(false);
+    renderWizardSoFar(false);
+    return renderWizardWorkflows(body);
+  }
+  if (wiz.index >= wiz.steps.length) {
+    // The final screen is itself a summary of the built lab, so the running one beside it would say the same
+    // thing twice; it steps aside and lets that have the width.
+    renderWizardStrip(true);
+    renderWizardSoFar(false);
+    return renderWizardSummary(body);
+  }
+  renderWizardStrip(true);
+  renderWizardSoFar(true);
+  return renderWizardStep(body, wiz.steps[wiz.index]);
+}
+
+/* The steps across the top of the dialog: one per question, ticked once answered, the current one marked. A step
+ * already answered can be clicked to go back to it; one not yet reached cannot, because the questions that
+ * follow depend on the answers before them. Names only, never answers: those are in "Your lab so far". */
+function renderWizardStrip(show) {
+  const strip = $("#wizardSteps");
+  if (!strip) return;
+  strip.hidden = !show;
+  strip.innerHTML = "";
+  if (!show) return;
+  (wiz.steps || []).forEach((step, i) => {
+    const done = i < wiz.index;
+    const chip = el("button", "wizard-step" + (done ? " done can-go" : i === wiz.index ? " now" : ""));
+    chip.type = "button";
+    chip.appendChild(el("span", "tick", done ? "✓" : String(i + 1)));
+    chip.appendChild(document.createTextNode(step.title || step.name));
+    if (done) chip.addEventListener("click", () => wizardGoToStep(i));
+    else chip.disabled = i !== wiz.index;
+    strip.appendChild(chip);
+  });
+}
+
+/* The readable form of an answer: a choice's own option label rather than the value stored, a multi-choice's
+ * labels joined, and a count or a name as typed. "" when the question has not been answered. */
+function wizardAnswerLabel(step) {
+  const value = wiz.answers[step.name];
+  if (value === undefined || value === null || value === "") return "";
+  const labelOf = (v) => {
+    const option = (step.options || []).find((o) => String(o.value) === String(v));
+    return option ? option.label : String(v);
+  };
+  if (Array.isArray(value)) return value.length ? value.map(labelOf).join(", ") : "";
+  return labelOf(value);
+}
+
+/* What the lab is becoming, beside the question: every step with its answer, and the ones still to come named as
+ * such, so the shape of the result is visible before it is committed to. */
+function renderWizardSoFar(show) {
+  const box = $("#wizardSoFar");
+  if (!box) return;
+  box.hidden = !show;
+  box.innerHTML = "";
+  if (!show) return;
+  box.appendChild(el("h4", "", "Your lab so far"));
+  const list = el("ul");
+  (wiz.steps || []).forEach((step, i) => {
+    const row = el("li");
+    row.appendChild(el("span", "k", step.title || step.name));
+    const answer = wizardAnswerLabel(step);
+    const pending = i === wiz.index ? "this question" : "not yet";
+    row.appendChild(el("span", "v" + (answer ? "" : " pending"), answer || pending));
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  if (!(wiz.steps || []).length) {
+    box.appendChild(el("p", "wizard-help", "Nothing answered yet."));
+  }
+}
+
+/* Go back to a question already answered. Forward is Next's job: an answer can change which questions follow, so
+ * they are read again rather than skipped over. */
+async function wizardGoToStep(index) {
+  if (index >= wiz.index) return;
+  wiz.index = index;
+  await loadWizardSteps();
+  renderWizard();
+}
+
+function renderWizardWorkflows(body) {
+  $("#wizardWhere").textContent = "";
+  wizardButtons({});
+  body.appendChild(el("p", "wizard-q", "What kind of lab?"));
+  body.appendChild(el("p", "wizard-help",
+    "Each one asks a few questions. Nothing is created until you say so."));
+  const list = el("div", "wizard-choice");
+  (wiz.workflows || []).forEach((workflow) => {
+    const label = el("label");
+    const button = el("input");
+    button.type = "radio";
+    button.name = "wizard-workflow";
+    button.addEventListener("change", () => startWizardWorkflow(workflow.name));
+    label.appendChild(button);
+    const text = el("span");
+    text.appendChild(el("strong", "", workflow.title));
+    text.appendChild(el("span", "opt-help", workflow.description));
+    (workflow.prerequisites || []).forEach((p) => {
+      text.appendChild(el("span", "opt-help", "Needs " + p.what + ": " + p.fix));
+    });
+    label.appendChild(text);
+    list.appendChild(label);
+  });
+  body.appendChild(list);
+  if (!(wiz.workflows || []).length) {
+    body.appendChild(el("p", "wizard-help", "This installation offered no workflows."));
+  }
+}
+
+async function startWizardWorkflow(name) {
+  wiz.workflow = name;
+  wiz.answers = {};
+  wiz.index = 0;
+  wiz.steps = [];
+  if (!(await loadWizardSteps())) wiz.workflow = "";
+  renderWizard();
+}
+
+// Re-read on every answer: the server decides which questions follow from what has been answered so far.
+// Returns false when the read failed, which leaves wiz.steps as it was so the caller can stay where it is
+// rather than walk on into a summary of nothing.
+async function loadWizardSteps() {
+  try {
+    const data = await wizardCall("wizard-steps", undefined, { name: wiz.workflow, answers: JSON.stringify(wiz.answers) });
+    wiz.steps = data.steps || [];
+    wiz.prerequisites = data.prerequisites || [];
+    return true;
+  } catch (e) {
+    toastError(e.message);
+    return false;
+  }
+}
+
+function renderWizardStep(body, step) {
+  $("#wizardWhere").textContent = `Step ${wiz.index + 1} of ${wiz.steps.length}`;
+  wizardButtons({ back: true, next: true });
+  (wiz.prerequisites || []).forEach((p) => {
+    const warn = el("div", "wizard-blocked");
+    warn.appendChild(el("strong", "", "This needs " + p.what + "."));
+    warn.appendChild(el("div", "opt-help", p.why + " " + p.fix));
+    body.appendChild(warn);
+  });
+  body.appendChild(el("p", "wizard-q", step.title));
+  if (step.help) body.appendChild(el("p", "wizard-help", step.help));
+  const value = wiz.answers[step.name] !== undefined ? wiz.answers[step.name] : step.default;
+
+  if (step.kind === "choice" || step.kind === "multi") {
+    const list = el("div", "wizard-choice");
+    (step.options || []).forEach((option) => {
+      const label = el("label");
+      const input = el("input");
+      input.type = step.kind === "multi" ? "checkbox" : "radio";
+      input.name = "wizard-" + step.name;
+      input.value = option.value;
+      input.checked = step.kind === "multi"
+        ? (value || []).indexOf(option.value) !== -1
+        : String(value) === String(option.value);
+      input.addEventListener("change", () => {
+        if (step.kind === "multi") {
+          const chosen = Array.from(list.querySelectorAll("input")).filter((i) => i.checked).map((i) => i.value);
+          wiz.answers[step.name] = chosen;
+        } else {
+          wiz.answers[step.name] = option.value;
+        }
+      });
+      label.appendChild(input);
+      const text = el("span");
+      text.appendChild(el("strong", "", option.label));
+      if (option.help) text.appendChild(el("span", "opt-help", option.help));
+      label.appendChild(text);
+      list.appendChild(label);
+    });
+    body.appendChild(list);
+    if (!(step.options || []).length) {
+      body.appendChild(el("p", "wizard-help", "Nothing to choose from on this installation."));
+    }
+    if (step.kind === "multi" && wiz.answers[step.name] === undefined) wiz.answers[step.name] = value || [];
+    if (step.kind === "choice" && wiz.answers[step.name] === undefined) wiz.answers[step.name] = value;
+    return;
+  }
+
+  const input = el("input");
+  input.type = step.kind === "count" ? "number" : "text";
+  if (step.kind === "count") {
+    input.min = step.min;
+    input.max = step.max;
+  }
+  input.value = value === undefined || value === null ? "" : value;
+  wiz.answers[step.name] = input.value;
+  input.addEventListener("input", () => { wiz.answers[step.name] = input.value; });
+  body.appendChild(input);
+}
+
+async function wizardStepBack() {
+  if (wiz.index === 0) {
+    wiz.workflow = "";
+    renderWizard();
+    return;
+  }
+  wiz.index -= 1;
+  await loadWizardSteps();
+  renderWizard();
+}
+
+async function wizardStepNext() {
+  wiz.index += 1;
+  // The answer just given may change what follows, so the steps are read again before the next one is shown.
+  if (!(await loadWizardSteps())) {
+    wiz.index -= 1;
+  } else if (wiz.index >= wiz.steps.length) {
+    await buildWizardLab();
+  }
+  renderWizard();
+}
+
+async function buildWizardLab() {
+  try {
+    const data = await wizardCall("wizard-build", { workflow: wiz.workflow, answers: wiz.answers });
+    wiz.config = data.config || null;
+  } catch (e) {
+    wiz.config = null;
+    toastError(e.message);
+  }
+}
+
+function renderWizardSummary(body) {
+  $("#wizardWhere").textContent = "Ready";
+  wizardButtons({ back: true, open: !!wiz.config, create: !!wiz.config, keep: !!wiz.config });
+  if (!wiz.config) {
+    body.appendChild(el("p", "wizard-help", "The server could not build this lab. Go back and change an answer."));
+    return;
+  }
+  const nodes = Object.keys(wiz.config.nodes || {});
+  const common = wiz.config.common || {};
+  body.appendChild(el("p", "wizard-q", "This is what it will build"));
+  const list = el("dl", "wizard-summary");
+  const rows = [
+    ["Nodes", nodes.length ? nodes.join(", ") : "none"],
+    ["Zone", common.mydomain || "—"],
+    ["Where", common.cloud_account ? "cloud account " + common.cloud_account : (common.backend || "libvirt")],
+    ["Each node", `${common.VM_CPU} vCPU · ${common.VM_MEM} MiB · ${common.VM_DSK} GiB, and more where a node needs it`],
+    ["Addresses", common.mygw ? "allocated from " + common.mygw + "/" + common.mymask : "assigned by the provider"],
+  ];
+  Object.keys(wiz.config.kclusters || {}).forEach((name) => {
+    const clu = wiz.config.kclusters[name];
+    rows.push(["Cluster " + name, clu.clu_type + (clu.addons && clu.addons.length ? " with " + clu.addons.join(", ") : "")]);
+  });
+  rows.forEach(([key, text]) => {
+    list.appendChild(el("dt", "", key));
+    list.appendChild(el("dd", "", text));
+  });
+  body.appendChild(list);
+}
+
+// What the lab is called: the name answered in the first question.
+function wizardLabName() {
+  return (wiz.answers.name || "lab").toString();
+}
+
+function wizardToCanvas() {
+  if (!wiz.config) return;
+  const name = wizardLabName();
+  $("#labName").value = name;
+  loadLab(wiz.config);
+  closeWizard();
+  toast("On the canvas: every field can be changed before you create it");
+}
+
+async function wizardCreate() {
+  if (!wiz.config) return;
+  // Straight into the canvas's own Create lab, which saves the definition, asks for the passphrase it needs and
+  // follows the job: one path, whichever way the lab was written.
+  wizardToCanvas();
+  await openCreate();
 }
 
 // ---- hypervisor status panel (read-only) ------------------------------------
@@ -1088,6 +1436,7 @@ async function openEditor(id) {
       kind = "Add-on"; title = item.section; desc = sc.description || "";
       layers = (sc.capabilities && sc.capabilities.layers) || [];
       walk(sc, form, []);
+      wireDependentFields(form);
       attachVersionSuggestions(form, sc);
       const frag = m.addonCfg[item.section] || {};
       form.querySelectorAll("[data-outpath]").forEach((i) => setWidgetValue(i, getPath(frag, JSON.parse(i.dataset.outpath))));
@@ -1136,6 +1485,23 @@ function applyEditor() {
   closeEditor();
   renderCanvas();
   refreshLab();
+}
+
+/* Connect every field in `container` whose options depend on another field there (fieldRow's enum_by branch) to
+ * the sibling it depends on, so choosing a distribution narrows the version list in that same row. Called once
+ * the container holds both, because either may be rendered first. */
+function wireDependentFields(container) {
+  if (!container || !container.querySelectorAll) return;
+  const dependents = Array.from(container.querySelectorAll("input")).filter((i) => i._dependsOn);
+  dependents.forEach((dep) => {
+    const source = Array.from(container.querySelectorAll("input, select")).find(
+      (i) => i._field && i._field.name === dep._dependsOn);
+    if (!source) return;
+    const apply = () => { if (dep._refillFor) dep._refillFor(source.value || ""); };
+    source.addEventListener("change", apply);
+    source.addEventListener("input", apply);
+    apply();
+  });
 }
 
 /* Recursively render `node` into `parent`, tracking the output-key path. */
@@ -1268,6 +1634,66 @@ function fieldRow(field, outPath, repeatMode) {
 
     row.appendChild(container);
     // Don't append input here; let the normal flow handle it after initialization
+  } else if (field.enum_by && field.enum_by.options) {
+    // A field whose choices depend on another field in the same section (discovery.dynamic_enum_by): clu_rel is
+    // one field serving every distribution, and each names its releases differently, so the list is narrowed
+    // here by whatever clu_type this row has chosen. Free text stays available: a release the server's list
+    // does not mention is still installable by naming it.
+    const byField = field.enum_by.on;
+    const byOptions = field.enum_by.options;
+    const container = el("div", "enum-by-container");
+    const select = el("select");
+    select.className = "enum-by-select";
+    const textInput = el("input");
+    textInput.type = "text";
+    textInput.className = "enum-by-custom";
+    textInput.placeholder = "or type a version";
+    textInput.style.display = "none";
+
+    input = el("input");
+    input.type = "hidden";
+    input.className = "enum-by-value";
+
+    const fill = (depends, keep) => {
+      const listed = byOptions[depends] || [];
+      select.innerHTML = "";
+      const blank = el("option", null, listed.length ? "— select or type —" : "— type a version —");
+      blank.value = "";
+      select.appendChild(blank);
+      listed.forEach((v) => { const o = el("option", null, v); o.value = v; select.appendChild(o); });
+      const custom = el("option", null, "— other —");
+      custom.value = "CUSTOM_VALUE";
+      select.appendChild(custom);
+      if (keep && listed.indexOf(keep) >= 0) {
+        select.value = keep; textInput.value = keep; textInput.style.display = "none";
+      } else if (keep) {
+        select.value = "CUSTOM_VALUE"; textInput.value = keep; textInput.style.display = "block";
+      }
+      input.value = keep || "";
+    };
+
+    const syncValue = () => {
+      if (select.value === "CUSTOM_VALUE") {
+        textInput.style.display = "block";
+        input.value = textInput.value;
+      } else {
+        textInput.style.display = "none";
+        input.value = select.value;
+      }
+    };
+    select.addEventListener("change", syncValue);
+    textInput.addEventListener("input", () => { input.value = textInput.value; });
+
+    container.appendChild(select);
+    container.appendChild(textInput);
+    // The sibling this depends on may be rendered after this field, so the list is filled on every change of it
+    // rather than only once: _dependsOn is read by the section renderer, which knows both rows.
+    input._dependsOn = byField;
+    input._refillFor = (depends) => fill(depends, input.value);
+    input._setFromValue = (v) => { fill(select._depends || "", v); };
+    fill("", "");
+
+    row.appendChild(container);
   } else if (options) {
     const optValue = (o) => (o && typeof o === "object") ? o.value : o;
     const optLabel = (o) => (o && typeof o === "object") ? o.label : o;
@@ -1478,6 +1904,7 @@ function instanceBox(fields, keyLabel) {
   keyRow.appendChild(ki);
   inst.appendChild(keyRow);
   fields.forEach((f) => inst.appendChild(fieldRow(f, [], true)));
+  wireDependentFields(inst);
   const rm = el("button", "btn rm-inst", "remove");
   rm.type = "button";
   rm.addEventListener("click", () => inst.remove());
@@ -1968,18 +2395,21 @@ async function validateLab() {
       : (r.output || "Validation failed.");
   } catch (e) { toastError("Validate error: " + e.message); }
 }
-function downloadLab() {
-  if ($("#downloadBtn").disabled) return;
-  const name = ($("#labName").value.trim() || "lab").replace(/[^A-Za-z0-9._-]/g, "_");
-  const blob = new Blob([JSON.stringify(state.lab, null, 2) + "\n"], { type: "application/json" });
+// `definition`/`filename` let the step-by-step builder download or save what it just wrote without putting it on
+// the canvas first; with neither, this is the canvas's own button and takes the canvas's lab and name.
+function downloadLab(definition, filename) {
+  if (!definition && $("#downloadBtn").disabled) return;
+  const name = (filename || $("#labName").value.trim() || "lab").replace(/[^A-Za-z0-9._-]/g, "_");
+  const blob = new Blob([JSON.stringify(definition || state.lab, null, 2) + "\n"], { type: "application/json" });
   const a = el("a"); a.href = URL.createObjectURL(blob);
   a.download = name.endsWith(".json") ? name : name + ".json";
   a.click(); URL.revokeObjectURL(a.href);
 }
-async function saveLab() {
-  if ($("#saveBtn").disabled) return;
+async function saveLab(definition, filename) {
+  if (!definition && $("#saveBtn").disabled) return;
   try {
-    const r = await adminCall("save", { filename: $("#labName").value.trim() || "lab", config: state.lab });
+    const r = await adminCall("save", { filename: filename || $("#labName").value.trim() || "lab",
+                                        config: definition || state.lab });
     // r.path is the full server-side path (api.py's "save" action already
     // returns it) — show it, not just the basename, so it's actually
     // findable (reported live 2026-09-01: the toast never said where).
@@ -2371,6 +2801,69 @@ function labSummary(lab) {
 
 // `example` set (the Examples dialog's Launch) creates that example lab by name, server-side: nothing is saved
 // here, and the server materialises it for the run and removes it afterwards.
+// Which stored credentials a lab actually names: every value in it that matches a credential the server listed.
+// Matching on the listed names rather than on a list of field names here means a cloud_account, an add-on's
+// service account (smlm_scc_account and the like) and anything added later are all found without this knowing
+// which fields those are.
+function labCredentials(lab, listed) {
+  const names = new Set((listed || []).map((c) => c.name));
+  const used = new Set();
+  const walk = (value) => {
+    if (typeof value === "string") {
+      if (names.has(value)) used.add(value);
+    } else if (Array.isArray(value)) {
+      value.forEach(walk);
+    } else if (value && typeof value === "object") {
+      Object.keys(value).forEach((k) => walk(value[k]));
+    }
+  };
+  walk(lab);
+  return (listed || []).filter((c) => used.has(c.name));
+}
+
+// A credential is locked when the whole file is encrypted or any of its fields is: either way the run cannot read
+// it without the passphrase.
+function credentialLocked(credential) {
+  return Boolean(credential.encrypted) || ((credential.encrypted_fields || []).length > 0);
+}
+
+// Ask for the passphrase only where it is needed. The credentials list carries each file's encryption flags, so
+// whether this lab needs one is a fact to read, not a question to put to the operator. A list that cannot be read
+// (no login yet, helper unreachable) falls back to offering the field, since refusing to ask would be the one
+// answer that cannot be corrected later.
+async function setCreatePassphrase(definition) {
+  const row = $("#createPassRow");
+  const field = $("#createPass");
+  const note = $("#createPassNote");
+  const offer = (text) => {
+    row.hidden = false;
+    field.required = false;
+    field.placeholder = "";
+    note.textContent = text;
+  };
+  let listed;
+  try {
+    listed = (await adminCall("credentials")).credentials || [];
+  } catch (e) {
+    offer("Type the passphrase if this lab's credentials are encrypted. It is handed to this one run and to "
+          + "nothing else: never saved, logged or shown again.");
+    return;
+  }
+  if (!definition) {
+    offer("Type the passphrase if this lab's credentials are encrypted. It is handed to this one run and to "
+          + "nothing else: never saved, logged or shown again.");
+    return;
+  }
+  const locked = labCredentials(definition, listed).filter(credentialLocked);
+  row.hidden = !locked.length;
+  field.required = locked.length > 0;
+  if (locked.length) {
+    field.placeholder = "required";
+    note.textContent = "Needed to decrypt " + locked.map((c) => c.name).join(", ")
+      + ". It is handed to this one run and to nothing else: never saved, logged or shown again.";
+  }
+}
+
 async function openCreate(example) {
   if (!example && $("#createBtn").disabled) return;
   state.createExample = example || "";
@@ -2385,7 +2878,20 @@ async function openCreate(example) {
   $("#createPass").value = "";
   $("#createMsg").hidden = true;
   $("#jobStatusLink").hidden = true;
+  $("#createPassRow").hidden = true;
   showDialog("#createDialog");
+
+  // An example is created by name, so its definition is not the one on the canvas: it is read from the public
+  // examples API to see which credentials it names.
+  let definition = state.lab;
+  if (example) {
+    try {
+      definition = await apiGet("example", { name: example });
+    } catch (e) {
+      definition = null;
+    }
+  }
+  await setCreatePassphrase(definition);
 
   // A lab already being created cannot be started again, and the server says so only after the password has been
   // typed and Create pressed. Showing its running job instead is the useful answer to a second Create.
@@ -2479,6 +2985,16 @@ window.addEventListener("DOMContentLoaded", () => {
 
   $("#filter").addEventListener("input", (e) => renderPalette(e.target.value));
   $("#facetFilter").addEventListener("change", () => renderPalette($("#filter").value || ""));
+  if ($("#simplifyBtn")) $("#simplifyBtn").addEventListener("click", openWizard);
+  if ($("#wizardClose")) $("#wizardClose").addEventListener("click", closeWizard);
+  if ($("#wizardBack")) $("#wizardBack").addEventListener("click", wizardStepBack);
+  if ($("#wizardNext")) $("#wizardNext").addEventListener("click", wizardStepNext);
+  if ($("#wizardOpen")) $("#wizardOpen").addEventListener("click", wizardToCanvas);
+  if ($("#wizardCreate")) $("#wizardCreate").addEventListener("click", wizardCreate);
+  if ($("#wizardDownload")) {
+    $("#wizardDownload").addEventListener("click", () => downloadLab(wiz.config, wizardLabName()));
+  }
+  if ($("#wizardSave")) $("#wizardSave").addEventListener("click", () => saveLab(wiz.config, wizardLabName()));
   $("#validateBtn").addEventListener("click", validateLab);
   $("#downloadBtn").addEventListener("click", downloadLab);
   $("#saveBtn").addEventListener("click", saveLab);

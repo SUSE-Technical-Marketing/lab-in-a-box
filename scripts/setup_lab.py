@@ -53,6 +53,7 @@ import spacecmd_common as sc  # noqa: E402
 import services  # noqa: E402
 import backends  # noqa: E402
 import harvester  # noqa: E402
+import images  # noqa: E402
 import ssh_keys  # noqa: E402
 from destroy_vm import destroy_vm  # noqa: E402
 from setup_vm import ensure_cloud_dns_ready, provision_vm, refresh_kept_node_dns  # noqa: E402
@@ -948,6 +949,47 @@ def phase_ssh_keys(definition):
             _report.add_warning(msg)
 
 
+def phase_keep_images(definition, config, defaults):
+    """
+    Capture every node that keeps a reusable image of a product (keep_image) and has no image yet, now that the
+    lab has finished with it: its add-ons are installed, its cluster is joined and its post_commands have run,
+    so this is the last moment at which the node is what a later lab wants to start from.
+
+    A node whose image is already there is skipped, which is also what makes this idempotent: that node was
+    built from the image in the first place, and a second lab adds nothing by capturing it again. A backend that
+    cannot keep images is skipped too, with a warning, so a lab that asks for one on a hypervisor still
+    finishes.
+    """
+    failed_nodes = {name for name, status in _report.nodes if status == "FAILED"}
+    for vm_name in definition.get("nodes", {}):
+        product, version = images.product_of(definition, vm_name)
+        if not product or vm_name in failed_nodes:
+            continue
+        backend = backends.get_backend(definition, config, vm_name, for_existing=True,
+                                       vm_img_loc=defaults.get("VM_IMG_LOC"),
+                                       iso_loc=defaults.get("ISO_LOC"),
+                                       lab_setup_path=defaults.get("LAB_SETUP_PATH"))
+        if not backend.images_supported():
+            lc.warn("'{}' asks to keep a {} image, which the {} backend cannot do; it will be installed "
+                    "again next time".format(vm_name, product, type(backend).__name__))
+            continue
+        if images.existing(backend, product, version):
+            continue
+        lc.log("Keeping a reusable \"{}{}{}\" image of \"{}{}{}\"".format(
+            lc._RED, product, lc._RESET, lc._RED, vm_name, lc._RESET))
+        try:
+            image = images.capture(backend, vm_name, product, version)
+        except SystemExit as e:
+            # Capturing is the last thing a run does and the lab itself is already up, so a provider refusing
+            # here is an error in the summary rather than the end of the run.
+            msg = "could not keep an image of '{}': {}".format(vm_name, e)
+            lc.error(msg)
+            _report.add_error(msg)
+            continue
+        lc.log("  {} is now {}, and the next lab will start from it".format(
+            images.name(product, version), image))
+
+
 def phase_post_commands(definition):
     """
     Run every node's post_commands, now that its Kubernetes join and its own add-ons are done. A node whose VM
@@ -991,6 +1033,7 @@ def setup_lab(definition, config, defaults, lab_file, keep=False, fresh=True, pa
 
     phase_vm_addons(definition, lab_file)
     phase_post_commands(definition)
+    phase_keep_images(definition, config, defaults)
 
     lc.log("LAB setup completed")
     print_summary(definition)

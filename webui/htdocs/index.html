@@ -25,6 +25,7 @@
       </div>
     </div>
     <div class="top-actions">
+      <button type="button" id="simplifyBtn" class="btn btn-accent" title="Answer a few questions instead, and let the server work the rest out"><span class="btn-mark" aria-hidden="true">◆</span>Simplify</button>
       <button type="button" class="btn" id="credBtn" title="Cloud accounts and service credentials stored on the automation node">Credentials</button>
       <button type="button" class="theme-toggle" id="themeToggle" title="Theme: auto (follows your system), light, or dark"><span class="dot"></span><span class="t-label">Auto</span></button>
       <div class="count-pill" id="countPill" title="Components discovered at runtime">
@@ -124,6 +125,33 @@
   </dialog>
 
   <!-- labs saved on the server (login) -->
+  <!-- the step-by-step builder: four questions and the server works the rest out (webui/lib/wizard.py). A
+       dialog over the page, so entering it changes nothing about the canvas, the catalogue or the lab panel. -->
+  <dialog id="wizardPanel" class="editor wizard-dialog" aria-labelledby="wizardTitle">
+    <div class="editor-head">
+      <h3 id="wizardTitle">Simplified</h3>
+      <span class="canvas-hint" id="wizardWhere"></span>
+    </div>
+    <!-- the steps across the top, then the question with what the lab is becoming beside it. The strip carries
+         step names only: their answers live in "Your lab so far", so no fact is shown twice in one dialog. -->
+    <nav id="wizardSteps" class="wizard-steps" aria-label="Steps" hidden></nav>
+    <div class="wizard-split">
+      <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
+      <aside id="wizardSoFar" class="wizard-sofar" aria-label="Your lab so far" hidden></aside>
+    </div>
+    <p class="hint" id="wizardHint">Every answer has a default worked out from this installation: the images its hypervisors report, the credentials it holds, and what each product's own documentation asks for.</p>
+    <div class="editor-foot">
+      <button type="button" id="wizardClose" class="btn" title="Back to the canvas">Close</button>
+      <span class="spacer"></span>
+      <button type="button" id="wizardBack" class="btn" hidden>Back</button>
+      <button type="button" id="wizardNext" class="btn primary" hidden>Next</button>
+      <button type="button" id="wizardDownload" class="btn" hidden title="Download the lab definition as a file">Download</button>
+      <button type="button" id="wizardSave" class="btn" hidden>Save to server</button>
+      <button type="button" id="wizardOpen" class="btn" hidden title="Put this lab on the canvas, where every field can be changed">Open in the canvas</button>
+      <button type="button" id="wizardCreate" class="btn primary" hidden title="Create this lab now">Create lab</button>
+    </div>
+  </dialog>
+
   <dialog id="savedDialog" class="editor small-dialog" aria-labelledby="savedTitle">
     <div class="editor-head"><h3 id="savedTitle">Saved labs</h3></div>
     <ul id="savedList" class="saved-list"></ul>
@@ -186,13 +214,16 @@
         file matching its backend.</p>
       <label class="opt-toggle"><input type="checkbox" id="createKeep" checked> Keep VMs that already exist
         (<code>--keep</code>); unticked, they are destroyed and created again</label>
-      <div class="cred-grid">
-        <label class="field"><span class="f-name">Credential passphrase</span>
-          <input type="password" id="createPass" autocomplete="new-password"
-                 placeholder="only if this lab uses encrypted credentials"></label>
+      <!-- Shown only when a credential this lab names is actually encrypted, which app.js works out from the
+           credentials list (names and flags, never values); hidden when none of them is. -->
+      <div id="createPassRow" hidden>
+        <div class="cred-grid">
+          <label class="field"><span class="f-name">Credential passphrase</span>
+            <input type="password" id="createPass" autocomplete="new-password"></label>
+        </div>
+        <p class="form-desc" id="createPassNote">The passphrase is handed to this one run, to decrypt its
+          credential files, and to nothing else: it is never saved, logged or shown again.</p>
       </div>
-      <p class="form-desc">The passphrase is handed to this one run, to decrypt its credential files, and to nothing
-        else: it is never saved, logged or shown again.</p>
     </div>
     <p id="createMsg" class="issue err dialog-msg" role="alert" hidden></p>
     <div id="createJob" class="dialog-body" hidden>

@@ -186,6 +186,53 @@ def describe_many(paths: Iterable[str]) -> Dict[str, dict]:
     return result
 
 
+def _validates_blank(path: str, probe: str) -> bool:
+    """Whether `path`'s own --validate accepts a lab that names none of its fields."""
+    try:
+        return subprocess.run([path, "--validate", probe], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=_DESCRIBE_TIMEOUT).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def accepts_blank_config(paths: Iterable[str]) -> Dict[str, bool]:
+    """
+    {path: whether this add-on can be added to a lab with no configuration of its own}, by asking each one's
+    --validate against a lab that holds nothing but the fields every lab must have.
+
+    An add-on refuses for reasons no metadata expresses — a required field, a credential account it cannot find,
+    or a rule of its own such as "exactly one of these three" — so the only complete answer is to ask it. Cached
+    like describe(), in the same file and against the same signature, because the answer only changes when the
+    add-on does.
+    """
+    paths = [os.path.realpath(p) for p in paths]
+    cache = _load_cache()
+    result, todo = {}, []
+    for p in paths:
+        key = hashlib.sha256(("blank-config:" + p).encode()).hexdigest()
+        entry = cache.get(key)
+        if entry and entry.get("sig") == _signature(p):
+            result[p] = bool(entry["out"])
+        else:
+            todo.append((p, key))
+    if todo:
+        import tempfile
+        fd, probe = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"common": {"mydomain": "probe.lab", "VM_MEM": "4096", "VM_DSK": "60", "VM_CPU": "2",
+                                  "SOURCE_IMAGE": "probe.qcow2"}, "nodes": {}}, f)
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(todo), os.cpu_count() or 4)) as pool:
+                outs = list(pool.map(lambda item: _validates_blank(item[0], probe), todo))
+        finally:
+            os.unlink(probe)
+        for (p, key), out in zip(todo, outs):
+            result[p] = out
+            cache[key] = {"sig": _signature(p), "out": out}
+        _save_cache(cache)
+    return result
+
+
 def describe(path: str) -> dict:
     """Return the add-on executable's `--schema json` output (cached), or {} when it provides none."""
     real = os.path.realpath(path)

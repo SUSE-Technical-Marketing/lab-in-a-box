@@ -231,7 +231,7 @@ picks it up automatically — there is <strong>no per-component code in the UI</
 </div>
 </section>
 <div class="layout">
-<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#contents">Contents</a></li><li><a href="#what-it-does">What it does</a></li><li><a href="#how-it-stays-100-dynamic">How it stays 100% dynamic</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#setup--everything-from-scratch">Setup — everything, from scratch</a></li><li><a href="#configuration">Configuration</a></li><li><a href="#using-it--build-a-lab">Using it — build a lab</a></li><li><a href="#links-and-embedding">Links and embedding</a></li><li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li><li><a href="#http-api">HTTP API</a></li><li><a href="#scope">Scope</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol></aside>
+<aside class="sidenav" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#contents">Contents</a></li><li><a href="#what-it-does">What it does</a></li><li><a href="#how-it-stays-100-dynamic">How it stays 100% dynamic</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#setup--everything-from-scratch">Setup — everything, from scratch</a></li><li><a href="#configuration">Configuration</a></li><li><a href="#using-it--build-a-lab">Using it — build a lab</a></li><li><a href="#simplify--the-step-by-step-builder">Simplify — the step-by-step builder</a></li><li><a href="#links-and-embedding">Links and embedding</a></li><li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li><li><a href="#http-api">HTTP API</a></li><li><a href="#scope">Scope</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol></aside>
 <main class="doc">
 
 <p>Lives in <a href="https://github.com/SUSE-Technical-Marketing/lab-in-a-box/tree/main/webui/"><code>webui/</code></a>.</p>
@@ -249,6 +249,7 @@ picks it up automatically — there is <strong>no per-component code in the UI</
 <li><a href="#2c-deploy-as-a-standalone-service-no-apache">2c. Deploy as a standalone service (no Apache)</a></li>
 <li><a href="#configuration">Configuration</a></li>
 <li><a href="#using-it--build-a-lab">Using it — build a lab</a></li>
+<li><a href="#simplify--the-step-by-step-builder">Simplify — the step-by-step builder</a></li>
 <li><a href="#login-credentials-and-create-lab">Login, credentials and Create lab</a></li>
 <li><a href="#http-api">HTTP API</a></li>
 <li><a href="#scope">Scope</a></li>
@@ -282,7 +283,16 @@ tree with one rule set ("Option B"):</p>
 <li><code>fields</code> / <code>sections</code> are <strong>structural wrappers</strong> (they never become output keys).</li>
 <li>Any other named object is a <strong>group</strong> that becomes an output key; a group
   marked <code>repeatable</code> becomes a keyed map of instances.</li>
+<li>A field with <code>enum</code> gets a dropdown; one with <code>enum_by</code> gets a dropdown whose options
+  depend on another field in the same section, plus a box to type a value the list does not carry.
+  <code>clu_rel</code> is the case: one field serves four Kubernetes distributions that name their releases
+  differently, so choosing a <code>clu_type</code> narrows the versions on offer to that distribution's own.</li>
 </ul>
+<p>Those release lists come out of the status snapshot that <code>refresh_hypervisor_status.py</code> writes as
+root, which reads each distribution's own git tags at most once a day. The CGI never asks a distribution's
+repository itself, for the same reason it never queries a hypervisor: it runs as the web server's user and does
+no slow or privileged work. A snapshot that has none yet leaves the field as free text, and a version outside the
+list is always accepted, so a release published this morning is installable before any refresh has seen it.</p>
 <p>So new fields, new components and new nested sections all render with zero UI
 changes. The only fixed convention is that small schema vocabulary — and it
 lives in the definitions, not the UI.</p>
@@ -527,6 +537,23 @@ the Apache config):</p>
 <li><strong>Download</strong> it, or <strong>Save to server</strong> (writes to the output dir). Then run it
    the usual way, <code>setup_lab.py &lt;lab&gt;.json</code>, or with <strong>Create lab</strong>.</li>
 </ol>
+<h2 id="simplify--the-step-by-step-builder">Simplify — the step-by-step builder</h2>
+<p><strong>Simplify</strong>, on the Lab panel, opens a dialog over the page and asks a few questions instead of asking you to draw the lab. It is for the lab of a familiar shape: a Kubernetes cluster, a Multi-Linux Manager server with clients, a virtualization node, plain VMs, or one of the example labs this installation ships. Pick one, answer, and the server builds the definition. The canvas, the catalogue and the lab panel stay where they are underneath, and <strong>no login is needed to reach any of it</strong>: the questions and the definition are the public API's work, as the schemas and Validate are. A login adds one thing, the credential store's cloud accounts by name in the "where" question; without one, this hypervisor is the only backend offered.</p>
+<p>What it decides, and what it asks:</p>
+<ul>
+<li><strong>Where to build it is always asked</strong>, because nothing else implies it: this hypervisor, or one of the cloud accounts in the credential store.</li>
+<li><strong>The addresses are never asked.</strong> The definition carries no <code>myip</code> at all, so the run allocates each one from the lab's own subnet — which is this automation node's own network, read off its default route.</li>
+<li><strong>The sizes come from each product's documentation</strong> (<code>libs/sizing.py</code>), per node, for what that node will run: an RKE2 server, a K3s agent, a Rancher node, a Multi-Linux Manager server with its volumes, a Harvester node.</li>
+<li><strong>The name becomes the lab's own DNS zone</strong>, one zone per lab, which is what the rest of the project expects.</li>
+<li><strong>Only add-ons that need no configuration are offered.</strong> Each one is asked, once and cached, whether its own <code>--validate</code> accepts a lab that configures it not at all; about half do. The rest want a credential, a required field or a choice only you can make, and the canvas is where those are added.</li>
+<li><strong>A later question can depend on an earlier one.</strong> Choosing SUSE Virtualization narrows the backends to the AWS accounts, asks for the Harvester AMI, and drops the add-on question entirely, because this project does not install add-ons on a Harvester cluster. Harvester itself installs on bare metal and on KVM; the path a <em>lab definition</em> can express today is the AWS one (<code>libs/harvester.py</code>), which is what the question says.</li>
+<li><strong>The Kubernetes distributions are the lab format's own.</strong> They come from the <code>clu_type</code> enum (<code>libs/lab_schema_base.py</code>), so RKE2, K3s and upstream Kubernetes are all offered and a distribution added to the schema appears here with no change to the builder. Upstream installs a named minor rather than a channel, and the lab is built with one.</li>
+<li><strong>An example lab is taken as it is written.</strong> The example workflow asks which example and what to call the file, nothing else: where it is built, how big its nodes are and what it installs are the example's own answers. It is copied, so changing it on the canvas never changes the example.</li>
+<li><strong>What the installation is missing is said up front.</strong> A Multi-Linux Manager lab needs a registration credential of kind <code>scc</code>; with none in the store, the workflow says so and how to fix it rather than building a lab that fails its own preflight.</li>
+</ul>
+<p>It ends with the lab summarised and four endings: <strong>Download</strong>, which saves the definition as a file and needs no login; <strong>Save to server</strong>, which keeps it among the saved labs; <strong>Open in the canvas</strong>, which loads it exactly as an example or an opened file would, so every field can still be changed; and <strong>Create lab</strong>, which is the canvas's own, with the same save and the same job to follow.</p>
+<p>The questions and the definition they build live in <code>webui/lib/wizard.py</code>, on the server rather than in the browser, for two reasons: a generated lab is checked by the same preflight a hand-written one goes through, and <code>tests/checks/151_wizard.sh</code> walks every answer of every workflow, builds each lab and validates it, so a question whose answer produces an invalid lab fails there rather than in front of you.</p>
+
 <h2 id="links-and-embedding">Links and embedding</h2>
 <p>Another page (for example rodeo-cli's Rodeo Builder) can open the lab-builder
 with a lab already started:</p>
@@ -551,6 +578,7 @@ with a lab already started:</p>
 <p>Without a frame, or with an origin that is not a plain <code>http(s)://host[:port]</code>,
 <code>embed</code> is ignored.</p>
 <h2 id="login-credentials-and-create-lab">Login, credentials and Create lab</h2>
+<p><strong>Create lab asks for a credential passphrase only when one is needed.</strong> The credentials list reports each file's encryption, whole-file and per field, so the dialog reads whether anything this lab names is encrypted: if nothing is, the field is not shown at all; if something is, it is required and says which credential it is for. Where that list cannot be read, the field is offered anyway, since not asking is the one answer that cannot be put right afterwards.</p>
 <p><strong>Save to server</strong>, <strong>Saved labs…</strong>, <strong>Credentials</strong> and <strong>Create lab</strong>
 need a login and HTTPS. Over plain HTTP they are disabled and say "You must connect via HTTPS to use this UI";
 on the static GitHub Pages build they are hidden, and Credentials is greyed out.</p>
@@ -637,6 +665,16 @@ on the static GitHub Pages build they are hidden, and Credentials is greyed out.
 <td>POST</td>
 <td><code>api?action=validate</code></td>
 <td><code>{ "config": {…} }</code> → validate via <code>libs/primary</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>api?action=wizard</code>, <code>api?action=wizard-steps&amp;name=WORKFLOW</code></td>
+<td>Simplify: the workflows it offers, and one workflow's questions. No login; with one, over HTTPS, the "where" question also carries the credential store's account names.</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>api?action=wizard-build</code></td>
+<td><code>{ "workflow": "…", "answers": {…} }</code> → the lab definition those answers describe</td>
 </tr>
 <tr>
 <td>GET</td>

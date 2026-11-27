@@ -659,6 +659,44 @@ class VMBackend(object):
         """
         return ""
 
+    def images_supported(self) -> bool:
+        """
+        Whether this backend can make a reusable image from one of its own VMs (libs/images.py's capture route).
+        False by default, which makes a caller install every time rather than fail.
+        """
+        return False
+
+    def image_import_supported(self) -> bool:
+        """
+        Whether this backend can import a disk built outside the cloud and register it as a bootable image
+        (libs/images.py's import route). False by default, and false for a provider whose API has no such
+        operation at all, which is not every provider: Hetzner's /images is read-only and OVHcloud's image
+        endpoint is a GET, so on those two a product that can only be delivered as a prebuilt disk cannot be
+        delivered that way.
+        """
+        return False
+
+    def find_image(self, name: str) -> str:
+        """
+        The id of this backend's own image called `name`, or "" when it has none. Only images this account owns
+        are considered: a provider's public catalogue is reached through resolve_image_name() instead.
+        """
+        return ""
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        Make an image called `name` from `vm_name`'s own disk and return its id, waiting until the provider
+        reports it usable. The VM itself is left as it is.
+        """
+        die("backend {} cannot make an image from a VM".format(type(self).__name__))
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        Register a disk built outside the cloud as an image called `name`, and return its id. `source` is where
+        the provider is to read it from, in that provider's own terms: an object-storage location or a URL.
+        """
+        die("backend {} cannot import a disk as an image".format(type(self).__name__))
+
     def resolve_image_name(self, name: str, instance_type: str = "") -> str:
         """
         The image `name` as this backend's create_vm() needs it. A provider image ID is returned unchanged; a product
@@ -1194,20 +1232,10 @@ class LibvirtBackend(VMBackend):
                 if r.returncode != 0:
                     die("virt-install (autoinstall) failed for '{}'".format(vm_name))
 
-                # The direct kernel/initrd boot is valid only for the installer's first boot.
-                # virt-install restarts the domain itself once the install finishes and reuses the same
-                # kernel, initrd and cmdline, which would boot the installer again. Before the real start,
-                # reset the domain to a plain disk boot: clear kernel, initrd and cmdline, set dev=hd, and
-                # detach the now-stale seed cdrom. This runs on a stopped domain. --edit on a running domain
-                # changes only the persistent definition, so the next start would boot the old config;
-                # hence the explicit destroy first.
-                self._virsh("destroy", vm_name, check=False)
-                edit = self._virt_xml(vm_name, "--edit", "--boot", "kernel=,initrd=,cmdline=,hd", check=False)
-                if edit.returncode != 0:
+                # The direct kernel/initrd boot is valid only for the installer's first boot, and the seed
+                # cdrom is stale once the install is done — see lab_creation.reset_to_disk_boot().
+                if not _lc.reset_to_disk_boot(self.remote_host, self.virt_srv, vm_name, seed_remote):
                     die("failed to reset '{}' to disk boot after autoinstall".format(vm_name))
-                self._virt_xml(vm_name, "--remove-device", "--disk", "path={}".format(seed_remote), check=False)
-                self._virsh("autostart", vm_name)
-                self._virsh("start", vm_name)
                 return
 
             # A bare hypervisor-local path here fails with "Cannot access install
@@ -1825,6 +1853,63 @@ class HetznerBackend(VMBackend):
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             raise RuntimeError("Hetzner API {} {} failed ({}): {}".format(method, path, e.code, detail))
+
+    # How long an image is waited for, and how often it is asked about.
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    # Hetzner snapshots carry no name of their own, only a description and labels, so an image this project owns
+    # is found by this label rather than by name.
+    IMAGE_LABEL = "lab-in-a-box"
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: POST /servers/{id}/actions/create_image makes a snapshot."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """
+        VMBackend.image_import_supported() override: Hetzner has no such operation. Its /images collection is
+        read-only, with no POST and no import of any kind, so a disk built elsewhere cannot be registered here.
+        A product that can only be delivered as a prebuilt disk cannot run on this backend.
+        """
+        return False
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: the snapshot labelled with `name`, as the id create_vm() takes."""
+        result = self._api("GET", "/images?type=snapshot&status=available&label_selector={}%3D{}".format(
+            self.IMAGE_LABEL, name))
+        images = (result or {}).get("images") or []
+        return str(images[0].get("id") or "") if images else ""
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: snapshot this VM's disk, labelled so find_image() can find it again.
+
+        A snapshot is taken of a running server; Hetzner does not require it to be off. The label is what carries
+        the name, because a snapshot's own name field is not settable.
+        """
+        server = self._find_server(vm_name)
+        if not server:
+            die("no Hetzner server for VM '{}' to make an image from".format(vm_name))
+        created = self._api("POST", "/servers/{}/actions/create_image".format(server["id"]), {
+            "type": "snapshot",
+            "description": name,
+            "labels": {self.IMAGE_LABEL: name},
+        })
+        image_id = str(((created or {}).get("image") or {}).get("id") or "")
+        if not image_id:
+            die("Hetzner create_image returned no image id for '{}'".format(vm_name))
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self._api("GET", "/images/{}".format(image_id))
+            status = str(((found or {}).get("image") or {}).get("status") or "")
+            if status == "available":
+                return image_id
+            if time.time() > deadline:
+                die("Hetzner snapshot {} for image '{}' was still '{}' after {} s".format(
+                    image_id, name, status or "unknown", self.IMAGE_WAIT))
+            log("  - {} is {}, waiting".format(name, status or "creating"))
+            time.sleep(self.IMAGE_INTERVAL)
 
     def _require_cloud_init(self, config_method, vm_name):
         if config_method != "cloud-init":
@@ -2577,6 +2662,128 @@ class AWSBackend(VMBackend):
         match = re.match(r"^[a-z]+\d+([a-z]*)$", family)
         return "arm64" if match and "g" in match.group(1) else "x86_64"
 
+    # How long an image is waited for before giving up, and how often it is asked about. An image of a 250 GiB
+    # disk takes tens of minutes; a provider that is still copying is not an error.
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: ec2 create-image makes an AMI from a running instance."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """
+        VMBackend.image_import_supported() override: ec2 import-snapshot reads a disk out of S3 and
+        register-image turns it into an AMI. The account needs the vmimport service role EC2 VM Import requires;
+        this project does not create it, and import_image() says so if it is missing.
+        """
+        return True
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this account's own AMI of that exact name, once it is usable."""
+        found = self._aws("ec2", "describe-images", "--owners", "self",
+                          "--filters", "Name=name,Values={}".format(name),
+                          "Name=state,Values=available")
+        images = (found or {}).get("Images") or []
+        return str(images[0].get("ImageId") or "") if images else ""
+
+    def _wait_for_ami(self, image_id: str, name: str) -> str:
+        """Wait until `image_id` is available, and return it. An AMI is pending while EC2 copies its snapshot."""
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self._aws("ec2", "describe-images", "--image-ids", image_id)
+            images = (found or {}).get("Images") or []
+            state = str((images[0] if images else {}).get("State") or "")
+            if state == "available":
+                return image_id
+            if state in ("failed", "error", "invalid", "deregistered"):
+                die("AMI '{}' for image '{}' ended in state '{}'".format(image_id, name, state))
+            if time.time() > deadline:
+                die("AMI '{}' for image '{}' was still '{}' after {} s".format(
+                    image_id, name, state or "unknown", self.IMAGE_WAIT))
+            log("  - {} is {}, waiting".format(name, state or "pending"))
+            time.sleep(self.IMAGE_INTERVAL)
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: ec2 create-image on this VM's instance.
+
+        The instance is rebooted as part of it, which is what makes the file systems consistent in the image.
+        --no-reboot would avoid the interruption and risk an image that has to repair itself on first boot, so
+        the reboot is kept: the VM has already done its slow work by the time this runs.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("no instance for VM '{}' to make an image from".format(vm_name))
+        created = self._aws("ec2", "create-image", "--instance-id", instance["InstanceId"],
+                            "--name", name,
+                            "--description", "Built by lab-in-a-box from {}".format(vm_name))
+        image_id = str((created or {}).get("ImageId") or "")
+        if not image_id:
+            die("ec2 create-image returned no AMI id for '{}'".format(vm_name))
+        self._aws("ec2", "create-tags", "--resources", image_id,
+                  "--tags", "Key=Name,Value={}".format(name), "Key=lab-in-a-box,Value={}".format(name))
+        return self._wait_for_ami(image_id, name)
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: import a disk already in S3 and register it as an AMI. `source` is
+        its S3 location, "s3://<bucket>/<key>".
+
+        Two steps, because EC2 has no one-call equivalent: import-snapshot reads the disk and gives a snapshot,
+        then register-image makes that snapshot the root device of an AMI. The AMI is registered for UEFI boot,
+        which is what every image this project builds uses.
+        """
+        if not str(source).startswith("s3://"):
+            die("AWS imports a disk from S3: expected an s3://<bucket>/<key> source, got '{}'".format(source))
+        bucket, _, key = str(source)[len("s3://"):].partition("/")
+        if not bucket or not key:
+            die("'{}' names no bucket and key".format(source))
+        container = json.dumps({"Description": name, "Format": "raw",
+                                "UserBucket": {"S3Bucket": bucket, "S3Key": key}})
+        try:
+            started = self._aws("ec2", "import-snapshot", "--description", name,
+                                "--disk-container", container)
+        except RuntimeError as e:
+            if "vmimport" in str(e) or "service role" in str(e).lower():
+                raise RuntimeError(
+                    "EC2 VM Import needs the 'vmimport' service role in this account, which lab-in-a-box does "
+                    "not create: see the AWS VM Import/Export prerequisites. Original error: {}".format(e))
+            raise
+        task = str((started or {}).get("ImportTaskId") or "")
+        if not task:
+            die("ec2 import-snapshot returned no task id for '{}'".format(name))
+        snapshot = self._wait_for_import_task(task, name)
+        registered = self._aws("ec2", "register-image", "--name", name, "--architecture", "x86_64",
+                               "--root-device-name", "/dev/sda1", "--ena-support", "--boot-mode", "uefi",
+                               "--virtualization-type", "hvm",
+                               "--block-device-mappings", json.dumps([{
+                                   "DeviceName": "/dev/sda1",
+                                   "Ebs": {"SnapshotId": snapshot, "DeleteOnTermination": True}}]))
+        image_id = str((registered or {}).get("ImageId") or "")
+        if not image_id:
+            die("ec2 register-image returned no AMI id for '{}'".format(name))
+        return self._wait_for_ami(image_id, name)
+
+    def _wait_for_import_task(self, task: str, name: str) -> str:
+        """Wait for import-snapshot task `task` and return the snapshot it produced."""
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self._aws("ec2", "describe-import-snapshot-tasks", "--import-task-ids", task)
+            tasks = (found or {}).get("ImportSnapshotTasks") or []
+            detail = (tasks[0] if tasks else {}).get("SnapshotTaskDetail") or {}
+            status = str(detail.get("Status") or "")
+            if status == "completed":
+                return str(detail.get("SnapshotId") or "")
+            if status in ("deleted", "deleting", "error"):
+                die("importing the disk for image '{}' failed: {}".format(
+                    name, detail.get("StatusMessage") or status))
+            if time.time() > deadline:
+                die("importing the disk for image '{}' was still '{}' after {} s".format(
+                    name, status or "unknown", self.IMAGE_WAIT))
+            log("  - importing {}: {} {}".format(name, status or "active", detail.get("Progress") or ""))
+            time.sleep(self.IMAGE_INTERVAL)
+
     def resolve_image_name(self, name: str, instance_type: str = "") -> str:
         """
         VMBackend.resolve_image_name() override. A product name is looked up as the region's newest image of that
@@ -2979,6 +3186,89 @@ class GCPBackend(VMBackend):
         if result.returncode != 0:
             raise RuntimeError("gcloud {} failed: {}".format(" ".join(args), result.stderr.strip()))
         return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: an image is created from an instance's own boot disk."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """
+        VMBackend.image_import_supported() override: `gcloud compute images create --source-uri` registers a raw
+        disk straight out of Cloud Storage, so no separate migration service is involved.
+        """
+        return True
+
+    def find_image(self, name: str) -> str:
+        """
+        VMBackend.find_image() override: this project's own image of that name, by asking for it directly.
+
+        Describing it rather than listing is deliberate: `gcloud compute images list` also returns the public
+        images of Google's own projects, and this must only ever answer about an image in this project.
+        """
+        try:
+            found = self._gcloud("compute", "images", "describe", name)
+        except RuntimeError:
+            return ""
+        return str((found or {}).get("name") or "")
+
+    def _boot_disk(self, instance: dict) -> str:
+        """The name of `instance`'s boot disk, read off the instance rather than assumed from its name."""
+        for disk in instance.get("disks") or []:
+            if disk.get("boot") or not disk.get("deviceName"):
+                return str(disk.get("source") or "").rstrip("/").rsplit("/", 1)[-1]
+        return ""
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: an image of this VM's boot disk.
+
+        The instance is stopped first and started again afterwards. GCE refuses an image of a disk attached to a
+        running instance unless --force is passed, and --force captures the disk as it happens to be at that
+        moment: a product worth keeping an image of is usually one with a database on it, and an image that has
+        to repair itself on first boot is worth less than the interruption. This is the same trade AWS makes by
+        rebooting the instance during create-image.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("no GCP instance for VM '{}' to make an image from".format(vm_name))
+        disk = self._boot_disk(instance)
+        if not disk:
+            die("could not tell which disk of VM '{}' is its boot disk".format(vm_name))
+        zone = str(instance.get("zone") or "").rstrip("/").rsplit("/", 1)[-1] or self.zone
+        was_running = state_matches(self.vm_state(vm_name), RUNNING_STATES)
+        if was_running:
+            log("  - stopping {} so its disk is captured consistently".format(vm_name))
+            self.stop_vm(vm_name)
+            wait_for_power_state(self, vm_name, POWERED_OFF_STATES)
+        try:
+            created = self._gcloud("compute", "images", "create", name,
+                                   "--source-disk", disk, "--source-disk-zone", zone,
+                                   "--labels", "lab-in-a-box={}".format(name),
+                                   "--description", "Built by lab-in-a-box from {}".format(vm_name))
+        finally:
+            if was_running:
+                log("  - starting {} again".format(vm_name))
+                self.start_vm(vm_name)
+        image = str((created or {}).get("name") or "")
+        if not image:
+            die("gcloud compute images create returned no image for '{}'".format(vm_name))
+        return image
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: register a raw disk already in Cloud Storage as an image. `source` is
+        its gs:// URI, and GCE requires the disk to be a gzip-compressed tarball whose name ends in .tar.gz,
+        containing the raw disk.
+        """
+        if not str(source).startswith("gs://") or not str(source).endswith(".tar.gz"):
+            die("GCP registers a raw disk from Cloud Storage: expected a gs://... .tar.gz source, got "
+                "'{}'".format(source))
+        created = self._gcloud("compute", "images", "create", name, "--source-uri", source,
+                               "--labels", "lab-in-a-box={}".format(name))
+        image = str((created or {}).get("name") or "")
+        if not image:
+            die("gcloud compute images create returned no image for '{}'".format(name))
+        return image
 
     def _require_cloud_init(self, config_method, vm_name):
         if config_method != "cloud-init":
@@ -3418,6 +3708,64 @@ class AlibabaBackend(VMBackend):
             die("AlibabaBackend only supports config_method=\"cloud-init\" (got '{}') for VM "
                 "'{}'".format(config_method or "<empty>", vm_name))
 
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: ECS CreateImage makes a custom image from an instance."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """VMBackend.image_import_supported() override: ECS ImportImage reads a disk out of OSS."""
+        return True
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this account's own custom image of that name, once usable."""
+        found = self._aliyun("DescribeImages", "--ImageName", name, "--ImageOwnerAlias", "self",
+                             "--Status", "Available")
+        listed = ((found or {}).get("Images") or {}).get("Image") or []
+        return str(listed[0].get("ImageId") or "") if listed else ""
+
+    def _wait_for_image(self, name: str) -> str:
+        """Wait until the custom image called `name` is Available, and return its id."""
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self.find_image(name)
+            if found:
+                return found
+            if time.time() > deadline:
+                die("Alibaba image '{}' was still not Available after {} s".format(name, self.IMAGE_WAIT))
+            log("  - {} is still being created, waiting".format(name))
+            time.sleep(self.IMAGE_INTERVAL)
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """VMBackend.image_from_vm() override: a custom image of this instance's disks."""
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("no Alibaba instance for VM '{}' to make an image from".format(vm_name))
+        created = self._aliyun("CreateImage", "--InstanceId", instance["InstanceId"], "--ImageName", name,
+                               "--Description", "Built by lab-in-a-box from {}".format(vm_name))
+        if not str((created or {}).get("ImageId") or ""):
+            die("ECS CreateImage returned no image id for '{}'".format(vm_name))
+        return self._wait_for_image(name)
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: import a raw disk already in OSS. `source` is its OSS location,
+        "oss://<bucket>/<object>".
+        """
+        if not str(source).startswith("oss://"):
+            die("Alibaba imports a disk from OSS: expected an oss://<bucket>/<object> source, got "
+                "'{}'".format(source))
+        bucket, _, obj = str(source)[len("oss://"):].partition("/")
+        if not bucket or not obj:
+            die("'{}' names no bucket and object".format(source))
+        self._aliyun("ImportImage", "--ImageName", name,
+                     "--DiskDeviceMapping.1.OSSBucket", bucket,
+                     "--DiskDeviceMapping.1.OSSObject", obj,
+                     "--DiskDeviceMapping.1.Format", "RAW")
+        return self._wait_for_image(name)
+
     def _find_instance(self, vm_name):
         result = self._aliyun("DescribeInstances", "--InstanceName", vm_name)
         instances = ((result or {}).get("Instances") or {}).get("Instance", [])
@@ -3796,6 +4144,90 @@ class ScalewayBackend(VMBackend):
         servers = (result or {}).get("servers", [])
         return servers[0] if servers else None
 
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: a snapshot of the root volume becomes an image."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """
+        VMBackend.image_import_supported() override: a snapshot can be created from an object already in Object
+        Storage (CreateSnapshot's own bucket and key fields), and that snapshot then becomes an image.
+        """
+        return True
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this project's own image of that name."""
+        result = self._api("GET", "/images?name={}".format(name))
+        images = [i for i in ((result or {}).get("images") or []) if i.get("name") == name]
+        return str(images[0].get("id") or "") if images else ""
+
+    def _wait_for_snapshot(self, snapshot_id: str, name: str) -> str:
+        """Wait until snapshot `snapshot_id` is available, and return it."""
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self._api("GET", "/snapshots/{}".format(snapshot_id))
+            state = str(((found or {}).get("snapshot") or {}).get("state") or "")
+            if state == "available":
+                return snapshot_id
+            if state == "error":
+                die("Scaleway snapshot for image '{}' ended in error".format(name))
+            if time.time() > deadline:
+                die("Scaleway snapshot for image '{}' was still '{}' after {} s".format(
+                    name, state or "unknown", self.IMAGE_WAIT))
+            log("  - {} is {}, waiting".format(name, state or "snapshotting"))
+            time.sleep(self.IMAGE_INTERVAL)
+
+    def _image_from_snapshot(self, snapshot_id: str, name: str) -> str:
+        """Register snapshot `snapshot_id` as the root volume of an image called `name`."""
+        created = self._api("POST", "/images", {
+            "name": name,
+            "root_volume": snapshot_id,
+            "arch": "x86_64",
+        })
+        image_id = str(((created or {}).get("image") or {}).get("id") or "")
+        if not image_id:
+            die("Scaleway returned no image id for '{}'".format(name))
+        return image_id
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: snapshot this server's root volume, then make that snapshot the root
+        volume of an image. Scaleway has no one-call equivalent; an image is always built on a snapshot.
+        """
+        server = self._find_server(vm_name)
+        if not server:
+            die("no Scaleway server for VM '{}' to make an image from".format(vm_name))
+        volumes = server.get("volumes") or {}
+        root = (volumes.get("0") or {}).get("id") or ""
+        if not root:
+            die("could not tell which volume of VM '{}' is its root volume".format(vm_name))
+        created = self._api("POST", "/snapshots", {"name": name, "volume_id": root})
+        snapshot_id = str(((created or {}).get("snapshot") or {}).get("id") or "")
+        if not snapshot_id:
+            die("Scaleway returned no snapshot id for '{}'".format(vm_name))
+        return self._image_from_snapshot(self._wait_for_snapshot(snapshot_id, name), name)
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: import a disk already in Object Storage as a snapshot, then register
+        that snapshot as an image. `source` is "s3://<bucket>/<key>", Scaleway's Object Storage being
+        S3-compatible.
+        """
+        if not str(source).startswith("s3://"):
+            die("Scaleway imports a disk from Object Storage: expected an s3://<bucket>/<key> source, got "
+                "'{}'".format(source))
+        bucket, _, key = str(source)[len("s3://"):].partition("/")
+        if not bucket or not key:
+            die("'{}' names no bucket and key".format(source))
+        created = self._api("POST", "/snapshots", {"name": name, "bucket": bucket, "key": key})
+        snapshot_id = str(((created or {}).get("snapshot") or {}).get("id") or "")
+        if not snapshot_id:
+            die("Scaleway returned no snapshot id for the import of '{}'".format(name))
+        return self._image_from_snapshot(self._wait_for_snapshot(snapshot_id, name), name)
+
     def _pick_server_type(self, vm_cpu, vm_mem_mb, vm_name):
         needed_mem_gb = int(vm_mem_mb) / 1024.0
         table = self.server_types or self.SERVER_TYPES
@@ -4115,6 +4547,80 @@ class UpCloudBackend(VMBackend):
         servers = ((result or {}).get("servers") or {}).get("server", [])
         return next((s for s in servers if s.get("title") == vm_name), None)
 
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: a storage device is turned into a template."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """VMBackend.image_import_supported() override: a storage can be imported from a URL or an upload."""
+        return True
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this account's own template of that title, as its UUID."""
+        result = self._api("GET", "/storage/template")
+        listed = ((result or {}).get("storages") or {}).get("storage") or []
+        found = [st for st in listed if st.get("title") == name]
+        return str(found[0].get("uuid") or "") if found else ""
+
+    def _wait_for_storage(self, uuid: str, name: str) -> str:
+        """Wait until storage `uuid` is online, and return it. UpCloud reports "maintenance" while it works."""
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self._api("GET", "/storage/{}".format(uuid))
+            state = str(((found or {}).get("storage") or {}).get("state") or "")
+            if state == "online":
+                return uuid
+            if state == "error":
+                die("UpCloud storage for image '{}' ended in error".format(name))
+            if time.time() > deadline:
+                die("UpCloud storage for image '{}' was still '{}' after {} s".format(
+                    name, state or "unknown", self.IMAGE_WAIT))
+            log("  - {} is {}, waiting".format(name, state or "maintenance"))
+            time.sleep(self.IMAGE_INTERVAL)
+
+    def _boot_storage(self, server: dict, vm_name: str) -> str:
+        """The UUID of `server`'s own disk, read off the server rather than assumed."""
+        detail = self._api("GET", "/server/{}".format(server.get("uuid")))
+        devices = (((detail or {}).get("server") or {}).get("storage_devices") or {}).get("storage_device") or []
+        disks = [d for d in devices if str(d.get("type") or "disk") == "disk"]
+        if not disks:
+            die("VM '{}' has no disk to make an image from".format(vm_name))
+        return str(disks[0].get("storage") or "")
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """VMBackend.image_from_vm() override: templatize this server's own disk."""
+        server = self._find_server(vm_name)
+        if not server:
+            die("no UpCloud server for VM '{}' to make an image from".format(vm_name))
+        storage = self._boot_storage(server, vm_name)
+        created = self._api("POST", "/storage/{}/templatize".format(storage), {
+            "storage": {"title": name},
+        })
+        uuid = str(((created or {}).get("storage") or {}).get("uuid") or "")
+        if not uuid:
+            die("UpCloud returned no template uuid for '{}'".format(vm_name))
+        return self._wait_for_storage(uuid, name)
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: create an empty storage, have UpCloud import the disk into it from
+        `source`, an http:// or https:// URL, and keep it as a template.
+        """
+        if not str(source).startswith(("http://", "https://")):
+            die("UpCloud imports a disk from a URL it can reach: expected http:// or https://, got "
+                "'{}'".format(source))
+        created = self._api("POST", "/storage", {"storage": {"title": name, "size": 10, "zone": self.zone}})
+        uuid = str(((created or {}).get("storage") or {}).get("uuid") or "")
+        if not uuid:
+            die("UpCloud returned no storage uuid to import '{}' into".format(name))
+        self._api("POST", "/storage/{}/import".format(uuid), {
+            "storage_import": {"source": "http_import", "source_location": source},
+        })
+        return self._wait_for_storage(uuid, name)
+
     def _pick_plan(self, vm_cpu, vm_mem_mb, vm_name):
         needed_mem_gb = int(vm_mem_mb) / 1024.0
         table = self.plans or self.PLANS
@@ -4408,6 +4914,51 @@ class OVHcloudBackend(VMBackend):
         instances = result or []
         return next((i for i in instances if i.get("name") == vm_name), None)
 
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: an instance can be snapshotted into an image."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """
+        VMBackend.image_import_supported() override: the OVHcloud API's image endpoint is read-only, with no
+        import operation. Uploading a disk here means talking to the region's OpenStack Glance service directly,
+        which is a different API from the one this backend speaks, so a product that can only be delivered as a
+        prebuilt disk cannot be delivered on this backend.
+        """
+        return False
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this project's own image of that name, in this region."""
+        listed = self._api("GET", "/cloud/project/{}/image?region={}".format(
+            self.service_name, self.region)) or []
+        found = [i for i in listed if i.get("name") == name and str(i.get("status") or "") == "active"]
+        return str(found[0].get("id") or "") if found else ""
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: snapshot this instance into an image of that name.
+
+        The call returns as soon as the snapshot is accepted, so the image is waited for by name: OVHcloud
+        reports it as "queued" or "saving" until it is active.
+        """
+        instance = self._find_instance(vm_name)
+        if not instance:
+            die("no OVHcloud instance for VM '{}' to make an image from".format(vm_name))
+        self._api("POST", "/cloud/project/{}/instance/{}/snapshot".format(
+            self.service_name, instance["id"]), {"snapshotName": name})
+        deadline = time.time() + self.IMAGE_WAIT
+        while True:
+            found = self.find_image(name)
+            if found:
+                return found
+            if time.time() > deadline:
+                die("OVHcloud image '{}' was still not active after {} s".format(name, self.IMAGE_WAIT))
+            log("  - {} is still being saved, waiting".format(name))
+            time.sleep(self.IMAGE_INTERVAL)
+
     def _pick_flavor(self, vm_cpu, vm_mem_mb, vm_name):
         """No stable name/vCPU/RAM table is possible here — flavorId is a per-region UUID, so this
         does a real flavor-list call and picks the smallest one satisfying both constraints."""
@@ -4660,6 +5211,60 @@ class ExoscaleBackend(VMBackend):
         if result.returncode != 0:
             raise RuntimeError("exo {} failed: {}".format(" ".join(args), result.stderr.strip()))
         return json.loads(result.stdout) if result.stdout.strip() else None
+
+    IMAGE_WAIT = 5400
+    IMAGE_INTERVAL = 30
+
+    def images_supported(self) -> bool:
+        """VMBackend.images_supported() override: a snapshot of an instance is promoted to a template."""
+        return True
+
+    def image_import_supported(self) -> bool:
+        """VMBackend.image_import_supported() override: a template can be registered from a URL."""
+        return True
+
+    def find_image(self, name: str) -> str:
+        """VMBackend.find_image() override: this account's own template of that name."""
+        try:
+            listed = self._exo("compute", "instance-template", "list", "--visibility", "private") or []
+        except RuntimeError:
+            return ""
+        rows = listed if isinstance(listed, list) else listed.get("templates") or []
+        found = [t for t in rows if t.get("name") == name]
+        return str(found[0].get("id") or "") if found else ""
+
+    def image_from_vm(self, vm_name: str, name: str) -> str:
+        """
+        VMBackend.image_from_vm() override: snapshot this instance, then promote that snapshot to a template.
+
+        Exoscale keeps the two apart: a snapshot belongs to the instance it came from and cannot start a new one,
+        while a template can. Promoting is what makes the result reusable.
+        """
+        snapshot = self._exo("compute", "instance", "snapshot", "create", vm_name)
+        snapshot_id = str((snapshot or {}).get("id") or "")
+        if not snapshot_id:
+            die("Exoscale returned no snapshot id for '{}'".format(vm_name))
+        promoted = self._exo("compute", "instance-snapshot", "promote", snapshot_id,
+                             "--template-name", name)
+        image_id = str((promoted or {}).get("id") or "")
+        if not image_id:
+            die("Exoscale returned no template id for '{}'".format(vm_name))
+        return image_id
+
+    def import_image(self, name: str, source: str) -> str:
+        """
+        VMBackend.import_image() override: register a template Exoscale fetches itself from `source`, an http://
+        or https:// URL. Exoscale also requires the disk's MD5 checksum, published beside it as <source>.md5.
+        """
+        if not str(source).startswith(("http://", "https://")):
+            die("Exoscale registers a template from a URL it fetches: expected http:// or https://, got "
+                "'{}'".format(source))
+        registered = self._exo("compute", "instance-template", "register", name,
+                               "--url", source, "--checksum", "{}.md5".format(source))
+        image_id = str((registered or {}).get("id") or "")
+        if not image_id:
+            die("Exoscale returned no template id for '{}'".format(name))
+        return image_id
 
     def _require_cloud_init(self, config_method, vm_name):
         if config_method != "cloud-init":

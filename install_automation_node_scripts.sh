@@ -161,7 +161,7 @@ done
 # Non-addon, non-orchestration tooling.
 _TOOLING="pushDockerImage.sh lab_schema refresh_hypervisor_status.py setup_harvester_cluster.py build_lab_usb.py
 setup_credentials.py vm_power.py check_addon.py migrate_config.py overlay_ctl.py check_lab.py upgrade_lab_in_a_box build_man_pages.py
-dns_sync.py reconcile_lab.py lab_watch.py"
+dns_sync.py reconcile_lab.py lab_watch.py lab_image.py"
 for i in ${_TOOLING}
 do
     cp "scripts/${i}" "/usr/local/bin/${i}"

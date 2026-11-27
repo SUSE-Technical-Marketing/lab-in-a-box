@@ -3,7 +3,7 @@
 <ul>
 <li><strong>One file, one command.</strong> Describe VMs, Kubernetes clusters (RKE2 or K3s) and add-ons declaratively. <code>setup_lab.py</code> builds them in dependency order, without you running <code>virt-install</code> or Ansible by hand.</li>
 <li><strong>Home lab or cloud, same definition.</strong> Lab VMs run on KVM hosts you own, on Harvester HCI, or on AWS, Google Cloud, Alibaba Cloud, Hetzner, Scaleway, UpCloud, OVHcloud or Exoscale. Labs can span several KVM hosts, and a single lab can mix clouds and sites through a <a href="#cross-cloud-wireguard-overlay">cross-cloud WireGuard overlay</a>.</li>
-<li><strong><span data-addon-count>108</span> ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
+<li><strong><span data-addon-count>109</span> ready-made add-ons.</strong> Rancher, Longhorn, NeuVector, Harbor, Keycloak, Jenkins, Argo CD, Fleet, SUSE Multi-Linux Manager/Uyuni, Nextcloud and more, plus intentionally vulnerable demo apps for security training.</li>
 <li><strong>A web UI that follows the code.</strong> <a href="#web-ui-lab-builder">lab-builder</a> renders each form from the add-on's own schema, so a new field in a script shows up in the UI with no front-end change.</li>
 <li><strong>Pluggable provisioning.</strong> Ignition and Combustion for SLE Micro, cloud-init for openSUSE and Ubuntu, <code>virt-customize</code> for legacy images, or a scripted install from an installer ISO (AutoYaST, Kickstart, Preseed or AutoInstall).</li>
 <li><strong>Credentials kept out of the lab file.</strong> Cloud and service credentials can live in per-account encrypted files (Argon2id key derivation, then AES-256-GCM and ChaCha20-Poly1305 in cascade).</li>
@@ -268,7 +268,7 @@
 <p>SUSE's own products come from SUSE's public image tracker, and the rest from each vendor's AWS Systems Manager public parameter or its own AWS account, never from a name search that another account could match. A value that is not a product name, an image ID or an image file name included, is passed through untouched.</p>
 <p>A cloud lab also needs its nodes to resolve each other. One small DNS VM per cloud account serves the lab domain, and the account's network is configured to hand that server to every instance in it, so a node joins its Kubernetes cluster by hostname with nothing configured inside the guest. On AWS that is a VPC DHCP option set: it applies to the whole VPC, an instance launched afterwards has it immediately, and one already running picks it up when its DHCP lease renews.</p>
 <h3 id="kubernetes-setup">Kubernetes setup</h3>
-<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on AWS from an AMI (see <a href="#harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned. Every RKE2 node and every K3s server node gets <code>/etc/profile.d/rke2.sh</code> or <code>/etc/profile.d/k3s.sh</code>, which sets <code>KUBECONFIG</code>, so <code>kubectl</code> and <code>helm</code> work in any root shell on the node, SSH commands included. Add-ons that expose a web hostname (for example <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) register it in the lab DNS, pointing at the kcluster's nodes; destroying a node removes the records that point at it. <code>clu_type: vanilla</code> builds upstream Kubernetes with kubeadm instead, taking its Kubernetes minor from <code>clu_rel</code> and its network plugin from <code>clu_cni</code> (flannel by default, calico, or none to bring your own). <code>clu_ingress</code> and <code>clu_storage</code> name the cluster's ingress controller (<code>nginx</code>, <code>traefik</code>) and default storage class (<code>longhorn</code>, <code>local-path</code>). Unset keeps what the distribution brings — nginx on RKE2, Traefik and local-path on K3s, both on Harvester — and installs one on a distribution that brings none, as soon as an add-on on the cluster needs it; naming a different one replaces the bundled component, and <code>none</code> installs nothing.</p>
+<p>After VMs are up, <code>setup_lab.py</code> installs Kubernetes on each node according to the <code>kclusters</code> section of the JSON. RKE2 and K3s are both supported, and <code>clu_type: harvester</code> builds a Harvester / SUSE Virtualization cluster on a cloud backend from a prebuilt image (see <a href="#harvester--suse-virtualization">Harvester / SUSE Virtualization</a>). Once a cluster is ready, its add-ons run in sequence; VM-level add-ons (attached to a single node rather than a cluster) run after that node is provisioned. Every RKE2 node and every K3s server node gets <code>/etc/profile.d/rke2.sh</code> or <code>/etc/profile.d/k3s.sh</code>, which sets <code>KUBECONFIG</code>, so <code>kubectl</code> and <code>helm</code> work in any root shell on the node, SSH commands included. Add-ons that expose a web hostname (for example <code>rancher.&lt;kcluster&gt;.&lt;domain&gt;</code>) register it in the lab DNS, pointing at the kcluster's nodes; destroying a node removes the records that point at it. <code>clu_type: vanilla</code> builds upstream Kubernetes with kubeadm instead, taking its Kubernetes minor from <code>clu_rel</code> and its network plugin from <code>clu_cni</code> (flannel by default, calico, or none to bring your own). <code>clu_ingress</code> and <code>clu_storage</code> name the cluster's ingress controller (<code>nginx</code>, <code>traefik</code>) and default storage class (<code>longhorn</code>, <code>local-path</code>). Unset keeps what the distribution brings — nginx on RKE2, Traefik and local-path on K3s, both on Harvester — and installs one on a distribution that brings none, as soon as an add-on on the cluster needs it; naming a different one replaces the bundled component, and <code>none</code> installs nothing.</p>
 <h3 id="multi-host-labs">Multi-host labs</h3>
 <p>A lab isn't limited to one hypervisor. Set <code>KVM_HOSTS</code> (space-separated) in <code>/etc/lab_creation.cfg</code> on the automation VM to make more than one hypervisor available:</p>
 <pre><code class="language-ini">KVM_HOSTS=&quot;hv1.mydemo.lab hv2.mydemo.lab hv3.mydemo.lab&quot;
@@ -497,7 +497,7 @@ nameserver &lt;AUTOMATION_IP&gt;
 
 <hr />
 <h2 id="web-ui-lab-builder">Web UI (lab-builder)</h2>
-<p>A browser-based designer for <code>lab.json</code> files that <strong>introspects the project's own Python libraries at run time</strong> — it has no hardcoded knowledge of any add-on. Pick a component and it renders a form straight from that component's schema; add a field to a script and the UI shows it with zero front-end changes. An add-on marked under construction (<code>status</code> in its <code>PLUGIN</code>, see the <a href="addons.html">Add-on Guide</a>) carries an "under construction" badge; hover over it for what does not work yet. It can still be added and run, with a warning.</p>
+<p>A browser-based designer for <code>lab.json</code> files that <strong>introspects the project's own Python libraries at run time</strong> — it has no hardcoded knowledge of any add-on. Pick a component and it renders a form straight from that component's schema; add a field to a script and the UI shows it with zero front-end changes. An add-on marked under construction (<code>status</code> in its <code>PLUGIN</code>, see the <a href="addons.html">Add-on Guide</a>) carries an "under construction" badge; hover over it for what does not work yet. It can still be added and run, with a warning. <strong>Simplify</strong>, on its Lab panel, asks four or five questions instead and builds the lab from them: where to build it is always asked, the addresses never are, and each node is sized from what its own products document; it needs no login, and one of its workflows starts from an example lab (see <a href="webui.html#simplify--the-step-by-step-builder">Simplify</a>). A cluster's <code>clu_rel</code> offers the releases its chosen distribution actually publishes, read from that project's own git tags at most once a day, with any other version still typeable.</p>
 <pre><code class="language-shell"># Fastest way to try it — zero dependencies beyond Python:
 python3.11 webui/run-local.py            # → http://localhost:8677/
 </code></pre>
@@ -780,11 +780,36 @@ setup_lab.py --keep rancher-cluster.json
   }
 }
 </code></pre>
-<h3 id="harvester--suse-virtualization-on-aws">Harvester / SUSE Virtualization on AWS</h3>
-<p>A <code>kclusters</code> entry with <code>clu_type: "harvester"</code> builds a Harvester cluster from EC2 instances.
-Each node boots a Harvester AMI that you supply (SUSE publishes none; <a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a>
-builds one from the Harvester ISO) and installs itself at first boot from the Harvester configuration lab-in-a-box passes as its
-user-data. The first node of the cluster in the file creates the cluster; the others join it through the cluster VIP.</p>
+<h3 id="harvester--suse-virtualization">Harvester / SUSE Virtualization</h3>
+<p>A Harvester cluster can be built four ways, and each one installs the same appliance from the same release assets. They differ
+only in how a node reaches the installer, so the entry point follows from where the nodes run.</p>
+<table>
+<thead>
+<tr><th>Where the nodes run</th><th>Method</th><th>Built by</th></tr>
+</thead>
+<tbody>
+<tr><td>A KVM hypervisor</td><td><code>pxe</code>, the default: netboot, nothing staged on the hypervisor</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>A KVM hypervisor</td><td><code>iso</code>: the release ISO attached to each node, no PXE or DHCP service needed</td><td><code>setup_harvester_cluster.py</code></td></tr>
+<tr><td>Any cloud backend</td><td><code>image</code>: a prebuilt Harvester image you supply as <code>SOURCE_IMAGE</code></td><td>a lab definition, <code>clu_type: "harvester"</code></td></tr>
+<tr><td>An existing Kubernetes cluster</td><td>the Harvester Helm chart</td><td>the <code>harvester</code> add-on</td></tr>
+</tbody>
+</table>
+<p><strong>On a hypervisor.</strong> <code>setup_harvester_cluster.py</code> takes its own standalone configuration file, not a lab
+definition (<code>templates/harvester-cluster.json.example</code> lists every key), and its <code>install_method</code> key chooses
+between the two methods available there. <code>pxe</code> serves the installer over HTTP and stages nothing on the hypervisor;
+<code>iso</code> stages the release ISO, kernel and initrd in <code>ISO_LOC</code> and boots each node from them, which needs no PXE
+or DHCP service at all but moves over 8 GB to the hypervisor once per release. Each file is verified against the sha512 the Harvester
+project publishes, and a verified copy is never fetched again. Naming a method that cannot be used on the target is reported and
+replaced with one that can, so a configuration written for one target still builds on another. The version comes from
+<code>harvester_version</code>; omit it and the newest stable release the Harvester project lists is installed.</p>
+<p><strong>On a cloud.</strong> A <code>kclusters</code> entry with <code>clu_type: "harvester"</code> builds the cluster from cloud
+instances. Each node boots a prebuilt Harvester image that you supply as <code>SOURCE_IMAGE</code> (SUSE publishes none;
+<a href="https://github.com/jdreinhardt/harvester-on-aws">jdreinhardt/harvester-on-aws</a> documents building an AMI from the
+Harvester ISO) and installs itself at first boot from the Harvester configuration lab-in-a-box passes as its user-data. The first
+node of the cluster in the file creates the cluster; the others join it through the cluster VIP. The cluster's version goes in
+<code>clu_rel</code>, the same field every other distribution takes its version from, as a release tag such as
+<code>v1.9.1</code>; a channel name is not accepted there. The example below is AWS, where nested virtualization also has to be
+on.</p>
 <pre><code class="language-json">{
   &quot;common&quot;: { &quot;backend&quot;: &quot;aws&quot;, &quot;config_method&quot;: &quot;cloud-init&quot;, &quot;cloud_account&quot;: &quot;aws-main&quot;, &quot;VM_MEM&quot;: 65536, &quot;VM_CPU&quot;: 16, &quot;VM_DSK&quot;: 250,
               &quot;SOURCE_IMAGE&quot;: &quot;ami-0123456789abcdef0&quot;, &quot;cloud_instance_type&quot;: &quot;m8i.4xlarge&quot;,
@@ -800,7 +825,7 @@ user-data. The first node of the cluster in the file creates the cluster; the ot
 }
 </code></pre>
 <ul>
-<li><strong>Nodes</strong> must use the <code>aws</code> backend, <code>aws_nested_virtualization: "true"</code> with a supported
+<li><strong>Nodes</strong> must use a cloud backend; on <code>aws</code> that means <code>aws_nested_virtualization: "true"</code> with a supported
   <code>cloud_instance_type</code> (M7i/M8i/C7i/R7i/I7i families; see <a href="#compute-backends_1">Compute backends</a>), and the
   Harvester AMI ID as <code>SOURCE_IMAGE</code>. 250 GiB is the AMI's minimum disk.</li>
 <li><strong>Cluster fields</strong>: <code>harvester_token</code> (required, shared by every node); <code>harvester_vip</code>
@@ -818,6 +843,43 @@ user-data. The first node of the cluster in the file creates the cluster; the ot
   drops frames from foreign MAC addresses, so Harvester VMs cannot use bridged VLAN networks; add-ons are not installed on a
   Harvester cluster yet; each node costs roughly what its instance type costs per hour plus 250 GiB of EBS.</li>
 </ul>
+<h3 id="reusable-machine-images">Reusable machine images</h3>
+<p>A product that takes hours to install is worth installing once. SUSE Multi-Linux Manager is the clear case, at over a day.
+Give a node <code>keep_image</code> and the lab builds it from the image of that product whenever one already exists, and keeps
+one when it does not.</p>
+<pre><code class="language-json">"nodes": {
+  "smlm1.mydemo.lab": { "keep_image": "smlm", "keep_image_version": "5.2", "addons": ["smlm"] }
+}
+</code></pre>
+<p>The first run installs the product as usual and, once the node's add-ons, its cluster join and its <code>post_commands</code>
+have all finished, asks the cloud to make an image of that node's own disk. Every later run finds that image and starts from it,
+so the install happens once rather than every time. Both fields are also accepted in <code>common</code>, for a lab whose nodes
+all carry the same product; a node naming its own <code>keep_image</code> does not inherit <code>common</code>'s version, which
+would name the image after one product at another product's version.</p>
+<p>The image is named <code>lab-in-a-box-&lt;product&gt;-&lt;version&gt;</code>, which is how a later lab finds it, and is
+tagged or labelled as this project's where the provider allows it. A second run adds nothing and does nothing: the image is
+already there, so the node is built from it and never captured again. A backend that cannot keep images warns and installs the
+product again instead of failing the run.</p>
+<p>There are two routes to an image, and the product decides which applies. <strong>Capture</strong> is the default and works on
+every cloud backend: the VM is created from an ordinary operating-system image, the slow install runs once, and the cloud makes
+an image of the result. Nothing is uploaded and nothing is converted. <strong>Import</strong> is for a product that cannot be
+installed onto a running operating system, an appliance written to a disk by its own installer being the case: the disk is built
+outside the cloud and registered there. Not every provider can do that, so each backend declares it.</p>
+<table>
+<thead>
+<tr><th>Backend</th><th>Capture a VM</th><th>Import a disk</th></tr>
+</thead>
+<tbody>
+<tr><td>aws, gcp, alibaba, scaleway, upcloud, exoscale</td><td>yes</td><td>yes</td></tr>
+<tr><td>hetzner, ovhcloud</td><td>yes</td><td><strong>no</strong>: neither provider's API has the operation</td></tr>
+<tr><td>libvirt, harvester</td><td>no</td><td>no</td></tr>
+</tbody>
+</table>
+<p><code>lab_image.py</code> does the same thing by hand against one lab's own backend: <code>find</code> prints the image of a
+product if there is one, <code>capture</code> makes an image of a node as it now is, and <code>import</code> registers a disk
+the provider reads from an object-storage location or a URL. Capturing stops or reboots the VM where the provider needs it to,
+on GCP by stopping it and starting it again, because an image taken of a disk in use can need to repair itself on first
+boot.</p>
 <h3 id="deploying-a-legacy-image-centos-7">Deploying a legacy image (CentOS 7)</h3>
 <p>CentOS 7 (and other pre-built <code>.qcow2</code> images that old) has neither Ignition/Combustion nor
 cloud-init built in, so <code>config_method</code> must be <code>virt_customize</code> (see
@@ -898,7 +960,7 @@ so this section doesn't grow without bound.</p>
 </ol>
 <pre><code class="language-shell">setup_lab.py rancher-cluster.json
 </code></pre>
-<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>SOURCE_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building. Every value is checked against the schema that declares it, too: an <code>myip</code> that is not an IP address, a <code>VM_MEM</code> that is not a number or below its minimum, a <code>clu_type</code> that is not one of the declared Kubernetes cluster types. Each add-on's <code>--validate</code> does the same for its own fields and for a per-node override of them. An address the file states by hand is held to the same rules the allocator applies to one it picks: an address the lab's DNS already holds under another name, or one belonging to the automation node itself, is an error rather than a warning, because building that node would point an existing name at the wrong host. An address that merely answers a ping stays a warning, and a node asking for the address its own DNS record already gives it is no clash at all, so rebuilding an existing lab still validates.</p>
+<p><code>setup_lab.py</code> preflights the file automatically before doing anything else — bad IPs, a <code>kcluster</code> reference that doesn't exist, a missing <code>SOURCE_IMAGE</code>, and similar mistakes get caught and printed (<code>✗ Preflight FAILED — N error(s)</code>) with nothing created, rather than failing partway through. A clean file prints <code>✓ Preflight passed</code> and proceeds straight to building. Every value is checked against the schema that declares it, too: an <code>myip</code> that is not an IP address, a <code>VM_MEM</code> that is not a number or below its minimum, a <code>clu_type</code> that is not one of the declared Kubernetes cluster types. Each add-on's <code>--validate</code> does the same for its own fields and for a per-node override of them. An address the file states by hand is held to the same rules the allocator applies to one it picks: an address the lab's DNS already holds under another name, or one belonging to the automation node itself, is an error rather than a warning, because building that node would point an existing name at the wrong host. An address that merely answers a ping stays a warning, and a node asking for the address its own DNS record already gives it is no clash at all, so rebuilding an existing lab still validates. A node sized below what the products it runs ask for is a warning too, taken from each product's own documentation (<code>libs/sizing.py</code>, which carries the page every figure came from): a Rancher node under 4 vCPU and 16 GB, a Multi-Linux Manager server under 4 cores and 16 GB, a Longhorn node without a disk of its own. It never blocks, because a demo lab is free to run a product on less than its documentation asks for, but nothing else would say so before a pod fails to schedule.</p>
 <p>In order, this: registers both nodes in DNS → creates both VMs (copies the QCOW2 image, generates Combustion files, boots them, waits for SSH) → installs RKE2 on <code>node101</code> as server, then <code>node102</code> as agent → installs <code>rancher</code> and <code>longhorn</code> on the cluster's management node (<code>mgm_node</code>, defaulting to the first server node — <code>node101</code> here). A 2-node cluster with Rancher typically takes 15–25 minutes; most of it is RKE2 bootstrapping and Rancher's own Helm install.</p>
 <ol start="3">
 <li><strong>Verify DNS resolves</strong> (from your own desktop, once it's <a href="#step-5--point-your-client-dns-at-the-automation-vm">pointed at the automation VM's DNS</a>):</li>
@@ -1492,6 +1554,10 @@ build_man_pages.py --installed      # write them again after an upgrade
 <tr>
 <td><a href="https://github.com/Antseed/antseed"><code>antseed</code></a></td>
 <td>Antseed: a peer-to-peer AI inference marketplace on a node — the buyer proxy any tool can use as its base URL, or the seller side, plus Antseed Desktop</td>
+</tr>
+<tr>
+<td><a href="https://buffer.com/"><code>buffer</code></a></td>
+<td>Buffer (buffer.com) for a node's coding agents: its remote MCP server registered with the agents the lab names, and its API key on the node for whatever calls the API directly. Nothing is self-hosted, because Buffer publishes no self-hosted edition. Its tools can create, edit and delete real posts, so no agent is connected unless <code>buffer_agents</code> names one</td>
 </tr>
 <tr>
 <td><a href="https://openai.com/"><code>openai</code></a></td>

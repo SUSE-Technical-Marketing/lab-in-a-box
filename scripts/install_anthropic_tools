@@ -87,6 +87,7 @@ for _candidate in ("/usr/local/lib/lab_creation", str(Path(__file__).resolve().p
 
 import addon_common as ac  # noqa: E402
 import k8s  # noqa: E402
+from agents import as_user, claude_command, register_mcp_servers  # noqa: E402
 import primary  # noqa: E402
 from nodejs import ensure_node, first_available, npm_command  # noqa: E402,F401
 from lab_creation import (die, install_packages, package_available, package_manager, require_ssh,  # noqa: E402
@@ -207,22 +208,10 @@ def _validate(v):
 
 # ── Pure command and payload builders ────────────────────────────────────────
 
-def as_user(user: str, command: str) -> str:
-    """`command` run as `user`, which for root is the command itself since every ssh_run is already root."""
-    if user == "root":
-        return command
-    return "su - {} -s /bin/bash -c {}".format(shlex.quote(user), shlex.quote(command))
-
-
 def native_command(cfg: dict) -> str:
     """The command that fetches Anthropic's installer and runs it for the release this node installs."""
     url = str(cfg.get("anthropic_tools_install_url") or DEFAULT_INSTALL_URL)
     return "curl -fsSL {} | bash -s {}".format(shlex.quote(url), shlex.quote(release(cfg)))
-
-
-def claude_command(args: str) -> str:
-    """`claude` with `args`, reaching a native install whose directory no non-interactive shell has on its PATH."""
-    return 'PATH="$HOME/.local/bin:$PATH" claude {}'.format(args)
 
 
 def profile_line_command(line: str) -> str:
@@ -431,22 +420,6 @@ def write_settings(host: str, user: str, cfg: dict, env: dict) -> None:
     print("- Writing ~/{} for '{}' on '{}'".format(SETTINGS_FILE, user, host))
     ssh_run(host, as_user(user, write_file_command(SETTINGS_FILE)),
             input_text=json.dumps(merge_settings(current, payload), indent=2) + "\n")
-
-
-def register_mcp_servers(host: str, user: str, servers: dict) -> None:
-    """
-    Register `servers` in `user`'s own MCP scope through Claude Code itself, which owns the file they live in.
-
-    Each name is removed first, so a changed definition replaces the one a previous run left. A definition reaches
-    the node as an argument of this command, and is visible in the node's process list while it runs: a server that
-    needs a secret takes it from the environment, not from here.
-    """
-    for name, definition in sorted((servers or {}).items()):
-        ssh_run(host, as_user(user, claude_command("mcp remove {} --scope user".format(shlex.quote(str(name))))),
-                check=False, capture=True)
-        print("- Registering the '{}' MCP server for '{}' on '{}'".format(name, user, host))
-        ssh_run(host, as_user(user, claude_command("mcp add-json {} {} --scope user".format(
-            shlex.quote(str(name)), shlex.quote(json.dumps(definition))))))
 
 
 def report_claude(host: str, user: str) -> None:
