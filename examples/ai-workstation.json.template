@@ -1,0 +1,102 @@
+{
+  "common": {
+    "lab_name": "AI workstation",
+    "lab_description": "One node that is both a desktop and a single-node K3s cluster, with as much of this project's AI tooling on it as fits: Anthropic's own client tooling and a Claude API proxy, a local LLM runtime with a chat UI in front of it, two code models, a vector database, an MCP gateway, a private search engine, a speech service, a translation service and a secret scanner. Nothing here needs a credential file: the two Helm charts that would normally come from the SUSE Application Collection are taken from their projects' own upstream charts instead. The API keys are \"??\" placeholders, resolved from the credential store or your own edit before the lab is created; every tool that needs no key runs as it stands. Sized generously on purpose, because Ollama pulls multi-gigabyte models and a desktop session wants memory of its own: trim VM_MEM and drop the models you do not want before using this on a small host.",
+    "SOURCE_IMAGE": "openSUSE-Leap-16.0.x86_64-NoCloud.qcow2",
+    "config_method": "cloud-init",
+    "VM_MEM": "24576",
+    "VM_DSK": "160",
+    "VM_CPU": "10",
+    "mymask": "24",
+    "mygw": "192.168.88.1",
+    "mydns": "192.168.88.1",
+    "mydomain": "mydemo.lab",
+    "mynet_reverse": "88.168.192"
+  },
+  "nodes": {
+    "ai1.mydemo.lab": {
+      "myip": "192.168.88.71",
+      "mymac": "34:8a:b1:4b:1a:71",
+      "kcluster": "ai",
+      "KUBERNETES_NODE_TYPE": "server",
+      "addons": [
+        "xfce",
+        "anthropic_tools",
+        "hyperframes",
+        "voicestudio",
+        "antseed",
+        "libretranslate",
+        "gitleaks"
+      ]
+    }
+  },
+  "kclusters": {
+    "ai": {
+      "clu_type": "k3s",
+      "clu_rel": "stable",
+      "mydomain": "mydemo.lab",
+      "addons": [
+        "anthropic",
+        "hermes",
+        "ollama",
+        "open_webui",
+        "mcpo",
+        "qdrant",
+        "codellama",
+        "starcoder2",
+        "searxng",
+        "skynet_simulator"
+      ]
+    }
+  },
+  "xfce": {
+    "xfce_access": "xrdp",
+    "xfce_port": 3389,
+    "xfce_extra_packages": ["firefox", "xfce4-terminal"]
+  },
+  "anthropic_tools": {
+    "anthropic_tools_components": ["claude_code", "agent_sdk", "api_sdk", "ant_cli", "settings"],
+    "anthropic_tools_install_method": "package",
+    "anthropic_tools_users": ["root"],
+    "anthropic_tools_release": "stable",
+    "anthropic_tools_path": "true",
+    "anthropic_tools_disable_autoupdate": "false",
+    "anthropic_tools_model": "claude-opus-5",
+    "anthropic_tools_api_key": "??anthropic_tools_api_key"
+  },
+  "anthropic": {
+    "anthropic_api_key": "??anthropic_api_key",
+    "anthropic_model": "anthropic/claude-opus-5",
+    "anthropic_shorthn": "claude"
+  },
+  "hermes": {
+    "hermes_registry": "registry.mydemo.lab",
+    "hermes_llm_api_key": "??hermes_llm_api_key"
+  },
+  "ollama": {
+    "ollama_source": "upstream",
+    "ollama_model": "llama3.2:1b",
+    "ollama_shorthn": "ollama"
+  },
+  "open_webui": {
+    "open_webui_source": "upstream"
+  },
+  "libretranslate": {},
+  "voicestudio": {},
+  "antseed": {},
+  "hyperframes": {},
+  "gitleaks": {
+    "gitleaks_mode": "container",
+    "gitleaks_scan_path": "/root",
+    "gitleaks_command": "dir",
+    "gitleaks_schedule": "0 3 * * *",
+    "gitleaks_redact": "true",
+    "gitleaks_fail_on_leaks": "false"
+  },
+  "mcpo": {},
+  "qdrant": {},
+  "codellama": {},
+  "starcoder2": {},
+  "searxng": {},
+  "skynet_simulator": {}
+}
