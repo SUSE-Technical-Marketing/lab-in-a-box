@@ -34,6 +34,7 @@ from lab_creation import (
 )
 from services import DNSService
 import apps
+import releases
 from lab_schema_base import field_default
 
 
@@ -369,17 +370,28 @@ class RKE2Distro(K8sDistro):
             update_kernel(hostname)
             reboot_into_pending_snapshot(hostname)
         log("  Installing RKE2 on '{}'".format(hostname))
-        # install_method and clu_rel are free text from the lab JSON, so they are shell-quoted. clu_type and node_type are fixed
-        # literals, so they are not quoted.
+        # The channel is resolved to a release here rather than left to the installer, which reads
+        # update.rke2.io for it and, when that does not answer, carries the channel's own name on as the version
+        # and builds a repository URL out of it that does not exist. releases.resolve() asks the same service, so
+        # a lab installs the release rke2 itself calls stable; it falls back to the last answer that service gave
+        # this node, then to the newest release tagged. "" means it could not be resolved at all, and then the
+        # channel is passed on exactly as before.
+        version = releases.resolve(clu_type, clu_rel)
+        if version and version != clu_rel:
+            log("    {} '{}' is release {}".format(clu_type, clu_rel, version))
+        # install_method, clu_rel and version are free text from the lab JSON, so they are shell-quoted. clu_type
+        # and node_type are fixed literals, so they are not quoted.
         ssh_run(
             hostname,
             "curl -sfL https://get.{clu_type}.io | "
             "INSTALL_RKE2_TYPE={node_type} "
             "INSTALL_RKE2_METHOD={install_method} "
             "INSTALL_RKE2_CHANNEL={clu_rel} "
+            "{version}"
             "sh -".format(
                 clu_type=clu_type, node_type=node_type,
                 install_method=shlex.quote(install_method), clu_rel=shlex.quote(clu_rel),
+                version="INSTALL_RKE2_VERSION={} ".format(shlex.quote(version)) if version else "",
             )
         )
 

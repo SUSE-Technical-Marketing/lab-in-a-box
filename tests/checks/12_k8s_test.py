@@ -62,6 +62,19 @@ k8s.wait_for_transactional_update_lock = lambda hostname: k8s.ssh_run.calls.appe
 k8s.update_kernel = lambda hostname: k8s.ssh_run.calls.append((hostname, "<update_kernel>", {}))
 k8s.is_transactional = lambda hostname: False
 
+# The channel a lab names is resolved to a release before installing (libs/releases.py), which reads the
+# distribution's own channel service. No test may reach it: the default here is "could not be resolved", which is
+# the behaviour that has to stay identical to before the resolution existed.
+_resolved = {"answer": "", "asked": []}
+
+
+def _fake_resolve(distribution, channel, **kwargs):
+    _resolved["asked"].append((distribution, channel))
+    return _resolved["answer"]
+
+
+k8s.releases.resolve = _fake_resolve
+
 
 # ── get_distro dispatch ───────────────────────────────────────────────────────
 check("get_distro('k3s') returns a K3sDistro", isinstance(k8s.get_distro("k3s"), k8s.K3sDistro))
@@ -238,6 +251,40 @@ try:
           "INSTALL_RKE2_CHANNEL='stable; rm -rf /'" in install_cmd)
     check("RKE2Distro first node: a shell metacharacter in install_method is quoted, not passed through raw",
           "INSTALL_RKE2_METHOD='tar; touch /tmp/pwned'" in install_cmd)
+
+    # ── the channel is resolved to a release before installing ──────────────
+    # The installer reads update.rke2.io for a channel and, when that does not answer, carries the channel's own
+    # name on as the version and writes a repository URL out of it that does not exist. Resolving it here keeps
+    # the release the distribution itself names, and must change nothing when it cannot be resolved.
+    _resolved["answer"] = ""
+    _resolved["asked"] = []
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+    unresolved_cmd = next(c for h, c, kw in fake_ssh.calls if "get.rke2.io" in c)
+    check("RKE2Distro: the channel the lab named is what gets resolved",
+          _resolved["asked"] == [("rke2", "stable")])
+    check("RKE2Distro: a channel that cannot be resolved is passed on exactly as before",
+          "INSTALL_RKE2_CHANNEL=stable" in unresolved_cmd and "INSTALL_RKE2_VERSION" not in unresolved_cmd)
+
+    _resolved["answer"] = "v1.36.6+rke2r1"
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+    resolved_cmd = next(c for h, c, kw in fake_ssh.calls if "get.rke2.io" in c)
+    check("RKE2Distro: a resolved channel installs that release",
+          "INSTALL_RKE2_VERSION=v1.36.6+rke2r1" in resolved_cmd)
+    check("RKE2Distro: and the channel still goes with it, which is what picks the RPM repository",
+          "INSTALL_RKE2_CHANNEL=stable" in resolved_cmd)
+
+    _resolved["answer"] = "v1.36.6+rke2r1; rm -rf /"
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="RKE2TOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    distro.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+    quoted_cmd = next(c for h, c, kw in fake_ssh.calls if "get.rke2.io" in c)
+    check("RKE2Distro: a resolved version is shell-quoted like every other value",
+          "INSTALL_RKE2_VERSION='v1.36.6+rke2r1; rm -rf /'" in quoted_cmd)
+    _resolved["answer"] = ""
 
     # No zypper (e.g. Ubuntu/Debian): the plain, no-install_method, non-transactional case these next checks mean.
     fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=1))])
