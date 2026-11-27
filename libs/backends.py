@@ -1194,20 +1194,10 @@ class LibvirtBackend(VMBackend):
                 if r.returncode != 0:
                     die("virt-install (autoinstall) failed for '{}'".format(vm_name))
 
-                # The direct kernel/initrd boot is valid only for the installer's first boot.
-                # virt-install restarts the domain itself once the install finishes and reuses the same
-                # kernel, initrd and cmdline, which would boot the installer again. Before the real start,
-                # reset the domain to a plain disk boot: clear kernel, initrd and cmdline, set dev=hd, and
-                # detach the now-stale seed cdrom. This runs on a stopped domain. --edit on a running domain
-                # changes only the persistent definition, so the next start would boot the old config;
-                # hence the explicit destroy first.
-                self._virsh("destroy", vm_name, check=False)
-                edit = self._virt_xml(vm_name, "--edit", "--boot", "kernel=,initrd=,cmdline=,hd", check=False)
-                if edit.returncode != 0:
+                # The direct kernel/initrd boot is valid only for the installer's first boot, and the seed
+                # cdrom is stale once the install is done — see lab_creation.reset_to_disk_boot().
+                if not _lc.reset_to_disk_boot(self.remote_host, self.virt_srv, vm_name, seed_remote):
                     die("failed to reset '{}' to disk boot after autoinstall".format(vm_name))
-                self._virt_xml(vm_name, "--remove-device", "--disk", "path={}".format(seed_remote), check=False)
-                self._virsh("autostart", vm_name)
-                self._virsh("start", vm_name)
                 return
 
             # A bare hypervisor-local path here fails with "Cannot access install

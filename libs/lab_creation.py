@@ -1285,6 +1285,30 @@ def _has_local_binary(binary):
     return shutil.which(binary) is not None
 
 
+def reset_to_disk_boot(remote_host, virt_srv, vm_name, detach_disk=""):
+    """
+    Take a domain off the installer kernel it was created with and leave it booting its own disk, started and set
+    to autostart. `detach_disk` is a disk path to remove at the same time, such as a seed or install medium that
+    is now stale; "" detaches nothing. Returns True on success.
+
+    A direct kernel/initrd boot is only valid for the installer's first boot: virt-install restarts the domain
+    itself once the install finishes, reusing the same kernel, initrd and command line, which would run the
+    installer again. The domain is destroyed first because virt-xml --edit on a running domain changes only the
+    persistent definition, so the next start would still use the old one.
+    """
+    run_libvirt_tool("virsh", remote_host, virt_srv, ["destroy", vm_name], check=False)
+    edit = run_libvirt_tool("virt-xml", remote_host, virt_srv,
+                            [vm_name, "--edit", "--boot", "kernel=,initrd=,cmdline=,hd"], check=False)
+    if edit.returncode != 0:
+        return False
+    if detach_disk:
+        run_libvirt_tool("virt-xml", remote_host, virt_srv,
+                         [vm_name, "--remove-device", "--disk", "path={}".format(detach_disk)], check=False)
+    run_libvirt_tool("virsh", remote_host, virt_srv, ["autostart", vm_name], check=False)
+    run_libvirt_tool("virsh", remote_host, virt_srv, ["start", vm_name], check=False)
+    return True
+
+
 def run_libvirt_tool(binary, remote_host, virt_srv, args, **kwargs):
     """
     Run `<binary> --connect <virt_srv> <args...>`, where binary is "virsh" or "virt-install". The local binary is used when it is
@@ -1957,12 +1981,22 @@ def image_source(cfg):
     return image_name(cfg), url, sha256, sha256_url
 
 
-def image_source_issues(label, image, url, sha256, sha256_url):
+# The digests a download can be verified against, by the length of their hex form. sha256 is what SOURCE_IMAGE
+# publishes; sha512 is what the Harvester project publishes for its install assets.
+DIGESTS = {"sha256": 64, "sha512": 128}
+
+
+def image_source_issues(label, image, url, digest, digest_url, algo="sha256"):
     """
-    Problems with one base image download — image file name, URL(s), sha256, sha256 URL — (an empty list when it is
-    usable). The checksum is mandatory: a downloaded base image is only ever booted once it matches.
+    Problems with one base image download — image file name, URL(s), digest, digest URL — (an empty list when it
+    is usable). The checksum is mandatory: a downloaded base image is only ever booted once it matches.
     """
     issues = []
+    length = DIGESTS.get(algo)
+    if not length:
+        issues.append("{}: unknown checksum algorithm '{}', expected one of {}".format(
+            label, algo, ", ".join(sorted(DIGESTS))))
+        return issues
     if _empty(image) or not _IMAGE_FILE_RE.match(image):
         issues.append("{}: a downloaded image (SOURCE_IMAGE URL) needs a plain file name (got '{}')".format(
             label, image))
@@ -1970,11 +2004,11 @@ def image_source_issues(label, image, url, sha256, sha256_url):
     if not urls or not all(re.match(r"^(https?|ftp|file)://", u) for u in urls):
         issues.append("{}: each download URL in SOURCE_IMAGE must start with http://, https://, ftp:// or "
                       "file://".format(label))
-    if sha256 and not _SHA256_RE.match(sha256.lower()):
-        issues.append("{}: SOURCE_SHA256 must be a 64-character hex sha256".format(label))
-    if not sha256 and not sha256_url.startswith("https://"):
-        issues.append("{}: a downloaded image needs SOURCE_SHA256: its sha256, or an https:// URL publishing "
-                      "it".format(label))
+    if digest and not re.match(r"^[0-9a-f]{%d}$" % length, digest.lower()):
+        issues.append("{}: SOURCE_SHA256 must be a {}-character hex {}".format(label, length, algo))
+    if not digest and not digest_url.startswith("https://"):
+        issues.append("{}: a downloaded image needs SOURCE_SHA256: its {}, or an https:// URL publishing "
+                      "it".format(label, algo))
     return issues
 
 
@@ -2020,13 +2054,13 @@ def image_source_hosts(definition, vm_name, config):
 _FETCH_IMAGE_SCRIPT = r"""
 set -eu
 dest=__ISO_LOC__/__IMAGE__
-marker="${dest}.sha256-verified"
+marker="${dest}.__ALGO__-verified"
 want=__SHA256__
 if [ -z "${want}" ]; then
   want=$(curl -4 -fsSL --retry 3 --max-time 60 __SHA256_URL__          | awk -v n=__IMAGE__ 'NF==1 || $2==n || $2=="*"n {print tolower($1); exit}')
 fi
-if ! printf '%s' "${want}" | grep -Eq '^[0-9a-f]{64}$'; then
-  echo "no sha256 for __IMAGE__ in __SHA256_URL__" >&2; exit 3
+if ! printf '%s' "${want}" | grep -Eq '^[0-9a-f]{__HEXLEN__}$'; then
+  echo "no __ALGO__ for __IMAGE__ in __SHA256_URL__" >&2; exit 3
 fi
 if [ -f "${dest}" ] && [ -f "${marker}" ] && [ "$(cat "${marker}")" = "${want} $(stat -c %s "${dest}")" ]; then
   echo "cached"; exit 0
@@ -2043,32 +2077,35 @@ if [ ! -f "${dest}" ]; then
   [ -n "${fetched}" ] || { echo "no source could deliver __IMAGE__" >&2; exit 5; }
   mv "${dest}.part" "${dest}"
 fi
-got=$(sha256sum "${dest}" | awk '{print $1}')
+got=$(__ALGO__sum "${dest}" | awk '{print $1}')
 if [ "${got}" != "${want}" ]; then
   mv "${dest}" "${dest}.corrupt"
-  echo "sha256 mismatch for __IMAGE__ (moved aside to ${dest}.corrupt)" >&2; exit 4
+  echo "__ALGO__ mismatch for __IMAGE__ (moved aside to ${dest}.corrupt)" >&2; exit 4
 fi
 echo "${want} $(stat -c %s "${dest}")" > "${marker}"
 echo "downloaded"
 """
 
 
-def fetch_source_image(host, iso_loc, image, url, sha256="", sha256_url=""):
+def fetch_source_image(host, iso_loc, image, url, digest="", digest_url="", algo="sha256"):
     """
     Make sure `image` is in ISO_LOC on KVM host `host`: download it from `url`
     — one URL, or several whitespace-separated mirrors tried in order — (IPv4,
     resumable) unless an already-verified copy is there, and check it
-    against `sha256` (or the digest published at `sha256_url`). Idempotent —
-    a verified copy is recorded in <image>.sha256-verified and never fetched
+    against `digest` (or the one published at `digest_url`, in sha*sum's own
+    two-column format). `algo` names the checksum, one of DIGESTS. Idempotent —
+    a verified copy is recorded in <image>.<algo>-verified and never fetched
     again. Returns "cached" or "downloaded"; dies on any failure.
     """
-    issues = image_source_issues("image '{}'".format(image), image, url, sha256, sha256_url)
+    issues = image_source_issues("image '{}'".format(image), image, url, digest, digest_url, algo)
     if issues:
         die("; ".join(issues))
     script = _FETCH_IMAGE_SCRIPT
     script = script.replace("__URLS__", " ".join(shlex.quote(u) for u in url.split()))
+    script = script.replace("__HEXLEN__", str(DIGESTS[algo]))
     for key, value in (("__ISO_LOC__", iso_loc.rstrip("/")), ("__IMAGE__", image),
-                       ("__SHA256__", sha256.lower()), ("__SHA256_URL__", sha256_url)):
+                       ("__ALGO__", algo),
+                       ("__SHA256__", digest.lower()), ("__SHA256_URL__", digest_url)):
         script = script.replace(key, shlex.quote(value))
     log("- Base image \"{}{}{}\" on {}".format(_RED, image, _RESET, host))
     r = ssh_run(host, "bash -s", input_text=script, check=False, capture=True)
