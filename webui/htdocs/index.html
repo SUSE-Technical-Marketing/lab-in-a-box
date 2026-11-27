@@ -132,7 +132,13 @@
       <h3 id="wizardTitle">Simplified</h3>
       <span class="canvas-hint" id="wizardWhere"></span>
     </div>
-    <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
+    <!-- the steps across the top, then the question with what the lab is becoming beside it. The strip carries
+         step names only: their answers live in "Your lab so far", so no fact is shown twice in one dialog. -->
+    <nav id="wizardSteps" class="wizard-steps" aria-label="Steps" hidden></nav>
+    <div class="wizard-split">
+      <div id="wizardBody" class="wizard-body" aria-live="polite"></div>
+      <aside id="wizardSoFar" class="wizard-sofar" aria-label="Your lab so far" hidden></aside>
+    </div>
     <p class="hint" id="wizardHint">Every answer has a default worked out from this installation: the images its hypervisors report, the credentials it holds, and what each product's own documentation asks for.</p>
     <div class="editor-foot">
       <button type="button" id="wizardClose" class="btn" title="Back to the canvas">Close</button>

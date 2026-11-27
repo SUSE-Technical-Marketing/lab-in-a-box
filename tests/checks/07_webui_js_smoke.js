@@ -817,6 +817,74 @@ const releaseChoiceChecks = () => {
         listed().length === 0 && !!text);
 };
 
+// -- the step builder shows where you are and what the lab is becoming ------
+// The questions used to arrive one after another with nothing to say how many there were or what had been
+// answered. The strip across the top and the box beside the question are the whole of that, so they are driven
+// here rather than asserted on source text.
+// app.js declares its wizard state as a top-level const, which a vm context does not expose on the sandbox
+// object, so it is reached by evaluating inside that context rather than through it.
+const setWiz = (patch) => vm.runInContext(
+  "Object.assign(wiz, " + JSON.stringify(patch) + ")", sandbox);
+const getWiz = (expr) => vm.runInContext("JSON.stringify(" + expr + ")", sandbox);
+
+const stepBuilderChecks = () => {
+  const nodes = stubNodes();
+  setWiz({ workflow: "kubernetes", index: 2, answers: { distribution: "rke2", nodes: "3" }, steps: [
+    { name: "distribution", title: "Distribution", kind: "choice",
+      options: [{ value: "rke2", label: "RKE2" }, { value: "k3s", label: "K3s" }] },
+    { name: "nodes", title: "Nodes", kind: "count", min: 1, max: 9 },
+    { name: "backend", title: "Where", kind: "choice",
+      options: [{ value: "host:nuc6", label: "nuc6.mydemo.lab" }] },
+    { name: "addons", title: "Add-ons", kind: "multi",
+      options: [{ value: "rancher", label: "Rancher" }, { value: "longhorn", label: "SUSE Storage" }] },
+  ] });
+
+  sandbox.renderWizardStrip(true);
+  const strip = nodes["#wizardSteps"];
+  const chips = strip.childNodes;
+  check("every question is a step in the strip", chips.length === 4);
+  check("the strip names the questions", chips.map((c) => c.childNodes[1].textContent).join("|")
+        === "Distribution|Nodes|Where|Add-ons");
+  check("the answered ones are ticked", chips[0].className.includes("done") && chips[1].className.includes("done")
+        && chips[0].childNodes[0].textContent === "✓");
+  check("the current one is marked, not ticked",
+        chips[2].className.includes("now") && chips[2].childNodes[0].textContent === "3");
+  check("an answered step can be gone back to", chips[0].className.includes("can-go"));
+  check("a question not yet reached cannot be jumped to",
+        !chips[3].className.includes("can-go") && chips[3].disabled === true);
+  check("the strip carries no answers, which the box beside the question already has",
+        !chips.some((c) => (c.childNodes[1].textContent || "").includes("RKE2")));
+
+  sandbox.renderWizardSoFar(true);
+  const box = nodes["#wizardSoFar"];
+  const rows = box.childNodes[1].childNodes;
+  check("the box is headed as the lab so far", box.childNodes[0].textContent === "Your lab so far");
+  check("an answer is shown by its own label, not the value stored",
+        rows[0].childNodes[1].textContent === "RKE2");
+  check("a typed answer is shown as typed", rows[1].childNodes[1].textContent === "3");
+  check("the question being asked says so", rows[2].childNodes[1].textContent === "this question"
+        && rows[2].childNodes[1].className.includes("pending"));
+  check("a question still to come says so", rows[3].childNodes[1].textContent === "not yet");
+
+  setWiz({ answers: { distribution: "rke2", nodes: "3", addons: ["rancher", "longhorn"] } });
+  sandbox.renderWizardSoFar(true);
+  check("several answers to one question read as a list",
+        nodes["#wizardSoFar"].childNodes[1].childNodes[3].childNodes[1].textContent === "Rancher, SUSE Storage");
+
+  setWiz({ answers: { distribution: "rke2", nodes: "3", addons: [] } });
+  sandbox.renderWizardSoFar(true);
+  check("choosing nothing is not shown as an answer",
+        nodes["#wizardSoFar"].childNodes[1].childNodes[3].childNodes[1].className.includes("pending"));
+
+  sandbox.renderWizardStrip(false);
+  sandbox.renderWizardSoFar(false);
+  check("both are out of the way where there is nothing to show",
+        nodes["#wizardSteps"].hidden === true && nodes["#wizardSoFar"].hidden === true);
+
+  check("the state really is the dialog's own, not a copy", getWiz("wiz.index") === "2");
+  setWiz({ workflow: "", steps: [], answers: {}, index: 0 });
+};
+
 // -- the Create dialog asks for a passphrase only where one is needed -------
 // "only if this lab uses encrypted credentials" put the question to the operator; the credentials list already
 // carries each file's encryption flags, so it is a fact to read instead.
@@ -860,6 +928,7 @@ const domChecks = (async () => {
   await wizardChecks();
   await passphraseChecks();
   releaseChoiceChecks();
+  stepBuilderChecks();
 })();
 
 Promise.all([urlParamChecks(), credentialChecks, domChecks]).then(() => {

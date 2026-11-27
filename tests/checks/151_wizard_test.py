@@ -315,6 +315,20 @@ check("the theme works in both schemes, since it uses the tokens rather than a f
 # A panel inside <main class="layout"> took a column of the grid and hid the catalogue and the canvas to get it,
 # which moved the lab panel. It is a dialog like every other one here, so entering it changes no layout at all.
 check("the step view is a dialog over the page", '<dialog id="wizardPanel"' in page)
+# The questions arrived one after another with nothing saying how many there were or what had been answered.
+check("the dialog has a strip of steps above the question", 'id="wizardSteps"' in page
+      and page.index('id="wizardSteps"') < page.index('id="wizardBody"'))
+check("...and the lab as it stands beside it", 'id="wizardSoFar"' in page and 'class="wizard-split"' in page)
+check("both start out of the way, for the screen that has nothing to show yet",
+      'id="wizardSteps" class="wizard-steps" aria-label="Steps" hidden' in page
+      and 'id="wizardSoFar"' in page.split("hidden></aside>")[0])
+check("the dialog is wider than it was, since it now carries two columns",
+      ".wizard-dialog { width: min(56rem, 94vw) }" in style)
+check("and becomes one column on a narrow screen rather than squeezing both",
+      "@media (max-width:60rem)" in style and ".wizard-split{grid-template-columns:1fr}" in style)
+check("the strip and the box are themed from the project's own tokens",
+      "var(--accent)" in style.split(".wizard-step.now")[1].split("}")[0]
+      and "var(--accent)" in style.split(".wizard-sofar h4{")[1].split("}")[0])
 check("it is not a panel in the layout grid",
       'class="panel wizard-area"' not in page and "wizard-area" not in style)
 check("and nothing in the page is hidden to show it",

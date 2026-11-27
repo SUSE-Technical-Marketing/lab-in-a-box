@@ -401,9 +401,88 @@ function wizardButtons({ back = false, next = false, open = false, create = fals
 function renderWizard() {
   const body = $("#wizardBody");
   body.innerHTML = "";
-  if (!wiz.workflow) return renderWizardWorkflows(body);
-  if (wiz.index >= wiz.steps.length) return renderWizardSummary(body);
+  if (!wiz.workflow) {
+    renderWizardStrip(false);
+    renderWizardSoFar(false);
+    return renderWizardWorkflows(body);
+  }
+  if (wiz.index >= wiz.steps.length) {
+    // The final screen is itself a summary of the built lab, so the running one beside it would say the same
+    // thing twice; it steps aside and lets that have the width.
+    renderWizardStrip(true);
+    renderWizardSoFar(false);
+    return renderWizardSummary(body);
+  }
+  renderWizardStrip(true);
+  renderWizardSoFar(true);
   return renderWizardStep(body, wiz.steps[wiz.index]);
+}
+
+/* The steps across the top of the dialog: one per question, ticked once answered, the current one marked. A step
+ * already answered can be clicked to go back to it; one not yet reached cannot, because the questions that
+ * follow depend on the answers before them. Names only, never answers: those are in "Your lab so far". */
+function renderWizardStrip(show) {
+  const strip = $("#wizardSteps");
+  if (!strip) return;
+  strip.hidden = !show;
+  strip.innerHTML = "";
+  if (!show) return;
+  (wiz.steps || []).forEach((step, i) => {
+    const done = i < wiz.index;
+    const chip = el("button", "wizard-step" + (done ? " done can-go" : i === wiz.index ? " now" : ""));
+    chip.type = "button";
+    chip.appendChild(el("span", "tick", done ? "✓" : String(i + 1)));
+    chip.appendChild(document.createTextNode(step.title || step.name));
+    if (done) chip.addEventListener("click", () => wizardGoToStep(i));
+    else chip.disabled = i !== wiz.index;
+    strip.appendChild(chip);
+  });
+}
+
+/* The readable form of an answer: a choice's own option label rather than the value stored, a multi-choice's
+ * labels joined, and a count or a name as typed. "" when the question has not been answered. */
+function wizardAnswerLabel(step) {
+  const value = wiz.answers[step.name];
+  if (value === undefined || value === null || value === "") return "";
+  const labelOf = (v) => {
+    const option = (step.options || []).find((o) => String(o.value) === String(v));
+    return option ? option.label : String(v);
+  };
+  if (Array.isArray(value)) return value.length ? value.map(labelOf).join(", ") : "";
+  return labelOf(value);
+}
+
+/* What the lab is becoming, beside the question: every step with its answer, and the ones still to come named as
+ * such, so the shape of the result is visible before it is committed to. */
+function renderWizardSoFar(show) {
+  const box = $("#wizardSoFar");
+  if (!box) return;
+  box.hidden = !show;
+  box.innerHTML = "";
+  if (!show) return;
+  box.appendChild(el("h4", "", "Your lab so far"));
+  const list = el("ul");
+  (wiz.steps || []).forEach((step, i) => {
+    const row = el("li");
+    row.appendChild(el("span", "k", step.title || step.name));
+    const answer = wizardAnswerLabel(step);
+    const pending = i === wiz.index ? "this question" : "not yet";
+    row.appendChild(el("span", "v" + (answer ? "" : " pending"), answer || pending));
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  if (!(wiz.steps || []).length) {
+    box.appendChild(el("p", "wizard-help", "Nothing answered yet."));
+  }
+}
+
+/* Go back to a question already answered. Forward is Next's job: an answer can change which questions follow, so
+ * they are read again rather than skipped over. */
+async function wizardGoToStep(index) {
+  if (index >= wiz.index) return;
+  wiz.index = index;
+  await loadWizardSteps();
+  renderWizard();
 }
 
 function renderWizardWorkflows(body) {

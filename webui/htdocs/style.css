@@ -407,7 +407,39 @@ h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mu
 .example-row .btn { flex: none; align-self: center; }
 
 /* the step-by-step builder (Simplify), which replaces the canvas while it is open */
-.wizard-dialog { width: min(46rem, 94vw) }
+.wizard-dialog { width: min(56rem, 94vw) }
+/* The steps as a strip across the top (clickable back to any step already answered) and the lab as it stands on
+   the right, so an answer's consequence is visible before it is committed to. Below 60rem the two columns become
+   one, which is also what a phone gets. */
+.wizard-steps{display:flex;gap:.3rem;margin:0 0 1rem;padding:.6rem;background:var(--code);
+  border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+.wizard-step{flex:1 1 0;min-width:5.4rem;display:flex;flex-direction:column;align-items:center;gap:.3rem;
+  padding:.35rem .25rem;border:0;border-radius:8px;background:none;color:var(--muted);
+  font:inherit;font-size:.78rem;line-height:1.2;text-align:center;cursor:default}
+.wizard-step.can-go{cursor:pointer}
+.wizard-step.can-go:hover{background:var(--panel);color:var(--ink)}
+.wizard-step .tick{width:1.25rem;height:1.25rem;border-radius:50%;border:1px solid var(--line);
+  display:grid;place-items:center;font-size:.68rem;background:var(--panel)}
+.wizard-step.done{color:var(--ink)}
+.wizard-step.done .tick{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.wizard-step.now{color:var(--accent);font-weight:600}
+.wizard-step.now .tick{border-color:var(--accent);color:var(--accent);font-weight:700;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.wizard-split{display:grid;grid-template-columns:1.6fr 1fr;gap:1.2rem;align-items:start}
+.wizard-sofar{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem}
+.wizard-sofar h4{margin:0 0 .6rem;font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--accent)}
+.wizard-sofar ul{list-style:none;margin:0;padding:0;font-size:.88rem}
+.wizard-sofar li{display:flex;justify-content:space-between;gap:.6rem;padding:.3rem 0;
+  border-bottom:1px dashed var(--line)}
+.wizard-sofar li:last-child{border-bottom:0}
+.wizard-sofar .k{color:var(--muted)}
+.wizard-sofar .v{font-weight:600;text-align:right}
+.wizard-sofar .v.pending{font-weight:400;color:var(--muted)}
+@media (max-width:60rem){
+  .wizard-split{grid-template-columns:1fr}
+  .wizard-sofar{order:2}
+}
 .wizard-body { padding: 1rem; overflow-y: auto; flex: 1 }
 .wizard-actions { display: flex; gap: .5rem; padding: .6rem 1rem; border-top: 1px solid var(--line) }
 .wizard-q { font-weight: 640; font-size: 1.05rem; margin: 0 0 .2rem }
