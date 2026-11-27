@@ -216,6 +216,15 @@ class K3sDistro(K8sDistro):
         ssh_run(hostname, "mkdir -p /etc/rancher/k3s")
         self._before_installer(hostname)
 
+        # The channel is resolved to a release here rather than left to the installer, for the reason the rke2
+        # path gives: a channel service that does not answer leaves the installer carrying the channel's own
+        # name where a version belongs. "" means it could not be resolved, and then the channel is passed on
+        # exactly as before.
+        version = releases.resolve("k3s", clu_rel)
+        if version and version != clu_rel:
+            log("    k3s '{}' is release {}".format(clu_rel, version))
+        pinned = "INSTALL_K3S_VERSION={} ".format(shlex.quote(version)) if version else ""
+
         if token is None:
             log("  Installing K3s server on '{}' (first node of '{}')".format(hostname, clu_name))
             # clu_rel, clu_name, mydomain and clu_token are free text from the lab JSON. They are shell-quoted before they reach
@@ -224,9 +233,10 @@ class K3sDistro(K8sDistro):
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} {}"
+                "INSTALL_K3S_CHANNEL={} {}{}"
                 "sh -s - server --tls-san {}.{}{}".format(
-                    shlex.quote(clu_rel), "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
+                    shlex.quote(clu_rel), pinned,
+                    "K3S_TOKEN={} ".format(shlex.quote(clu_token)) if clu_token else "",
                     shlex.quote(clu_name), shlex.quote(mydomain), disable)
             )
             self._start(hostname, "k3s")
@@ -239,10 +249,10 @@ class K3sDistro(K8sDistro):
             ssh_run(
                 hostname,
                 "curl -sfL https://get.k3s.io | "
-                "INSTALL_K3S_CHANNEL={} "
+                "INSTALL_K3S_CHANNEL={} {}"
                 "K3S_URL=https://{}:6443 "
                 "K3S_TOKEN={} "
-                "sh -".format(shlex.quote(clu_rel), shlex.quote(rancher1_ip), shlex.quote(token))
+                "sh -".format(shlex.quote(clu_rel), pinned, shlex.quote(rancher1_ip), shlex.quote(token))
             )
             self._start(hostname, "k3s-agent")
             return token, rancher1_ip

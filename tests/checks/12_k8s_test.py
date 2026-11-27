@@ -286,6 +286,38 @@ try:
           "INSTALL_RKE2_VERSION='v1.36.6+rke2r1; rm -rf /'" in quoted_cmd)
     _resolved["answer"] = ""
 
+    # ── k3s resolves its channel the same way, at both of its call sites ────
+    # k3s's own channel service answers today where rke2's did not, but the failure mode is identical, and a lab
+    # that pins a release should get that release rather than whatever the channel means on the day.
+    _resolved["answer"] = ""
+    _resolved["asked"] = []
+    k3s = k8s.get_distro("k3s")
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="K3STOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    k3s.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+    unresolved = next(c for h, c, kw in fake_ssh.calls if "get.k3s.io" in c)
+    check("K3sDistro: the channel the lab named is what gets resolved, for k3s",
+          _resolved["asked"] == [("k3s", "stable")])
+    check("K3sDistro: a channel that cannot be resolved is passed on exactly as before",
+          "INSTALL_K3S_CHANNEL=stable" in unresolved and "INSTALL_K3S_VERSION" not in unresolved)
+
+    _resolved["answer"] = "v1.37.2+k3s1"
+    fake_ssh = FakeSSH(responses=[("node-token", FakeResult(stdout="K3STOKEN\n"))])
+    k8s.ssh_run = fake_ssh
+    token, addr = k3s.install_server("vm1", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"})
+    resolved = next(c for h, c, kw in fake_ssh.calls if "get.k3s.io" in c)
+    check("K3sDistro: a resolved channel installs that release on the first server",
+          "INSTALL_K3S_VERSION=v1.37.2+k3s1" in resolved and "INSTALL_K3S_CHANNEL=stable" in resolved)
+
+    fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=1))])
+    k8s.ssh_run = fake_ssh
+    k3s.install_agent("vm2", "cluster1", {"clu_rel": "stable", "mydomain": "mydemo.lab"},
+                      token="K3STOKEN", rancher1_ip="10.0.0.1")
+    joined = next(c for h, c, kw in fake_ssh.calls if "get.k3s.io" in c)
+    check("K3sDistro: a joining node installs the same release, not whatever the channel means by then",
+          "INSTALL_K3S_VERSION=v1.37.2+k3s1" in joined and "K3S_URL=https://10.0.0.1:6443" in joined)
+    _resolved["answer"] = ""
+
     # No zypper (e.g. Ubuntu/Debian): the plain, no-install_method, non-transactional case these next checks mean.
     fake_ssh = FakeSSH(responses=[("command -v zypper", FakeResult(returncode=1))])
     k8s.ssh_run = fake_ssh
